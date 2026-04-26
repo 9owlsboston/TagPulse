@@ -2,6 +2,11 @@
 
 ## System Overview
 
+![TagPulse Architecture](assets/architecture.png)
+
+<details>
+<summary>ASCII source (for editing)</summary>
+
 ```
 +---------------------------------------------------------------------------+
 |   TagPulse Platform                                                       |
@@ -36,6 +41,13 @@
 |   | * Read frequency  * Anomaly detection  * ...                      |   |
 |   +-------------------------------------------------------------------+   |
 +---------------------------------------------------------------------------+
+```
+
+</details>
+
+To regenerate the PNG after editing the ASCII source:
+```bash
+java -Djava.awt.headless=true -jar /usr/share/ditaa/ditaa.jar /tmp/tagpulse-arch.txt docs/assets/architecture.png --no-shadows --scale 2
 ```
 
 ## Components
