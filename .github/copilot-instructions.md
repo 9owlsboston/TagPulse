@@ -1,7 +1,7 @@
 # Project: TagPulse
 
 ## Overview
-TagPulse is an IoT platform that ingests data from RFID tag readers and associated sensors via MQTT, stores it in TimescaleDB, and runs pluggable analytics modules tailored to application needs. First device type: RFID readers sending tag read events with metadata (tag ID, reader ID, timestamp, signal strength, optional sensor data).
+TagPulse is an IoT platform that provides device registration/configuration, data ingestion endpoints (MQTT + HTTP), telemetry modeling and monitoring, user-defined rules and alerts, pluggable analytics modules, and data integration/export to external systems — all managed through APIs and an admin UI. First device type: RFID readers sending tag read events with metadata (tag ID, reader ID, timestamp, signal strength, optional sensor data).
 
 ## Tech Stack
 - Language: Python 3.12

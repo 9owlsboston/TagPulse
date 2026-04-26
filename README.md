@@ -17,10 +17,13 @@ make run
 
 ## Architecture
 
-- **MQTT ingestion** — devices publish tag reads and sensor data via MQTT
-- **FastAPI backend** — REST API for device management, data queries, and analytics
+- **Device registry & config** — register, configure, and monitor IoT device fleet
+- **Dual ingestion** — MQTT and HTTP endpoints for device telemetry
 - **TimescaleDB** — time-series storage for tag reads + relational storage for device registry
+- **Rules & alerts** — user-defined rules evaluated against telemetry, with webhook/email alert routing
 - **Plugin analytics** — analytics modules as internal Python packages
+- **Integration layer** — outbound webhooks, SSE streaming, scheduled data exports
+- **Admin UI** — device management, telemetry dashboards, rule/alert configuration (Q3)
 
 See [docs/architecture.md](docs/architecture.md) for the full system overview.
 
@@ -30,9 +33,11 @@ See [docs/architecture.md](docs/architecture.md) for the full system overview.
 src/
   tagpulse/
     api/          # FastAPI routes
-    ingestion/    # MQTT subscriber + message processing
+    ingestion/    # MQTT + HTTP ingestion endpoints
     models/       # Database models (SQLAlchemy + TimescaleDB)
+    rules/        # Rules engine + alert routing
     analytics/    # Pluggable analytics modules
+    integrations/ # Webhooks, SSE, scheduled exports
     core/         # Config, dependencies, shared utilities
 tests/
   unit/           # Fast, isolated tests
