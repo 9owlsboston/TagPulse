@@ -3,38 +3,39 @@
 ## System Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  TagPulse Platform                                               │
-│                                                                  │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐   │
-│  │ Ingestion       │  │ Service         │  │ Rules & Alerts  │   │
-│  │ Layer           │─▶│ Layer           │─▶│ Engine          │   │
-│  │                 │  │                 │  │                 │   │
-│  │ • MQTT Sub      │  │ • Device Reg    │  │ • Conditions    │   │
-│  │ • HTTP Push     │  │ • Query         │  │ • Evaluation    │   │
-│  │                 │  │ • Telemetry     │  │ • Alert Route   │   │
-│  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘   │
-│           │                    │                    │            │
-│           ▼                    │                    ▼            │
-│  ┌─────────────────┐                       ┌─────────────────┐   │
-│  │ TimescaleDB     │◀──────────────────────│ Integration     │   │
-│  │                 │                       │ Layer           │   │
-│  │ • tag_reads     │                       │                 │   │
-│  │   (hyper)       │                       │ • Webhooks out  │   │
-│  │ • devices       │                       │ • SSE stream    │   │
-│  │ • rules         │                       │ • Exports       │   │
-│  │ • alerts        │                       │                 │   │
-│  │ • integr.       │                       │                 │   │
-│  └─────────────────┘                       └────────┬────────┘   │
-│                                                     │            │
-│                                                     ▼            │
-│                                             External Systems     │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────────┐│
-│  │ Analytics Modules (plugin architecture)                      ││
-│  │ • Read frequency  • Anomaly detection  • ...                 ││
-│  └──────────────────────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│   TagPulse Platform                                               │
+│                                                                   │
+│   ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐   │
+│   │ Ingestion       │  │ Service         │  │ Rules & Alerts  │   │
+│   │ Layer           │─▶│ Layer           │─▶│ Engine          │   │
+│   │                 │  │                 │  │                 │   │
+│   │ • MQTT Sub      │  │ • Device Reg    │  │ • Conditions    │   │
+│   │ • HTTP Push     │  │ • Query         │  │ • Evaluation    │   │
+│   │                 │  │ • Telemetry     │  │ • Alert Route   │   │
+│   └─────────────────┘  └─────────────────┘  └─────────────────┘   │
+│                                                                   │
+│            ▼                                         ▼            │
+│                                                                   │
+│   ┌─────────────────┐                       ┌─────────────────┐   │
+│   │ TimescaleDB     │◀──────────────────────│ Integration     │   │
+│   │                 │                       │ Layer           │   │
+│   │ • tag_reads     │                       │                 │   │
+│   │   (hyper)       │                       │ • Webhooks out  │   │
+│   │ • devices       │                       │ • SSE stream    │   │
+│   │ • rules         │                       │ • Exports       │   │
+│   │ • alerts        │                       │                 │   │
+│   │ • integr.       │                       │                 │   │
+│   └─────────────────┘                       └─────────────────┘   │
+│                                                                   │
+│                                                      ▼            │
+│                                              External Systems     │
+│                                                                   │
+│   ┌───────────────────────────────────────────────────────────┐   │
+│   │ Analytics Modules (plugin architecture)                   │   │
+│   │ • Read frequency  • Anomaly detection  • ...              │   │
+│   └───────────────────────────────────────────────────────────┘   │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 ## Components
