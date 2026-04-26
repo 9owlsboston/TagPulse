@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "ms-python.python",
+    "ms-python.mypy-type-checker",
+    "charliermarsh.ruff",
+    "ms-python.debugpy",
+    "editorconfig.editorconfig",
+    "github.copilot",
+    "github.copilot-chat"
+  ]
+}

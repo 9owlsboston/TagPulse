@@ -1,0 +1,56 @@
+# Project: TagPulse
+
+## Overview
+TagPulse is an IoT platform that ingests data from RFID tag readers and associated sensors via MQTT, stores it in TimescaleDB, and runs pluggable analytics modules tailored to application needs. First device type: RFID readers sending tag read events with metadata (tag ID, reader ID, timestamp, signal strength, optional sensor data).
+
+## Tech Stack
+- Language: Python 3.12
+- Framework: FastAPI (async)
+- Database: TimescaleDB (PostgreSQL extension)
+- MQTT Broker: EMQX or Mosquitto (external)
+- Testing: pytest + pytest-asyncio
+- Linting: ruff
+- Type checking: mypy (strict mode)
+
+## Code Conventions
+- Use type hints on all functions (public and private)
+- Use Pydantic models for all API request/response schemas and MQTT message parsing
+- Use structured logging (Python logging module with JSON formatter), never print()
+- Prefer async/await for all I/O operations
+- Use dependency injection via FastAPI's Depends() for database sessions and config
+
+## Testing Expectations
+- Every PR must include tests for new/changed behavior
+- Unit tests go in `tests/unit/`, integration in `tests/integration/`
+- Use fixtures for shared test setup, no global state
+- Mock external dependencies (MQTT broker, database) in unit tests
+- Run `make test` to validate
+
+## Naming
+- Files: snake_case
+- Classes: PascalCase
+- Functions/variables: snake_case
+- API routes: kebab-case (`/tag-reads`, `/device-registry`)
+- MQTT topics: slash-separated (`devices/{device_id}/tag-reads`)
+
+## Do NOT
+- Do not add dependencies without updating pyproject.toml
+- Do not use wildcard imports
+- Do not commit .env files or secrets
+- Do not catch bare exceptions — catch specific exception types
+- Do not put business logic in API route handlers — delegate to service functions
+- Do not import from `tests/` in `src/`
+
+## Process & Artifacts
+- Before starting work, check `docs/roadmap.md` to confirm the task is in-scope
+- Every PR must update `CHANGELOG.md` under an `## Unreleased` section
+- When making a non-obvious technical decision, create an ADR in `docs/adr/`
+- When changing system boundaries or adding a service, update `docs/architecture.md`
+- When a change touches 3+ components, write a design doc in `docs/design/` first
+- Follow `CONTRIBUTING.md` for branch naming, commit format, and PR expectations
+- Run `make check` before marking work complete
+
+## Key Docs
+- Architecture: docs/architecture.md
+- ADRs: docs/adr/README.md
+- IoT Reference: IoT.md
