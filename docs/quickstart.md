@@ -10,6 +10,7 @@ Get the full TagPulse platform running locally in under 5 minutes.
 - Python 3.12+ (backend development)
 - Node.js 20+ (frontend development)
 - Git
+- Two terminal windows/tabs
 
 ---
 
@@ -47,9 +48,12 @@ alembic upgrade head
 
 ---
 
-## 4. Start the Backend API
+## 4. Two-Terminal Development Workflow
+
+### Terminal 1 — Backend API (port 8000)
 
 ```bash
+cd ~/TagPulse
 make run
 ```
 
@@ -58,30 +62,25 @@ Verify:
 ```bash
 curl http://localhost:8000/health
 # {"status":"ok"}
-
-curl http://localhost:8000/health/ready
-# {"status":"healthy","checks":{"database":{"status":"up",...},...}}
 ```
 
-API docs available at: http://localhost:8000/docs
-
----
-
-## 5. Start the Frontend
+### Terminal 2 — Frontend (port 5173)
 
 ```bash
-cd TagPulse-UI
-npm install
+cd ~/TagPulse-UI
+npm install        # first time only
 npm run dev
 ```
 
 Open http://localhost:5173 in your browser.
 
+Both servers hot-reload — edit Python or React and changes appear instantly.
+
+API docs: http://localhost:8000/docs
+
 ---
 
-## 6. Seed Test Data
-
-### Create a tenant
+## 5. Seed a Tenant
 
 ```bash
 docker compose exec db psql -U tagpulse -d tagpulse -c "
@@ -96,17 +95,71 @@ VALUES (
 "
 ```
 
-### Register a device
+---
+
+## 6. Device Simulator
+
+TagPulse includes a device simulator that creates fake RFID readers and sends continuous tag reads.
+
+### Seed devices + run continuous simulation
+
+```bash
+cd ~/TagPulse
+python scripts/simulate_devices.py \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --devices 5 \
+  --interval 2
+```
+
+This will:
+1. Create 5 simulated RFID readers (Sim-Reader-01 through 05)
+2. Send a tag read from each device every 2 seconds
+3. Pick from 50 random tag IDs with realistic signal strength (-80 to -20 dBm)
+4. Include sensor data (temperature readings)
+5. Run until you press Ctrl+C
+
+### Seed devices only (no continuous reads)
+
+```bash
+python scripts/simulate_devices.py \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --devices 10 \
+  --seed-only
+```
+
+### Run for a fixed duration
+
+```bash
+python scripts/simulate_devices.py \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --devices 3 \
+  --interval 1 \
+  --duration 60    # Run for 60 seconds then stop
+```
+
+### Simulator options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--tenant-id` | (required) | Tenant UUID |
+| `--devices` | 3 | Number of simulated RFID readers to create |
+| `--interval` | 2.0 | Seconds between reads per device |
+| `--duration` | 0 | Run for N seconds (0 = forever, Ctrl+C to stop) |
+| `--seed-only` | false | Create devices and exit (no tag reads) |
+
+---
+
+## 7. Manual Testing
+
+### Register a device manually
 
 ```bash
 curl -X POST \
   -H "X-Tenant-ID: 11111111-1111-1111-1111-111111111111" \
   -H "Content-Type: application/json" \
-  -d '{"name": "Reader-01", "device_type": "rfid_reader"}' \
+  -d '{"name": "Manual-Reader-01", "device_type": "rfid_reader"}' \
   http://localhost:8000/device-registry
 ```
-
-Save the `id` from the response — you'll need it below.
 
 ### Ingest a tag read (HTTP)
 
@@ -133,7 +186,7 @@ docker compose exec mqtt mosquitto_pub \
 
 ---
 
-## 7. Verify the Full Flow
+## 8. Verify the Full Flow
 
 ```bash
 # List tag reads
@@ -150,11 +203,14 @@ curl -H "X-Tenant-ID: 11111111-1111-1111-1111-111111111111" \
 
 # Prometheus metrics
 curl http://localhost:8000/metrics
+
+# Readiness check
+curl http://localhost:8000/health/ready
 ```
 
 ---
 
-## 8. Create a Rule + Test Alerting
+## 9. Create a Rule + Test Alerting
 
 ```bash
 # Create a threshold rule
