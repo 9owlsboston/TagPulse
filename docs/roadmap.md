@@ -73,14 +73,15 @@
 ## Sprint 9 — Admin UI
 
 - [done] Technology decision — React 19 + TypeScript + Vite SPA in separate repo (see ADR-007, design/admin-ui.md)
-- [done] Overview dashboard — KPI tiles (devices, reads, alerts, anomalies) with auto-refresh
-- [done] Device management views — register, configure, monitor device fleet
+- [done] TagPulse-UI repo bootstrapped — quality gates passing (lint + typecheck + test)
+- [done] Overview dashboard — KPI tiles (devices, reads, alerts, anomalies) with auto-refresh + SSE live counter
+- [done] Device management views — register, configure, monitor device fleet (list + detail + register)
 - [done] Telemetry dashboard — live and historical telemetry visualization per device/group
-- [done] Data Explorer — form-based ad-hoc query builder for tag reads
+- [done] Data Explorer — form-based ad-hoc query builder for tag reads with CSV export
 - [done] Telemetry model management — list, create, delete per-device-type metric schemas
-- [done] Rule & alert management — create/edit rules, view alert history
-- [done] Integration management — configure webhooks, exports, view delivery status
-- [done] Usage & billing dashboard — per-tenant usage charts, quota status, billing export
+- [done] Rule & alert management — 4-step rule wizard, alert history with acknowledge
+- [done] Integration management — type-specific webhook/SSE/export config, delivery log
+- [done] Usage & billing dashboard — daily usage bar chart, quota progress bars
 
 ## Sprint 10 — Production Hardening
 
@@ -93,17 +94,21 @@
 
 ## Sprint 11 — Observability
 
-- [planned] Platform metrics — ingestion rate, message latency, DB write throughput
-- [planned] Device telemetry metrics — per-device data freshness, error rates
-- [planned] Rule engine metrics — evaluations/sec, alert trigger rate
-- [planned] Alerting rules — ingestion stall, reader offline, DB lag
+- [done] Platform metrics — OpenTelemetry SDK, Prometheus /metrics endpoint, ingestion + API counters
+- [done] Device telemetry metrics — devices_online gauge
+- [done] Rule engine metrics — rule_evaluations + alerts_fired counters
+- [done] EventBus metrics — published/consumed/dropped counters, queue size
+- [done] Integration metrics — webhook_deliveries, sse_connections, dead_letters counters
+- [done] Auto-instrumentation — FastAPI, SQLAlchemy, httpx, logging (trace ID correlation)
 
 ## Sprint 12 — Identity & Device Provisioning
 
-- [planned] User & role management — users table, admin/editor/viewer roles, API key auth (G1, G2)
-- [planned] API key generation — hashed keys, per-user, revocable
-- [planned] Device self-registration — provisioning endpoint with pre-shared key auth (G4)
-- [planned] Device approval flow — admin approves pending devices
+- [done] User & role management — users table, admin/editor/viewer roles, tenant-scoped
+- [done] API key generation — SHA-256 hashed keys, per-user, revocable, prefix-based lookup
+- [done] API key authentication — Bearer token auth with backward-compatible X-Tenant-ID
+- [done] Role enforcement — require_role() dependency, per-route permission matrix
+- [done] Device self-registration — provisioning endpoint with pre-shared key auth
+- [done] Device approval flow — admin approves/rejects pending devices
 
 ---
 

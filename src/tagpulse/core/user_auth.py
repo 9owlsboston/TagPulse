@@ -1,0 +1,130 @@
+"""User authentication — API key and X-Tenant-ID (backward compat)."""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import secrets
+from typing import Any
+from uuid import UUID
+
+from fastapi import Depends, HTTPException, Security
+from fastapi.security import APIKeyHeader
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from tagpulse.models.database import TenantModel, UserModel
+from tagpulse.repositories.timescaledb.session import get_session
+
+logger = logging.getLogger(__name__)
+
+api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
+tenant_id_header = APIKeyHeader(name="X-Tenant-ID", auto_error=False)
+
+
+class AuthenticatedUser:
+    """Represents the authenticated user for the current request."""
+
+    def __init__(
+        self,
+        user_id: UUID | None,
+        tenant_id: UUID,
+        tenant_name: str,
+        tenant_slug: str,
+        role: str,
+        email: str | None = None,
+    ) -> None:
+        self.user_id = user_id
+        self.tenant_id = tenant_id
+        self.tenant_name = tenant_name
+        self.tenant_slug = tenant_slug
+        self.role = role
+        self.email = email
+
+
+def generate_api_key(tenant_slug: str) -> tuple[str, str, str]:
+    """Generate an API key, its prefix, and its hash.
+
+    Returns: (raw_key, prefix, sha256_hash)
+    """
+    random_part = secrets.token_hex(16)
+    raw_key = f"tp_{tenant_slug}_{random_part}"
+    prefix = raw_key[:10]
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    return raw_key, prefix, key_hash
+
+
+def verify_api_key(raw_key: str, stored_hash: str) -> bool:
+    """Verify an API key against its stored hash."""
+    return hashlib.sha256(raw_key.encode()).hexdigest() == stored_hash
+
+
+async def get_current_user(
+    authorization: str | None = Security(api_key_header),
+    x_tenant_id: str | None = Security(tenant_id_header),
+    session: AsyncSession = Depends(get_session),
+) -> AuthenticatedUser:
+    """Authenticate via Bearer API key or X-Tenant-ID header (backward compat)."""
+    # Try Bearer token first
+    if authorization and authorization.startswith("Bearer "):
+        raw_key = authorization[7:]
+        prefix = raw_key[:10]
+        stmt = select(UserModel).where(
+            UserModel.api_key_prefix == prefix,
+            UserModel.status == "active",
+        )
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        if user is None or not verify_api_key(raw_key, user.api_key_hash or ""):
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        # Look up tenant
+        tenant = await session.get(TenantModel, user.tenant_id)
+        if tenant is None or tenant.status != "active":
+            raise HTTPException(status_code=401, detail="Tenant inactive")
+        return AuthenticatedUser(
+            user_id=user.id,
+            tenant_id=tenant.id,
+            tenant_name=tenant.name,
+            tenant_slug=tenant.slug,
+            role=user.role,
+            email=user.email,
+        )
+
+    # Fall back to X-Tenant-ID (backward compat — viewer role)
+    if x_tenant_id:
+        try:
+            tid = UUID(x_tenant_id)
+        except ValueError:
+            raise HTTPException(status_code=401, detail="Invalid tenant ID") from None
+        tenant_stmt = select(TenantModel).where(
+            TenantModel.id == tid, TenantModel.status == "active"
+        )
+        tenant_result = await session.execute(tenant_stmt)
+        tenant = tenant_result.scalar_one_or_none()
+        if tenant is None:
+            raise HTTPException(status_code=401, detail="Tenant not found")
+        return AuthenticatedUser(
+            user_id=None,
+            tenant_id=tenant.id,
+            tenant_name=tenant.name,
+            tenant_slug=tenant.slug,
+            role="viewer",
+        )
+
+    raise HTTPException(status_code=401, detail="Authentication required")
+
+
+def require_role(*roles: str) -> Any:
+    """FastAPI dependency that enforces role-based access."""
+
+    async def _check(
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> AuthenticatedUser:
+        if user.role not in roles:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Requires role: {', '.join(roles)}",
+            )
+        return user
+
+    return Depends(_check)

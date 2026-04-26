@@ -1,0 +1,59 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://tagpulse:secret@db:5432/tagpulse
+      MQTT_BROKER_HOST: mqtt
+      MQTT_BROKER_PORT: "1883"
+      LOG_LEVEL: debug
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
+    depends_on:
+      db:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    volumes:
+      - ./src:/app/src
+    command: >
+      uvicorn tagpulse.api.main:app
+      --host 0.0.0.0 --port 8000 --reload
+      --reload-dir /app/src
+
+  ui:
+    build:
+      context: ../TagPulse-UI
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - app
+
+  db:
+    image: timescale/timescaledb:latest-pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: tagpulse
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: tagpulse
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tagpulse"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf
+
+volumes:
+  pgdata:

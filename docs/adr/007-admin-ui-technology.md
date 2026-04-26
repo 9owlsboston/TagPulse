@@ -1,34 +1,87 @@
-# ADR-007: Admin UI Technology Selection (Deferred)
+# ADR-007: Admin UI Technology Selection
 
-**Status:** proposed
+**Status:** accepted
 **Date:** 2026-04-25
 
 ## Context
 
-TagPulse needs an admin UI for device management, telemetry dashboards, rule/alert configuration, and integration management. The UI is planned for Q3 2026 (Milestone 8). We need to decide on a frontend framework and hosting strategy.
+TagPulse needs an admin UI for device management, telemetry dashboards, rule/alert configuration, and integration management. The UI must support:
 
-This ADR is **proposed, not accepted** — the decision will be finalized when Milestone 8 begins, informed by team skills and any constraints discovered during Q2.
+- Real-time telemetry dashboards with smooth chart updates
+- Drag-and-drop dashboard customization (IoT Central pattern)
+- Interactive rule builder with condition preview
+- Client-side routing for instant page navigation
+- Mobile-responsive layout
 
-## Options Under Consideration
+After reviewing Azure IoT Central's architecture (which uses a React SPA), evaluating HTMX for v1, and considering long-term product needs, we concluded that SPA-grade interactivity is required from day one.
 
-### Option A: React + Vite (SPA served by FastAPI)
-- **Pros:** Large ecosystem, strong component libraries (Ant Design, MUI), good charting libraries for telemetry dashboards. Can be served as static files from the FastAPI backend.
-- **Cons:** Separate build pipeline, adds Node.js to the dev toolchain.
+## Options Evaluated
+
+### Option A: React + TypeScript + Vite (separate repo)
+- **Pros:** Full SPA interactivity, large ecosystem (Ant Design, Recharts), typed API client from OpenAPI spec, independent deploy, code splitting, PWA-capable.
+- **Cons:** Separate repo, Node.js toolchain, two CI pipelines.
 
 ### Option B: HTMX + Jinja2 (server-rendered by FastAPI)
-- **Pros:** No separate frontend build, no JavaScript framework to maintain, stays in the Python ecosystem. Good for CRUD-heavy admin interfaces.
-- **Cons:** Weaker for complex real-time dashboards (telemetry charts, live updates). Fewer UI component libraries.
+- **Pros:** No separate build, stays in Python ecosystem.
+- **Cons:** Cannot deliver drag-and-drop, interactive rule builder, smooth real-time charts, or client-side routing. Would need to be replaced as product matures.
 
-### Option C: Grafana (dashboards) + lightweight admin UI
-- **Pros:** Grafana excels at time-series visualization and connects directly to TimescaleDB. Admin CRUD could be a thin custom UI.
-- **Cons:** Two systems to maintain. Grafana customization is limited for non-dashboard workflows (device registration, rule builder).
+### Option C: Embedded SPA (React inside Python repo)
+- **Pros:** Single repo.
+- **Cons:** Worst of both worlds — full Node.js toolchain awkwardly nested in Python project, confusing IDE experience, coupled CI.
+
+### Option D: Grafana + lightweight admin
+- **Pros:** Excellent for time-series visualization.
+- **Cons:** Cannot customize for device registration, rule builder, integration management. Two systems.
 
 ## Decision
 
-Deferred to Q3 2026. The API-first design in Q2 ensures all UI capabilities are backed by REST endpoints, so the frontend choice doesn't block backend work.
+**Option A: React + TypeScript + Vite in a separate repository (`TagPulse-UI`).**
 
-## Action Items
+### Architecture
 
-- [ ] Evaluate team frontend skills at Q3 kickoff
-- [ ] Build a prototype of the telemetry dashboard view in the leading candidate
-- [ ] Finalize this ADR and update status to `accepted`
+```
+TagPulse (backend)              TagPulse-UI (frontend)
+├── FastAPI REST API             ├── React 19 + TypeScript
+├── OpenAPI spec (auto-gen)      ├── Vite (build + dev server)
+├── CORS middleware              ├── TanStack Query (data fetching)
+├── Serves API only              ├── React Router (client routing)
+│                                ├── Recharts (dashboards)
+│                                ├── Ant Design (components)
+│                                └── openapi-typescript-codegen
+│
+└── GET /health                  └── Deployed to CDN or nginx
+```
+
+### Development Workflow
+
+| Step | Command |
+|------|---------|
+| Start backend | `cd TagPulse && make run` (port 8000) |
+| Start frontend | `cd TagPulse-UI && npm run dev` (port 5173, proxies API to 8000) |
+| Regenerate API client | `npm run generate-api` (reads OpenAPI spec from backend) |
+| Build for production | `npm run build` → `dist/` folder |
+
+### Deployment Options
+
+1. **Separate services:** Frontend on CDN (Cloudflare Pages, Vercel, S3+CloudFront), API on container host. Best for scale.
+2. **Single container:** nginx serves frontend static files + reverse-proxies `/api/*` to uvicorn. Simpler ops.
+
+### Backend Changes Required
+
+- Add CORS middleware to FastAPI (`allow_origins`, `allow_methods`, `allow_headers`)
+- No template engine, no Jinja2, no HTML serving
+- OpenAPI spec already auto-generated by FastAPI
+
+## Consequences
+
+- **Good:** Full SPA interactivity — drag-and-drop dashboards, rule builder, real-time charts.
+- **Good:** Independent frontend deploys — ship UI fixes without backend redeploy.
+- **Good:** Typed API client generated from OpenAPI — no manual API wiring, fewer integration bugs.
+- **Good:** React ecosystem — Ant Design, Recharts, react-grid-layout for IoT Central-level UX.
+- **Bad:** Two repositories, two CI pipelines, Node.js added to toolchain.
+- **Bad:** Requires frontend development skills (TypeScript, React).
+- **Bad:** Initial setup cost higher than HTMX.
+
+## Alternatives Considered
+
+See Options B, C, D above. HTMX was the original v1 plan but rejected after IoT Central gap analysis showed SPA-grade interactivity is a product requirement, not a nice-to-have.

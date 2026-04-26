@@ -9,3 +9,6 @@
 | 005 | [Embedded rules & alerts engine](005-embedded-rules-engine.md) | accepted | 2026-04-25 |
 | 006 | [Webhook-first integration layer](006-webhook-integration-layer.md) | accepted | 2026-04-25 |
 | 007 | [Admin UI technology selection](007-admin-ui-technology.md) | proposed | 2026-04-25 |
+| 008 | [Multi-tenancy strategy](008-multi-tenancy-strategy.md) | proposed | 2026-04-25 |
+| 009 | [Containerization and local dev environment](009-containerization-local-dev.md) | proposed | 2026-04-25 |
+| 010 | [Internal event bus](010-internal-event-bus.md) | proposed | 2026-04-25 |

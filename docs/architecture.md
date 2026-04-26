@@ -19,27 +19,26 @@
 |   | * HTTP Push     |      | * Query         |      | * Evaluation    |   |
 |   |                 |      | * Telemetry     |      | * Alert Route   |   |
 |   +-----------------+      +-----------------+      +-----------------+   |
-|                                                                           |
-|            v                                                 v            |
-|                                                                           |
-|   +-----------------+                               +-----------------+   |
-|   | TimescaleDB     | <---------------------------- | Integration     |   |
-|   |                 |                               | Layer           |   |
-|   | * tag_reads     |                               |                 |   |
-|   |   (hyper)       |                               | * Webhooks out  |   |
-|   | * devices       |                               | * SSE stream    |   |
-|   | * rules         |                               | * Exports       |   |
-|   | * alerts        |                               |                 |   |
-|   | * integr.       |                               |                 |   |
-|   +-----------------+                               +-----------------+   |
-|                                                                           |
-|                                                              v            |
-|                                                      External Systems     |
-|                                                                           |
+|          |                                                 |              |
+|          v                                                 v              |
 |   +-------------------------------------------------------------------+   |
-|   | Analytics Modules (plugin architecture)                           |   |
-|   | * Read frequency  * Anomaly detection  * ...                      |   |
+|   | EventBus (internal pub/sub)                                       |   |
+|   | * Capacity-limited queues   * Back-pressure policies              |   |
+|   | * Phase 1: asyncio.Queue    * Phase 2: Redis Streams              |   |
 |   +-------------------------------------------------------------------+   |
+|          |                    |                            |              |
+|          v                    v                            v              |
+|   +-----------------+  +-----------------+         +-----------------+   |
+|   | TimescaleDB     |  | Analytics       |         | Integration     |   |
+|   |                 |  | Modules         |         | Layer           |   |
+|   | * tag_reads     |  |                 |         |                 |   |
+|   |   (hyper)       |  | * Read freq     |         | * Webhooks out  |   |
+|   | * devices       |  | * Anomaly det   |         | * SSE stream    |   |
+|   | * rules         |  | * ...           |         | * Exports       |   |
+|   | * alerts        |  |                 |         |                 |   |
+|   | * integr.       |  +-----------------+         +-----------------+   |
+|   +-----------------+                                      v              |
+|                                                    External Systems       |
 +---------------------------------------------------------------------------+
 ```
 
@@ -57,7 +56,7 @@ Accepts device telemetry via two protocols:
 - **MQTT subscriber** — connects to external broker (EMQX/Mosquitto), subscribes to `devices/{device_id}/tag-reads` and `devices/{device_id}/status` topics
 - **HTTP push endpoint** — `POST /tag-reads` for devices that can't speak MQTT
 
-Both paths validate messages against Pydantic schemas and write to TimescaleDB. See [ADR-002](adr/002-mqtt-device-connectivity.md).
+Both paths validate messages against Pydantic schemas, write to TimescaleDB, and publish events to the internal EventBus. See [ADR-002](adr/002-mqtt-device-connectivity.md).
 
 ### Service Layer
 FastAPI REST API providing:
@@ -83,10 +82,21 @@ Pushes data and events to external systems:
 
 All targets configured via CRUD API. See [ADR-006](adr/006-webhook-integration-layer.md).
 
+### Internal EventBus
+Capacity-limited async pub/sub bus connecting producers (ingestion, rules engine) to consumers (rules engine, analytics, integration layer):
+- **Protocol-based** — `EventBus` protocol with `publish()`, `subscribe()`, `start()`, `stop()` methods
+- **Capacity limits** — configurable max queue size per topic (default 10,000), high-watermark warnings at 80%
+- **Overflow policies** — `drop_oldest` (default), `drop_newest`, `block`, or `raise` when queues are full
+- **Topics** — `tag_read.created`, `device.status_changed`, `alert.triggered`, `device.registered`, `device.decommissioned`
+- **Phased implementation** — Phase 1: in-process `asyncio.Queue` → Phase 2: Redis Streams → Phase 3: Kafka/Redpanda
+
+See [ADR-010](adr/010-internal-event-bus.md).
+
 ### Analytics Modules
 Pluggable Python packages following a plugin pattern:
 - Base class with registration and lifecycle hooks
 - First module: read frequency analytics (reads/min, anomaly flagging)
+- Subscribes to `tag_read.created` events via the EventBus
 - Runs in background workers, shares DB connection pool
 
 See [ADR-004](adr/004-monolith-plugin-analytics.md).
@@ -118,13 +128,15 @@ Web interface for device management, telemetry dashboards, rule/alert configurat
 
 3. Valid message written to tag_reads hypertable
 
-4. Rules engine evaluates against active rules
-   └── Match? → Create alert → Route to action (webhook/email)
+4. Ingestion publishes TagReadCreated event → EventBus
+   (capacity-limited; overflow policy applies if consumers lag)
 
-5. Analytics modules process in background
-   └── Compute aggregates, detect anomalies
+5. EventBus fans out to subscribers:
+   ├── Rules engine evaluates against active rules
+   │   └── Match? → Create alert → publish AlertTriggered → EventBus
+   └── Analytics modules compute aggregates, detect anomalies
 
-6. Integration layer pushes to external systems
+6. Integration layer subscribes to AlertTriggered events
    ├── Webhooks fire on configured triggers
    ├── SSE streams live events to connected consumers
    └── Scheduled exports run on cron
@@ -141,6 +153,9 @@ Web interface for device management, telemetry dashboards, rule/alert configurat
 | Embedded rules engine | [ADR-005](adr/005-embedded-rules-engine.md) |
 | Webhook-first integration | [ADR-006](adr/006-webhook-integration-layer.md) |
 | Admin UI technology | [ADR-007](adr/007-admin-ui-technology.md) (proposed) |
+| Multi-tenancy strategy | [ADR-008](adr/008-multi-tenancy-strategy.md) (proposed) |
+| Containerization & local dev | [ADR-009](adr/009-containerization-local-dev.md) (proposed) |
+| Internal event bus | [ADR-010](adr/010-internal-event-bus.md) (proposed) |
 
 ## External Dependencies
 
@@ -157,6 +172,8 @@ src/tagpulse/
   api/            # FastAPI routes (thin handlers → service layer)
   ingestion/      # MQTT subscriber + HTTP push endpoint
   models/         # SQLAlchemy models + Pydantic schemas
+  repositories/   # Storage protocol + implementations (see design/storage-strategy.md)
+  events/         # EventBus protocol + implementations (see ADR-010)
   rules/          # Rule engine, conditions, alert routing
   analytics/      # Plugin analytics modules
   integrations/   # Webhooks, SSE, scheduled exports

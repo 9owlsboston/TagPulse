@@ -1,9 +1,12 @@
 """Unit tests for the health check endpoint."""
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from tagpulse.api.main import app
+from tagpulse.api.routes.health import router
 
+app = FastAPI()
+app.include_router(router)
 client = TestClient(app)
 
 

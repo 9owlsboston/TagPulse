@@ -1,0 +1,169 @@
+"""TimescaleDB implementation of the TagReadRepository protocol."""
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from tagpulse.models.database import TagReadModel
+from tagpulse.models.schemas import (
+    ReadsPerHour,
+    TagReadCreate,
+    TagReadResponse,
+    UniqueTagsPerWindow,
+)
+
+
+class TimescaleTagReadRepository:
+    """Persists tag read events to TimescaleDB hypertable."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def insert(self, tenant_id: uuid.UUID, read: TagReadCreate) -> TagReadResponse:
+        row = TagReadModel(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            device_id=read.device_id,
+            tag_id=read.tag_id,
+            timestamp=read.timestamp,
+            signal_strength=read.signal_strength,
+            sensor_data=read.sensor_data,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return TagReadResponse.model_validate(row)
+
+    async def insert_batch(self, tenant_id: uuid.UUID, reads: list[TagReadCreate]) -> int:
+        rows = [
+            TagReadModel(
+                id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                device_id=r.device_id,
+                tag_id=r.tag_id,
+                timestamp=r.timestamp,
+                signal_strength=r.signal_strength,
+                sensor_data=r.sensor_data,
+            )
+            for r in reads
+        ]
+        self._session.add_all(rows)
+        await self._session.flush()
+        return len(rows)
+
+    async def query(
+        self,
+        tenant_id: uuid.UUID,
+        *,
+        device_id: uuid.UUID | None = None,
+        tag_id: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[TagReadResponse]:
+        stmt = select(TagReadModel).where(
+            TagReadModel.tenant_id == tenant_id
+        ).order_by(TagReadModel.timestamp.desc())
+        if device_id is not None:
+            stmt = stmt.where(TagReadModel.device_id == device_id)
+        if tag_id is not None:
+            stmt = stmt.where(TagReadModel.tag_id == tag_id)
+        if start is not None:
+            stmt = stmt.where(TagReadModel.timestamp >= start)
+        if end is not None:
+            stmt = stmt.where(TagReadModel.timestamp <= end)
+        stmt = stmt.limit(limit).offset(offset)
+        result = await self._session.execute(stmt)
+        return [TagReadResponse.model_validate(row) for row in result.scalars()]
+
+    async def reads_per_hour(
+        self,
+        tenant_id: uuid.UUID,
+        *,
+        device_id: uuid.UUID | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[ReadsPerHour]:
+        bucket = func.date_trunc("hour", TagReadModel.timestamp).label("bucket")
+        stmt = (
+            select(
+                bucket,
+                TagReadModel.device_id,
+                func.count().label("read_count"),
+            )
+            .where(TagReadModel.tenant_id == tenant_id)
+            .group_by(bucket, TagReadModel.device_id)
+            .order_by(bucket.desc())
+        )
+        if device_id is not None:
+            stmt = stmt.where(TagReadModel.device_id == device_id)
+        if start is not None:
+            stmt = stmt.where(TagReadModel.timestamp >= start)
+        if end is not None:
+            stmt = stmt.where(TagReadModel.timestamp <= end)
+        result = await self._session.execute(stmt)
+        return [
+            ReadsPerHour(bucket=row.bucket, device_id=row.device_id, read_count=row.read_count)
+            for row in result
+        ]
+
+    async def unique_tags_per_window(
+        self,
+        tenant_id: uuid.UUID,
+        *,
+        device_id: uuid.UUID | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        window_minutes: int = 60,
+    ) -> list[UniqueTagsPerWindow]:
+        bucket = func.date_trunc("hour", TagReadModel.timestamp).label("bucket")
+        if window_minutes != 60:
+            bucket = func.to_timestamp(
+                func.floor(
+                    func.extract("epoch", TagReadModel.timestamp) / (window_minutes * 60)
+                )
+                * (window_minutes * 60)
+            ).label("bucket")
+        stmt = (
+            select(
+                bucket,
+                TagReadModel.device_id,
+                func.count(func.distinct(TagReadModel.tag_id)).label("unique_tags"),
+            )
+            .where(TagReadModel.tenant_id == tenant_id)
+            .group_by(bucket, TagReadModel.device_id)
+            .order_by(bucket.desc())
+        )
+        if device_id is not None:
+            stmt = stmt.where(TagReadModel.device_id == device_id)
+        if start is not None:
+            stmt = stmt.where(TagReadModel.timestamp >= start)
+        if end is not None:
+            stmt = stmt.where(TagReadModel.timestamp <= end)
+        result = await self._session.execute(stmt)
+        return [
+            UniqueTagsPerWindow(
+                bucket=row.bucket,
+                device_id=row.device_id,
+                unique_tags=row.unique_tags,
+            )
+            for row in result
+        ]
+
+    async def count_reads_since(
+        self,
+        tenant_id: uuid.UUID,
+        device_id: uuid.UUID,
+        since: datetime,
+    ) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(TagReadModel)
+            .where(TagReadModel.tenant_id == tenant_id)
+            .where(TagReadModel.device_id == device_id)
+            .where(TagReadModel.timestamp >= since)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one()
