@@ -1,0 +1,427 @@
+# TagPulse User Guide
+
+## Table of Contents
+
+- [Getting Started](#getting-started)
+- [Dashboard](#dashboard)
+- [Devices](#devices)
+- [Telemetry](#telemetry)
+- [Telemetry Models](#telemetry-models)
+- [Rules](#rules)
+- [Alerts](#alerts)
+- [Integrations](#integrations)
+- [Usage & Quotas](#usage--quotas)
+- [User Management](#user-management)
+
+---
+
+## Getting Started
+
+### Authentication Model
+
+TagPulse uses **password-less, API-key-based authentication**. There are no username/password prompts — access is controlled by tenant ID and optional API keys.
+
+**Two ways to authenticate:**
+
+| Method | How | Role | Use Case |
+|--------|-----|------|----------|
+| **Tenant ID** | Switch to the **Tenant ID** tab on the login screen | `viewer` (read-only) | Browsing dashboards and data |
+| **API Key** | Use the **API Key** tab with email + API key | Assigned role (`admin`, `editor`, or `viewer`) | Full access in the UI and API |
+
+When you log in through the UI with just a tenant ID, you are automatically a **viewer** — you can see everything but cannot create or modify resources (devices, rules, integrations, etc.).
+
+### Logging In
+
+The login screen has two tabs:
+
+**API Key tab** (default) — for full role-based access:
+1. Open `http://localhost:3000` (Docker) or `http://localhost:5173` (dev server).
+2. Enter your **Email** and **API Key** (e.g., `tp_test-corp_...`).
+3. Click **Sign In**. You'll be logged in with your assigned role (admin/editor/viewer).
+4. The header shows your name, role badge, and tenant name.
+
+**Tenant ID tab** — for read-only browsing:
+1. Switch to the **Tenant ID** tab.
+2. Enter your tenant UUID (e.g., `11111111-1111-1111-1111-111111111111`).
+3. Click **Continue as Viewer**.
+
+Click **Logout** in the top-right to end your session. JWT sessions expire after 1 hour — you'll be redirected to login automatically.
+
+### Upgrading to Full Access
+
+To get write access, you need a user account with an API key.
+
+**Via the UI (recommended):** If you're already logged in as an admin, navigate to **Users** in the sidebar → **Create User** → then generate an API key from the user detail page.
+
+**Via the API:** Use curl with an existing admin API key:
+
+```bash
+# 1. Create a user
+curl -X POST http://localhost:8000/users \
+  -H "Authorization: Bearer <your-admin-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "colleague@example.com", "name": "New User", "role": "editor"}'
+
+# 2. Generate an API key for the new user (note the user ID from step 1)
+curl -X POST http://localhost:8000/users/<user-id>/api-key \
+  -H "Authorization: Bearer <your-admin-api-key>"
+```
+
+The API key (format: `tp_{slug}_{random}`) is returned **once** — store it securely. Use it as a Bearer token for authenticated requests.
+
+> **Bootstrap tip:** For a fresh tenant with no users yet, bootstrap the first admin with an API key:
+> ```bash
+> # 1. Create the admin user (or find existing one)
+> USER_ID=$(docker compose exec -T db psql -U tagpulse -d tagpulse -tAc "
+> INSERT INTO users (id, tenant_id, email, name, role, status)
+> VALUES (gen_random_uuid(), '11111111-1111-1111-1111-111111111111',
+>         'admin@example.com', 'Admin', 'admin', 'active')
+> ON CONFLICT (tenant_id, email) DO UPDATE SET role = 'admin'
+> RETURNING id;
+> ")
+>
+> # 2. Generate and store an API key
+> python -c "
+> from tagpulse.core.user_auth import generate_api_key
+> raw_key, prefix, key_hash = generate_api_key('test-corp')
+> print(f'API_KEY={raw_key}')
+> print(f'PREFIX={prefix}')
+> print(f'HASH={key_hash}')
+> " | while IFS='=' read -r k v; do eval "$k=$v"; done
+>
+> docker compose exec -T db psql -U tagpulse -d tagpulse -c "
+> UPDATE users SET api_key_hash='$HASH', api_key_prefix='$PREFIX'
+> WHERE id='$USER_ID';
+> "
+>
+> echo "Your admin API key: $API_KEY"
+> echo "Store it securely — it cannot be retrieved again."
+> ```
+> Use the printed key as `Authorization: Bearer <key>` for all admin operations.
+
+### Navigation
+
+The sidebar on the left provides access to all sections: Dashboard, Devices, Telemetry, Telemetry Models, Rules, Alerts, Integrations, and Usage.
+
+### User Roles
+
+| Role     | Permissions                                      |
+|----------|--------------------------------------------------|
+| `admin`  | Full access — manage users, devices, and config  |
+| `editor` | Register/update devices, create rules/integrations |
+| `viewer` | Read-only access to data and dashboards          |
+
+---
+
+## Dashboard
+
+The dashboard provides a real-time overview of your IoT deployment. Widgets are **draggable and resizable** — arrange them to suit your workflow.
+
+### Widgets
+
+| Widget               | Description                                                    |
+|----------------------|----------------------------------------------------------------|
+| **Total Devices**    | Count of all registered devices                                |
+| **Reads Today**      | Tag reads aggregated per hour for the current day               |
+| **Open Alerts**      | Number of unacknowledged alerts                                |
+| **Anomaly Count**    | Anomalies detected by the analytics module                     |
+| **Recent Alerts**    | Last 5 open alerts showing device, severity, message, and time |
+| **Device Health**    | Per-device health cards: reads/hour, error rate, connection state |
+| **Live Event Counter** | Real-time count of incoming tag reads (updates via SSE)      |
+
+Data refreshes automatically — the live event counter updates in real time, while other widgets refresh every 30 seconds.
+
+---
+
+## Devices
+
+### Viewing Devices
+
+Navigate to **Devices** to see all registered readers.
+
+**Columns:** Name, Type, Status (active/decommissioned), Connection State (online/offline), Last Seen.
+
+**Filtering:**
+- Type in the search box to filter by device name.
+- Use the status dropdown to show only active or decommissioned devices.
+
+Click any row to open the device detail page.
+
+### Registering a New Device
+
+1. Click the **Register Device** button.
+2. Fill in the form:
+   - **Name** — a descriptive label (required, max 255 characters).
+   - **Device Type** — e.g., `rfid_reader` (required).
+   - **Firmware Version** — optional.
+   - **Metadata** — optional JSON for extra info like location or SKU.
+3. Click **Submit**. The device is created with `active` status.
+
+### Device Detail
+
+The detail page has three tabs:
+
+**Overview** — name, type, status, connection state, firmware, metadata (as formatted JSON). Admins see a **Decommission** button to retire a device.
+
+**Telemetry** — a line chart of signal strength for the device's last 100 reads.
+
+**Health** — reads/hour, error rate (%), connection state, and last seen timestamp.
+
+---
+
+## Telemetry
+
+### Telemetry Dashboard
+
+Navigate to **Telemetry** for an aggregate view of tag read activity.
+
+- **Line chart** with one series per device, bucketed by hour.
+- Use the **device selector** to focus on a single device or view all.
+- Use the **time range picker** to adjust the window.
+
+The chart updates in real time as new tag reads arrive.
+
+### Data Explorer
+
+Click **Explore** (from the Telemetry page) for detailed data access.
+
+**Filters:**
+- **Device** — select a specific device or all.
+- **Tag ID** — search and multi-select specific tags.
+- **Signal Strength** — set a min/max range.
+- **Time Range** — start and end date-time.
+- **Limit** — number of results (1–1000, default 100).
+
+**Views:**
+- **Table** — columns: Tag ID, Device, Timestamp, Signal Strength. Sortable and paginated (100 per page).
+- **Chart** — line chart of signal strength over time.
+
+Toggle between views using the button in the toolbar.
+
+**Export:** Click **Export to CSV** to download the current result set.
+
+---
+
+## Telemetry Models
+
+Telemetry models define the expected metrics schema for each device type (e.g., what readings an `rfid_reader` sends).
+
+### Viewing Models
+
+The table shows:
+- **Device Type** — the type this model applies to.
+- **Metrics** — count of defined metrics.
+- **Created** — creation date.
+
+Expand a row to see the full metrics list with columns: name, unit, min, max, and description.
+
+### Creating a Model
+
+1. Click **Create Model**.
+2. Enter the **Device Type** (required).
+3. Add metrics using the metric builder:
+   - **Name** — metric identifier (e.g., `signal_strength`).
+   - **Unit** — measurement unit (e.g., `dBm`).
+   - **Min / Max** — acceptable value range.
+   - **Description** — what this metric measures.
+4. Click **Add Metric** to add more, or the remove button to delete one.
+5. Click **Save**.
+
+### Deleting a Model
+
+Click the **Delete** button on the model row. This removes the schema definition but does not affect existing telemetry data.
+
+---
+
+## Rules
+
+Rules let you define automated conditions that trigger alerts when your telemetry data meets certain criteria.
+
+### Viewing Rules
+
+The rules table shows: Name, Condition Type, Action Type, and Enabled status.
+
+- Toggle the **Enabled** switch to activate or deactivate a rule without deleting it.
+- Click **Edit** to modify or **Delete** to remove a rule.
+
+### Creating a Rule
+
+Click **Create Rule** to open the multi-step wizard.
+
+**Step 1 — Condition:**
+- **Name** — a descriptive rule name (required).
+- **Description** — optional notes.
+- **Condition Type:**
+  - **Threshold** — triggers when a field crosses a value. Configure: operator (`>`, `<`, `==`), field, and threshold value.
+  - **Absence** — triggers when no read is received within X minutes. Optionally filter by tag ID.
+  - **Rate Change** — triggers on sudden changes. Configure: window (minutes) and change percent (e.g., 50%).
+
+**Step 2 — Action:**
+- **Webhook** — sends a POST request to a URL you specify.
+- **Email** — sends a notification email to a recipient address.
+- **Notification** — creates an internal alert (no extra config needed).
+
+**Step 3 — Scope:**
+- Apply the rule to a **specific device** or **all devices** (global).
+
+**Step 4 — Review:**
+- Review the full configuration, toggle **Enabled**, and click **Save**.
+
+---
+
+## Alerts
+
+Navigate to **Alerts** to see all triggered alerts.
+
+### Alert Table
+
+**Columns:** Time, Message, Severity (critical/warning/info), Status (open/acknowledged), Device.
+
+- Severity is color-coded: **red** = critical, **orange** = warning, **blue** = info.
+- Use the **Status filter** to show All, Open, or Acknowledged alerts.
+- Alerts are sorted newest-first by default (20 per page).
+
+### Acknowledging an Alert
+
+Click the **Acknowledge** button on any open alert to mark it as handled. Acknowledged alerts remain in the history for audit purposes.
+
+---
+
+## Integrations
+
+Integrations push TagPulse events to external systems.
+
+### Viewing Integrations
+
+The table shows: Name, Type, Events subscribed, Health status, Enabled toggle, and Last Triggered timestamp.
+
+- **Health** is color-coded: **green** = healthy, **orange** = degraded, **red** = error.
+- Toggle **Enabled** to start/stop delivery.
+- Click **Deliveries** to view the delivery log for an integration.
+- Click **Delete** to remove an integration.
+
+### Creating an Integration
+
+1. Click **Create Integration**.
+2. Fill in:
+   - **Name** — a descriptive label (required).
+   - **Type** — Webhook, SSE, or Export.
+   - **Events** — comma-separated event types to subscribe to (e.g., `tag_read.created, alert.triggered`).
+3. Configure type-specific settings:
+
+| Type        | Settings                                              |
+|-------------|-------------------------------------------------------|
+| **Webhook** | **URL** — the HTTPS endpoint to receive POST payloads |
+| **SSE**     | **Max Connections** — optional (1–1000)                |
+| **Export**   | **Schedule** — cron expression (e.g., `0 0 * * *` for daily), **Format** — CSV or JSON |
+
+4. Click **Save**.
+
+### Delivery Log
+
+Click **Deliveries** on any integration to see its delivery history.
+
+**Columns:** Time, Event, Status (success/pending/failed), Attempts, Response Code, Error.
+
+Use this log to troubleshoot failed deliveries — the error column shows the failure reason and the attempts column shows retry count.
+
+---
+
+## Usage & Quotas
+
+Navigate to **Usage** to monitor your tenant's platform consumption.
+
+### Daily Usage Chart
+
+A bar chart showing daily usage across all dimensions: API reads, API writes, ingestion, rule evaluations, alerts fired, and webhook deliveries.
+
+### Usage Summary Table
+
+| Dimension            | Quota Limit  |
+|----------------------|--------------|
+| API Reads            | 100,000      |
+| API Writes           | 50,000       |
+| Ingestion            | 1,000,000    |
+| Rule Evaluations     | 500,000      |
+| Alerts Fired         | 10,000       |
+| Webhook Deliveries   | 50,000       |
+| SSE Connections      | 1,000        |
+| Export Volume         | 100,000      |
+
+Each dimension shows a progress bar indicating the percentage of quota used. The bar turns **red** when usage reaches 90% or more.
+
+Use the date range filter to view historical usage trends.
+
+---
+
+## User Management
+
+> **Admin only** — the Users section is visible only to admin users.
+
+Navigate to **Users** in the sidebar to manage your tenant's user accounts.
+
+### Viewing Users
+
+The table shows: Name, Email, Role (admin/editor/viewer), Status (active/inactive), API Key prefix, and Created date.
+
+### Creating a User
+
+1. Click **Create User**.
+2. Fill in:
+   - **Email** — required, must be a valid email address.
+   - **Name** — required.
+   - **Role** — select Admin, Editor, or Viewer (default: Viewer).
+3. Click **Create**.
+
+The user is created but has no API key yet — generate one from the user detail page.
+
+### Editing a User
+
+Click **Edit** on any user row to open the detail page.
+
+- **Name** and **Role** can be changed inline. Click **Save Changes** to apply.
+- Click **Deactivate** to disable the account (the user can no longer authenticate). Click **Reactivate** to restore access.
+
+### API Key Management
+
+On the user detail page, the **API Key** card shows:
+
+- **Current key prefix** (e.g., `tp_test-c...`) or "No key generated".
+- **Generate API Key** — creates a new key. The full key is displayed **once** with a copy button. Store it securely.
+- **Regenerate API Key** — replaces the existing key with a new one. The old key is immediately invalidated.
+- **Revoke Key** — removes the key entirely. The user will need a new key to authenticate.
+
+> **Important:** API keys cannot be retrieved after creation. If a user loses their key, an admin must generate a new one.
+
+### Recommended Workflow: Onboarding a New User
+
+1. Navigate to **Users** → click **Create User** → fill in email, name, and role → click **Create**.
+2. Click **Edit** on the new user row to open their detail page.
+3. In the **API Key** card, click **Generate API Key**.
+4. Copy the key using the copy button and send it to the user securely (e.g., password manager, encrypted message).
+5. The user logs in via the **API Key** tab with their email and the generated key.
+
+> **Tip:** If you close the key banner without copying it, click **Regenerate API Key** to create a new one (the previous key is invalidated).
+
+**For bulk onboarding via the API:**
+
+```bash
+# Create user and generate key in one flow
+USER_ID=$(curl -s -X POST http://localhost:8000/users \
+  -H "Authorization: Bearer <admin-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"new@example.com","name":"New User","role":"editor"}' \
+  | python -c "import sys,json;print(json.load(sys.stdin)['id'])")
+
+curl -s -X POST "http://localhost:8000/users/$USER_ID/api-key" \
+  -H "Authorization: Bearer <admin-key>"
+```
+
+### Key Lifecycle Summary
+
+| Action | When to use |
+|--------|-------------|
+| **Generate** | New user needs access for the first time |
+| **Regenerate** | Key was lost, or you want to rotate keys periodically |
+| **Revoke** | User leaves the team, or the key is compromised |
+| **Deactivate user** | Temporarily block all access (key stays but won't work) |

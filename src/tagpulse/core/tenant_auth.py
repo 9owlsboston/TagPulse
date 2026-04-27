@@ -1,4 +1,4 @@
-"""Tenant authentication dependency — extracts tenant_id from API key header."""
+"""Tenant authentication dependency — extracts tenant from JWT, API key, or X-Tenant-ID header."""
 
 from uuid import UUID
 
@@ -7,6 +7,7 @@ from fastapi.security import APIKeyHeader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.core.user_auth import AuthenticatedUser, get_current_user
 from tagpulse.models.database import TenantModel
 from tagpulse.repositories.timescaledb.session import get_session
 
@@ -24,25 +25,14 @@ class Tenant:
 
 
 async def get_current_tenant(
-    tenant_id_header: str | None = Security(api_key_header),
+    user: AuthenticatedUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Tenant:
-    """Extract and validate tenant from X-Tenant-ID header.
+    """Extract tenant from the authenticated user (JWT, API key, or X-Tenant-ID).
 
-    In production, this would validate a JWT or API key.
-    For now, it looks up the tenant by UUID from the header.
+    Delegates authentication to get_current_user, then looks up the tenant plan.
     """
-    if tenant_id_header is None:
-        raise HTTPException(status_code=401, detail="X-Tenant-ID header required")
-
-    try:
-        tenant_id = UUID(tenant_id_header)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid tenant ID format") from None
-
-    stmt = select(TenantModel).where(
-        TenantModel.id == tenant_id, TenantModel.status == "active"
-    )
+    stmt = select(TenantModel).where(TenantModel.id == user.tenant_id)
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
 

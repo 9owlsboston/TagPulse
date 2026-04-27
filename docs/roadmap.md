@@ -110,6 +110,19 @@
 - [done] Device self-registration — provisioning endpoint with pre-shared key auth
 - [done] Device approval flow — admin approves/rejects pending devices
 
+## Sprint 13 — UI Authentication & Session Management
+
+- [done] Login page — email + API key authentication (replaces tenant-ID-only gate)
+- [done] Session management — JWT tokens with expiry, secure cookie storage
+- [done] Role-aware UI — show/hide actions based on user role (admin/editor/viewer)
+- [done] User profile — view current user info, role, tenant in header
+- [done] API key login flow — backend endpoint to exchange API key for session token
+- [done] Logout + session expiry — clear tokens, redirect to login
+- [done] Auth guard updates — protect routes based on role, redirect unauthenticated users
+- [done] User management page — admin-only list, create, edit, deactivate users
+- [done] API key management UI — generate and revoke keys from user detail view
+- [done] Register Device button — add CTA on device list page for discoverability
+
 ---
 
 ## Backlog (not scheduled)

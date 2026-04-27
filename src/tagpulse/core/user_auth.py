@@ -1,18 +1,21 @@
-"""User authentication — API key and X-Tenant-ID (backward compat)."""
+"""User authentication — JWT, API key, and X-Tenant-ID (backward compat)."""
 
 from __future__ import annotations
 
 import hashlib
 import logging
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
+import jwt
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.core.config import settings
 from tagpulse.models.database import TenantModel, UserModel
 from tagpulse.repositories.timescaledb.session import get_session
 
@@ -59,23 +62,63 @@ def verify_api_key(raw_key: str, stored_hash: str) -> bool:
     return hashlib.sha256(raw_key.encode()).hexdigest() == stored_hash
 
 
+def create_jwt(user: UserModel, tenant: TenantModel) -> str:
+    """Create a JWT access token for a user."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user.id),
+        "tid": str(tenant.id),
+        "role": user.role,
+        "email": user.email,
+        "tenant_name": tenant.name,
+        "tenant_slug": tenant.slug,
+        "iss": "tagpulse",
+        "iat": now,
+        "exp": now + timedelta(seconds=settings.jwt_expiry_seconds),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def decode_jwt(token: str) -> dict[str, Any]:
+    """Decode and verify a JWT token. Raises HTTPException on failure."""
+    try:
+        return jwt.decode(token, settings.jwt_secret, algorithms=["HS256"], issuer="tagpulse")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired") from None
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token") from None
+
+
 async def get_current_user(
     authorization: str | None = Security(api_key_header),
     x_tenant_id: str | None = Security(tenant_id_header),
     session: AsyncSession = Depends(get_session),
 ) -> AuthenticatedUser:
-    """Authenticate via Bearer API key or X-Tenant-ID header (backward compat)."""
+    """Authenticate via Bearer JWT, Bearer API key, or X-Tenant-ID header."""
     # Try Bearer token first
     if authorization and authorization.startswith("Bearer "):
-        raw_key = authorization[7:]
-        prefix = raw_key[:10]
+        raw_token = authorization[7:]
+        # JWT tokens don't start with "tp_"; API keys do
+        if not raw_token.startswith("tp_"):
+            # Decode JWT
+            payload = decode_jwt(raw_token)
+            return AuthenticatedUser(
+                user_id=UUID(payload["sub"]),
+                tenant_id=UUID(payload["tid"]),
+                tenant_name=payload["tenant_name"],
+                tenant_slug=payload["tenant_slug"],
+                role=payload["role"],
+                email=payload.get("email"),
+            )
+        # API key auth
+        prefix = raw_token[:10]
         stmt = select(UserModel).where(
             UserModel.api_key_prefix == prefix,
             UserModel.status == "active",
         )
         result = await session.execute(stmt)
         user = result.scalar_one_or_none()
-        if user is None or not verify_api_key(raw_key, user.api_key_hash or ""):
+        if user is None or not verify_api_key(raw_token, user.api_key_hash or ""):
             raise HTTPException(status_code=401, detail="Invalid API key")
         # Look up tenant
         tenant = await session.get(TenantModel, user.tenant_id)

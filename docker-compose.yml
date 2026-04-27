@@ -11,6 +11,7 @@ services:
       MQTT_BROKER_PORT: "1883"
       LOG_LEVEL: debug
       CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
+      JWT_SECRET: "dev-secret-change-in-production"
     depends_on:
       db:
         condition: service_healthy
