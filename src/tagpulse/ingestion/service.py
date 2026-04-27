@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from tagpulse.core.otel_metrics import ingestion_counter
 from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.models.schemas import TagReadCreate, TagReadResponse
-from tagpulse.repositories.protocols import TagReadRepository
+from tagpulse.repositories.protocols import DeviceRepository, TagReadRepository
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +19,11 @@ class IngestionService:
         self,
         repo: TagReadRepository,
         event_bus: EventBus,
+        device_repo: DeviceRepository | None = None,
     ) -> None:
         self._repo = repo
         self._event_bus = event_bus
+        self._device_repo = device_repo
 
     async def ingest(self, tenant_id: uuid.UUID, read: TagReadCreate) -> TagReadResponse:
         """Validate, persist, and publish a single tag read."""
@@ -33,6 +35,12 @@ class IngestionService:
             read.tag_id,
             read.timestamp,
         )
+        if self._device_repo:
+            now = datetime.now(UTC)
+            await self._device_repo.record_last_seen(tenant_id, read.device_id, now)
+            await self._device_repo.record_connection_state(
+                tenant_id, read.device_id, "online",
+            )
         await self._event_bus.publish(
             Topic.TAG_READ_CREATED,
             Event(

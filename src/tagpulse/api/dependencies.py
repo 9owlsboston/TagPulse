@@ -38,10 +38,11 @@ def get_event_bus(request: Request) -> EventBus:
 
 async def get_ingestion_service(
     repo: TagReadRepository = Depends(get_tag_read_repo),
+    device_repo: DeviceRepository = Depends(get_device_repo),
     event_bus: EventBus = Depends(get_event_bus),
 ) -> AsyncGenerator[IngestionService, None]:
     """Provide an IngestionService wired with repo and event bus."""
-    yield IngestionService(repo=repo, event_bus=event_bus)
+    yield IngestionService(repo=repo, event_bus=event_bus, device_repo=device_repo)
 
 
 async def get_device_service(

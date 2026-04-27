@@ -22,14 +22,31 @@ TAG_POOL = [f"TAG{i:04d}" for i in range(1, 51)]  # 50 unique tags
 
 
 def create_devices(client: httpx.Client, tenant_id: str, count: int) -> list[dict[str, str]]:
-    """Register simulated devices and return their IDs."""
+    """Register simulated devices and return their IDs.
+
+    Reuses existing devices with matching names to avoid duplicates on re-run.
+    """
+    headers = {"X-Tenant-ID": tenant_id}
+
+    # Fetch existing devices
+    existing: dict[str, str] = {}
+    resp = client.get(f"{API_URL}/device-registry", headers=headers, params={"limit": 1000})
+    if resp.status_code == 200:
+        for d in resp.json():
+            existing[d["name"]] = d["id"]
+
     devices = []
     for i in range(count):
+        name = f"Sim-Reader-{i + 1:02d}"
+        if name in existing:
+            devices.append({"id": existing[name], "name": name})
+            print(f"  Reusing device: {name} ({existing[name]})")
+            continue
         resp = client.post(
             f"{API_URL}/device-registry",
-            headers={"X-Tenant-ID": tenant_id},
+            headers=headers,
             json={
-                "name": f"Sim-Reader-{i + 1:02d}",
+                "name": name,
                 "device_type": "rfid_reader",
                 "metadata": {"location": f"zone-{chr(65 + i % 6)}", "simulated": True},
             },
@@ -49,8 +66,22 @@ def send_tag_read(
     device_id: str,
 ) -> bool:
     """Send a single simulated tag read."""
+    # 5% chance of a read "failing" (device glitch)
+    if random.random() < 0.05:
+        return False
+
     tag_id = random.choice(TAG_POOL)
     signal = round(random.uniform(-80.0, -20.0), 1)
+    sensor_data: dict[str, float] = {
+        "temperature": round(random.uniform(18.0, 28.0), 1),
+    }
+    # 30% chance of humidity sensor data
+    if random.random() < 0.3:
+        sensor_data["humidity"] = round(random.uniform(30.0, 80.0), 1)
+    # 10% chance of battery level
+    if random.random() < 0.1:
+        sensor_data["battery_pct"] = round(random.uniform(10.0, 100.0), 0)
+
     resp = client.post(
         f"{API_URL}/tag-reads",
         headers={"X-Tenant-ID": tenant_id},
@@ -59,7 +90,7 @@ def send_tag_read(
             "tag_id": tag_id,
             "timestamp": datetime.now(UTC).isoformat(),
             "signal_strength": signal,
-            "sensor_data": {"temperature": round(random.uniform(18.0, 28.0), 1)},
+            "sensor_data": sensor_data,
         },
     )
     return resp.status_code == 201
@@ -107,24 +138,33 @@ def main() -> None:
     print("Sending tag reads (Ctrl+C to stop)...\n")
     start = time.monotonic()
     total_reads = 0
+    dropped = 0
     try:
         while True:
             for device in devices:
+                # 10% chance a device skips this cycle (simulates busy/offline)
+                if random.random() < 0.10:
+                    continue
                 ok = send_tag_read(client, args.tenant_id, device["id"])
-                total_reads += 1
+                if ok:
+                    total_reads += 1
+                else:
+                    dropped += 1
                 status = "✓" if ok else "✗"
                 print(
-                    f"  {status} {device['name']} → {total_reads} reads sent",
+                    f"  {status} {device['name']} → {total_reads} sent, {dropped} dropped",
                     end="\r",
                 )
-            time.sleep(args.interval)
+            # Jitter: ±30% of the base interval
+            jitter = args.interval * random.uniform(0.7, 1.3)
+            time.sleep(jitter)
             if args.duration > 0 and (time.monotonic() - start) > args.duration:
                 break
     except KeyboardInterrupt:
         pass
 
     elapsed = time.monotonic() - start
-    print(f"\n\nDone: {total_reads} reads in {elapsed:.0f}s ({total_reads / max(elapsed, 1):.1f} reads/sec)")
+    print(f"\n\nDone: {total_reads} sent, {dropped} dropped in {elapsed:.0f}s ({total_reads / max(elapsed, 1):.1f} reads/sec)")
 
 
 if __name__ == "__main__":

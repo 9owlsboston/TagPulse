@@ -51,7 +51,7 @@ def upgrade() -> None:
     # -- Alerts table (hypertable) --
     op.create_table(
         "alerts",
-        sa.Column("id", UUID(as_uuid=True), primary_key=True),
+        sa.Column("id", UUID(as_uuid=True), nullable=False),
         sa.Column(
             "tenant_id", UUID(as_uuid=True), sa.ForeignKey("tenants.id"), nullable=False
         ),
@@ -70,6 +70,7 @@ def upgrade() -> None:
         sa.Column(
             "triggered_at", sa.DateTime(timezone=True), nullable=False
         ),
+        sa.PrimaryKeyConstraint("id", "triggered_at"),
     )
     op.create_index("ix_alerts_tenant_id", "alerts", ["tenant_id"])
     op.create_index("ix_alerts_rule_id", "alerts", ["rule_id"])

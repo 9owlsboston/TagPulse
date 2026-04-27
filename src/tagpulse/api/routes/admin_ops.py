@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.core.audit import AuditLogger
-from tagpulse.core.tenant_auth import Tenant, get_current_tenant
+from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.database import DeadLetterEventModel
 from tagpulse.repositories.timescaledb.session import get_session
 
@@ -36,13 +36,13 @@ class DeadLetterResponse(BaseModel):
 async def list_dead_letters(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
-    tenant: Tenant = Depends(get_current_tenant),
+    user: AuthenticatedUser = require_role("admin"),
     session: AsyncSession = Depends(get_session),
 ) -> list[DeadLetterResponse]:
     """List dead-lettered events for this tenant."""
     stmt = (
         select(DeadLetterEventModel)
-        .where(DeadLetterEventModel.tenant_id == tenant.id)
+        .where(DeadLetterEventModel.tenant_id == user.tenant_id)
         .order_by(DeadLetterEventModel.failed_at.desc())
         .limit(limit)
         .offset(offset)
@@ -66,7 +66,7 @@ async def list_dead_letters(
 @router.post("/dead-letter/{event_id}/retry", status_code=204)
 async def retry_dead_letter(
     event_id: UUID,
-    tenant: Tenant = Depends(get_current_tenant),
+    user: AuthenticatedUser = require_role("admin"),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Mark a dead-lettered event for retry."""
@@ -74,7 +74,7 @@ async def retry_dead_letter(
         update(DeadLetterEventModel)
         .where(
             DeadLetterEventModel.id == event_id,
-            DeadLetterEventModel.tenant_id == tenant.id,
+            DeadLetterEventModel.tenant_id == user.tenant_id,
         )
         .values(status="retried", retry_count=DeadLetterEventModel.retry_count + 1)
         .returning(DeadLetterEventModel.id)
@@ -87,7 +87,7 @@ async def retry_dead_letter(
 @router.delete("/dead-letter/{event_id}", status_code=204)
 async def abandon_dead_letter(
     event_id: UUID,
-    tenant: Tenant = Depends(get_current_tenant),
+    user: AuthenticatedUser = require_role("admin"),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Abandon a dead-lettered event."""
@@ -95,7 +95,7 @@ async def abandon_dead_letter(
         update(DeadLetterEventModel)
         .where(
             DeadLetterEventModel.id == event_id,
-            DeadLetterEventModel.tenant_id == tenant.id,
+            DeadLetterEventModel.tenant_id == user.tenant_id,
         )
         .values(status="abandoned")
         .returning(DeadLetterEventModel.id)
@@ -113,11 +113,11 @@ async def list_audit_logs(
     resource_type: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
-    tenant: Tenant = Depends(get_current_tenant),
+    user: AuthenticatedUser = require_role("admin"),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, object]]:
     """List audit logs for this tenant."""
     audit = AuditLogger(session)
     return await audit.list_logs(
-        tenant.id, resource_type=resource_type, limit=limit, offset=offset
+        user.tenant_id, resource_type=resource_type, limit=limit, offset=offset
     )

@@ -119,6 +119,9 @@ class FakeTagReadRepo:
             [r for r in self.reads if r.device_id == device_id and r.timestamp >= since]
         )
 
+    async def count_alerts_since(self, tenant_id: UUID, device_id: UUID, since: datetime) -> int:
+        return 0
+
 
 class FakeDeviceRepo:
     """In-memory device repository for query tests."""

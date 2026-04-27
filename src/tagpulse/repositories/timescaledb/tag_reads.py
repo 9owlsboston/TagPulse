@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tagpulse.models.database import TagReadModel
+from tagpulse.models.database import AlertModel, TagReadModel
 from tagpulse.models.schemas import (
     ReadsPerHour,
     TagReadCreate,
@@ -164,6 +164,22 @@ class TimescaleTagReadRepository:
             .where(TagReadModel.tenant_id == tenant_id)
             .where(TagReadModel.device_id == device_id)
             .where(TagReadModel.timestamp >= since)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one()
+
+    async def count_alerts_since(
+        self,
+        tenant_id: uuid.UUID,
+        device_id: uuid.UUID,
+        since: datetime,
+    ) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(AlertModel)
+            .where(AlertModel.tenant_id == tenant_id)
+            .where(AlertModel.device_id == device_id)
+            .where(AlertModel.triggered_at >= since)
         )
         result = await self._session.execute(stmt)
         return result.scalar_one()

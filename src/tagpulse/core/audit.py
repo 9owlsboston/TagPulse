@@ -25,11 +25,14 @@ class AuditLogger:
         resource_type: str,
         resource_id: uuid.UUID,
         changes: dict[str, Any] | None = None,
+        *,
+        user_id: uuid.UUID | None = None,
     ) -> None:
         """Record an audit log entry."""
         entry = AuditLogModel(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
+            user_id=user_id,
             action=action,
             resource_type=resource_type,
             resource_id=resource_id,
@@ -37,10 +40,11 @@ class AuditLogger:
         )
         self._session.add(entry)
         logger.debug(
-            "Audit: %s %s %s by tenant %s",
+            "Audit: %s %s %s by user %s (tenant %s)",
             action,
             resource_type,
             resource_id,
+            user_id,
             tenant_id,
         )
 
@@ -65,6 +69,7 @@ class AuditLogger:
         return [
             {
                 "id": str(row.id),
+                "user_id": str(row.user_id) if row.user_id else None,
                 "action": row.action,
                 "resource_type": row.resource_type,
                 "resource_id": str(row.resource_id),

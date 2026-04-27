@@ -60,6 +60,13 @@ class TagReadRepository(Protocol):
         since: datetime,
     ) -> int: ...
 
+    async def count_alerts_since(
+        self,
+        tenant_id: UUID,
+        device_id: UUID,
+        since: datetime,
+    ) -> int: ...
+
 
 class DeviceRepository(Protocol):
     """Contract for device registry persistence."""
@@ -97,4 +104,8 @@ class DeviceRepository(Protocol):
 
     async def record_last_seen(
         self, tenant_id: UUID, device_id: UUID, seen_at: datetime
+    ) -> None: ...
+
+    async def record_connection_state(
+        self, tenant_id: UUID, device_id: UUID, connection_state: str
     ) -> None: ...

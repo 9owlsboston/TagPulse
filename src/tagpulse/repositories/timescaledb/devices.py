@@ -122,6 +122,16 @@ class TimescaleDeviceRepository:
         )
         await self._session.execute(stmt)
 
+    async def record_connection_state(
+        self, tenant_id: uuid.UUID, device_id: uuid.UUID, connection_state: str
+    ) -> None:
+        stmt = (
+            update(DeviceModel)
+            .where(DeviceModel.id == device_id, DeviceModel.tenant_id == tenant_id)
+            .values(connection_state=connection_state)
+        )
+        await self._session.execute(stmt)
+
 
 def _to_response(row: DeviceModel) -> DeviceResponse:
     return DeviceResponse(

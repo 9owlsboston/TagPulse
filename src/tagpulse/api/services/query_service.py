@@ -105,7 +105,11 @@ class QueryService:
             reads_last_hour = await self._tag_read_repo.count_reads_since(
                 tenant_id, device.id, one_hour_ago
             )
-            error_rate = 0.0  # placeholder — no error tracking yet
+            alerts_last_hour = await self._tag_read_repo.count_alerts_since(
+                tenant_id, device.id, one_hour_ago
+            )
+            total = reads_last_hour + alerts_last_hour
+            error_rate = round(alerts_last_hour / total, 4) if total > 0 else 0.0
             summaries.append(
                 DeviceHealthSummary(
                     device_id=device.id,
@@ -132,6 +136,11 @@ class QueryService:
         reads_last_hour = await self._tag_read_repo.count_reads_since(
             tenant_id, device_id, one_hour_ago
         )
+        alerts_last_hour = await self._tag_read_repo.count_alerts_since(
+            tenant_id, device_id, one_hour_ago
+        )
+        total = reads_last_hour + alerts_last_hour
+        error_rate = round(alerts_last_hour / total, 4) if total > 0 else 0.0
         return DeviceHealthSummary(
             device_id=device.id,
             name=device.name,
@@ -139,5 +148,5 @@ class QueryService:
             connection_state=device.connection_state,
             last_seen=device.last_seen,
             reads_last_hour=reads_last_hour,
-            error_rate=0.0,
+            error_rate=error_rate,
         )

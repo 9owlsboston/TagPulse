@@ -112,10 +112,10 @@ Single database engine for both time-series and relational data:
 | `alerts` | Hypertable | Alert history (time-series) |
 | `integrations` | Regular | Webhook/export target configuration |
 
-See [ADR-003](adr/003-timescaledb-storage.md).
+Full schema reference: [data-models.md](data-models.md). See also [ADR-003](adr/003-timescaledb-storage.md).
 
-### Admin UI (planned)
-Web interface for device management, telemetry dashboards, rule/alert configuration, and integration management. Technology decision deferred. See [ADR-007](adr/007-admin-ui-technology.md).
+### Admin UI
+React 19 + TypeScript + Vite SPA in a separate repo ([TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI)). Served via nginx container on port 3000, proxies API calls to the backend via Docker network alias `api`. Includes dashboard, device management, telemetry charts, data explorer, rule wizard, integration config, and usage/billing views. See [ADR-007](adr/007-admin-ui-technology.md) and [design/admin-ui.md](design/admin-ui.md).
 
 ## Data Flow
 
@@ -171,7 +171,7 @@ Web interface for device management, telemetry dashboards, rule/alert configurat
 src/tagpulse/
   api/            # FastAPI routes (thin handlers → service layer)
   ingestion/      # MQTT subscriber + HTTP push endpoint
-  models/         # SQLAlchemy models + Pydantic schemas
+  models/         # SQLAlchemy models + Pydantic schemas (see docs/data-models.md)
   repositories/   # Storage protocol + implementations (see design/storage-strategy.md)
   events/         # EventBus protocol + implementations (see ADR-010)
   rules/          # Rule engine, conditions, alert routing

@@ -43,7 +43,7 @@ def upgrade() -> None:
     # -- Tag reads table --
     op.create_table(
         "tag_reads",
-        sa.Column("id", UUID(as_uuid=True), primary_key=True),
+        sa.Column("id", UUID(as_uuid=True), nullable=False),
         sa.Column("device_id", UUID(as_uuid=True), nullable=False, index=True),
         sa.Column("tag_id", sa.Text, nullable=False, index=True),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False, index=True),
@@ -55,6 +55,7 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("now()"),
         ),
+        sa.PrimaryKeyConstraint("id", "timestamp"),
     )
 
     # -- Convert tag_reads to TimescaleDB hypertable --
