@@ -5,6 +5,9 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Edge device reference client (`clients/pi/`):** Python package shipped to Raspberry Pi developers that enforces the on-the-wire device contract — dedup window, ENTER/EXIT state machine, batched publish, SQLite WAL ring buffer (restart-safe, size + age bounded), full-jitter exponential reconnect backoff, UTC timestamp validation, MQTT LWT, periodic heartbeat. Includes runnable example and 16 unit/integration tests.
+- Design document: [docs/design/asset-tracking-gap-analysis.md](docs/design/asset-tracking-gap-analysis.md) — end-to-end gap audit against the home-grown Pi asset-tracking goal (location, sensor telemetry, asset/zone model, device identity, MQTT topic taxonomy).
+- Reference document: [docs/azure-iot-asset-tracking.md](docs/azure-iot-asset-tracking.md) — Azure-equivalent architecture for asset tracking.
 - **UI Authentication (Sprint 13):** Two-mode login page — API Key (email + key → full role-based access) and Tenant ID (backward-compat viewer access)
 - `POST /auth/login` endpoint — exchanges email + API key for a 1-hour JWT access token
 - JWT authentication in `get_current_user` middleware (JWT → API key → X-Tenant-ID priority)
