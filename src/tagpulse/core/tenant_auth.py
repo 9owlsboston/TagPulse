@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Security
+from fastapi import Depends, HTTPException
 from fastapi.security import APIKeyHeader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -1,7 +1,6 @@
 """Unit tests for authentication — JWT, login schemas, rate limiting."""
 
 import time
-from unittest.mock import patch
 
 import jwt
 import pytest
@@ -32,16 +31,16 @@ class TestLoginSchemas:
         assert req.api_key == "tp_test_abc123"
 
     def test_empty_email_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):  # noqa: PT011 — pydantic raises ValidationError (subclass)
             LoginRequest(email="", api_key="tp_test_abc123")
 
     def test_empty_api_key_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):  # noqa: PT011
             LoginRequest(email="admin@example.com", api_key="")
 
     def test_login_response_structure(self) -> None:
         resp = LoginResponse(
-            access_token="token123",
+            access_token="token123",  # noqa: S106 — test fixture, not a real credential
             expires_in=3600,
             user=LoginUserInfo(
                 id="user-uuid",
@@ -52,7 +51,7 @@ class TestLoginSchemas:
                 tenant_name="Test Corp",
             ),
         )
-        assert resp.token_type == "bearer"
+        assert resp.token_type == "bearer"  # noqa: S105 — string literal compare, not a credential
         assert resp.expires_in == 3600
         assert resp.user.role == "admin"
 

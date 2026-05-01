@@ -61,7 +61,7 @@ class LoginResponse(BaseModel):
     """Successful login response with JWT token."""
 
     access_token: str
-    token_type: str = "bearer"
+    token_type: str = "bearer"  # noqa: S105 — OAuth2 bearer token type identifier, not a credential
     expires_in: int
     user: LoginUserInfo
 
@@ -102,7 +102,7 @@ async def login(
     # Update last_login
     from sqlalchemy import func
 
-    user.last_login = func.now()  # type: ignore[assignment]
+    user.last_login = func.now()
     await session.flush()
 
     return LoginResponse(

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     log_level: str = "info"
     event_bus_capacity: int = 10_000
     cors_origins: str = "http://localhost:5173"
-    jwt_secret: str = "dev-secret-change-in-production"
+    jwt_secret: str = "dev-secret-change-in-production"  # noqa: S105 — dev default, overridden in production via env
     jwt_expiry_seconds: int = 3600
     login_rate_limit: int = 5
 

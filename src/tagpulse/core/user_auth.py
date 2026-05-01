@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -64,7 +64,7 @@ def verify_api_key(raw_key: str, stored_hash: str) -> bool:
 
 def create_jwt(user: UserModel, tenant: TenantModel) -> str:
     """Create a JWT access token for a user."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": str(user.id),
         "tid": str(tenant.id),
@@ -82,7 +82,10 @@ def create_jwt(user: UserModel, tenant: TenantModel) -> str:
 def decode_jwt(token: str) -> dict[str, Any]:
     """Decode and verify a JWT token. Raises HTTPException on failure."""
     try:
-        return jwt.decode(token, settings.jwt_secret, algorithms=["HS256"], issuer="tagpulse")
+        decoded: dict[str, Any] = jwt.decode(
+            token, settings.jwt_secret, algorithms=["HS256"], issuer="tagpulse"
+        )
+        return decoded
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired") from None
     except jwt.InvalidTokenError:
