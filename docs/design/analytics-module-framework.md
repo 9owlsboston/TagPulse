@@ -182,7 +182,9 @@ migrations/versions/
 
 ---
 
-## 10. Open Questions
+## 10. Decisions (resolved)
 
-- Should anomaly thresholds be configurable per device/tenant? (Defer — hardcode 2σ for v1)
-- Should analytics results be a hypertable? (Yes if retention policies needed; defer decision)
+| # | Question | Decision |
+|---|---|---|
+| 1 | Per-device/tenant anomaly thresholds? | **Hardcode 2σ for v1.** Promote to per-tenant config if at least two customers ask. Avoid premature configurability. |
+| 2 | `analytics_results` as a hypertable? | **Yes** — retention policies become essential as modules accumulate. Convert in the migration that introduces the table. |

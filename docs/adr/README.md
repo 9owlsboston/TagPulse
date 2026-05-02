@@ -12,3 +12,4 @@
 | 008 | [Multi-tenancy strategy](008-multi-tenancy-strategy.md) | proposed | 2026-04-25 |
 | 009 | [Containerization and local dev environment](009-containerization-local-dev.md) | proposed | 2026-04-25 |
 | 010 | [Internal event bus](010-internal-event-bus.md) | proposed | 2026-04-25 |
+| 011 | [Device identity roadmap](011-device-identity-roadmap.md) | proposed | 2026-05-02 |

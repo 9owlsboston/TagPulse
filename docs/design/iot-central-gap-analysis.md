@@ -232,11 +232,10 @@ Current state (Sprints 1-8 complete)
 
 ---
 
-## 7. Open Questions
+## 7. Decisions (resolved)
 
-- Should user/role management (G1) be a prerequisite for Sprint 9 UI, or can the UI launch with tenant-level auth only?
-  - **Recommendation:** Launch UI with tenant auth (v1). Add user auth as Sprint 8.5 before production GA.
-- Should we adopt a standard like DTDL v2 for telemetry models, or keep our simpler MetricDefinition format?
-  - **Recommendation:** Keep simple format for v1. DTDL adds complexity with no current consumer requiring it.
-- Should device provisioning (G4) use pre-shared keys or X.509 certificates?
-  - **Recommendation:** Pre-shared keys for v1. X.509 is enterprise-tier (database-per-tenant path).
+| # | Question | Resolution |
+|---|---|---|
+| 1 | User/role management before Sprint 9 UI? | **Resolved** — user auth + RBAC shipped (see `tests/unit/test_auth.py`). |
+| 2 | DTDL v2 vs simpler MetricDefinition? | **Keep simple `MetricDefinition`** for v1; DTDL adds complexity with no current consumer requiring it. |
+| 3 | Provisioning: PSK or X.509? | **PSK for v1**; X.509 is enterprise-tier. Resolved by ADR-011 + [identity-device-provisioning.md](identity-device-provisioning.md). |

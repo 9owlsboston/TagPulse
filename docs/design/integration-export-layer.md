@@ -333,9 +333,11 @@ migrations/versions/
 
 ---
 
-## 11. Open Questions
+## 11. Decisions (resolved)
 
-- Should webhook secrets be stored encrypted? (Defer — plaintext in JSONB for v1, encrypt in Sprint 10)
-- Should SSE use `sse-starlette` or raw `StreamingResponse`? (Raw is simpler, fewer deps)
-- Should exports support S3 directly or only HTTP POST? (HTTP POST only for v1 — S3 via pre-signed URL)
-- Should dead-letter deliveries be queryable via API? (Yes — filter `status=dead_letter` in delivery history)
+| # | Question | Decision |
+|---|---|---|
+| 1 | Encrypt webhook secrets? | **Plaintext JSONB for v1; encrypt in Sprint 10.** Acceptable risk pre-prod; encrypt-at-rest column or KMS-wrapped value once hardening sprint lands. |
+| 2 | SSE library? | **Raw `StreamingResponse`** — simpler, no extra dependency, sufficient for our use case. |
+| 3 | S3 export support? | **HTTP POST only for v1.** S3 is supported indirectly: customer generates a pre-signed URL and registers it as an HTTP POST destination. Revisit native S3 if multiple customers ask. |
+| 4 | Dead-letter deliveries queryable? | **Yes** — filter `status=dead_letter` in delivery-history endpoint. |

@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-26
 **Status:** proposed
-**Related:** [IoT Central Gap Analysis](iot-central-gap-analysis.md) (G1, G2, G4)
+**Related:** [IoT Central Gap Analysis](iot-central-gap-analysis.md) (G1, G2, G4), [rfid-tag-data-model.md §4.4](rfid-tag-data-model.md) (tag-identity threat model — complementary to device-identity)
 
 ---
 
@@ -278,8 +278,10 @@ migrations/versions/
 
 ---
 
-## 12. Open Questions
+## 12. Decisions (resolved)
 
-- Should API keys have expiration? Recommendation: No for v1 — revocation is sufficient.
-- Should provisioning use X.509 certificates instead of pre-shared keys? Recommendation: Pre-shared keys for v1. X.509 is enterprise-tier.
-- Should we migrate existing X-Tenant-ID auth to require API keys? Recommendation: Keep both — X-Tenant-ID for backward compat, API keys for new integrations. Deprecate X-Tenant-ID in a future release.
+| # | Question | Decision |
+|---|---|---|
+| 1 | API key expiration? | **No** for v1 — revocation is sufficient. Revisit if customer audit requires it. |
+| 2 | X.509 vs pre-shared keys for provisioning? | **PSK for v1**; X.509 is enterprise-tier. mTLS rollout tracked under ADR-011 Phase 2. |
+| 3 | Migrate X-Tenant-ID to API keys? | **Keep both**: X-Tenant-ID for backward compat, API keys for new integrations. Deprecate X-Tenant-ID in a future release once usage telemetry shows it's safe to remove. |

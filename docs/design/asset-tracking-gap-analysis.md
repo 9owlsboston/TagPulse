@@ -2,15 +2,21 @@
 
 **Date:** 2026-05-01
 **Status:** draft
-**Related:** [docs/azure-iot-asset-tracking.md](../azure-iot-asset-tracking.md), [docs/design/iot-central-gap-analysis.md](iot-central-gap-analysis.md), [docs/design/storage-strategy.md](storage-strategy.md)
+**Related:** [docs/azure-iot-asset-tracking.md](../azure-iot-asset-tracking.md), [docs/design/iot-central-gap-analysis.md](iot-central-gap-analysis.md), [docs/design/storage-strategy.md](storage-strategy.md), [docs/refs/edge-hardware-and-rfid-primer.md](../refs/edge-hardware-and-rfid-primer.md)
 
 ---
 
 ## 1. Goal
 
-Deliver an end-to-end asset tracking solution where **home-grown Raspberry Pi
-devices** (RFID reader + optional sensors) report on physical assets to the
-TagPulse backend. Per-event payloads from a Pi may include:
+Deliver an end-to-end asset tracking solution where **home-grown edge
+devices** (tag scanner + optional sensors) report on physical assets to the
+TagPulse backend. The current reference target is a Raspberry Pi-class
+single-board computer running the [`clients/pi/`](../../clients/pi/)
+reference client, but TagPulse treats this as **one experiment among many** —
+the contract, schema, and wire format are hardware-agnostic and any
+MQTT-/HTTP-capable tag scanner or sensor gateway is a valid producer.
+
+Per-event payloads from an edge device may include:
 
 - RFID tag reads (asset identity, signal strength)
 - **GPS / location coordinates** (for mobile or vehicle-mounted readers)
@@ -22,10 +28,11 @@ The goal is for an operator to answer questions like:
 - *Where is asset X right now? Where has it been?*
 - *Which assets are inside zone Y? Which left in the last hour?*
 - *Show temperature history for cold-chain asset Z; alert on excursions.*
-- *Which Pi readers are online, and what's their last known position?*
+- *Which scanners are online, and what's their last known position?*
 
-The Pi firmware is **out of scope for this repo** — but the **wire contracts,
-device identity, and backend data model that the Pi depends on are in scope.**
+Device firmware is **out of scope for this repo** — but the **wire contracts,
+device identity, and backend data model that every edge device depends on
+are in scope.**
 
 ---
 
@@ -58,14 +65,14 @@ end-to-end, but **the platform has no first-class understanding of those fields*
 | A2 | First-class **sensor telemetry** stream (separate from tag reads) | missing | **P1** | New hypertable + topic |
 | A3 | **Asset** entity (the thing being tracked, distinct from the reader) | missing | **P1** | New table + API |
 | A4 | **Zone / site / geofence** model | missing | **P1** | New tables, geo index |
-| A5 | Device-side contract for **edge filtering / dedup / ENTER-EXIT** | undocumented | **P1** | Pi firmware spec |
-| A6 | **Pi device identity** stronger than shared API key (X.509 / per-device key) | partial | **P1** | Provisioning extension |
+| A5 | Device-side contract for **edge filtering / dedup / ENTER-EXIT** | undocumented | **P1** | Edge device spec |
+| A6 | **Per-device identity** stronger than shared API key (X.509 / per-device key) | partial | **P1** | Provisioning extension |
 | A7 | MQTT topic taxonomy beyond `tag-reads` / `status` (sensors, location, events) | missing | **P1** | Topic design |
 | A8 | **Spatial queries** (assets in zone, path history, nearest reader) | missing | **P2** | PostGIS or Timescale geo |
 | A9 | **Map visualization** in admin UI | missing | **P2** | TagPulse-UI |
 | A10 | **Geofence rules** (alert when asset enters/exits zone, dwell time) | missing | **P2** | Rules engine extension |
-| A11 | **Offline buffering / store-and-forward** on the Pi | not in repo | **P2** | Pi firmware spec |
-| A12 | **Cloud-to-device commands** (reconfigure Pi remotely) | backlog (G8) | **P3** | Already tracked |
+| A11 | **Offline buffering / store-and-forward** on the edge device | not in repo | **P2** | Edge device spec |
+| A12 | **Cloud-to-device commands** (reconfigure edge devices remotely) | backlog (G8) | **P3** | Already tracked |
 | A13 | Cold-chain / excursion-specific analytics module | missing | **P3** | New analytics plugin |
 
 P1 = required for a credible end-to-end demo. P2 = required for production
@@ -78,8 +85,8 @@ asset-tracking value. P3 = nice-to-have / domain-specific.
 ### A1. First-class location on tag reads
 
 **Problem.** `tag_reads` has `signal_strength` and a free-form `sensor_data`
-JSONB. A Pi mounted on a forklift sending GPS has nowhere structured to put
-it; downstream consumers must reach into JSON with no schema guarantees.
+JSONB. A scanner mounted on a forklift sending GPS has nowhere structured to
+put it; downstream consumers must reach into JSON with no schema guarantees.
 
 **Proposal.** Add nullable, indexed columns to `tag_reads`:
 
@@ -97,10 +104,10 @@ plain lat/lon; add PostGIS in A8 only if spatial queries demand it.
 
 ### A2. First-class sensor telemetry stream
 
-**Problem.** A Pi may report temperature **without** an RFID tag read (e.g.,
-ambient warehouse temperature every 60 s). Today there is no place for it —
-`tag_reads` requires a `tag_id`. Stuffing sensor-only data into `sensor_data`
-with a fake tag is a hack and breaks aggregations.
+**Problem.** An edge device may report temperature **without** an RFID tag
+read (e.g., ambient warehouse temperature every 60 s). Today there is no
+place for it — `tag_reads` requires a `tag_id`. Stuffing sensor-only data
+into `sensor_data` with a fake tag is a hack and breaks aggregations.
 
 **Proposal.** New hypertable `device_telemetry`:
 
@@ -184,13 +191,15 @@ Reader-bound zones are sufficient for the first cut and unblock A10.
 ### A5. Device-side contract for edge processing
 
 **Problem.** RFID readers naturally produce duplicate reads at high frequency.
-If the Pi forwards every raw read, we burn ingestion quota and downstream
-queries become useless. Today there is **no documented contract** for what
-the Pi must do before publishing.
+If the edge device forwards every raw read, we burn ingestion quota and
+downstream queries become useless. Today there is **no documented contract**
+for what an edge device must do before publishing.
 
 **Proposal.** A reference Python implementation now lives in
-[`clients/pi/`](../../clients/pi/) and is shipped to edge-device developers.
-It enforces the contract on the wire so every Pi behaves identically. The
+[`clients/pi/`](../../clients/pi/) (path retained from the initial Raspberry
+Pi experiment; the code itself is hardware-agnostic). It is shipped to
+edge-device developers and enforces the contract on the wire so every device
+— Pi, industrial gateway, or third-party scanner — behaves identically. The
 contract:
 
 - **De-dup window:** suppress identical `(tag_id, reader_antenna)` reads within
@@ -223,12 +232,12 @@ Pure-logic modules are unit-tested; the agent has a fake-publisher
 integration test. The example in `clients/pi/examples/run_reader.py`
 exercises the full pipeline against any local MQTT broker.
 
-### A6. Stronger device identity for the Pi
+### A6. Stronger per-device identity
 
 **Problem.** Provisioning today uses a tenant-scoped pre-shared key, then
-issues a long-lived token. For fleet-scale Pi deployments, a stolen Pi can
-impersonate any device until manually revoked. There is no per-device
-cryptographic identity.
+issues a long-lived token. For fleet-scale edge-device deployments, a stolen
+device (or its token) can impersonate any registered device until manually
+revoked. There is no per-device cryptographic identity.
 
 **Proposal (incremental).**
 
@@ -237,7 +246,9 @@ cryptographic identity.
 - Phase 2: support **X.509 client certs** for MQTT (mTLS). Backend stores
   the device's cert thumbprint; broker enforces mTLS; `device_id` derived
   from cert subject. ADR required.
-- Phase 3 (optional): TPM-backed key on Pi (Pi 4/5 + DICE / fTPM).
+- Phase 3 (optional): hardware-backed keys (TPM / DICE / Secure Element)
+  where the platform supports it — Pi 4/5+ via fTPM, industrial gateways
+  via discrete TPM 2.0, embedded SoCs via SE.
 
 Phase 1 unblocks the demo; Phase 2 is the production target.
 
@@ -274,15 +285,15 @@ existing `_parse_topic` helper just needs the new topic-type branches.
   `zone.entered`, `zone.exited`, `zone.dwell_exceeded`. Producers: ingestion
   emits `asset.zone_changed` events when a tag read crosses a zone boundary
   (reader-bound or geofence).
-- **A11 offline buffering on the Pi** — already tracked as backlog item G10.
-  Backend support is already in place (idempotent ingest via event id, late
-  timestamps accepted within 24 h per A5).
+- **A11 offline buffering on the edge device** — already tracked as backlog
+  item G10. Backend support is already in place (idempotent ingest via event
+  id, late timestamps accepted within 24 h per A5).
 
 ---
 
 ## 6. Out of Scope (Explicit)
 
-- Pi firmware itself (separate repo).
+- Edge-device firmware itself (separate repo / per-vendor work).
 - BLE / UWB / computer-vision tracking (covered as alternatives in
   [azure-iot-asset-tracking.md](../azure-iot-asset-tracking.md) §12).
 - Hosting topology on Azure (IoT Hub vs broker, ADX vs Timescale) — TagPulse
@@ -297,26 +308,22 @@ existing `_parse_topic` helper just needs the new topic-type branches.
 |---|---|---|
 | **14 — Telemetry & Location** | A1, A2, A7 (topics for both), update simulator | one sprint |
 | **15 — Assets & Zones** | A3, A4 (reader-bound only), `asset_current_location` view | one sprint |
-| **16 — Pi Contract & Identity** | A5 (doc + ADR), A6 phase 1, provisioning rotate-token | one sprint |
+| **16 — Edge Contract & Identity** | A5 (doc + ADR), A6 phase 1, provisioning rotate-token | one sprint |
 | **17 — Geofencing & Map** | A8 (basic), A10, A9 (TagPulse-UI), A6 phase 2 (mTLS) | two sprints |
 
-Each phase ends with simulator updates so the system can be exercised end-to-end
-before Pi firmware is ready.
+Each phase ends with simulator updates so the system can be exercised
+end-to-end before any specific edge-device firmware is ready.
 
 ---
 
-## 8. Open Questions
+## 8. Decisions (resolved)
 
-1. **One asset, multiple tags?** Bindings table assumes yes (a tag can be
-   replaced; previous bindings keep history). Confirmed?
-2. **Are all Pis "readers" today, or do we need a separate `device_type` for
-   sensor-only Pis?** The latter is cleaner with `telemetry_models`; affects
-   A2 validation.
-3. **GPS on every read, or separate cadence?** Affects whether A1 columns
-   live on `tag_reads` (every-read) or only on `location` topic events
-   (lower cadence). Current proposal is "both allowed."
-4. **mTLS broker** — does the chosen broker (Mosquitto vs EMQX) gate the
-   Phase 2 cert rollout, or do we proxy through the backend?
-5. **Retention.** `tag_reads` is currently uncapped. With sensor telemetry
-   added, do we want Timescale compression + retention policies before this
-   lands? (Probably yes; tracked separately.)
+The original Sprint 14 open questions have all been answered by subsequent design work:
+
+| # | Question | Resolution |
+|---|---|---|
+| 1 | One asset, multiple tags? | **Yes**, via lifecycle bindings — see [assets-and-zones.md §3.2](assets-and-zones.md). |
+| 2 | Sensor-only `device_type`? | Hardware terminology is now generalized; `device_type` already supports this. See [docs/refs/edge-hardware-and-rfid-primer.md](../refs/edge-hardware-and-rfid-primer.md). |
+| 3 | GPS cadence | **Both allowed** — inline on `tag_reads` and on the lower-cadence `…/location` topic. See [telemetry-and-location.md](telemetry-and-location.md). |
+| 4 | mTLS broker selection | Tracked under [identity-device-provisioning.md](identity-device-provisioning.md) and ADR-011 (mTLS is Phase 2). |
+| 5 | Retention | Resolved in [storage-strategy.md](storage-strategy.md) and [telemetry-and-location.md §11](telemetry-and-location.md): 90-day default + Timescale compression after 7 days. |

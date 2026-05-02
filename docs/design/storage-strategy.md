@@ -239,11 +239,15 @@ src/tagpulse/
 
 ---
 
-## 6. Open Questions
+## 6. Decisions & Open Questions
 
-- Should continuous aggregates be used in hot query paths, or reserved for dashboards/reports? (Impacts portability to plain PostgreSQL.)
-- When multi-tenancy lands (ADR-008), should tenant-specific DB routing live in the repository layer or in a middleware?
-- Should we add Alembic migration tests that verify DDL runs on plain PostgreSQL (without TimescaleDB extension) as a portability gate?
+### Resolved
+
+| # | Question | Decision |
+|---|---|---|
+| 3 | Migration tests on plain PostgreSQL as portability gate? | **Yes.** Add an Alembic migration test that runs DDL against plain PostgreSQL (no TimescaleDB extension) in CI. Catches accidental Timescale-only DDL early and protects the "swap connection string to Timescale Cloud" migration story. |
+| 1 | Continuous aggregates in hot paths or dashboards-only? | **Hot paths via a deterministic `MetricsRepository` abstraction (Option B-deterministic).** Both backends are first-class — not a fallback model. Single seam: `MetricsRepository` is the only place backend-specific aggregation lives, selected once at startup from `DATABASE_BACKEND` config (`timescale` \| `postgres`). **Timescale impl** uses continuous aggregates (`tag_reads_hourly_by_reader`, `alerts_daily_by_tenant`, etc.); **PG impl** uses materialized views refreshed by `pg_cron` (or an app-side scheduler) on the same buckets. Both ship in v1 with CI integration tests. **Scope of the abstraction is intentionally tight:** only time-bucketed aggregation queries go through `MetricsRepository` (estimated 4–8 methods over the platform's lifetime). Single-row lookups, simple filters, and `LIMIT` queries stay on regular repositories with plain SQL that runs identically on both backends. **Product positioning:** PG mode has an explicit scaling ceiling (to be benchmarked; expected ~1–2k devices/tenant for sub-second dashboards) past which TimescaleDB is required. **Review rule:** any new method on `MetricsRepository` requires both implementations in the same PR. |
+| 2 | Tenant DB routing: repository layer or middleware? | **Hybrid — middleware default, explicit override for non-request code (Option C), with mixed-tier capability built in from v1.** Single seam: `db_session_var: ContextVar[AsyncSession]` in `tagpulse.core.context`. **Per-request path:** middleware resolves the tenant, looks up `tenants.db_pool_key`, fetches a session from the matching pool in a startup-built `PoolRegistry`, sets `app.current_tenant_id` for shared-pool tenants, binds the contextvar, runs the request, resets on exit. **Background / admin path:** `async with tenant_context(tenant_id):` binds the contextvar manually for non-request code (rules engine, scheduled jobs, scripts). **Cross-tenant operations** go through a dedicated `AdminRepository` that takes an explicit `tenant_id` and is gated by an admin role at the route layer — visible in code review. **Mixed-tier deployment** is supported by the same mechanism: most tenants share `db_pool_key='shared_default'` with RLS isolation; tenants with sovereignty / residency requirements get their own `db_pool_key` pointing at a dedicated cluster in the required region. Promoting a tenant from shared to dedicated is a `pg_dump`-filtered-by-`tenant_id` data move + one row update on `tenants.db_pool_key`; **no code change**. **v1 scope (no Tier-2 customer yet):** add `tenants.db_pool_key VARCHAR(64) NOT NULL DEFAULT 'shared_default'`; introduce `db_session_var` and `tenant_context()`; wire existing `get_session()` dependency to populate the contextvar. Pool registry initially has one entry (`shared_default`). Tier-2 onboarding becomes a configuration task, not a refactor. |
 
 ---
 

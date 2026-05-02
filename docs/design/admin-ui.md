@@ -398,6 +398,10 @@ This creates the Phase 0 skeleton with copilot-instructions, quality gates, and 
 1. **CORS middleware** — already added (`CORS_ORIGINS` env var)
 2. **No other changes** — all API endpoints already exist
 
+> **Future:** an admin-only `GET /admin/tag-collisions` endpoint is planned alongside the global `tag_id` index decision in [assets-and-zones.md §11](assets-and-zones.md). Surface in the admin UI as a "Cross-tenant collision check" tool on the support / ops page when that lands; never expose to tenant-scoped roles.
+>
+> **Sprint 15b — Tenant Settings sub-tabs:** when inventory mode lands, add two sub-tabs to the Tenant Settings page — **"Sensor metrics"** (existing `telemetry_models` editor) and **"Tag data fields"** (new `tag_data_mappings` editor with scope picker: tenant / device-type / product). Per [tracking-modes.md §11](tracking-modes.md). Hidden when the tenant's `tracking_modes` doesn't include `'inventory'`.
+
 ---
 
 ## 11. Testing Strategy
@@ -408,7 +412,9 @@ This creates the Phase 0 skeleton with copilot-instructions, quality gates, and 
 
 ---
 
-## 12. Open Questions
+## 12. Decisions (resolved)
 
-- Should we use Ant Design or shadcn/ui? Ant Design has more IoT-relevant components (descriptions, statistic cards, table with virtual scroll). Recommend Ant Design.
-- Should SSE use EventSource API directly or a React hook library? Direct EventSource is simpler and sufficient.
+| # | Question | Decision |
+|---|---|---|
+| 1 | Component library: Ant Design vs shadcn/ui? | **Ant Design.** IoT-relevant components out of the box (descriptions, statistic cards, virtual-scroll table); shadcn would force us to rebuild these. Revisit only if Ant Design's bundle size becomes a constraint. |
+| 2 | SSE: native `EventSource` vs React hook library? | **Native `EventSource`.** Simpler, fewer deps, sufficient for our subscription patterns. |

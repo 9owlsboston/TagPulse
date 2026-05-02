@@ -33,6 +33,20 @@ Adopt a **hybrid multi-tenancy model**:
 - The FastAPI dependency resolves the correct async database session per request based on the routing table.
 - Application code remains unchanged — the tenant-scoped session is injected via `Depends()`.
 
+#### Routing mechanism (per [storage-strategy.md §6 Q2](../design/storage-strategy.md))
+
+Routing is implemented as a **hybrid middleware-default model with mixed-tier capability built in from v1**:
+
+- **Single seam:** `db_session_var: ContextVar[AsyncSession]` in `tagpulse.core.context`. Repositories never see a tenant argument; they read the contextvar.
+- **Pool registry:** built once at startup from `config/database.yaml`, mapping `db_pool_key → async_sessionmaker`. v1 ships with a single `shared_default` entry; additional pools are added per sovereign-tenant onboarding.
+- **Tenants table** carries `db_pool_key VARCHAR(64) NOT NULL DEFAULT 'shared_default'`. Most tenants share the default pool with RLS isolation; tenants with sovereignty / residency contracts get their own key pointing at a dedicated cluster in the required region.
+- **Per-request path:** middleware resolves the tenant from the JWT/API key, looks up `tenants.db_pool_key`, fetches a session from the matching pool, sets `app.current_tenant_id` for shared-pool tenants (RLS), binds the contextvar, runs the request, resets on exit.
+- **Background / admin path:** `async with tenant_context(tenant_id):` async context manager binds the contextvar manually for non-request code (rules engine, scheduled jobs, scripts).
+- **Cross-tenant operations** go through a dedicated `AdminRepository` that takes an explicit `tenant_id` and is gated by an admin role at the route layer — making cross-tenant queries visible in code review.
+- **Mixed-tier example:** Tenant A (regulated, sovereign) has `db_pool_key='acme_eu_west'` → dedicated cluster in West Europe. Tenants B and C (smaller, flexible) have `db_pool_key='shared_default'` → shared cluster in East US, isolated from each other by RLS. All three are served by the same code; the middleware routes per request.
+- **Promotion path** (shared → sovereign): provision new cluster, register pool key, run migrations against it, `pg_dump` filtered by `tenant_id` from shared pool, restore to new cluster, update `tenants.db_pool_key` in a brief read-only window, delete migrated rows from shared pool. **No application code change.**
+- **Migrations** run against every registered pool at deploy time; schema is identical across pools.
+
 ### Usage Metering & Chargeback
 
 #### Billable Dimensions

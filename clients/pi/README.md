@@ -1,13 +1,20 @@
-# TagPulse Edge Client (Raspberry Pi)
+# TagPulse Edge Client
 
 Reference Python implementation of the TagPulse **edge device contract** for
-home-grown Raspberry Pi RFID readers (with optional GPS, temperature, and
-other sensors).
+home-grown tag scanners and sensor gateways (RFID readers, with optional GPS,
+temperature, and other on-board sensors).
+
+The current reference target is a Raspberry Pi-class single-board computer —
+hence the legacy `clients/pi/` path — but the code is hardware-agnostic and
+is intended to run on any Linux/macOS host with Python 3.11+ that can talk
+MQTT or HTTP. "Pi" is one experiment among many; the contract, schema, and
+wire format do not assume a specific board.
 
 This package is **not used by the TagPulse backend.** It is shipped to edge
-device developers so that every Pi behaves the same way on the wire. The
-design rationale and contract live in
-[`docs/design/asset-tracking-gap-analysis.md`](../../docs/design/asset-tracking-gap-analysis.md)
+device developers so every scanner / sensor device behaves the same way on
+the wire. The design rationale and contract live in
+[`docs/design/edge-device-contract.md`](../../docs/design/edge-device-contract.md)
+and [`docs/design/asset-tracking-gap-analysis.md`](../../docs/design/asset-tracking-gap-analysis.md)
 §4.A5.
 
 ---
@@ -37,7 +44,7 @@ their server-side `device.configuration` JSON without firmware rebuilds.
 
 ---
 
-## Install on a Pi
+## Install on a device
 
 ```bash
 python3 -m venv .venv
@@ -45,7 +52,9 @@ python3 -m venv .venv
 pip install -e .
 ```
 
-Requires Python 3.11+ and `paho-mqtt>=2.0`.
+Requires Python 3.11+ and `paho-mqtt>=2.0`. Tested on Raspberry Pi OS, Debian,
+Ubuntu, and macOS — any Linux distribution with a working `paho-mqtt` should
+work.
 
 ## Minimal usage
 
@@ -63,7 +72,7 @@ config = EdgeConfig(
     username="device-...",
     password="<token>",
     buffer_path="/var/lib/tagpulse/edge.sqlite",
-    firmware_version="pi-reader-0.1.0",
+    firmware_version="edge-reader-0.1.0",
 )
 
 with EdgeAgent(config) as agent:

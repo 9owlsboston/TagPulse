@@ -291,7 +291,9 @@ scrape_configs:
 
 ---
 
-## 11. Open Questions
+## 11. Decisions (resolved)
 
-- Should we sample traces in production? Recommendation: Yes — `traceidratio` at 0.1 (10%) to control volume.
-- Should `/metrics` require auth? Recommendation: No — restrict via network policy. Standard practice for scraper endpoints.
+| # | Question | Decision |
+|---|---|---|
+| 1 | Trace sampling in production? | **Yes** — `traceidratio` at **0.1 (10%)**. Tunable per environment via env var; bump to 1.0 in staging during incident triage. |
+| 2 | `/metrics` auth? | **No** — restrict via network policy / `NetworkPolicy` resource. Standard practice for Prometheus scrape endpoints; auth would break scrapers without adding meaningful security inside the cluster. |

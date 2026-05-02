@@ -288,8 +288,10 @@ docs/
 
 ---
 
-## 9. Open Questions
+## 9. Decisions (resolved)
 
-- Should dead letter events be automatically retried on a schedule? (Defer — manual retry via API for v1)
-- Should we add Prometheus metrics endpoint in Sprint 10 or defer to Sprint 11? (Defer — Sprint 11 is observability)
-- How many uvicorn workers? (2 for v1; auto-scale based on CPU cores later)
+| # | Question | Decision |
+|---|---|---|
+| 1 | Auto-retry dead letters on a schedule? | **No, manual via API for v1.** Auto-retry hides systemic problems; operators should be in the loop. Revisit when DLQ volume warrants automation. |
+| 2 | Prometheus metrics endpoint timing? | **Sprint 11** (observability sprint) — keeps S10 focused on hardening basics. |
+| 3 | Uvicorn worker count? | **2 for v1**; auto-scale based on CPU cores later via container orchestrator settings. |
