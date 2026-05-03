@@ -12,6 +12,7 @@
 - [Integrations](#integrations)
 - [Usage & Quotas](#usage--quotas)
 - [User Management](#user-management)
+- [Audit Log](#audit-log)
 
 ---
 
@@ -419,9 +420,49 @@ curl -s -X POST "http://localhost:8000/users/$USER_ID/api-key" \
 
 ### Key Lifecycle Summary
 
-| Action | When to use |
+| **Action** | When to use |
 |--------|-------------|
 | **Generate** | New user needs access for the first time |
 | **Regenerate** | Key was lost, or you want to rotate keys periodically |
 | **Revoke** | User leaves the team, or the key is compromised |
 | **Deactivate user** | Temporarily block all access (key stays but won't work) |
+
+---
+
+## Audit Log
+
+> **Admin only** — the Audit Log is visible only to admin users.
+
+Navigate to **Audit Log** in the sidebar to review the tenant-scoped audit trail. Every privileged action (device approval, token rotation, certificate attach, tenant-config change, user create/update, etc.) is recorded with the actor, the affected resource, a JSON diff of the change, and a UTC timestamp.
+
+### Reading the table
+
+Columns:
+
+- **Timestamp** — when the action was committed (sortable; newest first by default).
+- **Action** — color-coded tag (e.g., `device.token_rotated`, `device.cert_attached`, `device.approved`, `device.rejected`, `tenant.map_config.update`, `user.create`).
+- **Resource** — `<resource_type>:<resource_id>` (copy-friendly).
+- **User** — actor user ID, or `system` for automated actions (e.g., scheduled token rotations).
+- **Changes** — truncated JSON peek; hover for the full pretty-printed diff.
+
+### Preset filters
+
+The **Segmented** selector at the top of the page narrows the view server-side:
+
+| Preset | What it shows |
+|--------|---------------|
+| **All** | Every audit entry for the tenant (most recent 200). |
+| **Device security events** | Only `device.token_rotated`, `device.cert_attached`, `device.approved`, `device.rejected` — the canonical "who touched device identity" view for security review and incident response. |
+| **Tenant config** | `tenant.update`, `tenant.map_config.update`. |
+| **User management** | `user.create`, `user.update`, `user.delete`. |
+
+Presets translate to the backend `?actions=` query parameter on `GET /admin/audit-logs` (comma-separated list). You can hit the same endpoint directly with any combination of action names.
+
+### Investigation workflow
+
+1. **Suspect a credential leak?** → select **Device security events** to see every recent token rotation and cert attach. Cross-reference the **User** column against the staff who should have rotated those credentials.
+2. **Investigating a misconfiguration?** → select **Tenant config**, find the offending `tenant.map_config.update`, hover the **Changes** column to see the JSON diff, and roll back the relevant fields via **Tenant Settings**.
+3. **Reviewing onboarding/offboarding?** → select **User management** to confirm the right roles were assigned and that decommissioned accounts were marked inactive.
+
+> **Note:** Audit entries are append-only and tenant-scoped — no admin can see or modify another tenant's log, and no API surface lets you delete an entry. For long-horizon retention, export periodically via the API (`GET /admin/audit-logs?limit=1000&offset=...`).
+
