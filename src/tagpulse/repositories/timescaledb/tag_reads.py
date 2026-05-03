@@ -26,10 +26,26 @@ class TimescaleTagReadRepository:
             id=uuid.uuid4(),
             tenant_id=tenant_id,
             device_id=read.device_id,
-            tag_id=read.tag_id,
+            tag_id=read.tag_id or "",
             timestamp=read.timestamp,
             signal_strength=read.signal_strength,
             sensor_data=read.sensor_data,
+            latitude=read.location.latitude if read.location else None,
+            longitude=read.location.longitude if read.location else None,
+            location_accuracy_m=(
+                read.location.accuracy_m if read.location else None
+            ),
+            location_source=read.location.source if read.location else None,
+            epc=read.identity.epc if read.identity else None,
+            epc_hex=read.identity.epc_hex if read.identity else None,
+            epc_scheme=read.identity.epc_scheme if read.identity else None,
+            epc_decoded=read.identity.epc_decoded if read.identity else None,
+            tid=read.identity.tid if read.identity else None,
+            user_memory_hex=(
+                read.identity.user_memory_hex if read.identity else None
+            ),
+            tag_data=read.tag_data,
+            reader_antenna=read.reader_antenna,
         )
         self._session.add(row)
         await self._session.flush()
@@ -41,10 +57,26 @@ class TimescaleTagReadRepository:
                 id=uuid.uuid4(),
                 tenant_id=tenant_id,
                 device_id=r.device_id,
-                tag_id=r.tag_id,
+                tag_id=r.tag_id or "",
                 timestamp=r.timestamp,
                 signal_strength=r.signal_strength,
                 sensor_data=r.sensor_data,
+                latitude=r.location.latitude if r.location else None,
+                longitude=r.location.longitude if r.location else None,
+                location_accuracy_m=(
+                    r.location.accuracy_m if r.location else None
+                ),
+                location_source=r.location.source if r.location else None,
+                epc=r.identity.epc if r.identity else None,
+                epc_hex=r.identity.epc_hex if r.identity else None,
+                epc_scheme=r.identity.epc_scheme if r.identity else None,
+                epc_decoded=r.identity.epc_decoded if r.identity else None,
+                tid=r.identity.tid if r.identity else None,
+                user_memory_hex=(
+                    r.identity.user_memory_hex if r.identity else None
+                ),
+                tag_data=r.tag_data,
+                reader_antenna=r.reader_antenna,
             )
             for r in reads
         ]

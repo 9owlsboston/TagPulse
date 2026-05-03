@@ -24,6 +24,7 @@ from tagpulse.api.routes.metrics import router as metrics_router
 from tagpulse.api.routes.provisioning import router as provisioning_router
 from tagpulse.api.routes.query import router as query_router
 from tagpulse.api.routes.rules import router as rules_router
+from tagpulse.api.routes.telemetry import router as telemetry_router
 from tagpulse.api.routes.telemetry_models import router as telemetry_models_router
 from tagpulse.api.routes.users import router as users_router
 from tagpulse.core.config import settings
@@ -186,6 +187,8 @@ async def usage_metering_middleware(
         path = request.url.path
         if request.method == "POST" and "tag-reads" in path:
             meter.record(tenant_id, "ingestion", "events")
+        elif request.method == "POST" and "telemetry" in path:
+            meter.record(tenant_id, "telemetry_ingestion", "readings")
         elif request.method in {"GET", "HEAD"}:
             meter.record(tenant_id, "api_read", "requests")
         elif request.method in {"POST", "PATCH", "PUT", "DELETE"}:
@@ -203,6 +206,7 @@ app.include_router(rules_router)
 app.include_router(analytics_router)
 app.include_router(integrations_router)
 app.include_router(sse_router)
+app.include_router(telemetry_router)
 app.include_router(telemetry_models_router)
 app.include_router(admin_router)
 app.include_router(admin_ops_router)

@@ -26,6 +26,13 @@ class RawTagRead:
     signal_strength: float | None = None
     observed_at: datetime | None = None
     sensor_data: dict[str, Any] | None = None
+    # -- Sprint 14: optional structured RFID identity --
+    epc: str | None = None
+    epc_hex: str | None = None
+    tid: str | None = None
+    user_memory_hex: str | None = None
+    tag_data: dict[str, Any] | None = None
+    reader_antenna: int | None = None
 
 
 @dataclass(frozen=True)

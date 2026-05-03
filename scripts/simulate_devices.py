@@ -82,16 +82,65 @@ def send_tag_read(
     if random.random() < 0.1:
         sensor_data["battery_pct"] = round(random.uniform(10.0, 100.0), 0)
 
+    body: dict[str, object] = {
+        "device_id": device_id,
+        "tag_id": tag_id,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "signal_strength": signal,
+        "sensor_data": sensor_data,
+    }
+    # 20% chance to attach a GPS location (mobile-reader profile)
+    if random.random() < 0.20:
+        body["location"] = {
+            "latitude": round(47.60 + random.uniform(-0.05, 0.05), 5),
+            "longitude": round(-122.33 + random.uniform(-0.05, 0.05), 5),
+            "accuracy_m": round(random.uniform(2.0, 12.0), 1),
+            "source": "gps",
+        }
+    # 25% chance to be a sensor-tag (temperature embedded in tag_data)
+    if random.random() < 0.25:
+        body["tag_data"] = {
+            "temperature_c": round(random.uniform(2.0, 8.0), 2),  # cold-chain band
+        }
+        body["identity"] = {
+            # Synthetic SGTIN-96 hex; decoder will produce ("raw", {}) for most
+            # but exercises the path. Real tags would have valid encodings.
+            "epc_hex": f"3034{random.randrange(0, 2**80):020x}",
+        }
+
     resp = client.post(
         f"{API_URL}/tag-reads",
         headers={"X-Tenant-ID": tenant_id},
-        json={
-            "device_id": device_id,
-            "tag_id": tag_id,
+        json=body,
+    )
+    return resp.status_code == 201
+
+
+def send_telemetry(
+    client: httpx.Client,
+    tenant_id: str,
+    device_id: str,
+) -> bool:
+    """Send a small batch of standalone telemetry readings."""
+    readings = [
+        {
             "timestamp": datetime.now(UTC).isoformat(),
-            "signal_strength": signal,
-            "sensor_data": sensor_data,
-        },
+            "metric_name": "temperature",
+            "metric_value": round(random.uniform(18.0, 28.0), 1),
+            "unit": "C",
+        }
+    ]
+    if random.random() < 0.5:
+        readings.append({
+            "timestamp": datetime.now(UTC).isoformat(),
+            "metric_name": "battery_pct",
+            "metric_value": round(random.uniform(10.0, 100.0), 0),
+            "unit": "pct",
+        })
+    resp = client.post(
+        f"{API_URL}/telemetry",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"device_id": device_id, "readings": readings},
     )
     return resp.status_code == 201
 
@@ -150,6 +199,9 @@ def main() -> None:
                     total_reads += 1
                 else:
                     dropped += 1
+                # Roughly every 5th cycle, also send standalone telemetry.
+                if random.random() < 0.20:
+                    send_telemetry(client, args.tenant_id, device["id"])
                 status = "✓" if ok else "✗"
                 print(
                     f"  {status} {device['name']} → {total_reads} sent, {dropped} dropped",

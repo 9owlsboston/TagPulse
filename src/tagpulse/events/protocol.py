@@ -18,6 +18,7 @@ class Topic(StrEnum):
     DEVICE_REGISTERED = "device.registered"
     DEVICE_DECOMMISSIONED = "device.decommissioned"
     ALERT_TRIGGERED = "alert.triggered"
+    TELEMETRY_OUT_OF_RANGE = "telemetry.out_of_range"
 
 
 @dataclasses.dataclass(frozen=True)

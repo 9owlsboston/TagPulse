@@ -74,3 +74,34 @@ dead_letters = meter.create_counter(
     description="Events sent to dead letter",
     unit="events",
 )
+
+# -- Telemetry & location (Sprint 14) --
+telemetry_ingestion_counter = meter.create_counter(
+    "tagpulse_telemetry_ingestion_total",
+    description="Total telemetry readings ingested",
+    unit="readings",
+)
+
+telemetry_quarantined_counter = meter.create_counter(
+    "tagpulse_telemetry_quarantined_total",
+    description="Telemetry readings quarantined (unknown / out-of-range / unit mismatch)",
+    unit="readings",
+)
+
+location_updates_counter = meter.create_counter(
+    "tagpulse_location_updates_total",
+    description="Standalone location updates ingested",
+    unit="updates",
+)
+
+device_events_counter = meter.create_counter(
+    "tagpulse_device_events_total",
+    description="Device-side events ingested",
+    unit="events",
+)
+
+tag_data_truncations_counter = meter.create_counter(
+    "tagpulse_tag_data_truncations_total",
+    description="Tag-data JSONB blobs truncated to inline size cap",
+    unit="reads",
+)

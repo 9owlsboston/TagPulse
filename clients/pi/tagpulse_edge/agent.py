@@ -141,7 +141,19 @@ class EdgeAgent(AbstractContextManager["EdgeAgent"]):
             signal_strength=read.signal_strength,
         )
         if enter is not None:
-            self._enqueue_presence(enter, sensor_data=read.sensor_data, observed_at=read.observed_at)
+            self._enqueue_presence(
+                enter,
+                sensor_data=read.sensor_data,
+                observed_at=read.observed_at,
+                identity={
+                    "epc": read.epc,
+                    "epc_hex": read.epc_hex,
+                    "tid": read.tid,
+                    "user_memory_hex": read.user_memory_hex,
+                },
+                tag_data=read.tag_data,
+                reader_antenna=read.reader_antenna,
+            )
 
     def submit_telemetry(self, sample: SensorSample) -> None:
         if not self._validate_ts(sample.observed_at):
@@ -239,6 +251,9 @@ class EdgeAgent(AbstractContextManager["EdgeAgent"]):
         *,
         sensor_data: dict[str, Any] | None = None,
         observed_at: datetime | None = None,
+        identity: dict[str, Any] | None = None,
+        tag_data: dict[str, Any] | None = None,
+        reader_antenna: int | None = None,
     ) -> None:
         ts = to_utc(observed_at)
         payload: dict[str, Any] = {
@@ -252,6 +267,14 @@ class EdgeAgent(AbstractContextManager["EdgeAgent"]):
             payload["signal_strength"] = ev.signal_strength
         if sensor_data is not None and ev.transition is Transition.ENTER:
             payload["sensor_data"] = sensor_data
+        if identity:
+            stripped = {k: v for k, v in identity.items() if v is not None}
+            if stripped:
+                payload["identity"] = stripped
+        if tag_data is not None and ev.transition is Transition.ENTER:
+            payload["tag_data"] = tag_data
+        if reader_antenna is not None:
+            payload["reader_antenna"] = reader_antenna
         self._enqueue("tag-reads", payload)
 
     def _enqueue(self, kind: str, payload: dict[str, Any]) -> None:

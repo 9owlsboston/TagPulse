@@ -4,6 +4,22 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Added
+- **Sprint 14 — Telemetry & Location Foundations** (backend slice):
+  - Migration `016_telemetry_location_rfid.py`: extends `tag_reads` with location (`latitude`, `longitude`, `location_accuracy_m`, `location_source`), structured RFID identity (`epc`, `epc_hex`, `epc_scheme`, `epc_decoded`, `tid`, `user_memory_hex`), `tag_data`, and `reader_antenna`. Adds partial indexes for location/EPC/TID. Creates `device_telemetry` hypertable + RLS policy + lookup index. Creates `telemetry_quarantine` table + RLS policy.
+  - New `device_telemetry` and `telemetry_quarantine` ORM models; `TelemetryRepository` protocol + Timescale implementation.
+  - New Pydantic schemas: `Location`, `Identity`, `TelemetryReading`, `TelemetryBatch`, `TelemetrySingle`, `TelemetryResponse`, `LocationPayload`, `DeviceEventPayload`. `TagReadCreate.tag_id` is now optional and defaults to `identity.epc` / `identity.tid` / `identity.epc_hex` at ingestion.
+  - Pure-Python EPC decoder (`tagpulse.rfid.epc.decode_epc_hex`) for SGTIN-96/198, SSCC-96, GIAI-96/202, GRAI-96/170; returns `("raw", {})` for unknown/malformed inputs.
+  - `IngestionService` now normalizes incoming reads (decodes EPC, defaults `tag_id`, applies the 4 KB `tag_data` cap with silent truncate + `_truncated=true` marker) and mirrors numeric `tag_data.*` keys as `device_telemetry` rows tagged with `{source: "tag", tag_read_id, epc, tid}`.
+  - `TelemetryService` validates against per-tenant `telemetry_models`: unknown metric → quarantine `unknown_metric`; out-of-range → quarantine `out_of_range` + `telemetry.out_of_range` event for the rules engine; stale (>24 h old) or future (>5 min skew) timestamps → quarantine `stale_timestamp`; unit mismatches enriched but accepted. Standalone location updates split into `location.latitude` + `location.longitude` rows with `unit="deg"`.
+  - New `POST /telemetry` route (batch ingestion) plus MQTT topic taxonomy expansion: subscriber now uses wildcard `tenants/+/devices/+/+` and dispatches `tag-reads`, `status`, `telemetry`, `location`, `events` suffixes.
+  - Edge client (`clients/pi`): `RawTagRead` accepts `epc`, `epc_hex`, `tid`, `user_memory_hex`, `tag_data`, `reader_antenna`; agent forwards them under an `identity` sub-object on `tag-reads` payloads.
+  - Simulator (`scripts/simulate_devices.py`): occasionally attaches GPS location, sensor-tag profile (temperature in `tag_data` + synthetic `epc_hex`), and emits standalone telemetry batches.
+  - OTel counters: `telemetry_ingestion`, `telemetry_quarantined`, `location_updates`, `device_events`, `tag_data_truncations`. Usage metering middleware records `telemetry_ingestion`/`readings` for `POST /telemetry`.
+  - Tests: `test_epc_decoder.py`, `test_tag_data_cap.py`, `test_telemetry_service.py`; updated `test_schemas.py` for the new optional `tag_id` contract. (194 unit tests passing.)
+  - UI work for Sprint 14 lives in the `TagPulse-UI` repo and is tracked separately.
+- `make export-openapi` target writes the FastAPI OpenAPI spec to `openapi.json`. Committed alongside backend changes so the `TagPulse-UI` client generator can regenerate against a known-good spec without booting a backend container.
+
 ### Changed
 - Open-questions sweep across 17 design docs. Stale items (overtaken by later design work) closed; recommended items ratified as **Decisions**; ~10 genuinely open items kept under **Still open** subsections for follow-up. LLM strategy questions explicitly deferred to Phase 1 kickoff.
 - Bucket-3 open-question decisions recorded:

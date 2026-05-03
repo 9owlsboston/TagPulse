@@ -1,10 +1,36 @@
 """Pydantic schemas for tag read messages, devices, and API responses."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+LocationSource = Literal["gps", "fixed", "inferred"]
+
+
+# -- Sub-models (Sprint 14) --
+
+
+class Location(BaseModel):
+    """Optional location attached to a tag read or sent on the location topic."""
+
+    latitude: float = Field(ge=-90.0, le=90.0)
+    longitude: float = Field(ge=-180.0, le=180.0)
+    accuracy_m: float | None = Field(default=None, ge=0.0)
+    source: LocationSource = "gps"
+
+
+class Identity(BaseModel):
+    """Optional RFID identity payload (EPC / TID / user memory)."""
+
+    epc: str | None = Field(default=None, max_length=256)
+    epc_hex: str | None = Field(default=None, max_length=128)
+    epc_scheme: str | None = Field(default=None, max_length=32)
+    epc_decoded: dict[str, Any] | None = None
+    tid: str | None = Field(default=None, max_length=64)
+    user_memory_hex: str | None = None
+
 
 # -- Tag Reads --
 
@@ -13,10 +39,15 @@ class TagReadCreate(BaseModel):
     """Incoming tag read event — used by both HTTP and MQTT ingestion paths."""
 
     device_id: UUID
-    tag_id: str = Field(min_length=1, max_length=256)
+    tag_id: str | None = Field(default=None, max_length=256)
     timestamp: datetime
     signal_strength: float | None = None
     sensor_data: dict[str, Any] | None = None
+    # -- Sprint 14: structured optional sub-models --
+    location: Location | None = None
+    identity: Identity | None = None
+    tag_data: dict[str, Any] | None = None
+    reader_antenna: int | None = Field(default=None, ge=0, le=255)
 
 
 class TagReadResponse(BaseModel):
@@ -28,9 +59,21 @@ class TagReadResponse(BaseModel):
     timestamp: datetime
     signal_strength: float | None
     sensor_data: dict[str, Any] | None
+    latitude: float | None = None
+    longitude: float | None = None
+    location_accuracy_m: float | None = None
+    location_source: str | None = None
+    epc: str | None = None
+    epc_hex: str | None = None
+    epc_scheme: str | None = None
+    epc_decoded: dict[str, Any] | None = None
+    tid: str | None = None
+    user_memory_hex: str | None = None
+    tag_data: dict[str, Any] | None = None
+    reader_antenna: int | None = None
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 # -- Devices --
@@ -143,3 +186,69 @@ class DeviceHealthSummary(BaseModel):
     last_seen: datetime | None
     reads_last_hour: int
     error_rate: float
+
+
+# -- Telemetry / Location / Events (Sprint 14) --
+
+
+class TelemetryReading(BaseModel):
+    """A single telemetry reading inside a batched payload."""
+
+    timestamp: datetime
+    metric_name: str = Field(min_length=1, max_length=100)
+    metric_value: float
+    unit: str | None = Field(default=None, max_length=20)
+    metadata: dict[str, Any] | None = None
+
+
+class TelemetryBatch(BaseModel):
+    """Batched telemetry payload — HTTP and MQTT share this shape."""
+
+    device_id: UUID
+    readings: list[TelemetryReading] = Field(min_length=1)
+
+
+class TelemetrySingle(BaseModel):
+    """Single-reading payload — used by MQTT location/telemetry topics."""
+
+    device_id: UUID
+    timestamp: datetime
+    metric_name: str = Field(min_length=1, max_length=100)
+    metric_value: float
+    unit: str | None = Field(default=None, max_length=20)
+    metadata: dict[str, Any] | None = None
+
+
+class TelemetryResponse(BaseModel):
+    """Persisted telemetry row."""
+
+    id: UUID
+    device_id: UUID
+    timestamp: datetime
+    metric_name: str
+    metric_value: float
+    unit: str | None
+    metadata: dict[str, Any] | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LocationPayload(BaseModel):
+    """Standalone location update on `…/location` topic."""
+
+    device_id: UUID
+    timestamp: datetime
+    latitude: float = Field(ge=-90.0, le=90.0)
+    longitude: float = Field(ge=-180.0, le=180.0)
+    accuracy_m: float | None = Field(default=None, ge=0.0)
+    source: LocationSource = "gps"
+
+
+class DeviceEventPayload(BaseModel):
+    """Free-form device-side event on `…/events` topic."""
+
+    device_id: UUID
+    timestamp: datetime
+    event_type: str = Field(min_length=1, max_length=100)
+    details: dict[str, Any] | None = None
+

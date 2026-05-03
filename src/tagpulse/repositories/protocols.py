@@ -1,7 +1,7 @@
 """Repository protocols — technology-agnostic contracts for data access."""
 
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from tagpulse.models.schemas import (
@@ -11,6 +11,8 @@ from tagpulse.models.schemas import (
     ReadsPerHour,
     TagReadCreate,
     TagReadResponse,
+    TelemetryReading,
+    TelemetryResponse,
     UniqueTagsPerWindow,
 )
 
@@ -109,3 +111,35 @@ class DeviceRepository(Protocol):
     async def record_connection_state(
         self, tenant_id: UUID, device_id: UUID, connection_state: str
     ) -> None: ...
+
+
+class TelemetryRepository(Protocol):
+    """Contract for device telemetry persistence (Sprint 14)."""
+
+    async def insert_reading(
+        self,
+        tenant_id: UUID,
+        device_id: UUID,
+        reading: TelemetryReading,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> TelemetryResponse: ...
+
+    async def quarantine(
+        self,
+        tenant_id: UUID,
+        device_id: UUID,
+        reading: TelemetryReading,
+        reason: str,
+    ) -> None: ...
+
+    async def query(
+        self,
+        tenant_id: UUID,
+        *,
+        device_id: UUID | None = None,
+        metric_name: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 100,
+    ) -> list[TelemetryResponse]: ...

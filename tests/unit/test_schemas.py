@@ -30,13 +30,17 @@ class TestTagReadCreate:
         assert read.signal_strength == -45.2
         assert read.sensor_data == {"temperature": 23.5}
 
-    def test_empty_tag_id_rejected(self) -> None:
-        with pytest.raises(ValidationError):
-            TagReadCreate(
-                device_id=uuid4(),
-                tag_id="",
-                timestamp=datetime.now(UTC),
-            )
+    def test_empty_tag_id_accepted_when_identity_present(self) -> None:
+        # Sprint 14: tag_id became optional. The ingestion service derives an
+        # effective tag_id from identity.epc/tid when not supplied.
+        read = TagReadCreate(
+            device_id=uuid4(),
+            timestamp=datetime.now(UTC),
+            identity={"epc_hex": "30340000000000000000000a"},  # type: ignore[arg-type]
+        )
+        assert read.tag_id is None
+        assert read.identity is not None
+        assert read.identity.epc_hex == "30340000000000000000000a"
 
     def test_missing_device_id_rejected(self) -> None:
         with pytest.raises(ValidationError):

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, SmallInteger, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -83,9 +83,67 @@ class TagReadModel(Base):
     )
     signal_strength: Mapped[float | None] = mapped_column(Float, nullable=True)
     sensor_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # -- Sprint 14: location --
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # -- Sprint 14: RFID identity --
+    epc: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    epc_hex: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    epc_scheme: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    epc_decoded: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    tid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_memory_hex: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tag_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    reader_antenna: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class DeviceTelemetryModel(Base):
+    """Device telemetry hypertable — sensor and metric readings (Sprint 14)."""
+
+    __tablename__ = "device_telemetry"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True, index=True
+    )
+    metric_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    metric_value: Mapped[float] = mapped_column(Float, nullable=False)
+    unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
+
+
+class TelemetryQuarantineModel(Base):
+    """Quarantine for unknown / out-of-range telemetry readings (Sprint 14)."""
+
+    __tablename__ = "telemetry_quarantine"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    metric_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    metric_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    reason: Mapped[str] = mapped_column(String(40), nullable=False)
 
 
 class TelemetryModelDef(Base):
