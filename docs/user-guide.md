@@ -11,6 +11,11 @@
 - [Rules](#rules)
 - [Alerts](#alerts)
 - [Integrations](#integrations)
+- [Assets](#assets)
+- [Sites & Zones](#sites--zones)
+- [Map](#map)
+- [Inventory](#inventory)
+- [Tenant Settings](#tenant-settings)
 - [Usage & Quotas](#usage--quotas)
 - [User Management](#user-management)
 - [Audit Log](#audit-log)
@@ -479,6 +484,189 @@ Click **Deliveries** on any integration to see its delivery history.
 **Columns:** Time, Event, Status (success/pending/failed), Attempts, Response Code, Error.
 
 Use this log to troubleshoot failed deliveries — the error column shows the failure reason and the attempts column shows retry count.
+
+---
+
+## Assets
+
+> **Requires** the `asset` tracking mode (Tenant Settings → Asset tracking).
+
+An **asset** is a real-world thing you want to track — a forklift, a returnable container, a high-value pallet. Assets are linked to one or more **tag bindings** (the EPC/TID/device-tag printed on the RFID label) so every read in the field can attribute back to the asset.
+
+### Asset list
+
+**Columns:** Name, Type, External Ref, Status (`active` / `decommissioned`), Updated. Sort by name; type-ahead search filters in place.
+
+Click **Create Asset** to add one. Required: Name. Optional: Asset Type (free text — `forklift`, `pallet`, `container`, …), External Ref (your ERP/WMS ID).
+
+### Asset detail
+
+Three-tab layout:
+
+- **Overview** — basic info plus the **Current Location** card (last known lat/lon, accuracy, recorded-at, source — `rfid` or `external`). The **Covers Zones** chip strip lists every zone the asset is currently inside (Sprint 15).
+- **Bindings** — table of all bindings (kind = `epc` / `tid` / `device`, value, bound-at, unbound-at). Active bindings have an empty `unbound_at`. Add a binding via **Bind Tag** — only one active binding per asset at a time. Remove via **Unbind**; the historical row is preserved.
+- **Path** — the recent location trail. Each row shows time, source, and zone (if inside one). The **Map** page shows the same trail visually with a 24-hour time slider.
+
+### Tag-binding lifecycle
+
+Bindings are append-only and time-boxed:
+
+1. **Bind** — sets `bound_at = now()`, leaves `unbound_at` null.
+2. **Unbind** — sets `unbound_at = now()`. The same binding value can later be re-bound to a different (or the same) asset.
+3. **Cross-tenant collisions** — if another tenant has an active binding for the same `binding_value`, you'll see an admin-only warning (count only — never the other tenant's identity, per the design's tenant-isolation guarantee).
+
+---
+
+## Sites & Zones
+
+> **Requires** the `asset` tracking mode.
+
+**Sites** are physical buildings; **zones** are subdivisions within them (a dock door, a cold-storage room, a virtual perimeter). Zones power the **Map** overlay, geofence rules (`zone.entered` / `zone.exited` / `zone.dwell_exceeded`), and stock-by-zone aggregation.
+
+### Sites
+
+Left-hand list. Each site has Name, Address, Default Timezone. Click a site to manage its zones in the right-hand panel.
+
+### Zones — three kinds
+
+| Kind | What it is | When to use |
+|------|------------|-------------|
+| **`reader_bound`** | Implicit — defined by which fixed readers see the tag. Pick the reader IDs that bound the zone. | Indoor warehouse zones where readers cover the floor. No GPS needed. |
+| **`geofence`** | A polygon drawn on the map (GeoJSON `Polygon`). | Outdoor yards, loading lots, anywhere with GPS-equipped tags or external locators. |
+| **`virtual`** | Admin-defined logical grouping (no readers, no polygon). | Cross-cutting categories like "Cold storage" or "Hazmat". |
+
+### Creating a zone
+
+1. Pick a site, click **Add Zone**.
+2. **Name** + **Kind**.
+3. For `reader_bound`: pick the readers from the multi-select.
+4. For `geofence`: a draw map appears. Click vertices in order, **Undo** removes the last, **Clear** starts over, **Done** auto-closes the ring. The server validates the GeoJSON (reject self-intersecting, < 3 vertices, etc.).
+5. Save.
+
+Zones are tenant-scoped — each tenant has its own private set; nothing crosses the tenant boundary.
+
+---
+
+## Map
+
+> **Requires** the `asset` tracking mode.
+
+Provider-agnostic Leaflet map driven by your **Tenant Settings → Map** config. Default: OpenStreetMap with a dev-only banner in the footer.
+
+### Layout
+
+- **Header** — layer checkboxes: **Assets**, **Zones**, **Stock density** (the third layer requires `inventory` mode and overlays geofence polygons with red shading scaled to total stock quantity).
+- **Body** — the map. Geofence polygons are drawn from `polygon_geojson`; zone names appear on hover. Asset markers show the asset name on hover; mobile-mobility assets get a colored ring.
+- **Time slider** (bottom) — drag back up to **24 hours** to replay positions. The slider re-resolves every visible asset's position via `GET /assets/{id}/path`.
+- **Footer** — always shows the tile-provider attribution.
+
+### Asset popups
+
+Click a marker:
+
+- Asset name + last-seen timestamp.
+- **Open detail →** jumps to [Asset detail](#asset-detail).
+- **View manifest →** opens a tree modal of the recursive child-asset manifest (per the carriers-and-manifests design — useful when one asset "carries" others, e.g., a pallet of cases). Empty children render a graceful "not carrying any child assets" state.
+
+### Stock-density overlay (`inventory` mode)
+
+With **Stock density** checked, every geofence zone is shaded red proportional to total stock units inside it (aggregated from `GET /inventory/stock-levels`). Hover for the exact quantity. Useful for spotting hot zones at a glance.
+
+---
+
+## Inventory
+
+> **Requires** the `inventory` tracking mode.
+
+Four pages plus an admin sub-page for tag-data mappings.
+
+### Products
+
+**Columns:** SKU, Name, GTIN, Category, Unit (`each` / `case` / `pallet`).
+
+Click **Create Product** to add one. SKU + Name are required; GTIN, category, and unit are optional. Click a row to open **Product detail**, which shows:
+
+- **Lots** tab — manufacturing batches (lot_code, manufactured_at, expires_at). Lots with expiry dates feed the **Lot Expiry Queue**.
+- **Stock items** tab — every individual tag bound to this product, with its current zone and state.
+
+### Lot Expiry
+
+**Filter:** Next 24h / 7 days / 30 days / 90 days / All lots (default 30 days). Sorted by expiry ascending so the most-urgent lot is at the top.
+
+**Columns:** Lot code, Product, Expires at, Notes.
+
+Use this to drive FEFO (first-expired-first-out) picking instructions, write-off lists, or expiry-driven discount campaigns.
+
+### Stock Levels
+
+A pivot table: rows are **Product**, columns are **Zones** plus a **Total** column. Each cell is the count of in-stock items.
+
+- The leftmost zone column is `unassigned` — items that haven't been seen in any zone yet.
+- **Export CSV** in the toolbar dumps the current pivot.
+- Filter by product or zone via the toolbar selectors.
+
+The **Map** page's stock-density overlay uses the same data.
+
+### Stock Movements
+
+Append-only ledger of every movement event.
+
+**Columns:** Occurred at, Movement type (`receive` / `move` / `pick` / `consume` / `adjust`), Stock item, From zone, To zone, Quantity, Device.
+
+Filter by product, zone, or movement type. Use this when reconciling physical counts against TagPulse's view.
+
+### Tag Data Mappings (admin)
+
+**Where:** sidebar → **Tag Data Mappings** (admin only).
+
+Defines how raw EPC bits decompose into semantic fields (`product_sku`, `lot_code`, …). Two scopes:
+
+- **Tenant-wide** — applies to every product unless overridden.
+- **Per product** — overrides for a specific SKU.
+
+Fields:
+
+- **Tag-data key** — the raw key the device emits (e.g., `epc.gtin14`).
+- **Semantic field** — what it maps to (`product_sku`, `lot_code`, `serial`, …).
+- **Transform** — optional Python-style expression for re-formatting.
+
+Without mappings, ingestion still works — the system just treats the tag as opaque and you create stock items manually. With mappings, stock items materialize automatically as soon as a bound tag is read.
+
+### Case/pallet containment (Sprint 15b)
+
+Use the `parent_stock_item_id` field on `POST /stock-items` (or `PATCH`) to record a case packed into a pallet, or a pallet loaded onto a trailer. The chain is recursive — a pallet's manifest will traverse all the way down to individual cases. The **Map** page's manifest pop-out (see [Map](#map) above) renders this tree.
+
+---
+
+## Tenant Settings
+
+> **Admin only.**
+
+Two-tab page: **General** (tracking modes) and **Map** (tile provider).
+
+### General tab — tracking modes
+
+Two switches:
+
+- **Asset tracking** — unlocks **Assets**, **Sites & Zones**, **Map**.
+- **Inventory tracking** — unlocks **Products**, **Lot Expiry**, **Stock Levels**, **Stock Movements**.
+
+At least one mode must remain enabled (the UI rejects disabling both with a toast). Disabling a mode hides the sidebar entries but **does not delete data** — re-enabling restores access.
+
+### Map tab — tile provider
+
+Provider-agnostic — supply a tile-URL template and (optional) API key. Examples:
+
+| Provider | Template |
+|----------|----------|
+| OpenStreetMap (default) | `https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png` |
+| MapTiler | `https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=YOUR_KEY` |
+| Mapbox | `https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/{z}/{x}/{y}?access_token=YOUR_TOKEN` |
+| Azure Maps | `https://atlas.microsoft.com/map/tile?api-version=2.0&tilesetId=microsoft.base.road&zoom={z}&x={x}&y={y}&subscription-key=YOUR_KEY` |
+
+**Attribution** is required — paste the provider's required string into the Attribution field; the **Map** footer always renders it.
+
+Save to persist. Every change is recorded in the **Audit Log** as `tenant.map_config.update` (the JSON diff of before/after is captured automatically).
 
 ---
 
