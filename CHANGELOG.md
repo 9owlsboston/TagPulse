@@ -5,6 +5,12 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Sprint 15 — Asset Tracking (Phase B.2): ingestion enrichment + zone transitions**:
+  - `IngestionService` now resolves the active asset binding for incoming tag reads (tries `identity.epc`, then `identity.tid`, then `tag_id`) and looks up the reader-bound zone for fixed devices. Mobile readers (`device.mobility = 'mobile'`) skip the zone lookup per [mobile-carriers-and-manifests.md §4.1](docs/design/mobile-carriers-and-manifests.md).
+  - On a zone transition, publishes `Topic.SUBJECT_ZONE_CHANGED` (`subject_kind='asset'`, with `from_zone_id`/`to_zone_id`/`tag_read_id`) onto the event bus. Process-local last-zone cache (per design §5; multi-worker durability deferred to Sprint 17 alongside the rules engine).
+  - DI factory and MQTT subscriber now inject `TimescaleAssetTagBindingRepository` + `TimescaleZoneRepository` into the ingestion service.
+  - `DeviceResponse.mobility` exposed on the API + repo response mapper so consumers can render fixed-vs-mobile state.
+  - New OTel counters: `tagpulse_tag_reads_without_asset_total`, `tagpulse_subject_zone_changed_total`.
 - **Sprint 15 — Asset Tracking (Phase B): assets, tag bindings, collision tooling**:
   - Migration `018_assets_bindings.py`: `assets` (with `parent_asset_id` self-FK for carrier containment, `external_ref` unique per tenant, `status ∈ {active,retired,lost}` check constraint) and `asset_tag_bindings` (`binding_value` + `binding_kind ∈ {epc,tid,device}` from day one). Partial unique index `ix_asset_tag_bindings_active` enforces one active binding per `(tenant_id, binding_value)`. Non-unique global index `ix_asset_tag_bindings_global_value` powers admin tag-collision tooling. RLS policies on both tables.
   - ORM: `AssetModel`, `AssetTagBindingModel`. Pydantic schemas: `AssetCreate/Update/Response`, `AssetTagBindingCreate/Response`, `TagCollisionResponse`.

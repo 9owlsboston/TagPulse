@@ -144,6 +144,7 @@ def _to_response(row: DeviceModel) -> DeviceResponse:
         firmware_version=row.firmware_version,
         connection_state=row.connection_state,
         last_seen=row.last_seen,
+        mobility=row.mobility,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

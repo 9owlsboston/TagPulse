@@ -112,6 +112,7 @@ class DeviceResponse(BaseModel):
     firmware_version: str | None
     connection_state: str
     last_seen: datetime | None
+    mobility: str = "fixed"
     created_at: datetime
     updated_at: datetime
 

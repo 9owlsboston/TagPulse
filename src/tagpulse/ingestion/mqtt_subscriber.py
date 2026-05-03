@@ -289,9 +289,18 @@ class MqttSubscriber:
         )
 
     def _build_ingestion_service(self, session: AsyncSession) -> IngestionService:
+        from tagpulse.repositories.timescaledb.assets import (
+            TimescaleAssetTagBindingRepository,
+        )
+        from tagpulse.repositories.timescaledb.sites_zones import (
+            TimescaleZoneRepository,
+        )
+
         return IngestionService(
             repo=TimescaleTagReadRepository(session),
             event_bus=self._event_bus,
             device_repo=TimescaleDeviceRepository(session),
             telemetry_service=self._build_telemetry_service(session),
+            binding_repo=TimescaleAssetTagBindingRepository(session),
+            zone_repo=TimescaleZoneRepository(session),
         )

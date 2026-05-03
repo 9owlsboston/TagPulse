@@ -111,3 +111,15 @@ tag_collisions_global_counter = meter.create_counter(
     description="Cross-tenant binding_value collisions inspected by admin",
     unit="checks",
 )
+
+tag_reads_without_asset_counter = meter.create_counter(
+    "tagpulse_tag_reads_without_asset_total",
+    description="Tag reads ingested with no active asset binding",
+    unit="reads",
+)
+
+subject_zone_changed_counter = meter.create_counter(
+    "tagpulse_subject_zone_changed_total",
+    description="Asset/stock-item zone-transition events emitted",
+    unit="events",
+)

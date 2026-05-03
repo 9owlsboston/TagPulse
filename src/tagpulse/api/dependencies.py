@@ -96,13 +96,23 @@ async def get_ingestion_service(
     device_repo: DeviceRepository = Depends(get_device_repo),
     event_bus: EventBus = Depends(get_event_bus),
     telemetry_service: TelemetryService = Depends(get_telemetry_service),
+    session: AsyncSession = Depends(get_session),
 ) -> AsyncGenerator[IngestionService, None]:
     """Provide an IngestionService wired with repo, event bus, and telemetry mirror."""
+    from tagpulse.repositories.timescaledb.assets import (
+        TimescaleAssetTagBindingRepository,
+    )
+    from tagpulse.repositories.timescaledb.sites_zones import (
+        TimescaleZoneRepository,
+    )
+
     yield IngestionService(
         repo=repo,
         event_bus=event_bus,
         device_repo=device_repo,
         telemetry_service=telemetry_service,
+        binding_repo=TimescaleAssetTagBindingRepository(session),
+        zone_repo=TimescaleZoneRepository(session),
     )
 
 

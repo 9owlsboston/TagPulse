@@ -784,6 +784,11 @@
             ],
             "title": "Metadata"
           },
+          "mobility": {
+            "default": "fixed",
+            "title": "Mobility",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
