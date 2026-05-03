@@ -3,6 +3,7 @@
 ## Table of Contents
 
 - [Getting Started](#getting-started)
+- [First-Time Admin Workflow](#first-time-admin-workflow)
 - [Dashboard](#dashboard)
 - [Devices](#devices)
 - [Telemetry](#telemetry)
@@ -111,6 +112,159 @@ The sidebar on the left provides access to all sections: Dashboard, Devices, Tel
 | `admin`  | Full access — manage users, devices, and config  |
 | `editor` | Register/update devices, create rules/integrations |
 | `viewer` | Read-only access to data and dashboards          |
+
+---
+
+## First-Time Admin Workflow
+
+You just logged in as an admin against a fresh tenant. The sidebar is full of options but every list is empty. Here's the recommended sequence to get from "empty" to "live data flowing in" — pick the asset, inventory, or both branches that match what you're tracking.
+
+> **Time estimate:** ~15 minutes for the simulator path; longer if you're wiring real readers.
+
+### Step 1 — Choose your tracking modes
+
+**Where:** sidebar → **Tenant Settings**.
+
+Toggle **Asset tracking** and/or **Inventory tracking** on. These flags drive which sidebar entries appear:
+
+| Mode | Unlocks sidebar entries |
+|------|-------------------------|
+| `asset` | **Assets**, **Sites & Zones**, **Map** |
+| `inventory` | **Products**, **Lot Expiry**, **Stock Levels**, **Stock Movements** |
+
+You can change this later — disabling a mode just hides the UI; existing data is preserved.
+
+### Step 2 — (Optional) Configure the map provider
+
+**Where:** sidebar → **Tenant Settings** → **Map** tab. Only relevant if you enabled **Asset tracking**.
+
+By default the **Map** page falls back to OpenStreetMap (a dev-only banner is shown in the footer). For production:
+
+- Pick a tile provider (MapTiler, Mapbox, Azure Maps, etc.).
+- Paste your tile-URL template and (if required) an API key.
+- The page persists the config to `tenant.map_config` — `Save`, then reload **Map**.
+
+### Step 3 — Define telemetry models
+
+**Where:** sidebar → **Telemetry Models** → **Create Model**.
+
+Tell TagPulse what metrics each device type sends. For an `rfid_reader`:
+
+| Name | Unit | Min | Max | Description |
+|------|------|-----|-----|-------------|
+| `signal_strength` | dBm | -100 | 0 | RSSI of the most recent read |
+| `temperature` | °C | -40 | 85 | Reader internal temperature |
+| `battery` | % | 0 | 100 | (Mobile readers only) |
+
+Skipping this step is fine — ingestion still works — but rule conditions and the Telemetry chart get a much better experience when models exist.
+
+### Step 4 — Lay out sites & zones (asset mode)
+
+**Where:** sidebar → **Sites & Zones**.
+
+1. **Create a site** (e.g., "Boston DC", "Production Floor"). One per physical building.
+2. **Create zones** within each site. Three kinds:
+   - **`reader_bound`** — implicitly defined by which fixed readers see the tag (no polygon needed; pick the readers that bound the zone).
+   - **`geofence`** — draw a polygon on the map. Click vertices, **Undo** if you misclick, **Done** to close. The server validates the GeoJSON.
+   - **`virtual`** — admin-only logical grouping (e.g., "Cold storage").
+
+Zones power the **Map**, geofence rules (Step 8), and dwell tracking.
+
+### Step 5 — Register devices
+
+**Where:** sidebar → **Devices** → **Register Device**.
+
+For each physical reader:
+
+- **Name** — human-friendly (e.g., `Dock-Door-A`).
+- **Device Type** — must match a telemetry model (e.g., `rfid_reader`).
+- **Mobility** — `fixed` (warehouse readers), `mobile` (handhelds, vehicle-mounted), or `unknown`.
+- **Metadata** — JSON freeform (location, asset tag, owner email, etc.).
+
+After save, the device detail page shows a **Token** (paste into your reader's TagPulse client config) and, optionally, a **Cert** card if you're using mTLS — admins can attach an X.509 PEM there (only the SHA-256 thumbprint + RFC 4514 subject are stored; the PEM is discarded immediately).
+
+> **No physical readers yet?** Skip to Step 7 — the device simulator (`scripts/simulate_devices.py`) creates fake readers and feeds tag reads on its own.
+
+### Step 6a — Asset tracking: define what you're tracking
+
+**Where:** sidebar → **Assets**.
+
+1. **Create an asset** (e.g., "Forklift #4", "Pallet PLT-00123").
+2. **Add a tag binding**: enter the EPC, TID, or device-internal tag ID printed on the RFID label. Bindings can be unbound and re-bound (for tag swaps); only one active binding per asset at a time.
+
+Once bound, every tag read from the field automatically attributes to the asset. The Asset detail page shows the **Path** (last 24 h trail), **Covers Zones**, and the active binding.
+
+### Step 6b — Inventory tracking: products, lots, stock items
+
+**Where:** sidebar → **Products**, then **Stock Levels**.
+
+1. **Create a product** (SKU + display name). Optionally add a **lot** (manufacturing batch with expiry date).
+2. (Sprint 15b) **Tag-data mappings** under **Admin → Tag Data Mappings** let you specify how raw EPC bits map to product-and-lot. Skip this initially — you can also create stock items manually.
+3. **Stock items** (per-tag inventory units) appear automatically as soon as bound tags are read; the **Stock Levels** view rolls them up by product/zone.
+4. (Sprint 15b) Use the new **`parent_stock_item_id`** field on `POST /stock-items` (or `PATCH /stock-items/{id}`) when packing cases into pallets — this builds the case/pallet containment tree the manifest API will traverse.
+
+The **Lot Expiry** queue surfaces lots within 30 days of expiry (configurable per product).
+
+### Step 7 — Generate live data
+
+**With real readers:** point them at `mqtt://<your-broker>:1883/tenants/<tenant-id>/devices/<device-id>/tag-reads` using the device token from Step 5.
+
+**With the simulator** (no hardware needed):
+
+```bash
+cd ~/TagPulse
+python scripts/simulate_devices.py \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --devices 5 \
+  --interval 2
+```
+
+Within seconds the **Dashboard** "Reads Today" widget will start incrementing and the **Telemetry** line chart will fill in.
+
+### Step 8 — Add rules & alerts
+
+**Where:** sidebar → **Rules** → **Create Rule**.
+
+Useful starter rules:
+
+| Rule | Condition | Action |
+|------|-----------|--------|
+| Reader offline | Absence > 5 minutes (any tag) | Notification |
+| RSSI cliff | Rate change ≥ 50% in 10 min on `signal_strength` | Webhook to Slack |
+| Asset left zone | `zone.exited` from "Cold storage", subject_kinds = `asset` | Email |
+| Pallet idle in dock | `zone.dwell_exceeded` ≥ 60 min in "Dock-Door-A" | Notification |
+
+Triggered alerts appear under **Alerts** with severity color-coding; click **Acknowledge** to clear.
+
+### Step 9 — Push events outward
+
+**Where:** sidebar → **Integrations** → **Create Integration**.
+
+Three types:
+
+- **Webhook** — POST JSON to any HTTPS endpoint (Slack, PagerDuty, your ERP).
+- **SSE** — long-lived stream consumers can subscribe to in-browser.
+- **Export** — scheduled CSV/JSON dump (cron schedule, format).
+
+The **Deliveries** tab on each integration shows attempts, status, and the last error if any.
+
+### Step 10 — Invite your team
+
+**Where:** sidebar → **Users** → **Create User**.
+
+For each teammate: email + name + role (`viewer` for read-only, `editor` for everyday operators, `admin` for ops/security). Then open the user detail page → **Generate API Key** → copy the key from the one-time banner and send it via your password manager.
+
+See [User Management](#user-management) below for full lifecycle (regenerate, revoke, deactivate).
+
+### Step 11 — Verify the audit trail
+
+**Where:** sidebar → **Audit Log** → **Device security events** preset.
+
+You should see entries for the device approvals, token rotations, and (if you used the cert workflow) `device.cert_attached`. This is the canonical place to come back to after any incident — see [Audit Log](#audit-log) below.
+
+### You're live
+
+At this point the platform is fully bootstrapped. Day-to-day operations live in **Dashboard**, **Map**, **Alerts**, and **Audit Log**. Configuration changes go through **Tenant Settings**, **Telemetry Models**, **Rules**, and **Integrations** — every change is captured in the audit log automatically.
 
 ---
 
