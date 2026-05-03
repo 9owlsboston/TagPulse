@@ -16,6 +16,9 @@ from tagpulse.core.otel_metrics import (
 from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.models.schemas import (
     AssetCreate,
+    AssetCurrentLocation,
+    AssetInZoneSummary,
+    AssetPathPoint,
     AssetResponse,
     AssetTagBindingCreate,
     AssetTagBindingResponse,
@@ -24,6 +27,9 @@ from tagpulse.models.schemas import (
     ExternalLocationResponse,
     ManifestEntry,
     ManifestResponse,
+)
+from tagpulse.repositories.timescaledb.asset_location import (
+    TimescaleAssetLocationRepository,
 )
 from tagpulse.repositories.timescaledb.assets import (
     TimescaleAssetRepository,
@@ -50,12 +56,14 @@ class AssetService:
         audit: AuditLogger,
         external_location_repo: TimescaleExternalLocationRepository | None = None,
         event_bus: EventBus | None = None,
+        asset_location_repo: TimescaleAssetLocationRepository | None = None,
     ) -> None:
         self._assets = asset_repo
         self._bindings = binding_repo
         self._audit = audit
         self._external = external_location_repo
         self._event_bus = event_bus
+        self._asset_location = asset_location_repo
 
     # -- Assets --
 
@@ -402,6 +410,61 @@ class AssetService:
             raise RuntimeError("external_location_repo not configured")
         return await self._external.list_for_asset(
             tenant_id, asset_id, limit=limit, offset=offset
+        )
+
+    # -- Location & path (Sprint 15 — view + path API) --
+
+    async def get_current_location(
+        self, tenant_id: UUID, asset_id: UUID
+    ) -> AssetCurrentLocation | None:
+        if self._asset_location is None:
+            raise RuntimeError("asset_location_repo not configured")
+        return await self._asset_location.get_current_location(
+            tenant_id, asset_id
+        )
+
+    async def list_current_locations(
+        self, tenant_id: UUID, *, limit: int = 200, offset: int = 0
+    ) -> list[AssetCurrentLocation]:
+        if self._asset_location is None:
+            raise RuntimeError("asset_location_repo not configured")
+        return list(
+            await self._asset_location.list_current_locations(
+                tenant_id, limit=limit, offset=offset
+            )
+        )
+
+    async def get_asset_path(
+        self,
+        tenant_id: UUID,
+        asset_id: UUID,
+        *,
+        since: datetime,
+        until: datetime,
+        limit: int = 1000,
+    ) -> list[AssetPathPoint]:
+        if self._asset_location is None:
+            raise RuntimeError("asset_location_repo not configured")
+        return list(
+            await self._asset_location.get_asset_path(
+                tenant_id, asset_id, since=since, until=until, limit=limit
+            )
+        )
+
+    async def get_assets_in_zone(
+        self,
+        tenant_id: UUID,
+        zone_id: UUID,
+        *,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[AssetInZoneSummary]:
+        if self._asset_location is None:
+            raise RuntimeError("asset_location_repo not configured")
+        return list(
+            await self._asset_location.get_assets_in_zone(
+                tenant_id, zone_id, limit=limit, offset=offset
+            )
         )
 
     async def _assert_no_parent_cycle(

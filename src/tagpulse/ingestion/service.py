@@ -173,11 +173,35 @@ class IngestionService:
         return result
 
     async def ingest_batch(self, tenant_id: uuid.UUID, reads: list[TagReadCreate]) -> int:
-        """Validate, persist, and publish a batch of tag reads."""
+        """Validate, persist, enrich, and publish a batch of tag reads.
+
+        Phase B.3: each read goes through the same asset/zone + inventory
+        enrichment as the single-read path so batched HTTP/MQTT clients see
+        the same ``subject.zone_changed`` and inventory side-effects.
+        """
         normalized = [self._normalize(tenant_id, r) for r in reads]
-        count = await self._repo.insert_batch(tenant_id, normalized)
+        inserted = await self._repo.insert_batch(tenant_id, normalized)
+        count = len(inserted)
         logger.info("Batch ingested: %d tag reads", count)
-        for read in normalized:
+        if self._device_repo and inserted:
+            now = datetime.now(UTC)
+            # Touch each unique device once; record_last_seen is cheap but
+            # unbounded loops here would amplify hot-batch fan-out.
+            seen_devices: set[uuid.UUID] = set()
+            for read in normalized:
+                if read.device_id in seen_devices:
+                    continue
+                seen_devices.add(read.device_id)
+                await self._device_repo.record_last_seen(
+                    tenant_id, read.device_id, now
+                )
+                await self._device_repo.record_connection_state(
+                    tenant_id, read.device_id, "online",
+                )
+        for read, row in zip(normalized, inserted, strict=True):
+            await self._mirror_tag_borne_sensors(tenant_id, read, row.id)
+            await self._enrich_with_asset_zone(tenant_id, read, row.id)
+            await self._enrich_with_inventory(tenant_id, read, row.id)
             await self._event_bus.publish(
                 Topic.TAG_READ_CREATED,
                 Event(
@@ -185,9 +209,12 @@ class IngestionService:
                     topic=Topic.TAG_READ_CREATED,
                     timestamp=datetime.now(UTC),
                     payload={
+                        "tag_read_id": str(row.id),
                         "tenant_id": str(tenant_id),
                         "device_id": str(read.device_id),
                         "tag_id": read.tag_id,
+                        "epc": read.identity.epc if read.identity else None,
+                        "tid": read.identity.tid if read.identity else None,
                         "signal_strength": read.signal_strength,
                     },
                 ),

@@ -43,7 +43,7 @@ class FakeRepo:
         )
 
     async def insert_batch(self, tenant_id, reads):  # type: ignore[no-untyped-def]
-        return len(reads)
+        return [await self.insert(tenant_id, r) for r in reads]
 
     async def query(self, *a, **kw):  # type: ignore[no-untyped-def]
         return []
@@ -337,3 +337,40 @@ async def test_device_mobility_lookup_cached() -> None:
     for _ in range(4):
         await svc.ingest(tenant, _read(device_id, epc="urn:epc:id:sgtin:m"))
     assert device_repo.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_ingest_enriches_each_read() -> None:
+    """Phase B.3: ingest_batch fans out enrichment + zone events per read."""
+    bus = AsyncEventBus(capacity=20)
+    events: list[Any] = []
+    await bus.subscribe(Topic.SUBJECT_ZONE_CHANGED, lambda e: events.append(e))
+    await bus.start()
+    asset_id = uuid4()
+    reader_a = uuid4()
+    reader_b = uuid4()
+    zone_a = uuid4()
+    zone_b = uuid4()
+    epc = "urn:epc:asset-batch"
+    svc = IngestionService(
+        repo=FakeRepo(),  # type: ignore[arg-type]
+        event_bus=bus,
+        device_repo=FakeDeviceRepo(mobility="fixed"),  # type: ignore[arg-type]
+        binding_repo=FakeBindingRepo({epc: asset_id}),  # type: ignore[arg-type]
+        zone_repo=FakeZoneRepo({reader_a: zone_a, reader_b: zone_b}),  # type: ignore[arg-type]
+    )
+    tenant = uuid4()
+    count = await svc.ingest_batch(
+        tenant,
+        [
+            _read(reader_a, epc=epc),
+            _read(reader_a, epc=epc),
+            _read(reader_b, epc=epc),
+        ],
+    )
+    await bus.drain(timeout=1.0)
+    assert count == 3
+    # Same enrichment semantics as the single-read path: one zone change.
+    assert len(events) == 1
+    assert events[0].payload["from_zone_id"] == str(zone_a)
+    assert events[0].payload["to_zone_id"] == str(zone_b)

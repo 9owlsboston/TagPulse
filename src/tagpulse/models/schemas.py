@@ -528,6 +528,58 @@ class ManifestResponse(BaseModel):
     children: list[ManifestEntry] = Field(default_factory=list)
 
 
+# -------- Asset location & path (Sprint 15 — view + path API) --------
+
+
+class AssetCurrentLocation(BaseModel):
+    """One row of the ``asset_current_location`` SQL view.
+
+    The latest known position for an active asset binding, badged by source
+    (`rfid` for the latest tag-read or one of the ``external_locations.source``
+    strings — e.g. `samsara`, `geotab`, `manual` — for the latest external
+    fix). Whichever side is newer wins.
+    """
+
+    asset_id: UUID
+    recorded_at: datetime
+    latitude: float
+    longitude: float
+    accuracy_meters: float | None
+    device_id: UUID | None
+    latest_position_source: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AssetPathPoint(BaseModel):
+    """One point on an asset's merged movement path.
+
+    Sourced from either RFID tag reads (`source='rfid'`) or external position
+    fixes (`source` matches the originating ``external_locations.source``).
+    Returned in ascending chronological order.
+    """
+
+    recorded_at: datetime
+    latitude: float
+    longitude: float
+    accuracy_meters: float | None
+    source: str
+    device_id: UUID | None = None
+    tag_read_id: UUID | None = None
+    external_id: UUID | None = None
+
+
+class AssetInZoneSummary(BaseModel):
+    """One row of `GET /zones/{zone_id}/assets` — assets currently in a zone."""
+
+    asset_id: UUID
+    name: str
+    asset_type: str
+    last_seen_at: datetime
+    binding_value: str
+    binding_kind: str
+
+
 # ============================================================================
 # Sprint 15b — Inventory tracking
 # ============================================================================

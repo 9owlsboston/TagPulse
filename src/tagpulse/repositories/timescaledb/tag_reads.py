@@ -51,7 +51,9 @@ class TimescaleTagReadRepository:
         await self._session.flush()
         return TagReadResponse.model_validate(row)
 
-    async def insert_batch(self, tenant_id: uuid.UUID, reads: list[TagReadCreate]) -> int:
+    async def insert_batch(
+        self, tenant_id: uuid.UUID, reads: list[TagReadCreate]
+    ) -> list[TagReadResponse]:
         rows = [
             TagReadModel(
                 id=uuid.uuid4(),
@@ -82,7 +84,7 @@ class TimescaleTagReadRepository:
         ]
         self._session.add_all(rows)
         await self._session.flush()
-        return len(rows)
+        return [TagReadResponse.model_validate(row) for row in rows]
 
     async def query(
         self,

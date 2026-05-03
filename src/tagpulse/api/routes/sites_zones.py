@@ -10,10 +10,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from tagpulse.api.dependencies import get_site_zone_service
+from tagpulse.api.dependencies import get_asset_service, get_site_zone_service
+from tagpulse.api.services.asset_service import AssetService
 from tagpulse.api.services.sites_zones_service import SiteZoneService
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.schemas import (
+    AssetInZoneSummary,
     SiteCreate,
     SiteResponse,
     SiteUpdate,
@@ -153,3 +155,21 @@ async def delete_zone(
     deleted = await service.delete_zone(user.tenant_id, user.user_id, zone_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Zone not found")
+
+
+@router.get("/zones/{zone_id}/assets", response_model=list[AssetInZoneSummary])
+async def list_assets_in_zone(
+    zone_id: UUID,
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    zone_service: SiteZoneService = Depends(get_site_zone_service),
+    asset_service: AssetService = Depends(get_asset_service),
+) -> list[AssetInZoneSummary]:
+    """Assets currently in the zone (latest tag-read reader matches the zone)."""
+    zone = await zone_service.get_zone(user.tenant_id, zone_id)
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    return await asset_service.get_assets_in_zone(
+        user.tenant_id, zone_id, limit=limit, offset=offset
+    )

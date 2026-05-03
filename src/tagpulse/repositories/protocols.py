@@ -23,7 +23,9 @@ class TagReadRepository(Protocol):
 
     async def insert(self, tenant_id: UUID, read: TagReadCreate) -> TagReadResponse: ...
 
-    async def insert_batch(self, tenant_id: UUID, reads: list[TagReadCreate]) -> int: ...
+    async def insert_batch(
+        self, tenant_id: UUID, reads: list[TagReadCreate]
+    ) -> list[TagReadResponse]: ...
 
     async def query(
         self,

@@ -5,6 +5,7 @@ Permissions per docs/design/assets-and-zones.md §4:
 - editor+: POST/PATCH/DELETE assets + bindings
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,7 +15,9 @@ from tagpulse.api.services.asset_service import AssetNotFoundError, AssetService
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.schemas import (
     AssetCreate,
+    AssetCurrentLocation,
     AssetLoadRequest,
+    AssetPathPoint,
     AssetResponse,
     AssetTagBindingCreate,
     AssetTagBindingResponse,
@@ -248,4 +251,45 @@ async def list_external_positions(
         raise HTTPException(status_code=404, detail="Asset not found")
     return await service.list_external_positions(
         user.tenant_id, asset_id, limit=limit, offset=offset
+    )
+
+
+@router.get(
+    "/{asset_id}/current-location",
+    response_model=AssetCurrentLocation,
+)
+async def get_asset_current_location(
+    asset_id: UUID,
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    service: AssetService = Depends(get_asset_service),
+) -> AssetCurrentLocation:
+    """Latest known position for the asset, sourced from RFID or external feeds."""
+    asset = await service.get_asset(user.tenant_id, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    location = await service.get_current_location(user.tenant_id, asset_id)
+    if location is None:
+        raise HTTPException(status_code=404, detail="No location recorded yet")
+    return location
+
+
+@router.get("/{asset_id}/path", response_model=list[AssetPathPoint])
+async def get_asset_path(
+    asset_id: UUID,
+    since: datetime = Query(...),
+    until: datetime = Query(...),
+    limit: int = Query(default=1000, ge=1, le=10000),
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    service: AssetService = Depends(get_asset_service),
+) -> list[AssetPathPoint]:
+    """Merged RFID + external-fix timeline for the asset, ascending by time."""
+    asset = await service.get_asset(user.tenant_id, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if until <= since:
+        raise HTTPException(
+            status_code=400, detail="`until` must be after `since`"
+        )
+    return await service.get_asset_path(
+        user.tenant_id, asset_id, since=since, until=until, limit=limit
     )

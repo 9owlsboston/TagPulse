@@ -212,20 +212,20 @@
 - [done] **`external_locations` hypertable** (migration 019) — `(tenant_id, asset_id, latitude, longitude, recorded_at, source, accuracy_meters?, speed_kph?, heading_deg?, metadata)`; RLS by `tenant_id`; hypertable on `recorded_at`. Per [mobile-carriers-and-manifests.md §10 Q5](design/mobile-carriers-and-manifests.md). (Compression/retention parity with `device_telemetry` deferred to ops policy work in Sprint 17.)
 - [done] **`POST /assets/{asset_id}/external-position`** endpoint (editor+) — generic ingestion for non-RFID carriers; emits `Topic.EXTERNAL_LOCATION_RECORDED`; OTel counter `tagpulse_external_locations_recorded_total`. Tenant rate-limit deferred to backlog (alongside global API rate-limit middleware). TMS-specific adapters land in backlog.
 - [done] `POST /assets/{id}/load`, `POST /assets/{id}/unload`, `GET /assets/{id}/manifest` for carrier semantics — idempotent; emits `Topic.ASSET_LOADED` / `Topic.ASSET_UNLOADED`; manifest built via recursive CTE on `assets.parent_asset_id`; OTel counter `tagpulse_asset_load_operations_total`.
-- [planned] `asset_current_location` SQL view — latest tag read per active binding, **UNION** with the latest `external_locations` row; new `latest_position_source` column lets the UI render "via Samsara" vs "via Reader-12"
+- [done] `asset_current_location` SQL view (migration 024) — latest tag read per active binding, **UNION** with the latest `external_locations` row; `latest_position_source` column lets the UI render "via Samsara" vs "via Reader-12". Powers `GET /assets/{id}/current-location`.
 - [done] `sites` table — physical locations (name, address, default_timezone) — **shared substrate, used by both modes**
 - [done] `zones` table — reader-bound (polygon nullable, deferred to Sprint 17) — **shared substrate**
 - [done] `/sites` and `/zones` CRUD APIs
 - [done] Ingestion emits `subject.zone_changed` event (with `subject_kind='asset'`) when reader transition crosses zone boundary — process-local last-zone cache; multi-worker durability deferred to Sprint 17
-- [deferred → Phase B.3] Batch ingest enrichment (`IngestionService.ingest_batch`) — current Phase B.2 hot-path enriches single `ingest()` only; batch path inserts via `repo.insert_batch` without per-read binding/zone resolution. B.3 will either (a) loop per-read with cache reuse, or (b) add a post-insert batch enrichment query keyed on `(tenant_id, identity values)`. Decision pending performance profile under simulator load.
-- [deferred → Phase B.3] `asset_current_location` SQL view (RFID-only first cut) + `GET /assets/{id}/path` endpoint — landed after Phase C so the view can `UNION` with `external_locations` per [mobile-carriers-and-manifests.md §10 Q5](design/mobile-carriers-and-manifests.md) in a single migration rather than rewriting twice.
-- [planned] Repository: `get_assets_in_zone()`, `get_asset_path()`
-- [planned] Simulator: bind tag IDs to named assets; cross zones over time
-- [planned] **UI:** Assets page — list, search by external_ref/tag, detail with current location/zone/binding history
-- [planned] **UI:** Sites & Zones page (admin/editor) — site list + zone editor with reader picker
-- [planned] **UI:** Asset detail — recent path timeline (reader hops), with **merged-source timeline badged by source** (RFID-derived vs external/TMS-derived) per [mobile-carriers-and-manifests.md §10 Q5](design/mobile-carriers-and-manifests.md)
+- [done] **Phase B.3** Batch ingest enrichment (`IngestionService.ingest_batch`) — batch path now mirrors `ingest()`: per-read binding/zone resolution, `subject.zone_changed` events, inventory enrichment, device last-seen + connection updates. `insert_batch` returns rows so events can carry `tag_read_id`.
+- [done] **Phase B.3** `asset_current_location` SQL view + `GET /assets/{id}/current-location` and `GET /assets/{id}/path` endpoints — single migration that unions RFID and `external_locations` per [mobile-carriers-and-manifests.md §10 Q5](design/mobile-carriers-and-manifests.md).
+- [done] Repository: `get_assets_in_zone()`, `get_asset_path()`, `get_current_location()` (`TimescaleAssetLocationRepository`); `GET /zones/{zone_id}/assets` route.
+- [done] Simulator: `scripts/simulate_assets.py` — binds tag IDs to named assets; randomises reader hops to drive zone transitions.
+- [done] **UI:** Assets page — list, search by external_ref/tag, detail with current location/zone/binding history.
+- [done] **UI:** Sites & Zones page (admin/editor) — site list + zone editor with reader picker; new "Occupants" drawer per zone backed by `useAssetsInZone`.
+- [done] **UI:** Asset detail — server-merged path via `useAssetPath`, current-location card via `useAssetCurrentLocation`, badged by source (RFID vs external/TMS).
+- [done] **UI:** Sidebar — Assets + Sites entries with role guards (visible when `tenants.tracking_modes` includes `asset`).
 - [planned] **UI:** Device detail — "Covers zones: …" panel
-- [planned] **UI:** Sidebar — Assets + Sites entries with role guards (visible when `tenants.tracking_modes` includes `asset`)
 
 ## Sprint 15b — Inventory Tracking (sibling to Sprint 15)
 

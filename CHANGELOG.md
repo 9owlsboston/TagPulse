@@ -5,6 +5,18 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Sprint 15 — Phase B.3 + asset-location queries**:
+  - `asset_current_location` SQL view (Alembic `024_asset_current_location.py`) — UNION of latest RFID tag-read per active binding and latest `external_locations` row, exposing `latest_position_source` so the UI can badge "via Reader-12" vs "via Samsara". RLS inherited from underlying tables.
+  - `TimescaleAssetLocationRepository` — `get_current_location`, `list_current_locations`, `get_asset_path` (server-side merged RFID + external timeline), `get_assets_in_zone` (JOIN against `zones.fixed_reader_ids`).
+  - New API routes (viewer+):
+    - `GET /assets/{asset_id}/current-location` — single latest fix.
+    - `GET /assets/{asset_id}/path?since=…&until=…&limit=…` — chronological merged path.
+    - `GET /zones/{zone_id}/assets` — current zone occupants.
+  - New Pydantic schemas `AssetCurrentLocation`, `AssetPathPoint`, `AssetInZoneSummary`.
+  - `IngestionService.ingest_batch` now mirrors `ingest()`: per-read asset/zone enrichment, inventory enrichment, device last-seen + connection updates, `subject.zone_changed` events with `tag_read_id`. `TagReadRepository.insert_batch` returns the inserted `TagReadResponse` rows so the service can correlate events back to persisted IDs.
+  - `scripts/simulate_assets.py` — registers named pallets, binds synthetic EPCs, drives random reader hops to exercise the enrichment pipeline end-to-end.
+  - 7 new unit tests (`tests/unit/test_asset_location.py`, `test_batch_ingest_enriches_each_read`). **295 passing total.**
+
 - **Sprint 13b — Multi-tier Foundations**:
   - `tagpulse.core.context` — `db_session_var` / `current_tenant_var` ContextVars + async `tenant_context()` helper for background jobs and scripts. `get_session()` now binds the contextvar so request and non-request paths share a single seam.
   - `tagpulse.core.pool_registry` — `PoolRegistry` + `PoolEntry`, built lazily from `config/database.yaml` (falls back to `settings.database_url` when no file is present). Strict lookup; `shared_default` is mandatory. New `config/database.yaml.example` documents the format.
