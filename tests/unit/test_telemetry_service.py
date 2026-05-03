@@ -16,6 +16,7 @@ from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.models.schemas import (
     LocationPayload,
     MetricDefinition,
+    TelemetryQuarantineResponse,
     TelemetryReading,
     TelemetryResponse,
 )
@@ -69,6 +70,11 @@ class FakeRepo:
         self.quarantined.append((tenant_id, device_id, reading, reason))
 
     async def query(self, *args: Any, **kwargs: Any) -> list[TelemetryResponse]:
+        return []
+
+    async def list_quarantine(
+        self, *args: Any, **kwargs: Any
+    ) -> list[TelemetryQuarantineResponse]:
         return []
 
 
@@ -203,3 +209,77 @@ async def test_location_writes_two_rows() -> None:
         assert row[3] is not None
         assert row[3]["source"] == "gps"
         assert row[3]["accuracy_m"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_query_delegates_to_repo() -> None:
+    """TelemetryService.query forwards filters to the repo."""
+
+    class _CapturingRepo(FakeRepo):
+        last_kwargs: dict[str, Any] = {}
+
+        async def query(self, *args: Any, **kwargs: Any) -> list[TelemetryResponse]:
+            self.last_kwargs = kwargs
+            return []
+
+    repo = _CapturingRepo()
+    svc = TelemetryService(
+        repo=repo,  # type: ignore[arg-type]
+        event_bus=FakeEventBus(),
+        model_service=FakeModelService([]),  # type: ignore[arg-type]
+    )
+    tenant = uuid4()
+    device = uuid4()
+    start = datetime.now(UTC) - timedelta(hours=1)
+    end = datetime.now(UTC)
+    await svc.query(
+        tenant,
+        device_id=device,
+        metric_name="temperature",
+        start=start,
+        end=end,
+        limit=50,
+    )
+    assert repo.last_kwargs == {
+        "device_id": device,
+        "metric_name": "temperature",
+        "start": start,
+        "end": end,
+        "limit": 50,
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_quarantine_delegates_to_repo() -> None:
+    """TelemetryService.list_quarantine forwards filters to the repo."""
+
+    class _CapturingRepo(FakeRepo):
+        last_kwargs: dict[str, Any] = {}
+
+        async def list_quarantine(
+            self, *args: Any, **kwargs: Any
+        ) -> list[TelemetryQuarantineResponse]:
+            self.last_kwargs = kwargs
+            return []
+
+    repo = _CapturingRepo()
+    svc = TelemetryService(
+        repo=repo,  # type: ignore[arg-type]
+        event_bus=FakeEventBus(),
+        model_service=FakeModelService([]),  # type: ignore[arg-type]
+    )
+    tenant = uuid4()
+    device = uuid4()
+    await svc.list_quarantine(
+        tenant,
+        device_id=device,
+        reason="out_of_range",
+        limit=25,
+        offset=10,
+    )
+    assert repo.last_kwargs == {
+        "device_id": device,
+        "reason": "out_of_range",
+        "limit": 25,
+        "offset": 10,
+    }

@@ -24,6 +24,14 @@ async def query_tag_reads(
     tag_id: str | None = Query(default=None),
     start: datetime | None = Query(default=None),
     end: datetime | None = Query(default=None),
+    has_location: bool | None = Query(
+        default=None,
+        description="If true, only return reads with a location; if false, only without.",
+    ),
+    epc_scheme: str | None = Query(
+        default=None,
+        description="Filter by decoded EPC scheme (e.g. 'sgtin-96', 'sscc-96', 'raw').",
+    ),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     tenant: Tenant = Depends(get_current_tenant),
@@ -36,6 +44,8 @@ async def query_tag_reads(
         tag_id=tag_id,
         start=start,
         end=end,
+        has_location=has_location,
+        epc_scheme=epc_scheme,
         limit=limit,
         offset=offset,
     )

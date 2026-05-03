@@ -19,6 +19,11 @@ All notable changes to TagPulse will be documented in this file.
   - Tests: `test_epc_decoder.py`, `test_tag_data_cap.py`, `test_telemetry_service.py`; updated `test_schemas.py` for the new optional `tag_id` contract. (194 unit tests passing.)
   - UI work for Sprint 14 lives in the `TagPulse-UI` repo and is tracked separately.
 - `make export-openapi` target writes the FastAPI OpenAPI spec to `openapi.json`. Committed alongside backend changes so the `TagPulse-UI` client generator can regenerate against a known-good spec without booting a backend container.
+- **Sprint 14 read endpoints** (unblocks UI work in `TagPulse-UI`):
+  - `GET /telemetry` — query persisted readings filtered by `device_id`, `metric_name`, `start`, `end`, `limit`.
+  - `GET /telemetry/quarantine` — list quarantined rows filtered by `device_id`, `reason`, `limit`, `offset`.
+  - `GET /tag-reads` accepts new `has_location` (bool) and `epc_scheme` (str) query parameters.
+  - New schema `TelemetryQuarantineResponse`. `TelemetryRepository` protocol gains `list_quarantine`. `openapi.json` regenerated.
 
 ### Changed
 - Open-questions sweep across 17 design docs. Stale items (overtaken by later design work) closed; recommended items ratified as **Decisions**; ~10 genuinely open items kept under **Still open** subsections for follow-up. LLM strategy questions explicitly deferred to Phase 1 kickoff.

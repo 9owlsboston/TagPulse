@@ -34,6 +34,8 @@ class QueryService:
         tag_id: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        has_location: bool | None = None,
+        epc_scheme: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[TagReadResponse]:
@@ -44,6 +46,8 @@ class QueryService:
             tag_id=tag_id,
             start=start,
             end=end,
+            has_location=has_location,
+            epc_scheme=epc_scheme,
             limit=limit,
             offset=offset,
         )

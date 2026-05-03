@@ -27,6 +27,7 @@ from tagpulse.models.schemas import (
     DeviceEventPayload,
     LocationPayload,
     TelemetryBatch,
+    TelemetryQuarantineResponse,
     TelemetryReading,
     TelemetryResponse,
 )
@@ -238,6 +239,44 @@ class TelemetryService:
             {"tenant_id": str(tenant_id), "metric_name": reading.metric_name},
         )
         return "accepted", response
+
+    async def query(
+        self,
+        tenant_id: UUID,
+        *,
+        device_id: UUID | None = None,
+        metric_name: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 100,
+    ) -> list[TelemetryResponse]:
+        """Query telemetry readings with filters."""
+        return await self._repo.query(
+            tenant_id,
+            device_id=device_id,
+            metric_name=metric_name,
+            start=start,
+            end=end,
+            limit=limit,
+        )
+
+    async def list_quarantine(
+        self,
+        tenant_id: UUID,
+        *,
+        device_id: UUID | None = None,
+        reason: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[TelemetryQuarantineResponse]:
+        """List quarantined telemetry rows for review."""
+        return await self._repo.list_quarantine(
+            tenant_id,
+            device_id=device_id,
+            reason=reason,
+            limit=limit,
+            offset=offset,
+        )
 
     async def _quarantine(
         self,

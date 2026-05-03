@@ -50,6 +50,8 @@ class FakeTagReadRepo:
         tag_id: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        has_location: bool | None = None,
+        epc_scheme: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[TagReadResponse]:
@@ -62,6 +64,12 @@ class FakeTagReadRepo:
             results = [r for r in results if r.timestamp >= start]
         if end is not None:
             results = [r for r in results if r.timestamp <= end]
+        if has_location is True:
+            results = [r for r in results if r.latitude is not None]
+        elif has_location is False:
+            results = [r for r in results if r.latitude is None]
+        if epc_scheme is not None:
+            results = [r for r in results if r.epc_scheme == epc_scheme]
         results.sort(key=lambda r: r.timestamp, reverse=True)
         return results[offset : offset + limit]
 

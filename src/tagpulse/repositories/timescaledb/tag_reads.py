@@ -92,6 +92,8 @@ class TimescaleTagReadRepository:
         tag_id: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        has_location: bool | None = None,
+        epc_scheme: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[TagReadResponse]:
@@ -106,6 +108,12 @@ class TimescaleTagReadRepository:
             stmt = stmt.where(TagReadModel.timestamp >= start)
         if end is not None:
             stmt = stmt.where(TagReadModel.timestamp <= end)
+        if has_location is True:
+            stmt = stmt.where(TagReadModel.latitude.isnot(None))
+        elif has_location is False:
+            stmt = stmt.where(TagReadModel.latitude.is_(None))
+        if epc_scheme is not None:
+            stmt = stmt.where(TagReadModel.epc_scheme == epc_scheme)
         stmt = stmt.limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [TagReadResponse.model_validate(row) for row in result.scalars()]

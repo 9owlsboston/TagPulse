@@ -1816,6 +1816,61 @@
         "title": "TelemetryModelResponse",
         "type": "object"
       },
+      "TelemetryQuarantineResponse": {
+        "description": "A quarantined telemetry reading awaiting model fix-up or review.",
+        "properties": {
+          "device_id": {
+            "format": "uuid",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "metric_name": {
+            "title": "Metric Name",
+            "type": "string"
+          },
+          "metric_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metric Value"
+          },
+          "raw_payload": {
+            "additionalProperties": true,
+            "title": "Raw Payload",
+            "type": "object"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "device_id",
+          "received_at",
+          "metric_name",
+          "metric_value",
+          "raw_payload",
+          "reason"
+        ],
+        "title": "TelemetryQuarantineResponse",
+        "type": "object"
+      },
       "TelemetryReading": {
         "description": "A single telemetry reading inside a batched payload.",
         "properties": {
@@ -1865,6 +1920,67 @@
           "metric_value"
         ],
         "title": "TelemetryReading",
+        "type": "object"
+      },
+      "TelemetryResponse": {
+        "description": "Persisted telemetry row.",
+        "properties": {
+          "device_id": {
+            "format": "uuid",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "metric_name": {
+            "title": "Metric Name",
+            "type": "string"
+          },
+          "metric_value": {
+            "title": "Metric Value",
+            "type": "number"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "id",
+          "device_id",
+          "timestamp",
+          "metric_name",
+          "metric_value",
+          "unit"
+        ],
+        "title": "TelemetryResponse",
         "type": "object"
       },
       "UniqueTagsPerWindow": {
@@ -4291,6 +4407,42 @@
             }
           },
           {
+            "description": "If true, only return reads with a location; if false, only without.",
+            "in": "query",
+            "name": "has_location",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "If true, only return reads with a location; if false, only without.",
+              "title": "Has Location"
+            }
+          },
+          {
+            "description": "Filter by decoded EPC scheme (e.g. 'sgtin-96', 'sscc-96', 'raw').",
+            "in": "query",
+            "name": "epc_scheme",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by decoded EPC scheme (e.g. 'sgtin-96', 'sscc-96', 'raw').",
+              "title": "Epc Scheme"
+            }
+          },
+          {
             "in": "query",
             "name": "limit",
             "required": false,
@@ -4667,6 +4819,129 @@
       }
     },
     "/telemetry": {
+      "get": {
+        "description": "Query persisted telemetry readings with filters.",
+        "operationId": "list_telemetry_telemetry_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "device_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Device Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "metric_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Metric Name"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TelemetryResponse"
+                  },
+                  "title": "Response List Telemetry Telemetry Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List Telemetry",
+        "tags": [
+          "telemetry"
+        ]
+      },
       "post": {
         "description": "Ingest a batch of telemetry readings via HTTP push.",
         "operationId": "ingest_telemetry_telemetry_post",
@@ -4895,6 +5170,110 @@
         "summary": "Delete Telemetry Model",
         "tags": [
           "telemetry-models"
+        ]
+      }
+    },
+    "/telemetry/quarantine": {
+      "get": {
+        "description": "List quarantined telemetry readings for the current tenant.",
+        "operationId": "list_telemetry_quarantine_telemetry_quarantine_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "device_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Device Id"
+            }
+          },
+          {
+            "description": "Filter by quarantine reason (unknown_metric, out_of_range, unit_mismatch, stale_timestamp).",
+            "in": "query",
+            "name": "reason",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by quarantine reason (unknown_metric, out_of_range, unit_mismatch, stale_timestamp).",
+              "title": "Reason"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TelemetryQuarantineResponse"
+                  },
+                  "title": "Response List Telemetry Quarantine Telemetry Quarantine Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List Telemetry Quarantine",
+        "tags": [
+          "telemetry"
         ]
       }
     },

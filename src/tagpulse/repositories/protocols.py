@@ -11,6 +11,7 @@ from tagpulse.models.schemas import (
     ReadsPerHour,
     TagReadCreate,
     TagReadResponse,
+    TelemetryQuarantineResponse,
     TelemetryReading,
     TelemetryResponse,
     UniqueTagsPerWindow,
@@ -32,6 +33,8 @@ class TagReadRepository(Protocol):
         tag_id: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        has_location: bool | None = None,
+        epc_scheme: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[TagReadResponse]: ...
@@ -143,3 +146,13 @@ class TelemetryRepository(Protocol):
         end: datetime | None = None,
         limit: int = 100,
     ) -> list[TelemetryResponse]: ...
+
+    async def list_quarantine(
+        self,
+        tenant_id: UUID,
+        *,
+        device_id: UUID | None = None,
+        reason: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[TelemetryQuarantineResponse]: ...

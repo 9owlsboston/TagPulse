@@ -14,7 +14,11 @@ from tagpulse.models.database import (
     DeviceTelemetryModel,
     TelemetryQuarantineModel,
 )
-from tagpulse.models.schemas import TelemetryReading, TelemetryResponse
+from tagpulse.models.schemas import (
+    TelemetryQuarantineResponse,
+    TelemetryReading,
+    TelemetryResponse,
+)
 
 
 class TimescaleTelemetryRepository:
@@ -110,4 +114,29 @@ class TimescaleTelemetryRepository:
                 metadata=r.metadata_,
             )
             for r in result.scalars()
+        ]
+
+    async def list_quarantine(
+        self,
+        tenant_id: UUID,
+        *,
+        device_id: UUID | None = None,
+        reason: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[TelemetryQuarantineResponse]:
+        stmt = (
+            select(TelemetryQuarantineModel)
+            .where(TelemetryQuarantineModel.tenant_id == tenant_id)
+            .order_by(TelemetryQuarantineModel.received_at.desc())
+        )
+        if device_id is not None:
+            stmt = stmt.where(TelemetryQuarantineModel.device_id == device_id)
+        if reason is not None:
+            stmt = stmt.where(TelemetryQuarantineModel.reason == reason)
+        stmt = stmt.limit(limit).offset(offset)
+        result = await self._session.execute(stmt)
+        return [
+            TelemetryQuarantineResponse.model_validate(row)
+            for row in result.scalars()
         ]

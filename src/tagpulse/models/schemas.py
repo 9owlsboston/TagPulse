@@ -233,6 +233,20 @@ class TelemetryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TelemetryQuarantineResponse(BaseModel):
+    """A quarantined telemetry reading awaiting model fix-up or review."""
+
+    id: UUID
+    device_id: UUID
+    received_at: datetime
+    metric_name: str
+    metric_value: float | None
+    raw_payload: dict[str, Any]
+    reason: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class LocationPayload(BaseModel):
     """Standalone location update on `…/location` topic."""
 
