@@ -47,7 +47,7 @@ rfid_latest AS (
         tr.latitude,
         tr.longitude,
         tr.location_accuracy_m AS accuracy_meters,
-        tr.reader_id     AS device_id,
+        tr.device_id     AS device_id,
         'rfid'::text     AS source
     FROM active_bindings b
     JOIN tag_reads tr
