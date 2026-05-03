@@ -43,6 +43,53 @@ class UsageMeter:
         key = (tenant_id, dimension, unit)
         self._buffer[key] += count
 
+    async def record_snapshot(
+        self,
+        tenant_id: UUID,
+        dimension: str,
+        unit: str,
+        value: int,
+    ) -> None:
+        """Record a gauge-style snapshot — replaces today's value, doesn't sum.
+
+        Used by periodic workers (e.g. ``stock_items_active``) where the
+        recorded number reflects current state, not a delta. Writes through
+        immediately rather than buffering, since snapshots are infrequent
+        (typically once/day) and must not be merged with the additive buffer.
+        """
+        try:
+            async with self._session_factory() as session:
+                today = datetime(
+                    date.today().year,
+                    date.today().month,
+                    date.today().day,
+                    tzinfo=UTC,
+                )
+                stmt = text("""
+                    INSERT INTO tenant_usage_detail
+                        (tenant_id, usage_date, dimension, quantity, unit)
+                    VALUES (:tid, :dt, :dim, :qty, :unit)
+                    ON CONFLICT (tenant_id, usage_date, dimension)
+                    DO UPDATE SET quantity = :qty, unit = :unit
+                """)
+                await session.execute(
+                    stmt,
+                    {
+                        "tid": tenant_id,
+                        "dt": today,
+                        "dim": dimension,
+                        "qty": value,
+                        "unit": unit,
+                    },
+                )
+                await session.commit()
+        except Exception:  # pragma: no cover - defensive
+            logger.exception(
+                "UsageMeter.record_snapshot failed (tenant=%s dim=%s)",
+                tenant_id,
+                dimension,
+            )
+
     async def check_quota(
         self, tenant_id: UUID, dimension: str, session: AsyncSession
     ) -> QuotaResult:

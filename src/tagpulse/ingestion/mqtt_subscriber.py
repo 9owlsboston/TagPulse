@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tagpulse.api.services.device_service import DeviceService
 from tagpulse.api.services.telemetry_model_service import TelemetryModelService
 from tagpulse.api.services.telemetry_service import TelemetryService
+from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.protocol import EventBus
 from tagpulse.ingestion.service import IngestionService
 from tagpulse.models.schemas import (
@@ -59,6 +60,7 @@ class MqttSubscriber:
         event_bus: EventBus,
         username: str | None = None,
         password: str | None = None,
+        usage_meter: UsageMeter | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -66,6 +68,7 @@ class MqttSubscriber:
         self._event_bus = event_bus
         self._username = username
         self._password = password
+        self._usage_meter = usage_meter
 
     async def run(self) -> None:
         """Connect to broker, subscribe, and process messages until cancelled."""
@@ -319,4 +322,5 @@ class MqttSubscriber:
             movement_repo=TimescaleStockMovementRepository(session),
             tag_data_mapping_repo=TimescaleTagDataMappingRepository(session),
             tenant_repo=TimescaleTenantRepository(session),
+            usage_meter=self._usage_meter,
         )

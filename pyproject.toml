@@ -26,6 +26,7 @@ dependencies = [
     "opentelemetry-instrumentation-logging>=0.49b0",
     "prometheus-client>=0.21",
     "PyJWT>=2.8",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

@@ -16,6 +16,7 @@ from tagpulse.core.otel_metrics import (
     subject_zone_changed_counter,
     tag_reads_without_asset_counter,
 )
+from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.ingestion.tag_data import cap_tag_data
 from tagpulse.models.schemas import (
@@ -114,6 +115,7 @@ class IngestionService:
         movement_repo: TimescaleStockMovementRepository | None = None,
         tag_data_mapping_repo: TimescaleTagDataMappingRepository | None = None,
         tenant_repo: TimescaleTenantRepository | None = None,
+        usage_meter: UsageMeter | None = None,
     ) -> None:
         self._repo = repo
         self._event_bus = event_bus
@@ -127,6 +129,7 @@ class IngestionService:
         self._movement_repo = movement_repo
         self._tag_data_mapping_repo = tag_data_mapping_repo
         self._tenant_repo = tenant_repo
+        self._usage_meter = usage_meter
 
     async def ingest(self, tenant_id: uuid.UUID, read: TagReadCreate) -> TagReadResponse:
         """Validate, persist, and publish a single tag read."""
@@ -536,6 +539,10 @@ class IngestionService:
             stock_movements_recorded_counter.add(
                 1, {"tenant_id": str(tenant_id)}
             )
+            if self._usage_meter is not None:
+                self._usage_meter.record(
+                    tenant_id, "inventory_movements", "events"
+                )
 
         await self._event_bus.publish(
             Topic.SUBJECT_ZONE_CHANGED,

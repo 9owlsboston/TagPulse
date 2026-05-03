@@ -13,6 +13,7 @@ from tagpulse.api.services.sites_zones_service import SiteZoneService
 from tagpulse.api.services.telemetry_model_service import TelemetryModelService
 from tagpulse.api.services.telemetry_service import TelemetryService
 from tagpulse.core.audit import AuditLogger
+from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.protocol import EventBus
 from tagpulse.ingestion.service import IngestionService
 from tagpulse.repositories.protocols import (
@@ -43,6 +44,15 @@ async def get_device_repo(
 def get_event_bus(request: Request) -> EventBus:
     """Retrieve the EventBus from application state."""
     return request.app.state.event_bus  # type: ignore[no-any-return]
+
+
+def get_usage_meter_optional(request: Request) -> "UsageMeter | None":
+    """Retrieve the UsageMeter from application state if started.
+
+    Returns ``None`` outside the app lifespan (e.g. some tests) so the
+    ingestion service falls back to OTel-only counting.
+    """
+    return getattr(request.app.state, "usage_meter", None)
 
 
 async def get_device_service(
@@ -98,6 +108,7 @@ async def get_ingestion_service(
     event_bus: EventBus = Depends(get_event_bus),
     telemetry_service: TelemetryService = Depends(get_telemetry_service),
     session: AsyncSession = Depends(get_session),
+    usage_meter: UsageMeter | None = Depends(get_usage_meter_optional),
 ) -> AsyncGenerator[IngestionService, None]:
     """Provide an IngestionService wired with repo, event bus, and telemetry mirror."""
     from tagpulse.repositories.timescaledb.assets import (
@@ -130,6 +141,7 @@ async def get_ingestion_service(
         movement_repo=TimescaleStockMovementRepository(session),
         tag_data_mapping_repo=TimescaleTagDataMappingRepository(session),
         tenant_repo=TimescaleTenantRepository(session),
+        usage_meter=usage_meter,
     )
 
 

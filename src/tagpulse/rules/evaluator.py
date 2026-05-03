@@ -91,6 +91,88 @@ class RuleEvaluator:
                     )
             await session.commit()
 
+    async def on_subject_zone_changed(self, event: Event) -> None:
+        """Evaluate ``stock.unexpected_in_zone`` rules on stock-item zone moves.
+
+        Subscribed to ``Topic.SUBJECT_ZONE_CHANGED``. Only fires for
+        ``subject_kind == 'stock_item'`` (asset zone-rules are not part of
+        Phase E). Matches rules either by exact ``product_id`` or by the
+        product-agnostic form (``product_id`` is null in the config).
+        """
+        payload = event.payload
+        if payload.get("subject_kind") != "stock_item":
+            return
+        tenant_id_str = payload.get("tenant_id")
+        to_zone_id = payload.get("to_zone_id")
+        if not tenant_id_str or to_zone_id is None:
+            # No alert when transitioning to "unknown zone" (None) — that's
+            # a separate condition not modeled in Phase E.
+            return
+        tenant_id = UUID(tenant_id_str)
+        product_id_str = payload.get("product_id")
+        subject_id_str = payload.get("subject_id")
+
+        async with self._session_factory() as session:
+            service = RulesService(session)
+            rules = await service.get_active_rules_by_condition_type(
+                tenant_id, "stock.unexpected_in_zone"
+            )
+            for rule in rules:
+                self._meter.record(tenant_id, "rule_evaluations", "evaluations")
+                config_product = rule.condition_config.get("product_id")
+                if config_product and config_product != product_id_str:
+                    continue
+                allowed = set(rule.condition_config.get("allowed_zone_ids") or [])
+                if not allowed:
+                    continue
+                if to_zone_id in allowed:
+                    continue
+                message = (
+                    f"Rule '{rule.name}' triggered: stock_item "
+                    f"{subject_id_str} entered zone {to_zone_id} "
+                    "(not in allowed list)"
+                )
+                alert = await service.create_alert(
+                    tenant_id,
+                    rule.id,
+                    device_id=None,
+                    severity="warning",
+                    message=message,
+                    context={
+                        "rule_name": rule.name,
+                        "condition_type": rule.condition_type,
+                        "condition_config": rule.condition_config,
+                        "event_payload": payload,
+                    },
+                )
+                self._meter.record(tenant_id, "alerts_fired", "events")
+                logger.info(
+                    "Stock zone alert fired: alert=%s rule=%s stock_item=%s zone=%s",
+                    alert.id,
+                    rule.id,
+                    subject_id_str,
+                    to_zone_id,
+                )
+                await self._event_bus.publish(
+                    Topic.ALERT_TRIGGERED,
+                    Event(
+                        id=alert.id,
+                        topic=Topic.ALERT_TRIGGERED,
+                        timestamp=alert.triggered_at,
+                        payload={
+                            "alert_id": str(alert.id),
+                            "tenant_id": str(tenant_id),
+                            "rule_id": str(rule.id),
+                            "device_id": None,
+                            "severity": alert.severity,
+                            "message": alert.message,
+                            "action_type": rule.action_type,
+                            "action_config": rule.action_config,
+                        },
+                    ),
+                )
+            await session.commit()
+
 
 def _evaluate_condition(
     condition_type: str,

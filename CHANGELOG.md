@@ -4,6 +4,23 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Added
+- **Sprint 15b — Phase E (rules / workers / imports / simulator / metering)**:
+  - **Rules engine — inventory conditions**: `RuleCreate` / `RuleUpdate` now accept `stock.below_threshold`, `stock.expiring_within`, `stock.unexpected_in_zone` in `condition_type`. Backed by new Pydantic models `StockBelowThresholdCondition`, `StockExpiringWithinCondition`, `StockUnexpectedInZoneCondition`.
+  - **Event-driven branch**: `RuleEvaluator.on_subject_zone_changed` now subscribes to `Topic.SUBJECT_ZONE_CHANGED` (in addition to `TAG_READ_CREATED`) and fires alerts for `stock.unexpected_in_zone` rules whenever a `stock_item` enters a zone outside its configured `allowed_zone_ids`. Rules can be scoped per-product or apply to all products in the tenant.
+  - **InventoryRuleWorker** (`src/tagpulse/workers/inventory_rule_worker.py`): periodic background scanner.
+    - Every 60 s: evaluates `stock.below_threshold` rules across all tenants by querying the `stock_levels` view (filtered by product/lot/zone) and firing an alert when the aggregate drops under the rule threshold.
+    - Once per UTC day: evaluates `stock.expiring_within` rules by scanning `lots` for rows whose `expires_at` is within `days` of now (optionally filtered by `product_id`); records a single alert per rule listing the matching lot IDs.
+    - Once per UTC day: writes the per-tenant `stock_items_active` metering snapshot.
+    - New `RulesService.get_active_rules_by_condition_type` and `get_active_rules_by_condition_types_all_tenants` helpers feed both the worker and the evaluator's zone-changed branch.
+  - **Bulk CSV import endpoints** (admin-only, mounted via new `inventory_imports` router): `POST /products/import`, `POST /lots/import`, `POST /stock-items/import`. UTF-8 / UTF-8-BOM tolerant, 5 MiB / 10 000 row caps, idempotent on duplicate keys (skipped not failed). The stock-items endpoint accepts `?preflight=true` to return cross-tenant `binding_value` collision counts (via `TimescaleAssetTagBindingRepository.count_other_tenant_collisions`) without writing any rows — wires the tag-collision admin tooling shipped in Phase B into the bulk-onboarding workflow per `docs/design/assets-and-zones.md` §11 Q3.
+  - **Inventory simulator** `scripts/simulate_inventory.py`: end-to-end exercise of the inventory branch — seeds a 3-product catalog with valid GTIN-14s, creates a near-expiry lot per product, registers a tenant-scope `tag_data_mapping` (`tag_data.lot → lot_code`), then streams SGTIN-96 EPCs that decode back to the catalog (so ingestion auto-creates `stock_items`, emits zone transitions, and feeds the worker scans).
+  - **Metering — new dimensions**:
+    - `inventory_movements` (counter, unit `events`): incremented by `IngestionService` whenever a `stock_movements` row is appended on a zone transition. Wired through a new optional `usage_meter` parameter on `IngestionService` + a new `get_usage_meter_optional` FastAPI dependency reading `app.state.usage_meter`. The MQTT subscriber now also receives the meter and forwards it into the per-message ingestion service.
+    - `stock_items_active` (gauge, unit `items`): recorded once per UTC day by the worker via the new `UsageMeter.record_snapshot(tenant_id, dimension, unit, value)` method, which uses `INSERT ... ON CONFLICT DO UPDATE SET quantity = :qty` (replace, not sum) so gauges don't accumulate across writes.
+  - `python-multipart` added to runtime dependencies (required by FastAPI's `UploadFile`).
+  - 9 new unit tests in `tests/unit/test_phase_e_inventory_rules.py` covering schema acceptance, evaluator zone-changed fire/skip/asset-ignore branches, worker below-threshold fire/skip, and CSV BOM/timestamp parsing helpers. **269 passing total.**
+
 ### Changed
 - **Sprint 15 — Phase A-C audit mitigations (asset-tracking hardening)**:
   - Migration `022_phase_abc_hardening.py`:

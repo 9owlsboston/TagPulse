@@ -525,6 +525,95 @@
         "title": "AssetUpdate",
         "type": "object"
       },
+      "Body_import_lots_lots_import_post": {
+        "properties": {
+          "upload": {
+            "description": "CSV: product_sku,lot_code,manufactured_at,expires_at",
+            "format": "binary",
+            "title": "Upload",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload"
+        ],
+        "title": "Body_import_lots_lots_import_post",
+        "type": "object"
+      },
+      "Body_import_products_products_import_post": {
+        "properties": {
+          "upload": {
+            "description": "CSV: sku,gtin,name,category,unit",
+            "format": "binary",
+            "title": "Upload",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload"
+        ],
+        "title": "Body_import_products_products_import_post",
+        "type": "object"
+      },
+      "Body_import_stock_items_stock_items_import_post": {
+        "properties": {
+          "upload": {
+            "description": "CSV: product_sku,lot_code,binding_value,binding_kind",
+            "format": "binary",
+            "title": "Upload",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload"
+        ],
+        "title": "Body_import_stock_items_stock_items_import_post",
+        "type": "object"
+      },
+      "CollisionPreflight": {
+        "properties": {
+          "collisions": {
+            "items": {
+              "$ref": "#/components/schemas/CollisionPreflightRow"
+            },
+            "title": "Collisions",
+            "type": "array"
+          },
+          "rows_total": {
+            "title": "Rows Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows_total",
+          "collisions"
+        ],
+        "title": "CollisionPreflight",
+        "type": "object"
+      },
+      "CollisionPreflightRow": {
+        "properties": {
+          "binding_value": {
+            "title": "Binding Value",
+            "type": "string"
+          },
+          "other_tenant_collisions": {
+            "title": "Other Tenant Collisions",
+            "type": "integer"
+          },
+          "row": {
+            "title": "Row",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row",
+          "binding_value",
+          "other_tenant_collisions"
+        ],
+        "title": "CollisionPreflightRow",
+        "type": "object"
+      },
       "DeadLetterResponse": {
         "description": "Dead-lettered event.",
         "properties": {
@@ -1215,6 +1304,37 @@
           }
         },
         "title": "Identity",
+        "type": "object"
+      },
+      "ImportSummary": {
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/RowError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "rows_created": {
+            "title": "Rows Created",
+            "type": "integer"
+          },
+          "rows_skipped": {
+            "title": "Rows Skipped",
+            "type": "integer"
+          },
+          "rows_total": {
+            "title": "Rows Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows_total",
+          "rows_created",
+          "rows_skipped",
+          "errors"
+        ],
+        "title": "ImportSummary",
         "type": "object"
       },
       "IntegrationCreate": {
@@ -2244,6 +2364,36 @@
         "title": "ReadsPerHour",
         "type": "object"
       },
+      "RowError": {
+        "description": "Per-row error description.",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "row": {
+            "title": "Row",
+            "type": "integer"
+          },
+          "sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sku"
+          }
+        },
+        "required": [
+          "row",
+          "error"
+        ],
+        "title": "RowError",
+        "type": "object"
+      },
       "RuleCreate": {
         "description": "Create a new rule.",
         "properties": {
@@ -2263,7 +2413,7 @@
             "type": "object"
           },
           "condition_type": {
-            "pattern": "^(threshold|absence|rate_change)$",
+            "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone)$",
             "title": "Condition Type",
             "type": "string"
           },
@@ -2444,7 +2594,7 @@
           "condition_type": {
             "anyOf": [
               {
-                "pattern": "^(threshold|absence|rate_change)$",
+                "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone)$",
                 "type": "string"
               },
               {
@@ -6832,6 +6982,55 @@
         ]
       }
     },
+    "/lots/import": {
+      "post": {
+        "operationId": "import_lots_lots_import_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_lots_lots_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Import Lots",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
     "/lots/{lot_id}": {
       "patch": {
         "operationId": "update_lot_lots__lot_id__patch",
@@ -7055,6 +7254,55 @@
           }
         ],
         "summary": "Create Product",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
+    "/products/import": {
+      "post": {
+        "operationId": "import_products_products_import_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_products_products_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Import Products",
         "tags": [
           "inventory"
         ]
@@ -8069,6 +8317,77 @@
           }
         ],
         "summary": "Create Stock Item",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
+    "/stock-items/import": {
+      "post": {
+        "operationId": "import_stock_items_stock_items_import_post",
+        "parameters": [
+          {
+            "description": "If true, return cross-tenant collision report and create nothing.",
+            "in": "query",
+            "name": "preflight",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "If true, return cross-tenant collision report and create nothing.",
+              "title": "Preflight",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_stock_items_stock_items_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ImportSummary"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CollisionPreflight"
+                    }
+                  ],
+                  "title": "Response Import Stock Items Stock Items Import Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Import Stock Items",
         "tags": [
           "inventory"
         ]

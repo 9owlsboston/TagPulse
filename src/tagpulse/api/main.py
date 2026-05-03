@@ -22,6 +22,7 @@ from tagpulse.api.routes.health import router as health_router
 from tagpulse.api.routes.ingestion import router as ingestion_router
 from tagpulse.api.routes.integrations import router as integrations_router
 from tagpulse.api.routes.inventory import router as inventory_router
+from tagpulse.api.routes.inventory_imports import router as inventory_imports_router
 from tagpulse.api.routes.metrics import router as metrics_router
 from tagpulse.api.routes.provisioning import router as provisioning_router
 from tagpulse.api.routes.query import router as query_router
@@ -42,6 +43,7 @@ from tagpulse.integrations.webhook import WebhookDispatcher
 from tagpulse.repositories.timescaledb.session import async_session_factory
 from tagpulse.rules.delivery import AlertDeliveryService
 from tagpulse.rules.evaluator import RuleEvaluator
+from tagpulse.workers.inventory_rule_worker import InventoryRuleWorker
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         usage_meter=usage_meter,
     )
     await event_bus.subscribe(Topic.TAG_READ_CREATED, evaluator.on_tag_read)
+    await event_bus.subscribe(
+        Topic.SUBJECT_ZONE_CHANGED, evaluator.on_subject_zone_changed
+    )
+
+    # Inventory rule worker — periodic scans for stock.below_threshold and
+    # stock.expiring_within rules + daily stock_items_active metering snapshot.
+    inventory_worker = InventoryRuleWorker(
+        session_factory=async_session_factory,
+        event_bus=event_bus,
+        usage_meter=usage_meter,
+    )
+    await inventory_worker.start()
+    app.state.inventory_worker = inventory_worker
 
     # Alert delivery — subscribes to alert triggered events
     alert_delivery = AlertDeliveryService()
@@ -106,7 +121,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     mqtt_task: asyncio.Task[None] | None = None
     if settings.mqtt_broker_host:
         mqtt_task = asyncio.create_task(
-            _run_mqtt_subscriber(event_bus)
+            _run_mqtt_subscriber(event_bus, usage_meter)
         )
         logger.info("MQTT subscriber task started")
 
@@ -117,6 +132,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         mqtt_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await mqtt_task
+    await inventory_worker.stop()
     await usage_meter.stop()
     for module in analytics_modules:
         await module.stop()
@@ -125,7 +141,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await event_bus.drain(timeout=10.0)
 
 
-async def _run_mqtt_subscriber(event_bus: AsyncEventBus) -> None:
+async def _run_mqtt_subscriber(
+    event_bus: AsyncEventBus, usage_meter: UsageMeter
+) -> None:
     """Run MQTT subscriber with per-message sessions to avoid stale ORM state."""
     subscriber = MqttSubscriber(
         host=settings.mqtt_broker_host,
@@ -134,6 +152,7 @@ async def _run_mqtt_subscriber(event_bus: AsyncEventBus) -> None:
         event_bus=event_bus,
         username=settings.mqtt_username,
         password=settings.mqtt_password,
+        usage_meter=usage_meter,
     )
     try:
         await subscriber.run()
@@ -218,3 +237,4 @@ app.include_router(provisioning_router)
 app.include_router(sites_zones_router)
 app.include_router(assets_router)
 app.include_router(inventory_router)
+app.include_router(inventory_imports_router)

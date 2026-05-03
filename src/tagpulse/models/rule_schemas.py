@@ -31,6 +31,38 @@ class RateChangeCondition(BaseModel):
     change_percent: float = Field(gt=0)
 
 
+# -- Inventory conditions (Sprint 15b Phase E) --
+
+
+class StockBelowThresholdCondition(BaseModel):
+    """Periodic scan: alert when (product[, lot][, zone]) stock falls below N."""
+
+    product_id: str  # UUID-as-string for JSONB round-trip parity
+    lot_id: str | None = None
+    zone_id: str | None = None
+    threshold: int = Field(ge=0)
+
+
+class StockExpiringWithinCondition(BaseModel):
+    """Periodic scan: alert when any lot for product expires within N days."""
+
+    product_id: str | None = None  # None = all products in tenant
+    days: int = Field(ge=0)
+
+
+class StockUnexpectedInZoneCondition(BaseModel):
+    """Event-driven: alert on stock_item entering zone NOT in allowed list."""
+
+    product_id: str | None = None  # None = applies to all products
+    allowed_zone_ids: list[str] = Field(min_length=1)
+
+
+_RULE_CONDITION_PATTERN = (
+    r"^(threshold|absence|rate_change|"
+    r"stock\.below_threshold|stock\.expiring_within|stock\.unexpected_in_zone)$"
+)
+
+
 # -- Rules --
 
 
@@ -39,7 +71,7 @@ class RuleCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
-    condition_type: str = Field(pattern=r"^(threshold|absence|rate_change)$")
+    condition_type: str = Field(pattern=_RULE_CONDITION_PATTERN)
     condition_config: dict[str, Any]
     action_type: str = Field(pattern=r"^(webhook|email|notification)$")
     action_config: dict[str, Any]
@@ -53,7 +85,7 @@ class RuleUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     condition_type: str | None = Field(
-        default=None, pattern=r"^(threshold|absence|rate_change)$"
+        default=None, pattern=_RULE_CONDITION_PATTERN
     )
     condition_config: dict[str, Any] | None = None
     action_type: str | None = Field(
