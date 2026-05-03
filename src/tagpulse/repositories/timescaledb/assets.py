@@ -6,6 +6,7 @@ Sprint 15 Phase B — see docs/design/assets-and-zones.md.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -149,6 +150,84 @@ class TimescaleAssetRepository:
         row.status = "retired"
         await self._session.flush()
         return True
+
+    async def set_parent(
+        self,
+        tenant_id: uuid.UUID,
+        asset_id: uuid.UUID,
+        parent_asset_id: uuid.UUID | None,
+    ) -> tuple[AssetResponse, uuid.UUID | None] | None:
+        """Set parent_asset_id and return (updated_asset, prior_parent_id).
+
+        Returns None if the asset is not found in this tenant.
+        """
+        stmt = select(AssetModel).where(
+            AssetModel.id == asset_id, AssetModel.tenant_id == tenant_id
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            return None
+        prior = row.parent_asset_id
+        row.parent_asset_id = parent_asset_id
+        await self._session.flush()
+        return _asset_to_response(row), prior
+
+    async def get_descendants(
+        self, tenant_id: uuid.UUID, asset_id: uuid.UUID
+    ) -> Sequence[tuple[AssetResponse, int]]:
+        """Return descendants of asset_id with their depth (1-based).
+
+        Uses a recursive CTE; tenant_id is enforced at every level.
+        Excludes the root itself; excludes retired assets.
+        """
+        from sqlalchemy import text
+
+        stmt = text(
+            """
+            WITH RECURSIVE descendants AS (
+                SELECT id, tenant_id, external_ref, name, asset_type, status,
+                       parent_asset_id, metadata, created_at, updated_at,
+                       1 AS depth
+                FROM assets
+                WHERE tenant_id = :tenant_id
+                  AND parent_asset_id = :root_id
+                  AND status != 'retired'
+                UNION ALL
+                SELECT a.id, a.tenant_id, a.external_ref, a.name, a.asset_type,
+                       a.status, a.parent_asset_id, a.metadata, a.created_at,
+                       a.updated_at, d.depth + 1
+                FROM assets a
+                JOIN descendants d ON a.parent_asset_id = d.id
+                WHERE a.tenant_id = :tenant_id
+                  AND a.status != 'retired'
+            )
+            SELECT * FROM descendants ORDER BY depth, name
+            """
+        )
+        result = await self._session.execute(
+            stmt, {"tenant_id": tenant_id, "root_id": asset_id}
+        )
+        rows = result.mappings().all()
+        out: list[tuple[AssetResponse, int]] = []
+        for r in rows:
+            out.append(
+                (
+                    AssetResponse(
+                        id=r["id"],
+                        tenant_id=r["tenant_id"],
+                        external_ref=r["external_ref"],
+                        name=r["name"],
+                        asset_type=r["asset_type"],
+                        status=r["status"],
+                        parent_asset_id=r["parent_asset_id"],
+                        metadata=r["metadata"],
+                        created_at=r["created_at"],
+                        updated_at=r["updated_at"],
+                    ),
+                    r["depth"],
+                )
+            )
+        return out
 
 
 class TimescaleAssetTagBindingRepository:

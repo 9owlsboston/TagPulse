@@ -20,6 +20,9 @@ class Topic(StrEnum):
     ALERT_TRIGGERED = "alert.triggered"
     TELEMETRY_OUT_OF_RANGE = "telemetry.out_of_range"
     SUBJECT_ZONE_CHANGED = "subject.zone_changed"
+    ASSET_LOADED = "asset.loaded"
+    ASSET_UNLOADED = "asset.unloaded"
+    EXTERNAL_LOCATION_RECORDED = "asset.external_location_recorded"
 
 
 @dataclasses.dataclass(frozen=True)

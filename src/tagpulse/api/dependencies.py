@@ -135,15 +135,21 @@ async def get_site_zone_service(
 
 async def get_asset_service(
     session: AsyncSession = Depends(get_session),
+    event_bus: EventBus = Depends(get_event_bus),
 ) -> AsyncGenerator["AssetService", None]:
     """Provide an AssetService bound to the current session."""
     from tagpulse.repositories.timescaledb.assets import (
         TimescaleAssetRepository,
         TimescaleAssetTagBindingRepository,
     )
+    from tagpulse.repositories.timescaledb.external_locations import (
+        TimescaleExternalLocationRepository,
+    )
 
     yield AssetService(
         asset_repo=TimescaleAssetRepository(session),
         binding_repo=TimescaleAssetTagBindingRepository(session),
         audit=AuditLogger(session=session),
+        external_location_repo=TimescaleExternalLocationRepository(session),
+        event_bus=event_bus,
     )

@@ -432,3 +432,73 @@ class TagCollisionResponse(BaseModel):
 
     binding_value: str
     other_tenant_count: int
+
+
+# -------- External locations (Sprint 15 Phase C) --------
+
+
+class ExternalLocationCreate(BaseModel):
+    """Inbound non-RFID position fix for an asset."""
+
+    latitude: float = Field(..., ge=-90.0, le=90.0)
+    longitude: float = Field(..., ge=-180.0, le=180.0)
+    recorded_at: datetime
+    source: str = Field(..., min_length=1, max_length=64)
+    accuracy_meters: float | None = Field(None, ge=0.0)
+    speed_kph: float | None = Field(None, ge=0.0)
+    heading_deg: float | None = Field(None, ge=0.0, lt=360.0)
+    metadata: dict[str, Any] | None = None
+
+
+class ExternalLocationResponse(BaseModel):
+    """Persisted external_locations row."""
+
+    id: UUID
+    tenant_id: UUID
+    asset_id: UUID
+    recorded_at: datetime
+    latitude: float
+    longitude: float
+    source: str
+    accuracy_meters: float | None
+    speed_kph: float | None
+    heading_deg: float | None
+    metadata: dict[str, Any] | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# -------- Carrier semantics (Sprint 15 Phase C) --------
+
+
+class AssetLoadRequest(BaseModel):
+    """POST /assets/{id}/load — attach a child asset to a carrier."""
+
+    parent_asset_id: UUID
+    at: datetime | None = None  # defaults to server-side now()
+
+
+class AssetUnloadRequest(BaseModel):
+    """POST /assets/{id}/unload — detach a child asset from its carrier."""
+
+    at: datetime | None = None
+
+
+class ManifestEntry(BaseModel):
+    """One node in an asset's containment tree."""
+
+    asset_id: UUID
+    name: str
+    asset_type: str
+    parent_asset_id: UUID | None
+    depth: int
+    children: list["ManifestEntry"] = Field(default_factory=list)
+
+
+class ManifestResponse(BaseModel):
+    """GET /assets/{id}/manifest — recursive children of a carrier."""
+
+    asset_id: UUID
+    name: str
+    asset_type: str
+    children: list[ManifestEntry] = Field(default_factory=list)

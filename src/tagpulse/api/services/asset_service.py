@@ -1,39 +1,61 @@
-"""Asset & tag-binding service (Sprint 15 Phase B)."""
+"""Asset & tag-binding service (Sprint 15 Phase B + Phase C carrier ops)."""
 
 from __future__ import annotations
 
 import logging
+import uuid as uuid_mod
+from datetime import UTC, datetime
 from uuid import UUID
 
 from tagpulse.core.audit import AuditLogger
-from tagpulse.core.otel_metrics import tag_collisions_global_counter
+from tagpulse.core.otel_metrics import (
+    asset_load_counter,
+    external_locations_counter,
+    tag_collisions_global_counter,
+)
+from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.models.schemas import (
     AssetCreate,
     AssetResponse,
     AssetTagBindingCreate,
     AssetTagBindingResponse,
     AssetUpdate,
+    ExternalLocationCreate,
+    ExternalLocationResponse,
+    ManifestEntry,
+    ManifestResponse,
 )
 from tagpulse.repositories.timescaledb.assets import (
     TimescaleAssetRepository,
     TimescaleAssetTagBindingRepository,
 )
+from tagpulse.repositories.timescaledb.external_locations import (
+    TimescaleExternalLocationRepository,
+)
 
 logger = logging.getLogger(__name__)
 
 
+class AssetNotFoundError(Exception):
+    """Raised when the asset is not present in the caller's tenant."""
+
+
 class AssetService:
-    """CRUD operations for assets and tag bindings, with audit hooks."""
+    """CRUD operations for assets and tag bindings, with audit + event hooks."""
 
     def __init__(
         self,
         asset_repo: TimescaleAssetRepository,
         binding_repo: TimescaleAssetTagBindingRepository,
         audit: AuditLogger,
+        external_location_repo: TimescaleExternalLocationRepository | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._assets = asset_repo
         self._bindings = binding_repo
         self._audit = audit
+        self._external = external_location_repo
+        self._event_bus = event_bus
 
     # -- Assets --
 
@@ -183,3 +205,196 @@ class AssetService:
             },
         )
         return count
+
+    # -- Carrier semantics (Phase C) --
+
+    async def load_onto_carrier(
+        self,
+        tenant_id: UUID,
+        user_id: UUID | None,
+        asset_id: UUID,
+        parent_asset_id: UUID,
+        at: datetime | None = None,
+    ) -> AssetResponse:
+        """Attach `asset_id` to `parent_asset_id`. Idempotent."""
+        if asset_id == parent_asset_id:
+            raise ValueError("asset cannot be its own parent")
+        # Verify parent exists in same tenant.
+        parent = await self._assets.get(tenant_id, parent_asset_id)
+        if parent is None:
+            raise AssetNotFoundError(parent_asset_id)
+        result = await self._assets.set_parent(
+            tenant_id, asset_id, parent_asset_id
+        )
+        if result is None:
+            raise AssetNotFoundError(asset_id)
+        updated, prior = result
+        if prior == parent_asset_id:
+            # Idempotent: already attached to this carrier.
+            return updated
+        timestamp = at or datetime.now(UTC)
+        await self._audit.log(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            action="asset.loaded",
+            resource_type="asset",
+            resource_id=asset_id,
+            changes={
+                "parent_asset_id": str(parent_asset_id),
+                "prior_parent_asset_id": str(prior) if prior else None,
+            },
+        )
+        asset_load_counter.add(
+            1, {"tenant_id": str(tenant_id), "op": "load"}
+        )
+        if self._event_bus is not None:
+            await self._event_bus.publish(
+                Topic.ASSET_LOADED,
+                Event(
+                    id=uuid_mod.uuid4(),
+                    topic=Topic.ASSET_LOADED,
+                    timestamp=timestamp,
+                    payload={
+                        "tenant_id": str(tenant_id),
+                        "asset_id": str(asset_id),
+                        "parent_asset_id": str(parent_asset_id),
+                        "at": timestamp.isoformat(),
+                    },
+                ),
+            )
+        return updated
+
+    async def unload_from_carrier(
+        self,
+        tenant_id: UUID,
+        user_id: UUID | None,
+        asset_id: UUID,
+        at: datetime | None = None,
+    ) -> AssetResponse:
+        """Detach `asset_id` from its current carrier. Idempotent."""
+        result = await self._assets.set_parent(tenant_id, asset_id, None)
+        if result is None:
+            raise AssetNotFoundError(asset_id)
+        updated, prior = result
+        if prior is None:
+            return updated
+        timestamp = at or datetime.now(UTC)
+        await self._audit.log(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            action="asset.unloaded",
+            resource_type="asset",
+            resource_id=asset_id,
+            changes={"prior_parent_asset_id": str(prior)},
+        )
+        asset_load_counter.add(
+            1, {"tenant_id": str(tenant_id), "op": "unload"}
+        )
+        if self._event_bus is not None:
+            await self._event_bus.publish(
+                Topic.ASSET_UNLOADED,
+                Event(
+                    id=uuid_mod.uuid4(),
+                    topic=Topic.ASSET_UNLOADED,
+                    timestamp=timestamp,
+                    payload={
+                        "tenant_id": str(tenant_id),
+                        "asset_id": str(asset_id),
+                        "prior_parent_asset_id": str(prior),
+                        "at": timestamp.isoformat(),
+                    },
+                ),
+            )
+        return updated
+
+    async def get_manifest(
+        self, tenant_id: UUID, asset_id: UUID
+    ) -> ManifestResponse:
+        """Return the recursive containment tree rooted at `asset_id`."""
+        root = await self._assets.get(tenant_id, asset_id)
+        if root is None:
+            raise AssetNotFoundError(asset_id)
+        descendants = await self._assets.get_descendants(tenant_id, asset_id)
+        # Build entries by id, then attach each to its parent.
+        entries: dict[UUID, ManifestEntry] = {}
+        for asset, depth in descendants:
+            entries[asset.id] = ManifestEntry(
+                asset_id=asset.id,
+                name=asset.name,
+                asset_type=asset.asset_type,
+                parent_asset_id=asset.parent_asset_id,
+                depth=depth,
+                children=[],
+            )
+        children_of_root: list[ManifestEntry] = []
+        for entry in entries.values():
+            if entry.parent_asset_id == asset_id:
+                children_of_root.append(entry)
+            elif entry.parent_asset_id in entries:
+                entries[entry.parent_asset_id].children.append(entry)
+        return ManifestResponse(
+            asset_id=root.id,
+            name=root.name,
+            asset_type=root.asset_type,
+            children=children_of_root,
+        )
+
+    # -- External (non-RFID) positions (Phase C) --
+
+    async def record_external_position(
+        self,
+        tenant_id: UUID,
+        user_id: UUID | None,
+        asset_id: UUID,
+        payload: ExternalLocationCreate,
+    ) -> ExternalLocationResponse:
+        if self._external is None:
+            raise RuntimeError("external_location_repo not configured")
+        # Verify asset exists in tenant.
+        asset = await self._assets.get(tenant_id, asset_id)
+        if asset is None:
+            raise AssetNotFoundError(asset_id)
+        position = await self._external.insert(tenant_id, asset_id, payload)
+        external_locations_counter.add(
+            1, {"tenant_id": str(tenant_id), "source": payload.source}
+        )
+        await self._audit.log(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            action="asset.external_position_recorded",
+            resource_type="asset",
+            resource_id=asset_id,
+            changes={"source": payload.source},
+        )
+        if self._event_bus is not None:
+            await self._event_bus.publish(
+                Topic.EXTERNAL_LOCATION_RECORDED,
+                Event(
+                    id=uuid_mod.uuid4(),
+                    topic=Topic.EXTERNAL_LOCATION_RECORDED,
+                    timestamp=position.recorded_at,
+                    payload={
+                        "tenant_id": str(tenant_id),
+                        "asset_id": str(asset_id),
+                        "latitude": position.latitude,
+                        "longitude": position.longitude,
+                        "source": position.source,
+                        "recorded_at": position.recorded_at.isoformat(),
+                    },
+                ),
+            )
+        return position
+
+    async def list_external_positions(
+        self,
+        tenant_id: UUID,
+        asset_id: UUID,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ExternalLocationResponse]:
+        if self._external is None:
+            raise RuntimeError("external_location_repo not configured")
+        return await self._external.list_for_asset(
+            tenant_id, asset_id, limit=limit, offset=offset
+        )

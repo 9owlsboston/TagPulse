@@ -123,3 +123,15 @@ subject_zone_changed_counter = meter.create_counter(
     description="Asset/stock-item zone-transition events emitted",
     unit="events",
 )
+
+external_locations_counter = meter.create_counter(
+    "tagpulse_external_locations_recorded_total",
+    description="External (non-RFID) location fixes recorded per asset",
+    unit="positions",
+)
+
+asset_load_counter = meter.create_counter(
+    "tagpulse_asset_load_operations_total",
+    description="Carrier load/unload operations on the assets containment tree",
+    unit="ops",
+)

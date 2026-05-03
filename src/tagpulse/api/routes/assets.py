@@ -10,14 +10,19 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from tagpulse.api.dependencies import get_asset_service
-from tagpulse.api.services.asset_service import AssetService
+from tagpulse.api.services.asset_service import AssetNotFoundError, AssetService
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.schemas import (
     AssetCreate,
+    AssetLoadRequest,
     AssetResponse,
     AssetTagBindingCreate,
     AssetTagBindingResponse,
+    AssetUnloadRequest,
     AssetUpdate,
+    ExternalLocationCreate,
+    ExternalLocationResponse,
+    ManifestResponse,
 )
 
 router = APIRouter(prefix="/assets", tags=["assets"])
@@ -148,3 +153,96 @@ async def unbind_tag(
     )
     if not unbound:
         raise HTTPException(status_code=404, detail="Active binding not found")
+
+
+# -- Carrier semantics (Phase C) --
+
+
+@router.post("/{asset_id}/load", response_model=AssetResponse)
+async def load_asset(
+    asset_id: UUID,
+    body: AssetLoadRequest,
+    user: AuthenticatedUser = require_role("admin", "editor"),
+    service: AssetService = Depends(get_asset_service),
+) -> AssetResponse:
+    """Attach `asset_id` to `body.parent_asset_id` (carrier). Idempotent."""
+    try:
+        return await service.load_onto_carrier(
+            user.tenant_id,
+            user.user_id,
+            asset_id,
+            body.parent_asset_id,
+            body.at,
+        )
+    except AssetNotFoundError:
+        raise HTTPException(status_code=404, detail="Asset not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.post("/{asset_id}/unload", response_model=AssetResponse)
+async def unload_asset(
+    asset_id: UUID,
+    body: AssetUnloadRequest,
+    user: AuthenticatedUser = require_role("admin", "editor"),
+    service: AssetService = Depends(get_asset_service),
+) -> AssetResponse:
+    """Detach `asset_id` from its current carrier. Idempotent."""
+    try:
+        return await service.unload_from_carrier(
+            user.tenant_id, user.user_id, asset_id, body.at
+        )
+    except AssetNotFoundError:
+        raise HTTPException(status_code=404, detail="Asset not found") from None
+
+
+@router.get("/{asset_id}/manifest", response_model=ManifestResponse)
+async def get_manifest(
+    asset_id: UUID,
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    service: AssetService = Depends(get_asset_service),
+) -> ManifestResponse:
+    """Return the recursive containment tree rooted at `asset_id`."""
+    try:
+        return await service.get_manifest(user.tenant_id, asset_id)
+    except AssetNotFoundError:
+        raise HTTPException(status_code=404, detail="Asset not found") from None
+
+
+# -- External (non-RFID) positions (Phase C) --
+
+
+@router.post(
+    "/{asset_id}/external-position",
+    response_model=ExternalLocationResponse,
+    status_code=201,
+)
+async def record_external_position(
+    asset_id: UUID,
+    body: ExternalLocationCreate,
+    user: AuthenticatedUser = require_role("admin", "editor"),
+    service: AssetService = Depends(get_asset_service),
+) -> ExternalLocationResponse:
+    """Record a non-RFID position fix (TMS push, manual check-in, etc.)."""
+    try:
+        return await service.record_external_position(
+            user.tenant_id, user.user_id, asset_id, body
+        )
+    except AssetNotFoundError:
+        raise HTTPException(status_code=404, detail="Asset not found") from None
+
+
+@router.get(
+    "/{asset_id}/external-positions",
+    response_model=list[ExternalLocationResponse],
+)
+async def list_external_positions(
+    asset_id: UUID,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    service: AssetService = Depends(get_asset_service),
+) -> list[ExternalLocationResponse]:
+    return await service.list_external_positions(
+        user.tenant_id, asset_id, limit=limit, offset=offset
+    )
