@@ -237,44 +237,20 @@ async def test_get_zone_for_reader_delegates() -> None:
     assert zone_repo.calls[-1] == ("get_zone_for_reader", reader)
 
 
-# -- Route-level guard for zone kind/payload mismatch --
+# -- Schema-level guard for zone kind/payload mismatch --
 
 from uuid import uuid4 as _uuid4  # noqa: E402
-
-from fastapi import HTTPException  # noqa: E402
-
-from tagpulse.api.routes.sites_zones import create_zone  # noqa: E402
-from tagpulse.core.user_auth import AuthenticatedUser  # noqa: E402
-
-
-def _make_admin() -> AuthenticatedUser:
-    return AuthenticatedUser(
-        user_id=_uuid4(),
-        tenant_id=_uuid4(),
-        tenant_name="Acme",
-        tenant_slug="acme",
-        role="admin",
-    )
-
-
-class _StubSvc:
-    async def get_site(self, tenant_id, site_id):  # type: ignore[no-untyped-def]
-        return _site(tenant_id, id=site_id)
-
-    async def create_zone(self, tenant_id, user_id, payload):  # type: ignore[no-untyped-def]
-        return _zone(tenant_id, payload.site_id, name=payload.name)
 
 
 @pytest.mark.asyncio
 async def test_create_zone_rejects_reader_bound_without_readers() -> None:
-    user = _make_admin()
-    body = ZoneCreate(site_id=_uuid4(), name="Bad", fixed_reader_ids=None)
+    """Schema-level validator (ZoneCreate.model_validator) blocks the body
+    before it ever reaches the route handler — see Phase A-C audit #7."""
+    from pydantic import ValidationError
 
-    with pytest.raises(HTTPException) as exc:
-        await create_zone(body=body, user=user, service=_StubSvc())  # type: ignore[arg-type]
-
-    assert exc.value.status_code == 422
-    assert "fixed_reader_ids" in exc.value.detail
+    with pytest.raises(ValidationError) as exc:
+        ZoneCreate(site_id=_uuid4(), name="Bad", fixed_reader_ids=None)
+    assert "fixed_reader_ids" in str(exc.value)
 
 
 @pytest.mark.asyncio

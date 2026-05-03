@@ -223,6 +223,11 @@ class AssetService:
         parent = await self._assets.get(tenant_id, parent_asset_id)
         if parent is None:
             raise AssetNotFoundError(parent_asset_id)
+        # Multi-step cycle guard: walking the proposed parent's ancestry
+        # must not encounter ``asset_id``. Without this, ``set_parent``
+        # would happily form A→B→A loops which then hang the recursive CTE
+        # in ``get_descendants`` (and thus ``GET /assets/{id}/manifest``).
+        await self._assert_no_parent_cycle(tenant_id, asset_id, parent_asset_id)
         result = await self._assets.set_parent(
             tenant_id, asset_id, parent_asset_id
         )
@@ -397,4 +402,34 @@ class AssetService:
             raise RuntimeError("external_location_repo not configured")
         return await self._external.list_for_asset(
             tenant_id, asset_id, limit=limit, offset=offset
+        )
+
+    async def _assert_no_parent_cycle(
+        self,
+        tenant_id: UUID,
+        asset_id: UUID,
+        proposed_parent_id: UUID,
+    ) -> None:
+        """Walk ``proposed_parent_id``'s ancestry; raise if we hit ``asset_id``.
+
+        Bounded by the current containment depth (typically <10 — pallet of
+        cases of cartons). A hard cap of 64 hops protects against
+        already-corrupt data; we'd rather fail loudly than loop.
+        """
+        seen: set[UUID] = {asset_id}
+        cursor: UUID | None = proposed_parent_id
+        for _ in range(64):
+            if cursor is None:
+                return
+            if cursor in seen:
+                raise ValueError(
+                    "load would create a containment cycle"
+                )
+            seen.add(cursor)
+            ancestor = await self._assets.get(tenant_id, cursor)
+            if ancestor is None:
+                return  # parent vanished mid-flight; let set_parent decide
+            cursor = ancestor.parent_asset_id
+        raise ValueError(
+            "asset containment depth exceeds 64 — refusing to load"
         )

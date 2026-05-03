@@ -317,6 +317,16 @@ class ZoneCreate(BaseModel):
     polygon_geojson: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
 
+    @model_validator(mode="after")
+    def _check_kind_payload(self) -> "ZoneCreate":
+        if self.kind == "reader_bound" and not self.fixed_reader_ids:
+            raise ValueError(
+                "reader_bound zones require a non-empty fixed_reader_ids"
+            )
+        if self.kind == "geofence" and not self.polygon_geojson:
+            raise ValueError("geofence zones require polygon_geojson")
+        return self
+
 
 class ZoneUpdate(BaseModel):
     """Patch a zone."""
@@ -325,6 +335,20 @@ class ZoneUpdate(BaseModel):
     fixed_reader_ids: list[UUID] | None = None
     polygon_geojson: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _check_fixed_readers(self) -> "ZoneUpdate":
+        # Empty list would later trip ck_zones_kind_payload at the DB layer
+        # for reader_bound zones; reject up-front with a clear 422.
+        if (
+            "fixed_reader_ids" in self.model_fields_set
+            and self.fixed_reader_ids is not None
+            and len(self.fixed_reader_ids) == 0
+        ):
+            raise ValueError(
+                "fixed_reader_ids must be omitted or contain at least one reader"
+            )
+        return self
 
 
 class ZoneResponse(BaseModel):

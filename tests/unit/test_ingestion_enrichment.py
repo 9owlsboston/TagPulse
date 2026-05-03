@@ -10,7 +10,12 @@ import pytest
 
 from tagpulse.events.async_bus import AsyncEventBus
 from tagpulse.events.protocol import Topic
-from tagpulse.ingestion.service import _LAST_ZONE_BY_ASSET, IngestionService
+from tagpulse.ingestion.service import (
+    _BINDING_BY_VALUE,
+    _DEVICE_MOBILITY,
+    _LAST_ZONE_BY_ASSET,
+    IngestionService,
+)
 from tagpulse.models.schemas import (
     AssetTagBindingResponse,
     DeviceResponse,
@@ -131,8 +136,12 @@ def _read(device_id: UUID, *, epc: str | None = None) -> TagReadCreate:
 @pytest.fixture(autouse=True)
 def _clear_cache() -> Any:
     _LAST_ZONE_BY_ASSET.clear()
+    _BINDING_BY_VALUE.clear()
+    _DEVICE_MOBILITY.clear()
     yield
     _LAST_ZONE_BY_ASSET.clear()
+    _BINDING_BY_VALUE.clear()
+    _DEVICE_MOBILITY.clear()
 
 
 # ---- Tests ----
@@ -225,3 +234,106 @@ async def test_no_enrichment_when_binding_repo_absent() -> None:
     )
     result = await svc.ingest(uuid4(), _read(uuid4(), epc="x"))
     assert result.tag_id == "x"
+
+
+# ---- Audit mitigation tests (Phase A-C) ----
+
+
+@pytest.mark.asyncio
+async def test_binding_lookup_cached_across_reads() -> None:
+    """Repeated reads for the same EPC should hit the in-process cache."""
+    bus = AsyncEventBus(capacity=10)
+    await bus.start()
+    tenant = uuid4()
+    asset_id = uuid4()
+    device_id = uuid4()
+
+    class CountingBindingRepo(FakeBindingRepo):
+        def __init__(self, m: dict[str, UUID]) -> None:
+            super().__init__(m)
+            self.lookups = 0
+
+        async def get_active_by_value(  # type: ignore[no-untyped-def, override]
+            self, tenant_id, binding_value
+        ) -> AssetTagBindingResponse | None:
+            self.lookups += 1
+            return await super().get_active_by_value(tenant_id, binding_value)
+
+    binding_repo = CountingBindingRepo({"urn:epc:id:sgtin:1": asset_id})
+    svc = IngestionService(
+        repo=FakeRepo(),  # type: ignore[arg-type]
+        event_bus=bus,
+        device_repo=FakeDeviceRepo(),  # type: ignore[arg-type]
+        zone_repo=FakeZoneRepo({device_id: uuid4()}),  # type: ignore[arg-type]
+        binding_repo=binding_repo,  # type: ignore[arg-type]
+    )
+    for _ in range(3):
+        await svc.ingest(tenant, _read(device_id, epc="urn:epc:id:sgtin:1"))
+    assert binding_repo.lookups == 1
+
+
+@pytest.mark.asyncio
+async def test_unmapped_binding_lookup_cached_too() -> None:
+    """Misses must also be cached so floods of unbound reads don't hammer the DB."""
+    bus = AsyncEventBus(capacity=10)
+    await bus.start()
+    tenant = uuid4()
+    device_id = uuid4()
+
+    class CountingBindingRepo(FakeBindingRepo):
+        def __init__(self) -> None:
+            super().__init__({})
+            self.lookups = 0
+
+        async def get_active_by_value(  # type: ignore[no-untyped-def, override]
+            self, tenant_id, binding_value
+        ) -> AssetTagBindingResponse | None:
+            self.lookups += 1
+            return None
+
+    binding_repo = CountingBindingRepo()
+    svc = IngestionService(
+        repo=FakeRepo(),  # type: ignore[arg-type]
+        event_bus=bus,
+        device_repo=FakeDeviceRepo(),  # type: ignore[arg-type]
+        zone_repo=FakeZoneRepo({}),  # type: ignore[arg-type]
+        binding_repo=binding_repo,  # type: ignore[arg-type]
+    )
+    for _ in range(5):
+        await svc.ingest(tenant, _read(device_id, epc="urn:epc:id:sgtin:miss"))
+    # tag_id falls back to epc when identity is set, so 1 candidate per read,
+    # 1 lookup on the first read, 0 on the next 4.
+    assert binding_repo.lookups == 1
+
+
+@pytest.mark.asyncio
+async def test_device_mobility_lookup_cached() -> None:
+    """`_lookup_device_mobility` is called once per (tenant, device)."""
+    bus = AsyncEventBus(capacity=10)
+    await bus.start()
+    tenant = uuid4()
+    device_id = uuid4()
+    asset_id = uuid4()
+
+    class CountingDeviceRepo(FakeDeviceRepo):
+        def __init__(self) -> None:
+            super().__init__(mobility="fixed")
+            self.calls = 0
+
+        async def get(  # type: ignore[no-untyped-def, override]
+            self, tenant_id, device_id
+        ) -> DeviceResponse:
+            self.calls += 1
+            return await super().get(tenant_id, device_id)
+
+    device_repo = CountingDeviceRepo()
+    svc = IngestionService(
+        repo=FakeRepo(),  # type: ignore[arg-type]
+        event_bus=bus,
+        device_repo=device_repo,  # type: ignore[arg-type]
+        zone_repo=FakeZoneRepo({device_id: uuid4()}),  # type: ignore[arg-type]
+        binding_repo=FakeBindingRepo({"urn:epc:id:sgtin:m": asset_id}),  # type: ignore[arg-type]
+    )
+    for _ in range(4):
+        await svc.ingest(tenant, _read(device_id, epc="urn:epc:id:sgtin:m"))
+    assert device_repo.calls == 1

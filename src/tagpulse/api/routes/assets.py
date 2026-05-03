@@ -243,6 +243,9 @@ async def list_external_positions(
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
     service: AssetService = Depends(get_asset_service),
 ) -> list[ExternalLocationResponse]:
+    asset = await service.get_asset(user.tenant_id, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
     return await service.list_external_positions(
         user.tenant_id, asset_id, limit=limit, offset=offset
     )

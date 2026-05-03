@@ -19,6 +19,7 @@ from tagpulse.core.otel_metrics import (
 from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.ingestion.tag_data import cap_tag_data
 from tagpulse.models.schemas import (
+    AssetTagBindingResponse,
     Identity,
     StockItemCreate,
     TagReadCreate,
@@ -65,6 +66,17 @@ _TRACKING_MODES_CACHE_MAX = 1_024
 
 _GTIN_TO_PRODUCT_ID: dict[tuple[uuid.UUID, str], uuid.UUID | None] = {}
 _TRACKING_MODES: dict[uuid.UUID, tuple[str, ...]] = {}
+
+# Phase A-C audit mitigations (#5, #6): bound the per-read DB hits in the
+# asset-tracking branch. Bindings rarely flip; mobility almost never does.
+_BINDING_CACHE_MAX = 8_192
+_MOBILITY_CACHE_MAX = 4_096
+# (tenant, binding_value) -> (asset_id, binding_id) ; None = "no active binding"
+_BINDING_BY_VALUE: dict[
+    tuple[uuid.UUID, str], tuple[uuid.UUID, uuid.UUID] | None
+] = {}
+# (tenant, device_id) -> "fixed" | "mobile"
+_DEVICE_MOBILITY: dict[tuple[uuid.UUID, uuid.UUID], str] = {}
 
 
 def _bounded_set(
@@ -290,9 +302,36 @@ class IngestionService:
 
         binding = None
         for value in candidates:
+            binding_cache_key = (tenant_id, value)
+            if binding_cache_key in _BINDING_BY_VALUE:
+                cached = _BINDING_BY_VALUE[binding_cache_key]
+                if cached is None:
+                    continue  # known miss — skip the DB roundtrip
+                asset_id, _binding_id = cached
+                # Synthesize a thin record; only ``asset_id`` is read below.
+                binding = AssetTagBindingResponse.model_construct(
+                    id=_binding_id,
+                    tenant_id=tenant_id,
+                    asset_id=asset_id,
+                    binding_value=value,
+                    binding_kind="epc",
+                    bound_at=datetime.now(UTC),
+                    unbound_at=None,
+                    metadata=None,
+                )
+                break
             binding = await self._binding_repo.get_active_by_value(tenant_id, value)
             if binding is not None:
+                _bounded_set(
+                    _BINDING_BY_VALUE,
+                    binding_cache_key,
+                    (binding.asset_id, binding.id),
+                    _BINDING_CACHE_MAX,
+                )
                 break
+            _bounded_set(
+                _BINDING_BY_VALUE, binding_cache_key, None, _BINDING_CACHE_MAX
+            )
 
         if binding is None:
             tag_reads_without_asset_counter.add(
@@ -355,13 +394,25 @@ class IngestionService:
     async def _lookup_device_mobility(
         self, tenant_id: uuid.UUID, device_id: uuid.UUID
     ) -> str:
-        """Return device mobility ('fixed' | 'mobile'), defaulting to 'fixed'."""
+        """Return device mobility ('fixed' | 'mobile'), defaulting to 'fixed'.
+
+        Cached in-process; mobility is changed by an admin via /devices PATCH
+        and a stale value at worst delays the switch by one worker restart.
+        """
+        cache_key = (tenant_id, device_id)
+        cached = _DEVICE_MOBILITY.get(cache_key)
+        if cached is not None:
+            return cached
         if self._device_repo is None:
             return "fixed"
         device = await self._device_repo.get(tenant_id, device_id)
-        if device is None:
-            return "fixed"
-        return getattr(device, "mobility", "fixed")
+        mobility = (
+            getattr(device, "mobility", "fixed") if device is not None else "fixed"
+        )
+        _bounded_set(
+            _DEVICE_MOBILITY, cache_key, mobility, _MOBILITY_CACHE_MAX
+        )
+        return mobility
 
     async def _enrich_with_inventory(
         self,

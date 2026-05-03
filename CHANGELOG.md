@@ -5,6 +5,24 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Changed
+- **Sprint 15 — Phase A-C audit mitigations (asset-tracking hardening)**:
+  - Migration `022_phase_abc_hardening.py`:
+    - `external_locations.asset_id` now has an explicit `ON DELETE CASCADE` FK to `assets.id` (was completely missing — orphan / cross-tenant asset_ids could be persisted).
+    - GIN partial index `ix_zones_fixed_readers_gin ON zones (fixed_reader_ids) WHERE kind = 'reader_bound'` so `TimescaleZoneRepository.get_zone_for_reader`'s JSONB `@>` lookup stops sequential-scanning the zones table on every fixed-reader read.
+    - `ck_zones_kind_payload` tightened to require `jsonb_array_length(fixed_reader_ids) > 0` for `reader_bound` zones — empty lists silently bypassed `IS NOT NULL` and broke `get_zone_for_reader`.
+  - `SiteModel`, `ZoneModel`, `AssetModel`: `updated_at` columns now carry `onupdate=func.now()` (was missing on all three — `updated_at` always equalled `created_at`, breaking any UI "last modified" indicator).
+  - `AssetService.load_onto_carrier`: multi-step containment-cycle guard. The previous self-loop check only caught `asset_id == parent_asset_id`; an `A→B→A` request would silently form a loop that hung the recursive CTE in `get_descendants` (and hence `GET /assets/{id}/manifest`). New `_assert_no_parent_cycle` walks the proposed parent's ancestry (capped at 64 hops as a safety net for already-corrupt data).
+  - `IngestionService` asset-tracking branch:
+    - `(tenant, binding_value) → (asset_id, binding_id)` cache (bounded LRU) eliminates the per-read `get_active_by_value` round-trip; misses are cached too so floods of unbound EPCs no longer hammer the DB.
+    - `(tenant, device_id) → mobility` cache (bounded LRU) eliminates the per-read `device_repo.get` round-trip.
+  - `ZoneCreate` / `ZoneUpdate` Pydantic schemas now reject inconsistent payloads at construction:
+    - `ZoneCreate`: `kind='reader_bound'` requires non-empty `fixed_reader_ids`; `kind='geofence'` requires `polygon_geojson`. The route handler's manual checks were removed in favour of this single source of truth.
+    - `ZoneUpdate`: `fixed_reader_ids=[]` is rejected up-front instead of failing later at the DB layer.
+  - `GET /assets/{asset_id}/external-positions` now returns `404` when the asset doesn't exist in the tenant (was silently returning `[]`, inconsistent with `POST .../external-position`).
+  - 8 new unit tests covering carrier-cycle prevention (direct + multi-step + happy path), Zone schema validators (create + update), binding cache hit count (hits + misses), and device-mobility cache hit count. **260 passing total.**
+  - **Deferred to Sprint 17 UI**: `tenants.tracking_modes` admin API/UI — the ingestion guard exists but tenants cannot flip the value yet (default `['asset']`).
+
+
 - **Sprint 15b — Phase D audit mitigations (inventory hardening)**:
   - Migration `021_inventory_hardening.py`:
     - `stock_items.lot_id` FK now `ON DELETE SET NULL` (was implicit `NO ACTION` blocking lot deletes).

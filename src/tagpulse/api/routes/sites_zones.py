@@ -98,16 +98,8 @@ async def create_zone(
     site = await service.get_site(user.tenant_id, body.site_id)
     if site is None:
         raise HTTPException(status_code=404, detail="Parent site not found")
-    if body.kind == "reader_bound" and not body.fixed_reader_ids:
-        raise HTTPException(
-            status_code=422,
-            detail="reader_bound zones require fixed_reader_ids",
-        )
-    if body.kind == "geofence" and not body.polygon_geojson:
-        raise HTTPException(
-            status_code=422,
-            detail="geofence zones require polygon_geojson",
-        )
+    # Schema-level validation (ZoneCreate.model_validator) already enforces
+    # kind/payload consistency — see models/schemas.py.
     try:
         return await service.create_zone(user.tenant_id, user.user_id, body)
     except ValueError as exc:

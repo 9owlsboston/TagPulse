@@ -208,3 +208,103 @@ async def test_get_active_binding_delegates() -> None:
     binding_repo.next_response = expected
     out = await svc.get_active_binding(uuid4(), "E280-1234")
     assert out is expected
+
+
+# ---- Audit mitigation tests (Phase A-C) ------------------------------
+
+
+class _KeyedAssetRepo:
+    """Asset repo keyed by id, with a working set_parent + get."""
+
+    def __init__(self) -> None:
+        self.assets: dict[UUID, AssetResponse] = {}
+
+    def add(self, asset: AssetResponse) -> None:
+        self.assets[asset.id] = asset
+
+    async def get(  # type: ignore[no-untyped-def]
+        self, tenant_id: UUID, asset_id: UUID
+    ) -> AssetResponse | None:
+        return self.assets.get(asset_id)
+
+    async def set_parent(  # type: ignore[no-untyped-def]
+        self, tenant_id, asset_id, parent_asset_id
+    ):
+        row = self.assets.get(asset_id)
+        if row is None:
+            return None
+        prior = row.parent_asset_id
+        updated = row.model_copy(update={"parent_asset_id": parent_asset_id})
+        self.assets[asset_id] = updated
+        return updated, prior
+
+
+@pytest.mark.asyncio
+async def test_load_onto_carrier_blocks_direct_self_loop() -> None:
+    svc, asset_repo, _, _ = _service()
+    aid = uuid4()
+    asset_repo.next_response = _asset(uuid4(), id=aid)
+    with pytest.raises(ValueError, match="own parent"):
+        await svc.load_onto_carrier(uuid4(), uuid4(), aid, aid)
+
+
+@pytest.mark.asyncio
+async def test_load_onto_carrier_blocks_multi_step_cycle() -> None:
+    """A→B→A cycle must be refused before set_parent runs."""
+    tenant = uuid4()
+    a_id, b_id = uuid4(), uuid4()
+    keyed = _KeyedAssetRepo()
+    # Existing: B is already a child of A. Attempt: load A onto B → cycle.
+    keyed.add(_asset(tenant, id=a_id, name="A"))
+    keyed.add(
+        _asset(tenant, id=b_id, name="B").model_copy(
+            update={"parent_asset_id": a_id}
+        )
+    )
+    audit = _FakeAudit()
+    svc = AssetService(
+        asset_repo=keyed,  # type: ignore[arg-type]
+        binding_repo=_FakeBindingRepo(),  # type: ignore[arg-type]
+        audit=audit,  # type: ignore[arg-type]
+    )
+    with pytest.raises(ValueError, match="containment cycle"):
+        await svc.load_onto_carrier(tenant, uuid4(), a_id, b_id)
+    # No mutation should have happened.
+    assert keyed.assets[a_id].parent_asset_id is None
+    assert audit.entries == []
+
+
+@pytest.mark.asyncio
+async def test_load_onto_carrier_allows_normal_attach() -> None:
+    tenant = uuid4()
+    child_id, parent_id = uuid4(), uuid4()
+    keyed = _KeyedAssetRepo()
+    keyed.add(_asset(tenant, id=child_id, name="child"))
+    keyed.add(_asset(tenant, id=parent_id, name="parent"))
+    svc = AssetService(
+        asset_repo=keyed,  # type: ignore[arg-type]
+        binding_repo=_FakeBindingRepo(),  # type: ignore[arg-type]
+        audit=_FakeAudit(),  # type: ignore[arg-type]
+    )
+    out = await svc.load_onto_carrier(tenant, uuid4(), child_id, parent_id)
+    assert out.parent_asset_id == parent_id
+
+
+def test_zone_create_validator_blocks_empty_readers() -> None:
+    from pydantic import ValidationError
+
+    from tagpulse.models.schemas import ZoneCreate
+
+    with pytest.raises(ValidationError):
+        ZoneCreate(site_id=uuid4(), name="Z", fixed_reader_ids=[])
+
+
+def test_zone_update_validator_blocks_empty_readers() -> None:
+    from pydantic import ValidationError
+
+    from tagpulse.models.schemas import ZoneUpdate
+
+    # None is fine (not provided), [] is rejected.
+    ZoneUpdate()  # no error
+    with pytest.raises(ValidationError):
+        ZoneUpdate(fixed_reader_ids=[])
