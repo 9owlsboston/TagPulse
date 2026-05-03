@@ -430,6 +430,35 @@ class TimescaleStockItemRepository:
         await self._session.flush()
         return _stock_item_to_response(row)
 
+    async def record_observation(
+        self,
+        tenant_id: uuid.UUID,
+        stock_item_id: uuid.UUID,
+        *,
+        zone_id: uuid.UUID | None,
+        observed_at: datetime,
+    ) -> tuple[uuid.UUID | None, uuid.UUID | None] | None:
+        """Update zone + last_seen on a stock_item; return (prev_zone, new_zone).
+
+        Returns ``None`` if the stock item is missing or no longer eligible
+        (consumed/expired/lost). Always bumps ``last_seen_at``; only writes
+        ``current_zone_id`` when ``zone_id`` differs from the prior value.
+        """
+        stmt = select(StockItemModel).where(
+            StockItemModel.id == stock_item_id,
+            StockItemModel.tenant_id == tenant_id,
+            StockItemModel.state.notin_(["consumed", "expired", "lost"]),
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            return None
+        prev_zone = row.current_zone_id
+        row.last_seen_at = observed_at
+        if zone_id != prev_zone:
+            row.current_zone_id = zone_id
+        await self._session.flush()
+        return prev_zone, zone_id
+
     async def stock_levels(
         self,
         tenant_id: uuid.UUID,

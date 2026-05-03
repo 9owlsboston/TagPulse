@@ -103,6 +103,13 @@ async def get_ingestion_service(
     from tagpulse.repositories.timescaledb.assets import (
         TimescaleAssetTagBindingRepository,
     )
+    from tagpulse.repositories.timescaledb.inventory import (
+        TimescaleLotRepository,
+        TimescaleProductRepository,
+        TimescaleStockItemRepository,
+        TimescaleStockMovementRepository,
+        TimescaleTagDataMappingRepository,
+    )
     from tagpulse.repositories.timescaledb.sites_zones import (
         TimescaleZoneRepository,
     )
@@ -114,6 +121,11 @@ async def get_ingestion_service(
         telemetry_service=telemetry_service,
         binding_repo=TimescaleAssetTagBindingRepository(session),
         zone_repo=TimescaleZoneRepository(session),
+        product_repo=TimescaleProductRepository(session),
+        lot_repo=TimescaleLotRepository(session),
+        stock_repo=TimescaleStockItemRepository(session),
+        movement_repo=TimescaleStockMovementRepository(session),
+        tag_data_mapping_repo=TimescaleTagDataMappingRepository(session),
     )
 
 

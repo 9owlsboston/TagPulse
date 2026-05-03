@@ -240,7 +240,7 @@
 - [done] **`tag_data_mappings` table** — per-(tenant, device_type, product) mapping from `tag_data` keys to semantic fields; most-specific scope wins (Sprint 15b Phase D). Ingestion read path lands with Phase D.2.
 - [done] `stock_movements` hypertable — append-only ledger (enter/exit/transfer/consume) — Sprint 15b Phase D (writes from ingestion deferred to Phase D.2)
 - [done] `stock_levels` SQL view — live count per (product, lot, zone) — Sprint 15b Phase D
-- [planned] **Phase D.2** — Ingestion inventory branch — SKU lookup by GTIN (LRU cached), lot inference from `tag_data` via `tag_data_mappings`, emit `subject.zone_changed` with `subject_kind='stock_item'` and append `stock_movements` rows on zone transitions
+- [done] **Phase D.2** — Ingestion inventory branch — SKU lookup by GTIN, lot inference from `tag_data` via `tag_data_mappings`, emit `subject.zone_changed` with `subject_kind='stock_item'` and append `stock_movements` rows on zone transitions (Sprint 15b Phase D.5)
 - [done] APIs: `/stock-items`, `/stock-levels`, `/stock-movements` (filter by product/lot/zone/state/time) — Sprint 15b Phase D
 - [planned] Rules engine: `stock.below_threshold`, `stock.expiring_within`, `stock.unexpected_in_zone`
 - [planned] Periodic workers — below-threshold scan (60 s), expiring-soon scan (daily)

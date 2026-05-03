@@ -5,6 +5,14 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Sprint 15b — Inventory Tracking (Phase D.5): ingestion inventory branch**:
+  - `IngestionService` now resolves SGTIN reads to a registered product (GTIN-14 derived from the EPC's company_prefix + item_ref via the new `tagpulse.rfid.epc.gtin14_from_decoded` helper, mod-10 check digit per GS1 §7.9), auto-creates a `stock_item` on the first sighting (lot inferred from `tag_data` via `tag_data_mappings` — most-specific scope wins, product > tenant), bumps `current_zone_id` + `last_seen_at` on every observation, and on a zone transition appends a `stock_movements` row (`enter` for first-known zone, `transfer` otherwise) plus emits `Topic.SUBJECT_ZONE_CHANGED` with `subject_kind='stock_item'`.
+  - Process-local `_LAST_ZONE_BY_STOCK_ITEM` cache mirrors the asset cache; multi-worker durability deferred to Sprint 17 alongside the rules engine (per `docs/design/assets-and-zones.md` §5).
+  - Mobile readers and missing inventory repos short-circuit cleanly — `stock_item` is still auto-created on first SGTIN sighting, but no zone resolution / movement / event is emitted.
+  - New `TimescaleStockItemRepository.record_observation(tenant_id, stock_item_id, *, zone_id, observed_at) -> (prev_zone, new_zone)` for the ingestion hot-path.
+  - DI factory (`get_ingestion_service`) and the MQTT subscriber (`MQTTSubscriber._build_ingestion_service`) now wire all five inventory repos into the service.
+  - New OTel counters: `tagpulse_stock_items_auto_created_total`, `tagpulse_stock_movements_recorded_total`, `tagpulse_inventory_unmapped_sgtin_total`. The existing `tagpulse_subject_zone_changed_total` now carries `subject_kind='stock_item'` in addition to `'asset'`.
+  - 7 new unit tests in `tests/unit/test_ingestion_inventory.py` (246 passing total).
 - **Sprint 15b — Inventory Tracking (Phase D): products, lots, stock items, movements, mappings**:
   - Migration `020_inventory.py`: creates `products` (unique `(tenant_id, sku)`, partial index on GTIN, `unit ∈ {each,case,pallet}`), `lots` (unique `(tenant_id, product_id, lot_code)`, partial index for upcoming expirations), `stock_items` (`binding_kind ∈ {epc,tid}`, `state ∈ {in_stock,in_transit,consumed,expired,lost}`, partial unique index on active bindings, aggregation index by `(tenant, product, lot, zone)`), `stock_movements` hypertable on `occurred_at` (`movement_type ∈ {enter,exit,transfer,consume}`), `tag_data_mappings` (with check constraints binding `scope_id` consistency to `scope_kind ∈ {tenant,device_type,product}`). Adds `stock_levels` view (`SELECT product_id, lot_id, current_zone_id, COUNT(*) WHERE state='in_stock'`). All tables enable RLS with `tenant_isolation` policies.
   - ORM: `ProductModel`, `LotModel`, `StockItemModel`, `StockMovementModel`, `TagDataMappingModel`. Pydantic: `Product*`, `Lot*`, `StockItem*`, `StockMovementResponse`, `StockLevelRow`, `TagDataMapping*`.

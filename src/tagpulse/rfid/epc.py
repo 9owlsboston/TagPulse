@@ -291,3 +291,41 @@ def _read_7bit_string(bits: _BitReader, *, max_chars: int) -> str:
             break
         out.append(chr(ch))
     return "".join(out)
+
+
+def gtin14_from_decoded(decoded: dict[str, Any] | None) -> str | None:
+    """Return the GTIN-14 string for a decoded SGTIN payload, or None.
+
+    The SGTIN's ``item_ref`` field is the 14-digit indicator-plus-item-reference
+    minus the check digit (per GS1 EPC TDS §7). GTIN-14 is constructed as::
+
+        indicator || company_prefix || item_reference || check_digit
+
+    Returns ``None`` when the input is not an SGTIN payload or when the
+    company_prefix/item_ref widths don't sum to 13 digits.
+    """
+    if not decoded:
+        return None
+    scheme = decoded.get("scheme", "")
+    if not isinstance(scheme, str) or not scheme.startswith("sgtin"):
+        return None
+    cp = decoded.get("company_prefix")
+    item = decoded.get("item_ref")
+    if not isinstance(cp, str) or not isinstance(item, str) or len(item) < 1:
+        return None
+    indicator = item[0]
+    item_ref = item[1:]
+    body = f"{indicator}{cp}{item_ref}"
+    if len(body) != 13 or not body.isdigit():
+        return None
+    # Mod-10 check digit per GS1 General Specifications §7.9.
+    total = 0
+    for i, ch in enumerate(body):
+        n = int(ch)
+        # Rightmost digit is multiplied by 3 — i.e. position from the right
+        # alternates 3,1,3,1,... Counting from the left over 13 digits, the
+        # leftmost digit (i=0) gets *3 (since 13 is odd).
+        weight = 3 if (13 - i) % 2 == 1 else 1
+        total += n * weight
+    check = (10 - (total % 10)) % 10
+    return body + str(check)

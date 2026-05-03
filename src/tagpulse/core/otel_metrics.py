@@ -135,3 +135,21 @@ asset_load_counter = meter.create_counter(
     description="Carrier load/unload operations on the assets containment tree",
     unit="ops",
 )
+
+stock_item_auto_created_counter = meter.create_counter(
+    "tagpulse_stock_items_auto_created_total",
+    description="Stock items auto-created by ingestion on first SGTIN read",
+    unit="items",
+)
+
+stock_movements_recorded_counter = meter.create_counter(
+    "tagpulse_stock_movements_recorded_total",
+    description="Stock movement rows appended by ingestion on zone transitions",
+    unit="movements",
+)
+
+inventory_unmapped_sgtin_counter = meter.create_counter(
+    "tagpulse_inventory_unmapped_sgtin_total",
+    description="SGTIN reads with no matching product (GTIN lookup miss)",
+    unit="reads",
+)

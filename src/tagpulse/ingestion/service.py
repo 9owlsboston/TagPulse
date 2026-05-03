@@ -10,6 +10,9 @@ from typing import Any
 from tagpulse.api.services.telemetry_service import TelemetryService
 from tagpulse.core.otel_metrics import (
     ingestion_counter,
+    inventory_unmapped_sgtin_counter,
+    stock_item_auto_created_counter,
+    stock_movements_recorded_counter,
     subject_zone_changed_counter,
     tag_reads_without_asset_counter,
 )
@@ -17,6 +20,7 @@ from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.ingestion.tag_data import cap_tag_data
 from tagpulse.models.schemas import (
     Identity,
+    StockItemCreate,
     TagReadCreate,
     TagReadResponse,
     TelemetryReading,
@@ -25,10 +29,17 @@ from tagpulse.repositories.protocols import DeviceRepository, TagReadRepository
 from tagpulse.repositories.timescaledb.assets import (
     TimescaleAssetTagBindingRepository,
 )
+from tagpulse.repositories.timescaledb.inventory import (
+    TimescaleLotRepository,
+    TimescaleProductRepository,
+    TimescaleStockItemRepository,
+    TimescaleStockMovementRepository,
+    TimescaleTagDataMappingRepository,
+)
 from tagpulse.repositories.timescaledb.sites_zones import (
     TimescaleZoneRepository,
 )
-from tagpulse.rfid.epc import decode_epc_hex
+from tagpulse.rfid.epc import decode_epc_hex, gtin14_from_decoded
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +47,11 @@ logger = logging.getLogger(__name__)
 # worker; multi-worker durability lands in Sprint 17 alongside the rules
 # engine's Redis state per docs/design/assets-and-zones.md §5.
 _LAST_ZONE_BY_ASSET: dict[tuple[uuid.UUID, uuid.UUID], uuid.UUID | None] = {}
+
+# Mirrors the asset cache for stock_item zone transitions (Sprint 15b Phase D.5).
+_LAST_ZONE_BY_STOCK_ITEM: dict[
+    tuple[uuid.UUID, uuid.UUID], uuid.UUID | None
+] = {}
 
 
 class IngestionService:
@@ -49,6 +65,11 @@ class IngestionService:
         telemetry_service: TelemetryService | None = None,
         binding_repo: TimescaleAssetTagBindingRepository | None = None,
         zone_repo: TimescaleZoneRepository | None = None,
+        product_repo: TimescaleProductRepository | None = None,
+        lot_repo: TimescaleLotRepository | None = None,
+        stock_repo: TimescaleStockItemRepository | None = None,
+        movement_repo: TimescaleStockMovementRepository | None = None,
+        tag_data_mapping_repo: TimescaleTagDataMappingRepository | None = None,
     ) -> None:
         self._repo = repo
         self._event_bus = event_bus
@@ -56,6 +77,11 @@ class IngestionService:
         self._telemetry_service = telemetry_service
         self._binding_repo = binding_repo
         self._zone_repo = zone_repo
+        self._product_repo = product_repo
+        self._lot_repo = lot_repo
+        self._stock_repo = stock_repo
+        self._movement_repo = movement_repo
+        self._tag_data_mapping_repo = tag_data_mapping_repo
 
     async def ingest(self, tenant_id: uuid.UUID, read: TagReadCreate) -> TagReadResponse:
         """Validate, persist, and publish a single tag read."""
@@ -78,6 +104,7 @@ class IngestionService:
             )
         await self._mirror_tag_borne_sensors(tenant_id, normalized, result.id)
         await self._enrich_with_asset_zone(tenant_id, normalized, result.id)
+        await self._enrich_with_inventory(tenant_id, normalized, result.id)
         await self._event_bus.publish(
             Topic.TAG_READ_CREATED,
             Event(
@@ -298,3 +325,185 @@ class IngestionService:
         if device is None:
             return "fixed"
         return getattr(device, "mobility", "fixed")
+
+    async def _enrich_with_inventory(
+        self,
+        tenant_id: uuid.UUID,
+        read: TagReadCreate,
+        tag_read_id: uuid.UUID,
+    ) -> None:
+        """Inventory branch: SGTIN -> product -> stock_item -> movement.
+
+        Per docs/design/tracking-modes.md §4.4: SGTIN reads are matched to a
+        registered ``products`` row by GTIN-14. A missing product is not an
+        error — it is counted so operators can spot un-registered SKUs. When a
+        product matches:
+
+        * Look up the active stock_item bound to this EPC; auto-create one if
+          absent (lot inferred from ``tag_data`` via ``tag_data_mappings``,
+          most-specific scope wins: product > tenant).
+        * Resolve the reader-bound zone (skipped for mobile readers).
+        * Update the stock_item's ``current_zone_id`` + ``last_seen_at``.
+        * On a zone transition: append a ``stock_movements`` row and emit
+          ``Topic.SUBJECT_ZONE_CHANGED`` with ``subject_kind='stock_item'``.
+        """
+        if (
+            self._product_repo is None
+            or self._stock_repo is None
+            or read.identity is None
+            or read.identity.epc is None
+        ):
+            return
+
+        gtin = gtin14_from_decoded(read.identity.epc_decoded)
+        if gtin is None:
+            return  # not an SGTIN — no product mapping possible
+
+        product = await self._product_repo.get_by_gtin(tenant_id, gtin)
+        if product is None:
+            inventory_unmapped_sgtin_counter.add(
+                1, {"tenant_id": str(tenant_id)}
+            )
+            return
+
+        epc = read.identity.epc
+        stock_item = await self._stock_repo.get_active_by_binding(
+            tenant_id, "epc", epc
+        )
+        if stock_item is None:
+            lot_id = await self._infer_lot_id(
+                tenant_id, product.id, read.tag_data
+            )
+            try:
+                stock_item = await self._stock_repo.create(
+                    tenant_id,
+                    StockItemCreate(
+                        product_id=product.id,
+                        lot_id=lot_id,
+                        binding_value=epc,
+                        binding_kind="epc",
+                    ),
+                )
+            except ValueError:
+                # Race: another worker just created the same active binding.
+                stock_item = await self._stock_repo.get_active_by_binding(
+                    tenant_id, "epc", epc
+                )
+                if stock_item is None:
+                    return
+            else:
+                stock_item_auto_created_counter.add(
+                    1, {"tenant_id": str(tenant_id)}
+                )
+
+        # Mobile readers (or no zone repo) skip zone resolution — no
+        # transition can be inferred without a fixed reader-bound zone.
+        device_mobility = await self._lookup_device_mobility(
+            tenant_id, read.device_id
+        )
+        if device_mobility != "fixed" or self._zone_repo is None:
+            return
+
+        zone = await self._zone_repo.get_zone_for_reader(
+            tenant_id, read.device_id
+        )
+        new_zone_id = zone.id if zone else None
+
+        observation = await self._stock_repo.record_observation(
+            tenant_id,
+            stock_item.id,
+            zone_id=new_zone_id,
+            observed_at=read.timestamp,
+        )
+        if observation is None:
+            return
+        prev_zone_id, _ = observation
+
+        cache_key = (tenant_id, stock_item.id)
+        seen_before = cache_key in _LAST_ZONE_BY_STOCK_ITEM
+        _LAST_ZONE_BY_STOCK_ITEM[cache_key] = new_zone_id
+        if not seen_before:
+            return  # seed; first observation never fires a transition
+        if new_zone_id == prev_zone_id:
+            return
+
+        if self._movement_repo is not None:
+            await self._movement_repo.insert(
+                tenant_id,
+                stock_item.id,
+                from_zone_id=prev_zone_id,
+                to_zone_id=new_zone_id,
+                movement_type="transfer" if prev_zone_id else "enter",
+                device_id=read.device_id,
+                occurred_at=read.timestamp,
+            )
+            stock_movements_recorded_counter.add(
+                1, {"tenant_id": str(tenant_id)}
+            )
+
+        await self._event_bus.publish(
+            Topic.SUBJECT_ZONE_CHANGED,
+            Event(
+                id=uuid.uuid4(),
+                topic=Topic.SUBJECT_ZONE_CHANGED,
+                timestamp=datetime.now(UTC),
+                payload={
+                    "tenant_id": str(tenant_id),
+                    "subject_kind": "stock_item",
+                    "subject_id": str(stock_item.id),
+                    "product_id": str(product.id),
+                    "from_zone_id": str(prev_zone_id) if prev_zone_id else None,
+                    "to_zone_id": str(new_zone_id) if new_zone_id else None,
+                    "device_id": str(read.device_id),
+                    "epc": epc,
+                    "tag_read_id": str(tag_read_id),
+                    "timestamp": read.timestamp.isoformat(),
+                },
+            ),
+        )
+        subject_zone_changed_counter.add(
+            1, {"tenant_id": str(tenant_id), "subject_kind": "stock_item"}
+        )
+
+    async def _infer_lot_id(
+        self,
+        tenant_id: uuid.UUID,
+        product_id: uuid.UUID,
+        tag_data: dict[str, Any] | None,
+    ) -> uuid.UUID | None:
+        """Resolve ``tag_data`` -> ``lot_id`` via tag_data_mappings.
+
+        Most-specific scope wins (product > tenant). Returns ``None`` when no
+        mapping declares ``semantic_field='lot'`` or when the referenced
+        ``lot_code`` is unknown for the product.
+        """
+        if (
+            not tag_data
+            or self._tag_data_mapping_repo is None
+            or self._lot_repo is None
+        ):
+            return None
+
+        # Pull both scopes in priority order; first hit wins.
+        scopes: list[tuple[str, uuid.UUID | None]] = [
+            ("product", product_id),
+            ("tenant", None),
+        ]
+        for scope_kind, scope_id in scopes:
+            mappings = await self._tag_data_mapping_repo.list(
+                tenant_id, scope_kind=scope_kind, scope_id=scope_id
+            )
+            for mapping in mappings:
+                if mapping.semantic_field != "lot":
+                    continue
+                value = tag_data.get(mapping.tag_data_key)
+                if not isinstance(value, str) or not value:
+                    continue
+                lots = await self._lot_repo.list_for_product(
+                    tenant_id, product_id, limit=1000
+                )
+                for lot in lots:
+                    if lot.lot_code == value:
+                        return lot.id
+                return None
+        return None
