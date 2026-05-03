@@ -4,10 +4,12 @@ Periodically scans an in-process map of "subject -> (zone, entered_at)"
 populated by ``DwellTracker.on_subject_zone_changed`` and fires synthetic
 alerts for ``zone.dwell_exceeded`` rules whose threshold has elapsed.
 
-This is an MVP single-worker implementation. When multi-worker dwell is
-needed, an ``asset_current_zone`` table replaces the in-process map per
-[docs/design/geofencing-and-map.md §5.2](../../../docs/design/geofencing-and-map.md);
-the public worker surface (start/stop/run_once) does not change.
+The in-process map is **write-through** to the ``subject_current_zone`` table
+(migration 027); on startup ``DwellTracker.hydrate()`` rebuilds the map from
+the table so worker restarts (and multi-worker deployments) don't lose dwell
+state. The fast path stays in-process — DB writes happen on every event but
+do not block the publisher (the tracker is invoked from the event-bus
+subscriber, which already runs out-of-band of the ingest hot path).
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tagpulse.core.otel_metrics import (
@@ -29,6 +33,7 @@ from tagpulse.core.otel_metrics import (
 )
 from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.protocol import Event, EventBus, Topic
+from tagpulse.models.database import SubjectCurrentZoneModel
 from tagpulse.rules import RulesService
 
 logger = logging.getLogger(__name__)
@@ -37,10 +42,16 @@ logger = logging.getLogger(__name__)
 class DwellTracker:
     """In-process subject->zone state populated by SUBJECT_ZONE_CHANGED.
 
-    A separate object so tests can poke state without spinning up the worker.
+    Write-through to ``subject_current_zone`` (migration 027) for durability.
+    The in-process map is the read path; the table is the persistence backing.
     """
 
-    def __init__(self, *, max_subjects: int = 50_000) -> None:
+    def __init__(
+        self,
+        *,
+        max_subjects: int = 50_000,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+    ) -> None:
         # (tenant_id, subject_id) -> (zone_id, entered_at, subject_kind)
         self._state: dict[
             tuple[UUID, str], tuple[str | None, datetime, str | None]
@@ -48,6 +59,7 @@ class DwellTracker:
         self._max = max_subjects
         # Per (tenant, rule, subject_id) — last alert time, for cooldown.
         self._last_alert: dict[tuple[UUID, UUID, str], datetime] = {}
+        self._session_factory = session_factory
 
     async def on_subject_zone_changed(self, event: Event) -> None:
         payload = event.payload
@@ -58,6 +70,7 @@ class DwellTracker:
         tenant_id = UUID(tenant_id_str)
         to_zone_id = payload.get("to_zone_id")
         subject_kind = payload.get("subject_kind")
+        zone_kind = payload.get("zone_kind")
         ts_raw = payload.get("timestamp")
         if isinstance(ts_raw, str):
             try:
@@ -74,6 +87,75 @@ class DwellTracker:
             except StopIteration:  # pragma: no cover
                 pass
         self._state[key] = (to_zone_id, entered_at, subject_kind)
+        # Write-through persistence (Sprint 17a §5.2).
+        if self._session_factory is not None:
+            try:
+                await self._persist(
+                    tenant_id=tenant_id,
+                    subject_kind=subject_kind,
+                    subject_id=subject_id_str,
+                    zone_id=to_zone_id,
+                    zone_kind=zone_kind,
+                    entered_at=entered_at,
+                )
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("DwellTracker persist failed")
+
+    async def _persist(
+        self,
+        *,
+        tenant_id: UUID,
+        subject_kind: str | None,
+        subject_id: str,
+        zone_id: str | None,
+        zone_kind: str | None,
+        entered_at: datetime,
+    ) -> None:
+        assert self._session_factory is not None
+        async with self._session_factory() as session:
+            stmt = pg_insert(SubjectCurrentZoneModel).values(
+                tenant_id=tenant_id,
+                subject_kind=subject_kind or "unknown",
+                subject_id=UUID(subject_id),
+                zone_id=UUID(zone_id) if zone_id else None,
+                zone_kind=zone_kind,
+                entered_at=entered_at,
+                updated_at=datetime.now(UTC),
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["tenant_id", "subject_kind", "subject_id"],
+                set_={
+                    "zone_id": stmt.excluded.zone_id,
+                    "zone_kind": stmt.excluded.zone_kind,
+                    "entered_at": stmt.excluded.entered_at,
+                    "updated_at": stmt.excluded.updated_at,
+                },
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+    async def hydrate(self) -> int:
+        """Reload in-process state from ``subject_current_zone``.
+
+        Called once on app startup so dwell tracking survives restart. Returns
+        the number of rows loaded. No-op if no session factory is configured.
+        """
+        if self._session_factory is None:
+            return 0
+        async with self._session_factory() as session:
+            stmt = select(SubjectCurrentZoneModel).limit(self._max)
+            result = await session.execute(stmt)
+            count = 0
+            for row in result.scalars():
+                key = (row.tenant_id, str(row.subject_id))
+                self._state[key] = (
+                    str(row.zone_id) if row.zone_id else None,
+                    row.entered_at,
+                    row.subject_kind,
+                )
+                count += 1
+            logger.info("DwellTracker hydrated %d rows", count)
+            return count
 
     def snapshot(
         self,

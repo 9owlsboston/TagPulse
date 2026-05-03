@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import time
 import uuid
 from typing import Any
 
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.geo import (
     PolygonValidationError,
+    bbox_contains,
     compute_bbox,
     validate_polygon,
 )
@@ -24,6 +26,24 @@ from tagpulse.models.schemas import (
     ZoneResponse,
     ZoneUpdate,
 )
+
+# Sprint 17a §4.1: tenant-level cache of all geofence zones (TTL 30s).
+# Zones change rarely, so caching the *full* geofence list per tenant lets the
+# hot tag-read path skip SQL entirely on cache hit and run the bbox prefilter
+# in-process. Tradeoff: a polygon edit takes up to 30s to propagate; acceptable
+# for v1 — zone edits are rare admin actions, not high-frequency events.
+_GEOFENCE_CACHE_TTL_S = 30.0
+_GEOFENCE_CACHE_MAX_TENANTS = 1024
+_GEOFENCE_CACHE: dict[uuid.UUID, tuple[float, list[ZoneResponse]]] = {}
+
+
+def _geofence_cache_invalidate(tenant_id: uuid.UUID) -> None:
+    """Invalidate the geofence list cache for ``tenant_id``.
+
+    Called on zone create/update/delete so a polygon edit takes effect on the
+    next ingest tick instead of waiting for the TTL.
+    """
+    _GEOFENCE_CACHE.pop(tenant_id, None)
 
 
 def _bbox_for(
@@ -197,6 +217,7 @@ class TimescaleZoneRepository:
             raise ValueError(
                 f"Zone '{zone.name}' already exists in this site"
             ) from exc
+        _geofence_cache_invalidate(tenant_id)
         return _zone_to_response(row)
 
     async def get(
@@ -253,6 +274,7 @@ class TimescaleZoneRepository:
         for key, value in patch_data.items():
             setattr(row, key, value)
         await self._session.flush()
+        _geofence_cache_invalidate(tenant_id)
         return _zone_to_response(row)
 
     async def delete(self, tenant_id: uuid.UUID, zone_id: uuid.UUID) -> bool:
@@ -265,6 +287,7 @@ class TimescaleZoneRepository:
             return False
         await self._session.delete(row)
         await self._session.flush()
+        _geofence_cache_invalidate(tenant_id)
         return True
 
     async def get_zone_for_reader(
@@ -296,22 +319,48 @@ class TimescaleZoneRepository:
     ) -> builtins.list[ZoneResponse]:
         """Bbox prefilter for the geofence engine (Sprint 17a §4.1).
 
-        Hits the partial index ``ix_zones_bbox`` and returns all geofence
-        zones whose bbox covers the point. Caller still runs
-        ``point_in_polygon`` to confirm.
+        Cached at tenant level (TTL 30s, per design §4.1): the *full* set of
+        geofence zones is loaded once per tenant per TTL, then bbox prefilter
+        runs in-process. SQL is bypassed entirely on cache hit. Cache is
+        invalidated synchronously by ``create``/``update``/``delete``.
         """
-        stmt = (
-            select(ZoneModel)
-            .where(
-                ZoneModel.tenant_id == tenant_id,
-                ZoneModel.kind == "geofence",
-                ZoneModel.polygon_geojson.is_not(None),
-                ZoneModel.bbox_min_lat <= lat,
-                ZoneModel.bbox_max_lat >= lat,
-                ZoneModel.bbox_min_lon <= lon,
-                ZoneModel.bbox_max_lon >= lon,
+        now = time.monotonic()
+        cached = _GEOFENCE_CACHE.get(tenant_id)
+        if cached is not None and (now - cached[0]) < _GEOFENCE_CACHE_TTL_S:
+            zones = cached[1]
+        else:
+            stmt = (
+                select(ZoneModel)
+                .where(
+                    ZoneModel.tenant_id == tenant_id,
+                    ZoneModel.kind == "geofence",
+                    ZoneModel.polygon_geojson.is_not(None),
+                )
+                .order_by(ZoneModel.created_at.asc())
             )
-            .order_by(ZoneModel.created_at.asc())
-        )
-        result = await self._session.execute(stmt)
-        return [_zone_to_response(row) for row in result.scalars()]
+            result = await self._session.execute(stmt)
+            zones = [_zone_to_response(row) for row in result.scalars()]
+            # Bounded LRU-ish: drop the oldest tenant entry when we hit the cap.
+            if (
+                tenant_id not in _GEOFENCE_CACHE
+                and len(_GEOFENCE_CACHE) >= _GEOFENCE_CACHE_MAX_TENANTS
+            ):
+                try:
+                    oldest = next(iter(_GEOFENCE_CACHE))
+                    _GEOFENCE_CACHE.pop(oldest, None)
+                except StopIteration:  # pragma: no cover
+                    pass
+            _GEOFENCE_CACHE[tenant_id] = (now, zones)
+
+        return [
+            z
+            for z in zones
+            if bbox_contains(
+                lat=lat,
+                lon=lon,
+                bbox_min_lat=z.bbox_min_lat,
+                bbox_max_lat=z.bbox_max_lat,
+                bbox_min_lon=z.bbox_min_lon,
+                bbox_max_lon=z.bbox_max_lon,
+            )
+        ]

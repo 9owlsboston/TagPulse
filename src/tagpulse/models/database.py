@@ -511,6 +511,38 @@ class ZoneModel(Base):
     )
 
 
+class SubjectCurrentZoneModel(Base):
+    """Latest known zone per subject (Sprint 17a §5.2).
+
+    Persistence backing for ``DwellTracker``. One row per
+    ``(tenant_id, subject_kind, subject_id)``; upserted by the ingestion path
+    on every ``subject.zone_changed`` event so the dwell worker survives
+    restart and works in multi-worker deployments.
+    """
+
+    __tablename__ = "subject_current_zone"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    subject_kind: Mapped[str] = mapped_column(String(32), primary_key=True)
+    subject_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True
+    )
+    zone_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    zone_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    entered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class AssetModel(Base):
     """Tenant-scoped tracked thing (Sprint 15)."""
 

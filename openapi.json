@@ -920,6 +920,59 @@
         "title": "DeliveryResponse",
         "type": "object"
       },
+      "DeviceCertAttach": {
+        "description": "Admin payload for attaching a device certificate.\n\nPlaintext PEM is **not** stored \u2014 only its SHA-256 thumbprint plus the\nparsed subject. The MQTT broker (Mosquitto with EXTERNAL auth) holds the\nPKI; the backend uses the thumbprint to map an authenticated cert back\nto a device row.",
+        "properties": {
+          "cert_pem": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Cert Pem",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cert_pem"
+        ],
+        "title": "DeviceCertAttach",
+        "type": "object"
+      },
+      "DeviceCertResponse": {
+        "properties": {
+          "attached_at": {
+            "format": "date-time",
+            "title": "Attached At",
+            "type": "string"
+          },
+          "device_id": {
+            "format": "uuid",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "thumbprint": {
+            "title": "Thumbprint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "thumbprint",
+          "subject",
+          "attached_at"
+        ],
+        "title": "DeviceCertResponse",
+        "type": "object"
+      },
       "DeviceCreate": {
         "description": "Register a new device (reader).",
         "properties": {
@@ -1034,6 +1087,28 @@
       "DeviceResponse": {
         "description": "Device returned from the API.",
         "properties": {
+          "cert_subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cert Subject"
+          },
+          "cert_thumbprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cert Thumbprint"
+          },
           "configuration": {
             "anyOf": [
               {
@@ -2240,6 +2315,50 @@
         "title": "ManifestResponse",
         "type": "object"
       },
+      "MapConfigResponse": {
+        "description": "Resolved tile-provider config returned to the UI.",
+        "properties": {
+          "attribution": {
+            "title": "Attribution",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Provider kind: osm | mapbox | maptiler | self_hosted",
+            "title": "Kind",
+            "type": "string"
+          },
+          "max_zoom": {
+            "default": 19,
+            "title": "Max Zoom",
+            "type": "integer"
+          },
+          "subdomains": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subdomains"
+          },
+          "tile_url_template": {
+            "title": "Tile Url Template",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "tile_url_template",
+          "attribution"
+        ],
+        "title": "MapConfigResponse",
+        "type": "object"
+      },
       "MetricDefinition": {
         "description": "A single metric that a device type can report.",
         "properties": {
@@ -2647,7 +2766,7 @@
             "type": "object"
           },
           "condition_type": {
-            "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone)$",
+            "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone|zone\\.entered|zone\\.exited|zone\\.dwell_exceeded)$",
             "title": "Condition Type",
             "type": "string"
           },
@@ -2828,7 +2947,7 @@
           "condition_type": {
             "anyOf": [
               {
-                "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone)$",
+                "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone|zone\\.entered|zone\\.exited|zone\\.dwell_exceeded)$",
                 "type": "string"
               },
               {
@@ -4127,6 +4246,25 @@
         "title": "TenantConfigUpdate",
         "type": "object"
       },
+      "TileProviderUpdate": {
+        "description": "Admin payload for setting the tenant's tile provider.\n\n``provider`` is the raw blob persisted to ``tenants.tile_provider``;\nschema is provider-specific (see ``services.map_config``).\nPass ``None`` to fall back to the system default (OSM public).",
+        "properties": {
+          "provider": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "title": "TileProviderUpdate",
+        "type": "object"
+      },
       "UniqueTagsPerWindow": {
         "description": "Aggregation: unique tag count per time window.",
         "properties": {
@@ -4477,6 +4615,50 @@
       "ZoneResponse": {
         "description": "Persisted zone row.",
         "properties": {
+          "bbox_max_lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox Max Lat"
+          },
+          "bbox_max_lon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox Max Lon"
+          },
+          "bbox_min_lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox Min Lat"
+          },
+          "bbox_min_lon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox Min Lon"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -6789,6 +6971,68 @@
         "summary": "Approve Device",
         "tags": [
           "provisioning"
+        ]
+      }
+    },
+    "/device-registry/{device_id}/cert": {
+      "post": {
+        "description": "Attach a client certificate to a device (admin only).\n\nStores SHA-256 thumbprint + subject. The actual PEM lives in the MQTT\nbroker's CA store, never in the application database.",
+        "operationId": "attach_device_cert_device_registry__device_id__cert_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Device Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceCertAttach"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceCertResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Attach Device Cert",
+        "tags": [
+          "device-registry"
         ]
       }
     },
@@ -10564,6 +10808,84 @@
           }
         ],
         "summary": "Update Tenant Config",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/tenant/map-config": {
+      "get": {
+        "description": "Resolved tile-provider config for the calling tenant (any role).",
+        "operationId": "get_map_config_tenant_map_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Map Config",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "patch": {
+        "description": "Set the tile provider for the calling tenant (admin only).",
+        "operationId": "update_map_config_tenant_map_config_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TileProviderUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Update Map Config",
         "tags": [
           "tenant"
         ]

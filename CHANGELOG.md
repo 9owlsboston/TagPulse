@@ -20,7 +20,15 @@ All notable changes to TagPulse will be documented in this file.
   - `cryptography>=43.0` added to backend dependencies.
   - Broker enforcement, dual-auth listener config, step-ca Helm chart, and `tenants.require_mtls` flag are deferred to **Sprint 17c** — the cert column + attach API ship now so devices can pre-register before the broker switches to enforcement.
 
-- **Sprint 17 — tests**: 42 new tests across `test_geo.py` (17), `test_map_config.py` (9), `test_zone_rule_schemas.py` (7), `test_zone_rules_and_dwell.py` (7), `test_device_cert.py` (2). **354 backend tests passing** (was 312).
+- **Sprint 17 — tests**: 44 new tests across `test_geo.py` (17), `test_map_config.py` (9), `test_zone_rule_schemas.py` (7), `test_zone_rules_and_dwell.py` (7), `test_device_cert.py` (2), `test_geofence_pipeline.py` (2). **356 backend tests passing** (was 312).
+
+- **Sprint 17 — audit follow-up (gap mitigations)**:
+  - **`zone_kind` on every `subject.zone_changed` emit** — reader-bound emits now carry `"zone_kind": "reader_bound"` (alongside the geofence path's `"zone_kind": "geofence"`) per design §4.1 / §7. Downstream consumers can route by transition kind without parsing the source.
+  - **Tenant-level 30 s TTL cache** on `find_geofence_candidates` per design §4.1 — `_GEOFENCE_CACHE` in `tagpulse.repositories.timescaledb.sites_zones`. Full geofence list loaded once per tenant per TTL; bbox prefilter runs in-process on hit. Synchronously invalidated by zone create/update/delete so polygon edits take effect on the next ingest tick.
+  - **Durable `subject_current_zone` table** (Alembic `027_subject_current_zone.py`) — promotes `DwellTracker._state` to a persisted upsert per design §5.2. `DwellTracker` is write-through (called from the `SUBJECT_ZONE_CHANGED` subscriber, off the ingest hot path) and hydrates from the table on app startup so dwell state survives worker restart and works in multi-worker deployments. RLS by `tenant_id`.
+  - **Prometheus alert rules** at `ops/prometheus/alerts.yml` (`tagpulse.geofence` group) — `GeofenceEvaluationLatencyP99High` (p99 > 10 ms, 1 h sustained) and `GeofenceCandidatesP95High` (p95 > 50, 1 h sustained). Both labeled `category: adr-trigger` and link to the runbook.
+  - **Operator runbook** `docs/runbooks/geofence-postgis-trigger.md` — covers acknowledge → confirm-not-pathological-polygon → open ADR-013 → schedule migration → communicate. Listed in `docs/runbooks/README.md`.
+  - **Geofence pipeline integration test** (`test_geofence_pipeline.py`): outside→inside→inside→outside stream emits exactly 2 `zone_changed` events with `zone_kind='geofence'`; full pipeline (transition → `zone.entered` rule → alert) end-to-end.
 
 - **Sprint 16 — gap closure (audit follow-up)**:
   - **Observe-mode flag for clock enforcement** (`settings.ingest_clock_enforce`, defaults `True`). When `False`, out-of-window events are still dead-lettered + metered (with a `mode='observe'` attribute on `tagpulse_events_rejected_clock_total`) but the row is also inserted — supporting the 48 h shadow rollout phase per [docs/design/edge-device-contract.md §10](docs/design/edge-device-contract.md). Two new tests in `test_ingestion_clock.py` (`TestObserveMode`).

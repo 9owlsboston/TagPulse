@@ -90,7 +90,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.inventory_worker = inventory_worker
 
     # Sprint 17a: dwell tracker + worker for zone.dwell_exceeded rules.
-    dwell_tracker = DwellTracker()
+    # Tracker is write-through to subject_current_zone (migration 027) so
+    # dwell state survives restart and is shared across workers.
+    dwell_tracker = DwellTracker(session_factory=async_session_factory)
+    await dwell_tracker.hydrate()
     await event_bus.subscribe(
         Topic.SUBJECT_ZONE_CHANGED, dwell_tracker.on_subject_zone_changed
     )

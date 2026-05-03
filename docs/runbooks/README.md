@@ -6,3 +6,4 @@ the design or ADR that introduced it.
 | Runbook | Applies to | Source |
 |---|---|---|
 | [device-token-rotation.md](device-token-rotation.md) | Sprint 16 | [docs/design/edge-device-contract.md §10](../design/edge-device-contract.md), ADR-011 |
+| [geofence-postgis-trigger.md](geofence-postgis-trigger.md) | Sprint 17a | [docs/design/geofencing-and-map.md §11 Q5](../design/geofencing-and-map.md), ADR-013 (TBD) |
