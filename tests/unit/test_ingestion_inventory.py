@@ -58,6 +58,9 @@ class FakeRepo:
     async def insert_batch(self, tenant_id, reads):  # type: ignore[no-untyped-def]
         return [await self.insert(tenant_id, r) for r in reads]
 
+    async def record_rejection(self, tenant_id, read, reason):  # type: ignore[no-untyped-def]
+        return None
+
     async def query(self, *a, **kw):  # type: ignore[no-untyped-def]
         return []
 

@@ -113,6 +113,8 @@ class DeviceResponse(BaseModel):
     connection_state: str
     last_seen: datetime | None
     mobility: str = "fixed"
+    token_prefix: str | None = None
+    token_rotated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

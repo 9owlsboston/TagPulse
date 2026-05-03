@@ -260,12 +260,12 @@
 > Design: [docs/design/edge-device-contract.md](design/edge-device-contract.md), ADR-011
 > Goal: codify the wire contract `clients/pi/` enforces; tighten device identity before fleets get bigger.
 
-- [planned] `docs/design/edge-device-contract.md` — dedup, ENTER/EXIT, batching, clock rules, heartbeat
-- [planned] ADR-011 — device identity roadmap (token rotation → mTLS → TPM)
-- [planned] Backend ingestion middleware: reject events older than 24h or >5min in future; metering dimension `events_rejected_clock`
-- [planned] `POST /device-registry/{id}/rotate-token` (admin only) — revoke previous token, audit log entry
-- [planned] Provisioning metering: `device_token_rotations` dimension
-- [planned] Edge client doc — README in `clients/pi/` linked to contract spec
+- [done] `docs/design/edge-device-contract.md` — dedup, ENTER/EXIT, batching, clock rules, heartbeat
+- [done] ADR-011 — device identity roadmap (token rotation → mTLS → TPM)
+- [done] Backend ingestion middleware: reject events older than 24h or >5min in future; metering dimension `events_rejected_clock` (`src/tagpulse/ingestion/clock.py`, dead-lettered to `dead_letter_events.topic = 'tag_read.rejected_clock'`)
+- [done] `POST /device-registry/{id}/rotate-token` (admin only) — revoke previous token, audit log entry (`device.token_rotated`), Alembic `025_device_tokens.py` adds `devices.token_hash` / `token_prefix` / `token_rotated_at`
+- [done] Provisioning metering: `device_token_rotations` dimension + `tagpulse_device_token_rotations_total` OTel counter
+- [done] Edge client doc — README in `clients/pi/` linked to contract spec
 - [planned] **UI:** Device detail "Security" panel — token last-rotated, rotate button (admin), copy-once token reveal modal
 - [planned] **UI:** Device detail "Heartbeat" panel — uptime, queue depth, firmware, connection state
 - [planned] **UI:** Audit log — "device security events" filter preset

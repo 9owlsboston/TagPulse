@@ -45,6 +45,9 @@ class FakeRepo:
     async def insert_batch(self, tenant_id, reads):  # type: ignore[no-untyped-def]
         return [await self.insert(tenant_id, r) for r in reads]
 
+    async def record_rejection(self, tenant_id, read, reason):  # type: ignore[no-untyped-def]
+        return None
+
     async def query(self, *a, **kw):  # type: ignore[no-untyped-def]
         return []
 
@@ -360,7 +363,7 @@ async def test_batch_ingest_enriches_each_read() -> None:
         zone_repo=FakeZoneRepo({reader_a: zone_a, reader_b: zone_b}),  # type: ignore[arg-type]
     )
     tenant = uuid4()
-    count = await svc.ingest_batch(
+    count, rejected = await svc.ingest_batch(
         tenant,
         [
             _read(reader_a, epc=epc),
@@ -370,6 +373,7 @@ async def test_batch_ingest_enriches_each_read() -> None:
     )
     await bus.drain(timeout=1.0)
     assert count == 3
+    assert rejected == 0
     # Same enrichment semantics as the single-read path: one zone change.
     assert len(events) == 1
     assert events[0].payload["from_zone_id"] == str(zone_a)

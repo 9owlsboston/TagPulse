@@ -27,6 +27,13 @@ class TagReadRepository(Protocol):
         self, tenant_id: UUID, reads: list[TagReadCreate]
     ) -> list[TagReadResponse]: ...
 
+    async def record_rejection(
+        self,
+        tenant_id: UUID,
+        read: TagReadCreate,
+        reason: str,
+    ) -> None: ...
+
     async def query(
         self,
         tenant_id: UUID,

@@ -6,7 +6,11 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tagpulse.models.database import AlertModel, TagReadModel
+from tagpulse.models.database import (
+    AlertModel,
+    DeadLetterEventModel,
+    TagReadModel,
+)
 from tagpulse.models.schemas import (
     ReadsPerHour,
     TagReadCreate,
@@ -85,6 +89,36 @@ class TimescaleTagReadRepository:
         self._session.add_all(rows)
         await self._session.flush()
         return [TagReadResponse.model_validate(row) for row in rows]
+
+    async def record_rejection(
+        self,
+        tenant_id: uuid.UUID,
+        read: TagReadCreate,
+        reason: str,
+    ) -> None:
+        """Persist a tag read that failed an ingestion-time guard (e.g. clock window)
+        as a ``dead_letter_events`` row so operators can audit drops without
+        relying solely on metrics. Per docs/design/edge-device-contract.md §3.5.
+        """
+        ts = read.timestamp
+        payload: dict[str, object] = {
+            "device_id": str(read.device_id),
+            "tag_id": read.tag_id,
+            "timestamp": ts.isoformat() if ts else None,
+            "epc": read.identity.epc if read.identity else None,
+            "tid": read.identity.tid if read.identity else None,
+        }
+        row = DeadLetterEventModel(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            topic="tag_read.rejected_clock",
+            payload=payload,
+            error_message=reason,
+            retry_count=0,
+            status="rejected",
+        )
+        self._session.add(row)
+        await self._session.flush()
 
     async def query(
         self,

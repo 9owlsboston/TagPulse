@@ -5,6 +5,13 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Sprint 16 — Edge Contract & Identity Hardening (backend)**:
+  - **Ingestion clock-window enforcement** (`src/tagpulse/ingestion/clock.py`): rejects events older than 24 h or more than 5 min in the future per [docs/design/edge-device-contract.md §3.5](docs/design/edge-device-contract.md). Single-read `POST /tag-reads` returns `400 {detail: event_too_old | event_in_future}`; batch `POST /tag-reads/batch` skips rejected events and now returns `{ingested, rejected}`. Rejected events are dead-lettered (`dead_letter_events.topic = 'tag_read.rejected_clock'`) and metered via the new `events_rejected_clock` dimension + `tagpulse_events_rejected_clock_total` OTel counter.
+  - **Per-device rotatable Bearer tokens** (ADR-011 Phase 1): new `devices.token_hash` / `token_prefix` / `token_rotated_at` columns (Alembic `025_device_tokens.py`) and `POST /device-registry/{device_id}/rotate-token` (admin only). Plaintext `tpd_<slug>_…` token returned **once**; backend stores SHA-256 hash. Rotation is atomic, audit-logged (`device.token_rotated`, prior + new prefix in `changes`), and metered via `device_token_rotations` dimension + `tagpulse_device_token_rotations_total` OTel counter.
+  - `DeviceResponse` now includes `token_prefix` and `token_rotated_at` so the UI Security panel can render "last rotated …" without a separate fetch.
+  - `TagReadRepository.record_rejection()` — protocol + Timescale impl that writes the dead-letter row from the ingestion path.
+  - 15 new unit tests (`tests/unit/test_ingestion_clock.py`, `tests/unit/test_device_token.py`); existing batch-ingest tests updated for the new `(ingested, rejected)` return tuple. **310 passing total.**
+
 - **Sprint 15 — Phase B.3 + asset-location queries**:
   - `asset_current_location` SQL view (Alembic `024_asset_current_location.py`) — UNION of latest RFID tag-read per active binding and latest `external_locations` row, exposing `latest_position_source` so the UI can badge "via Reader-12" vs "via Samsara". RLS inherited from underlying tables.
   - `TimescaleAssetLocationRepository` — `get_current_location`, `list_current_locations`, `get_asset_path` (server-side merged RFID + external timeline), `get_assets_in_zone` (JOIN against `zones.fixed_reader_ids`).

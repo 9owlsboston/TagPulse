@@ -1112,6 +1112,29 @@
             "title": "Status",
             "type": "string"
           },
+          "token_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Prefix"
+          },
+          "token_rotated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Rotated At"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -1132,6 +1155,37 @@
           "updated_at"
         ],
         "title": "DeviceResponse",
+        "type": "object"
+      },
+      "DeviceTokenResponse": {
+        "description": "One-time device-token reveal \u2014 never re-readable after this response.",
+        "properties": {
+          "device_id": {
+            "format": "uuid",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "rotated_at": {
+            "format": "date-time",
+            "title": "Rotated At",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "token",
+          "prefix",
+          "rotated_at"
+        ],
+        "title": "DeviceTokenResponse",
         "type": "object"
       },
       "DeviceUpdate": {
@@ -6835,6 +6889,58 @@
         ]
       }
     },
+    "/device-registry/{device_id}/rotate-token": {
+      "post": {
+        "description": "Rotate a device's Bearer token (admin only).\n\nPlaintext token is returned **once** \u2014 backend stores only its SHA-256\nhash, immediately invalidating any prior token. Audit-logged and metered\nper ADR-011 Phase 1 / docs/design/edge-device-contract.md \u00a75.",
+        "operationId": "rotate_device_token_device_registry__device_id__rotate_token_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Device Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceTokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Rotate Device Token",
+        "tags": [
+          "device-registry"
+        ]
+      }
+    },
     "/devices/provision": {
       "post": {
         "description": "Self-register a device using a tenant provisioning key.",
@@ -9596,7 +9702,7 @@
     },
     "/tag-reads/batch": {
       "post": {
-        "description": "Ingest a batch of tag read events via HTTP push.",
+        "description": "Ingest a batch of tag read events via HTTP push.\n\nReturns the count of accepted and clock-rejected events; rejected events\nare dead-lettered per docs/design/edge-device-contract.md \u00a73.5.",
         "operationId": "create_tag_reads_batch_tag_reads_batch_post",
         "requestBody": {
           "content": {

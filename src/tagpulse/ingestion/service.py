@@ -9,6 +9,7 @@ from typing import Any
 
 from tagpulse.api.services.telemetry_service import TelemetryService
 from tagpulse.core.otel_metrics import (
+    events_rejected_clock_counter,
     ingestion_counter,
     inventory_unmapped_sgtin_counter,
     stock_item_auto_created_counter,
@@ -18,6 +19,7 @@ from tagpulse.core.otel_metrics import (
 )
 from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.protocol import Event, EventBus, Topic
+from tagpulse.ingestion.clock import ClockRejectionError, check_clock_window
 from tagpulse.ingestion.tag_data import cap_tag_data
 from tagpulse.models.schemas import (
     AssetTagBindingResponse,
@@ -134,6 +136,23 @@ class IngestionService:
     async def ingest(self, tenant_id: uuid.UUID, read: TagReadCreate) -> TagReadResponse:
         """Validate, persist, and publish a single tag read."""
         normalized = self._normalize(tenant_id, read)
+        reason = check_clock_window(normalized.timestamp)
+        if reason is not None:
+            await self._repo.record_rejection(tenant_id, normalized, reason)
+            events_rejected_clock_counter.add(
+                1, {"tenant_id": str(tenant_id), "reason": reason}
+            )
+            if self._usage_meter is not None:
+                self._usage_meter.record(
+                    tenant_id, "events_rejected_clock", "events"
+                )
+            logger.warning(
+                "Tag read rejected by clock window: device=%s ts=%s reason=%s",
+                normalized.device_id,
+                normalized.timestamp,
+                reason,
+            )
+            raise ClockRejectionError(reason)
         result = await self._repo.insert(tenant_id, normalized)
         ingestion_counter.add(1, {"tenant_id": str(tenant_id), "protocol": "http"})
         logger.info(
@@ -172,17 +191,43 @@ class IngestionService:
         )
         return result
 
-    async def ingest_batch(self, tenant_id: uuid.UUID, reads: list[TagReadCreate]) -> int:
+    async def ingest_batch(
+        self, tenant_id: uuid.UUID, reads: list[TagReadCreate]
+    ) -> tuple[int, int]:
         """Validate, persist, enrich, and publish a batch of tag reads.
 
         Phase B.3: each read goes through the same asset/zone + inventory
         enrichment as the single-read path so batched HTTP/MQTT clients see
         the same ``subject.zone_changed`` and inventory side-effects.
+
+        Sprint 16: out-of-window events (per docs/design/edge-device-contract.md
+        §3.5) are dead-lettered + metered and excluded from the inserted set.
+        Returns ``(ingested, rejected)``.
         """
-        normalized = [self._normalize(tenant_id, r) for r in reads]
+        normalized_all = [self._normalize(tenant_id, r) for r in reads]
+        normalized: list[TagReadCreate] = []
+        rejected = 0
+        for read in normalized_all:
+            reason = check_clock_window(read.timestamp)
+            if reason is not None:
+                await self._repo.record_rejection(tenant_id, read, reason)
+                events_rejected_clock_counter.add(
+                    1, {"tenant_id": str(tenant_id), "reason": reason}
+                )
+                if self._usage_meter is not None:
+                    self._usage_meter.record(
+                        tenant_id, "events_rejected_clock", "events"
+                    )
+                rejected += 1
+                continue
+            normalized.append(read)
         inserted = await self._repo.insert_batch(tenant_id, normalized)
         count = len(inserted)
-        logger.info("Batch ingested: %d tag reads", count)
+        logger.info(
+            "Batch ingested: %d tag reads (%d rejected by clock window)",
+            count,
+            rejected,
+        )
         if self._device_repo and inserted:
             now = datetime.now(UTC)
             # Touch each unique device once; record_last_seen is cheap but
@@ -219,7 +264,7 @@ class IngestionService:
                     },
                 ),
             )
-        return count
+        return count, rejected
 
     def _normalize(
         self, tenant_id: uuid.UUID, read: TagReadCreate

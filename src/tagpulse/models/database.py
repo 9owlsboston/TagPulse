@@ -74,6 +74,12 @@ class DeviceModel(Base):
     last_seen: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # -- Sprint 16: rotatable per-device token (ADR-011 Phase 1) --
+    token_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    token_prefix: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    token_rotated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

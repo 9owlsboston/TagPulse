@@ -1,13 +1,21 @@
 """CRUD API routes for the device registry."""
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.api.dependencies import get_device_service
 from tagpulse.api.services.device_service import DeviceNotFoundError, DeviceService
-from tagpulse.core.user_auth import AuthenticatedUser, require_role
+from tagpulse.core.audit import AuditLogger
+from tagpulse.core.otel_metrics import device_token_rotations_counter
+from tagpulse.core.user_auth import AuthenticatedUser, generate_device_token, require_role
+from tagpulse.models.database import DeviceModel, TenantModel
 from tagpulse.models.schemas import DeviceCreate, DeviceResponse, DeviceUpdate
+from tagpulse.repositories.timescaledb.session import get_session
 
 router = APIRouter(prefix="/device-registry", tags=["device-registry"])
 
@@ -75,3 +83,65 @@ async def decommission_device(
         return await service.decommission(user.tenant_id, device_id)
     except DeviceNotFoundError:
         raise HTTPException(status_code=404, detail="Device not found") from None
+
+
+class DeviceTokenResponse(BaseModel):
+    """One-time device-token reveal — never re-readable after this response."""
+
+    device_id: UUID
+    token: str
+    prefix: str
+    rotated_at: datetime
+
+
+@router.post("/{device_id}/rotate-token", response_model=DeviceTokenResponse)
+async def rotate_device_token(
+    device_id: UUID,
+    user: AuthenticatedUser = require_role("admin"),
+    session: AsyncSession = Depends(get_session),
+) -> DeviceTokenResponse:
+    """Rotate a device's Bearer token (admin only).
+
+    Plaintext token is returned **once** — backend stores only its SHA-256
+    hash, immediately invalidating any prior token. Audit-logged and metered
+    per ADR-011 Phase 1 / docs/design/edge-device-contract.md §5.
+    """
+    stmt = select(DeviceModel).where(
+        DeviceModel.id == device_id,
+        DeviceModel.tenant_id == user.tenant_id,
+    )
+    result = await session.execute(stmt)
+    device = result.scalar_one_or_none()
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found") from None
+
+    tenant = await session.get(TenantModel, user.tenant_id)
+    if tenant is None:  # pragma: no cover — defensive
+        raise HTTPException(status_code=500, detail="Tenant not found") from None
+
+    prior_prefix = device.token_prefix
+    raw_token, prefix, token_hash = generate_device_token(tenant.slug)
+    rotated_at = datetime.now(UTC)
+    device.token_hash = token_hash
+    device.token_prefix = prefix
+    device.token_rotated_at = rotated_at
+
+    audit = AuditLogger(session)
+    await audit.log(
+        user.tenant_id,
+        action="device.token_rotated",
+        resource_type="device",
+        resource_id=device_id,
+        changes={"prior_prefix": prior_prefix, "new_prefix": prefix},
+        user_id=user.user_id,
+    )
+    await session.flush()
+
+    device_token_rotations_counter.add(1, {"tenant_id": str(user.tenant_id)})
+
+    return DeviceTokenResponse(
+        device_id=device_id,
+        token=raw_token,
+        prefix=prefix,
+        rotated_at=rotated_at,
+    )

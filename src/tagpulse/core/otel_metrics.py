@@ -153,3 +153,17 @@ inventory_unmapped_sgtin_counter = meter.create_counter(
     description="SGTIN reads with no matching product (GTIN lookup miss)",
     unit="reads",
 )
+
+# -- Sprint 16: edge contract & identity hardening --
+events_rejected_clock_counter = meter.create_counter(
+    "tagpulse_events_rejected_clock_total",
+    description="Tag-read events rejected by the ingestion clock window "
+    "(too old or too far in the future) per docs/design/edge-device-contract.md §3.5",
+    unit="events",
+)
+
+device_token_rotations_counter = meter.create_counter(
+    "tagpulse_device_token_rotations_total",
+    description="Per-device Bearer token rotations (ADR-011 Phase 1)",
+    unit="rotations",
+)

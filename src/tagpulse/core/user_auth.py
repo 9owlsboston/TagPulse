@@ -62,6 +62,22 @@ def verify_api_key(raw_key: str, stored_hash: str) -> bool:
     return hashlib.sha256(raw_key.encode()).hexdigest() == stored_hash
 
 
+def generate_device_token(tenant_slug: str) -> tuple[str, str, str]:
+    """Generate a per-device Bearer token, its prefix, and its hash.
+
+    Mirrors :func:`generate_api_key` but uses a ``tpd_`` (tag-pulse-device)
+    prefix so token leak triage can distinguish user keys from device tokens
+    at a glance. Per ADR-011 Phase 1.
+
+    Returns: (raw_token, prefix, sha256_hash)
+    """
+    random_part = secrets.token_hex(16)
+    raw_token = f"tpd_{tenant_slug}_{random_part}"
+    prefix = raw_token[:10]
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    return raw_token, prefix, token_hash
+
+
 def create_jwt(user: UserModel, tenant: TenantModel) -> str:
     """Create a JWT access token for a user."""
     now = datetime.now(UTC)
