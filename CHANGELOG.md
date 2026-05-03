@@ -5,6 +5,15 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Sprint 13b — Multi-tier Foundations**:
+  - `tagpulse.core.context` — `db_session_var` / `current_tenant_var` ContextVars + async `tenant_context()` helper for background jobs and scripts. `get_session()` now binds the contextvar so request and non-request paths share a single seam.
+  - `tagpulse.core.pool_registry` — `PoolRegistry` + `PoolEntry`, built lazily from `config/database.yaml` (falls back to `settings.database_url` when no file is present). Strict lookup; `shared_default` is mandatory. New `config/database.yaml.example` documents the format.
+  - `tenants.db_pool_key VARCHAR(64) NOT NULL DEFAULT 'shared_default'` column + index — Alembic migration `023_tenant_db_pool_key.py`.
+  - `tagpulse.repositories.admin.AdminRepository` — cross-tenant queries (`list_tenant_pool_bindings`, `count_tenants_per_pool`) intended only for admin-gated routes.
+  - `tagpulse.repositories.metrics.MetricsRepository` — backend-agnostic time-bucket seam. `TimescaleMetricsRepository` uses `time_bucket`, `PostgresMetricsRepository` uses `date_trunc`; factory `get_metrics_repository()` picks via new `settings.database_backend` (`timescale` | `postgres`). First method: `tag_reads_hourly_by_reader`.
+  - New deps: `PyYAML>=6.0`, `types-PyYAML>=6.0`.
+  - 14 new unit tests (`test_db_routing.py`, `test_metrics_repository.py`). **288 passing total.**
+
 - **Sprint 15b — Phase F audit mitigation: tenant config API**:
   - New routes `GET /tenant/config` (any role) and `PATCH /tenant/config` (admin-only) backed by `src/tagpulse/api/routes/tenant_config.py`. Returns `{id, name, slug, plan, tracking_modes}`. PATCH validates `tracking_modes` is a non-empty list of `asset` / `inventory` literals, deduplicates on write, and emits an `tenant.config.update` audit log entry recording the `from`→`to` transition. Unblocks the Phase F UI sidebar gating + Tenant Settings page.
   - New cross-product `GET /lots` route (`InventoryService.list_lots` + `LotRepository.list_all`) supporting `expiring_within_days`, `limit`, `offset`. Powers the UI Lot Expiry Queue page without N+1 per-product calls.

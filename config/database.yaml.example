@@ -1,0 +1,20 @@
+# TagPulse pool registry — Sprint 13b multi-tier seam.
+#
+# Every tenant resolves to one of these named pools via tenants.db_pool_key.
+# v1 ships with one entry; adding a sovereign / regional pool later is a
+# config edit + one SQL UPDATE on tenants.db_pool_key — no code change.
+#
+# Per docs/design/storage-strategy.md §6 Q2.
+
+pools:
+  shared_default:
+    dsn: postgresql+asyncpg://tagpulse:secret@localhost:5432/tagpulse
+    # Optional create_async_engine kwargs go here, e.g.
+    # pool_size: 20
+    # max_overflow: 10
+    # pool_pre_ping: true
+
+  # Example — uncomment when a sovereign customer is onboarded:
+  # eu_west_dedicated:
+  #   dsn: postgresql+asyncpg://tagpulse:secret@eu-west-pg.internal:5432/tagpulse_eu
+  #   pool_size: 10

@@ -1,5 +1,7 @@
 """Application configuration via environment variables."""
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings
 
 
@@ -7,6 +9,8 @@ class Settings(BaseSettings):
     """TagPulse application settings."""
 
     database_url: str = "postgresql+asyncpg://tagpulse:secret@localhost:5432/tagpulse"
+    database_config_path: str = "config/database.yaml"
+    database_backend: Literal["timescale", "postgres"] = "timescale"
     mqtt_broker_host: str = "localhost"
     mqtt_broker_port: int = 1883
     mqtt_username: str | None = None

@@ -38,6 +38,9 @@ class TenantModel(Base):
     tracking_modes: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default='["asset"]'
     )
+    db_pool_key: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="shared_default"
+    )
     provisioning_key_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     provisioning_key_prefix: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

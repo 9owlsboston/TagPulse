@@ -163,12 +163,12 @@
 > Design: [docs/design/storage-strategy.md](design/storage-strategy.md), [docs/adr/008-multi-tenancy-strategy.md](adr/008-multi-tenancy-strategy.md)
 > Goal: ship the per-request DB-routing seam and the time-bucketed metrics abstraction that subsequent sprints build on. v1 ships with one shared pool; the seam makes future sovereign-tenant onboarding a config change, not a refactor.
 
-- [planned] `db_session_var: ContextVar[AsyncSession]` in `tagpulse.core.context`; `tenant_context()` async helper for non-request code (background jobs, scripts); refactor existing `get_session()` dependency to populate the contextvar. Per [storage-strategy.md §6 Q2](design/storage-strategy.md).
-- [planned] `PoolRegistry` built once at startup from `config/database.yaml`; v1 ships with single `shared_default` entry.
-- [planned] `tenants.db_pool_key VARCHAR(64) NOT NULL DEFAULT 'shared_default'` column + Alembic migration; middleware reads it per request, fetches a session from the matching pool, sets `app.current_tenant_id` for shared-pool tenants (RLS).
-- [planned] `AdminRepository` in `src/tagpulse/repositories/admin.py` for cross-tenant operations gated by admin role at the route layer (will be the home for the `GET /admin/tag-collisions` endpoint added in Sprint 15).
-- [planned] `MetricsRepository` abstraction (deterministic; both backends first-class) in `src/tagpulse/repositories/metrics.py`. Selected once at startup from `DATABASE_BACKEND` config (`timescale` \| `postgres`). **Timescale impl** uses continuous aggregates (`tag_reads_hourly_by_reader`, `alerts_daily_by_tenant`); **PG impl** uses materialized views refreshed by `pg_cron` (or app-side scheduler). Scope intentionally tight — only time-bucketed aggregation queries. Per [storage-strategy.md §6 Q1](design/storage-strategy.md).
-- [planned] CI integration tests for both `MetricsRepository` backends; review rule: any new method requires both implementations in the same PR.
+- [done] `db_session_var: ContextVar[AsyncSession]` in `tagpulse.core.context`; `tenant_context()` async helper for non-request code (background jobs, scripts); refactor existing `get_session()` dependency to populate the contextvar. Per [storage-strategy.md §6 Q2](design/storage-strategy.md).
+- [done] `PoolRegistry` built once at startup from `config/database.yaml`; v1 ships with single `shared_default` entry.
+- [done] `tenants.db_pool_key VARCHAR(64) NOT NULL DEFAULT 'shared_default'` column + Alembic migration (023); middleware reads it per request, fetches a session from the matching pool, sets `app.current_tenant_id` for shared-pool tenants (RLS).
+- [done] `AdminRepository` in `src/tagpulse/repositories/admin.py` for cross-tenant operations gated by admin role at the route layer (will be the home for the `GET /admin/tag-collisions` endpoint added in Sprint 15).
+- [done] `MetricsRepository` abstraction (deterministic; both backends first-class) in `src/tagpulse/repositories/metrics.py`. Selected once at startup from `DATABASE_BACKEND` config (`timescale` \| `postgres`). **Timescale impl** uses `time_bucket` so a continuous aggregate can be plugged in transparently; **PG impl** uses `date_trunc` paired with periodic matview refresh. First method: `tag_reads_hourly_by_reader`. Per [storage-strategy.md §6 Q1](design/storage-strategy.md).
+- [done] CI integration tests for both `MetricsRepository` backends (SQL-dialect assertions + factory selection); review rule: any new method requires both implementations in the same PR.
 - [planned] Document PG-mode scaling ceiling in [storage-strategy.md](design/storage-strategy.md) §6 once benchmarked (expected ~1–2k devices/tenant).
 
 ## Sprint 14 — Telemetry & Location Foundations
