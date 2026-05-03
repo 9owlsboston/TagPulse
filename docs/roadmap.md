@@ -118,7 +118,7 @@
 - [done] Retry + dead letter — dead_letter_events table, admin API for retry/abandon
 - [done] Audit logging — audit_logs table with tenant-scoped query API
 - [done] Dockerfile + deployment config — HEALTHCHECK, multi-worker, labels
-- [planned] docs/runbooks/ — operational runbook documents
+- [done] `docs/runbooks/` foundation — README + first two runbooks (`device-token-rotation.md` from Sprint 16, `geofence-postgis-trigger.md` from Sprint 17a). Future runbooks land alongside the sprint that needs them.
 
 ## Sprint 11 — Observability
 
@@ -225,7 +225,7 @@
 - [done] **UI:** Sites & Zones page (admin/editor) — site list + zone editor with reader picker; new "Occupants" drawer per zone backed by `useAssetsInZone`.
 - [done] **UI:** Asset detail — server-merged path via `useAssetPath`, current-location card via `useAssetCurrentLocation`, badged by source (RFID vs external/TMS).
 - [done] **UI:** Sidebar — Assets + Sites entries with role guards (visible when `tenants.tracking_modes` includes `asset`).
-- [planned] **UI:** Device detail — "Covers zones: …" panel
+- [done] **UI:** Device detail — "Covers Zones" panel on the Overview tab listing zones whose `fixed_reader_ids` include this device. ([TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI/blob/main/src/pages/devices/DeviceDetail.tsx))
 
 ## Sprint 15b — Inventory Tracking (sibling to Sprint 15)
 
@@ -302,6 +302,18 @@
 - [deferred → Sprint 17c] **Broker enforcement & dual-auth** — Mosquitto `tls_version`, listener `cafile`/`certfile`/`keyfile` config; `mosquitto-go-auth` HTTP backend pointing at `/internal/mqtt-auth`; `tenants.require_mtls` flag for opt-in enforcement. Cert scaffolding ships now; broker-side rollout is its own sprint.
 - [deferred → Sprint 17c] **step-ca Helm chart + per-tenant intermediate CA bootstrap**
 - [done] **UI:** Device detail Security tab — cert thumbprint + subject display, admin-only "Attach cert" PEM upload modal (POST /device-registry/{id}/cert). ([TagPulse-UI#4](https://github.com/9owlsboston/TagPulse-UI/pull/4))
+
+## Sprint 17c — mTLS Broker Rollout & Geofence Edge Cases (planned)
+
+> Design: [docs/adr/012-mtls-for-mqtt.md](adr/012-mtls-for-mqtt.md), [docs/design/geofencing-and-map.md](design/geofencing-and-map.md)
+> Goal: finish the mTLS story end-to-end at the broker, and close the explicit geofence edge cases deferred from 17a.
+
+- [planned] Mosquitto 2.x listener config — `tls_version`, `cafile`/`certfile`/`keyfile`; per-tenant SNI or listener split (TBD in ADR-012 follow-up)
+- [planned] `mosquitto-go-auth` HTTP backend → TagPulse `/internal/mqtt-auth` shim — verifies cert thumbprint against `devices.cert_thumbprint`, enforces tenant scope on topic ACL
+- [planned] `tenants.require_mtls` flag (Alembic) — opt-in enforcement; dual-auth (token + cert) honoured while `false`
+- [planned] step-ca Helm chart + per-tenant intermediate CA bootstrap; 90-day leaf rotation; revocation list publication
+- [planned] **Antimeridian-crossing polygons** — split-at-±180° storage + dual-bbox prefilter; covers Pacific-spanning fleets
+- [planned] Operator runbook — broker rollout, dual-auth → cert-only cutover, revocation procedure
 
 ---
 
