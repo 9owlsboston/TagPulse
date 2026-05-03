@@ -155,6 +155,25 @@ async def list_lots(
     )
 
 
+@router.get("/lots", response_model=list[LotResponse])
+async def list_all_lots(
+    expiring_within_days: int | None = Query(default=None, ge=0),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    service: InventoryService = Depends(get_inventory_service),
+) -> list[LotResponse]:
+    """Cross-product lot list. Used by the UI Lot Expiry Queue page."""
+    return list(
+        await service.list_lots(
+            user.tenant_id,
+            expiring_within_days=expiring_within_days,
+            limit=limit,
+            offset=offset,
+        )
+    )
+
+
 @router.patch("/lots/{lot_id}", response_model=LotResponse)
 async def update_lot(
     lot_id: UUID,

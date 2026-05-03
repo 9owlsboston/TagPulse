@@ -5,6 +5,11 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Sprint 15b — Phase F audit mitigation: tenant config API**:
+  - New routes `GET /tenant/config` (any role) and `PATCH /tenant/config` (admin-only) backed by `src/tagpulse/api/routes/tenant_config.py`. Returns `{id, name, slug, plan, tracking_modes}`. PATCH validates `tracking_modes` is a non-empty list of `asset` / `inventory` literals, deduplicates on write, and emits an `tenant.config.update` audit log entry recording the `from`→`to` transition. Unblocks the Phase F UI sidebar gating + Tenant Settings page.
+  - New cross-product `GET /lots` route (`InventoryService.list_lots` + `LotRepository.list_all`) supporting `expiring_within_days`, `limit`, `offset`. Powers the UI Lot Expiry Queue page without N+1 per-product calls.
+  - 5 unit tests in `tests/unit/test_tenant_config.py` cover schema acceptance/rejection and response serialisation. **274 passing total.**
+
 - **Sprint 15b — Phase E (rules / workers / imports / simulator / metering)**:
   - **Rules engine — inventory conditions**: `RuleCreate` / `RuleUpdate` now accept `stock.below_threshold`, `stock.expiring_within`, `stock.unexpected_in_zone` in `condition_type`. Backed by new Pydantic models `StockBelowThresholdCondition`, `StockExpiringWithinCondition`, `StockUnexpectedInZoneCondition`.
   - **Event-driven branch**: `RuleEvaluator.on_subject_zone_changed` now subscribes to `Topic.SUBJECT_ZONE_CHANGED` (in addition to `TAG_READ_CREATED`) and fires alerts for `stock.unexpected_in_zone` rules whenever a `stock_item` enters a zone outside its configured `allowed_zone_ids`. Rules can be scoped per-product or apply to all products in the tenant.

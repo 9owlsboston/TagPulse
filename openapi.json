@@ -3829,6 +3829,70 @@
         "title": "TelemetryResponse",
         "type": "object"
       },
+      "TenantConfig": {
+        "description": "Read-only view of tenant-scoped feature flags.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "plan": {
+            "title": "Plan",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "tracking_modes": {
+            "items": {
+              "enum": [
+                "asset",
+                "inventory"
+              ],
+              "type": "string"
+            },
+            "title": "Tracking Modes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "plan",
+          "tracking_modes"
+        ],
+        "title": "TenantConfig",
+        "type": "object"
+      },
+      "TenantConfigUpdate": {
+        "description": "Admin-only payload for toggling tenant feature flags.",
+        "properties": {
+          "tracking_modes": {
+            "items": {
+              "enum": [
+                "asset",
+                "inventory"
+              ],
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Tracking Modes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tracking_modes"
+        ],
+        "title": "TenantConfigUpdate",
+        "type": "object"
+      },
       "UniqueTagsPerWindow": {
         "description": "Aggregation: unique tag count per time window.",
         "properties": {
@@ -6982,6 +7046,92 @@
         ]
       }
     },
+    "/lots": {
+      "get": {
+        "description": "Cross-product lot list. Used by the UI Lot Expiry Queue page.",
+        "operationId": "list_all_lots_lots_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "expiring_within_days",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expiring Within Days"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LotResponse"
+                  },
+                  "title": "Response List All Lots Lots Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List All Lots",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
     "/lots/import": {
       "post": {
         "operationId": "import_lots_lots_import_post",
@@ -9912,6 +10062,84 @@
         "summary": "Recent Reads",
         "tags": [
           "query"
+        ]
+      }
+    },
+    "/tenant/config": {
+      "get": {
+        "description": "Return the calling tenant's configuration (any role).",
+        "operationId": "get_tenant_config_tenant_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Tenant Config",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "patch": {
+        "description": "Update tenant feature flags (admin only). Deduplicated and audited.",
+        "operationId": "update_tenant_config_tenant_config_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Update Tenant Config",
+        "tags": [
+          "tenant"
         ]
       }
     },

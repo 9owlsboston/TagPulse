@@ -173,6 +173,22 @@ class InventoryService:
             offset=offset,
         )
 
+    async def list_lots(
+        self,
+        tenant_id: UUID,
+        *,
+        expiring_within_days: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Sequence[LotResponse]:
+        """Cross-product lot list, ordered by soonest expiry first."""
+        return await self._lots.list_all(
+            tenant_id,
+            expiring_within_days=expiring_within_days,
+            limit=limit,
+            offset=offset,
+        )
+
     async def update_lot(
         self,
         tenant_id: UUID,

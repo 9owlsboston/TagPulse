@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -293,6 +293,30 @@ class TimescaleLotRepository:
             stmt = stmt.where(
                 LotModel.expires_at.isnot(None),
                 LotModel.expires_at <= datetime.fromtimestamp(cutoff, tz=UTC),
+            )
+        stmt = (
+            stmt.order_by(LotModel.expires_at.asc().nullslast())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._session.execute(stmt)
+        return [_lot_to_response(r) for r in result.scalars()]
+
+    async def list_all(
+        self,
+        tenant_id: uuid.UUID,
+        *,
+        expiring_within_days: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Sequence[LotResponse]:
+        """Cross-product lot list, ordered by soonest expiry."""
+        stmt = select(LotModel).where(LotModel.tenant_id == tenant_id)
+        if expiring_within_days is not None:
+            cutoff = datetime.now(UTC) + timedelta(days=expiring_within_days)
+            stmt = stmt.where(
+                LotModel.expires_at.isnot(None),
+                LotModel.expires_at <= cutoff,
             )
         stmt = (
             stmt.order_by(LotModel.expires_at.asc().nullslast())
