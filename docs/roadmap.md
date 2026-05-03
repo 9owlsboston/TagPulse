@@ -242,18 +242,18 @@
 - [done] `stock_levels` SQL view — live count per (product, lot, zone) — Sprint 15b Phase D
 - [done] **Phase D.2** — Ingestion inventory branch — SKU lookup by GTIN, lot inference from `tag_data` via `tag_data_mappings`, emit `subject.zone_changed` with `subject_kind='stock_item'` and append `stock_movements` rows on zone transitions (Sprint 15b Phase D.5)
 - [done] APIs: `/stock-items`, `/stock-levels`, `/stock-movements` (filter by product/lot/zone/state/time) — Sprint 15b Phase D
-- [planned] Rules engine: `stock.below_threshold`, `stock.expiring_within`, `stock.unexpected_in_zone`
-- [planned] Periodic workers — below-threshold scan (60 s), expiring-soon scan (daily)
-- [planned] CSV import endpoints for products / lots / stock_items (bulk onboarding)
-- [planned] Simulator: inventory profile — register sample products, emit SGTIN tag streams across zones, simulate consume / expire
-- [planned] Metering: new dimensions `inventory_movements`, `stock_items_active`
-- [planned] **UI:** Products page — catalog list, SKU detail with stock-by-zone bar chart
-- [planned] **UI:** Lots sub-page — expiry queue, lot detail
-- [planned] **UI:** Stock Levels page — pivot grid (product × zone), CSV export
-- [planned] **UI:** Stock Movements page — chronological ledger filter (product / zone / time)
-- [planned] **UI:** Rule wizard — inventory condition step
-- [planned] **UI:** Sidebar — Products / Stock Levels / Stock Movements entries (visible when `tenants.tracking_modes` includes `inventory`)
-- [planned] **UI:** Tenant settings page — admin toggle for `tracking_modes`; **"Sensor metrics"** sub-tab (declared telemetry keys mirrored to `device_telemetry`); **"Tag data fields"** sub-tab (editor for `tag_data_mappings`). Per [admin-ui.md §10](design/admin-ui.md).
+- [done] Rules engine: `stock.below_threshold`, `stock.expiring_within`, `stock.unexpected_in_zone` — Sprint 15b Phase E (`src/tagpulse/rules/evaluator.py`, `workers/inventory_rule_worker.py`)
+- [done] Periodic workers — below-threshold scan (60 s), expiring-soon scan (daily) — Sprint 15b Phase E (`workers/inventory_rule_worker.py`)
+- [done] CSV import endpoints for products / lots / stock_items (bulk onboarding) — Sprint 15b Phase E (`api/routes/inventory_imports.py`)
+- [done] Simulator: inventory profile — register sample products, emit SGTIN tag streams across zones, simulate consume / expire — Sprint 15b Phase E (`scripts/simulate_inventory.py`)
+- [done] Metering: new dimensions `inventory_movements`, `stock_items_active` — Sprint 15b Phase E
+- [done] **UI:** Products page — catalog list, SKU detail with stock-by-zone bar chart — Sprint 15b Phase F (`pages/inventory/ProductList.tsx`, `ProductDetail.tsx`)
+- [done] **UI:** Lots sub-page — expiry queue, lot detail — Sprint 15b Phase F (`pages/inventory/LotExpiryQueue.tsx` + per-product lots in `ProductDetail.tsx`; backed by new cross-product `GET /lots`)
+- [done] **UI:** Stock Levels page — pivot grid (product × zone), CSV export — Sprint 15b Phase F (`pages/inventory/StockLevels.tsx`)
+- [done] **UI:** Stock Movements page — chronological ledger filter (product / zone / time) — Sprint 15b Phase F (`pages/inventory/StockMovements.tsx`)
+- [done] **UI:** Rule wizard — inventory condition step — Sprint 15b Phase F (`pages/rules/RuleEditor.tsx` extended with `stock.*` condition types)
+- [done] **UI:** Sidebar — Products / Stock Levels / Stock Movements / Lot Expiry entries (gated by `tenants.tracking_modes`) — Sprint 15b Phase F (`components/Layout.tsx` reads `useTenantConfig` and filters by `requires`)
+- [done] **UI:** Tenant settings page — admin toggle for `tracking_modes`; **"Sensor metrics"** sub-tab (declared telemetry keys mirrored to `device_telemetry`); **"Tag data fields"** sub-tab (editor for `tag_data_mappings`) — Sprint 15b Phase F mitigation (`pages/admin/TenantSettings.tsx`, backed by new `GET`/`PATCH /tenant/config`). Per [admin-ui.md §10](design/admin-ui.md).
 
 ## Sprint 16 — Edge Contract & Identity Hardening
 
