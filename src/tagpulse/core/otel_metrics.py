@@ -167,3 +167,51 @@ device_token_rotations_counter = meter.create_counter(
     description="Per-device Bearer token rotations (ADR-011 Phase 1)",
     unit="rotations",
 )
+
+device_cert_attachments_counter = meter.create_counter(
+    "tagpulse_device_cert_attachments_total",
+    description=(
+        "Device-certificate attachments via POST /device-registry/{id}/cert "
+        "(ADR-012 Phase 2 mTLS for MQTT)."
+    ),
+    unit="attachments",
+)
+
+# -- Sprint 17a: geofencing & map --
+geofence_evaluation_duration = meter.create_histogram(
+    "geofence_evaluation_duration",
+    description=(
+        "Per-evaluation latency for the in-process geofence point-in-polygon "
+        "test. p99 > 10ms sustained 1h opens ADR-013 (PostGIS adoption) per "
+        "docs/design/geofencing-and-map.md §11 Q5."
+    ),
+    unit="s",
+)
+
+geofence_candidates_per_evaluation = meter.create_histogram(
+    "geofence_candidates_per_evaluation",
+    description=(
+        "Polygons surviving the SQL bbox prefilter per ingest. p95 > 50 "
+        "sustained 1h opens ADR-013 (PostGIS adoption) per "
+        "docs/design/geofencing-and-map.md §11 Q5."
+    ),
+    unit="1",
+)
+
+geofence_transitions_counter = meter.create_counter(
+    "tagpulse_geofence_transitions_total",
+    description="Geofence-zone enter/exit transitions emitted by ingestion.",
+    unit="events",
+)
+
+dwell_evaluations_counter = meter.create_counter(
+    "tagpulse_dwell_evaluations_total",
+    description="Dwell-worker scans of asset_current_zone (Sprint 17a §5.2).",
+    unit="scans",
+)
+
+dwell_alerts_counter = meter.create_counter(
+    "tagpulse_dwell_alerts_total",
+    description="Synthetic zone.dwell_exceeded alerts emitted by the dwell worker.",
+    unit="alerts",
+)

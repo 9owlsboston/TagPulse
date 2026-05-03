@@ -115,6 +115,8 @@ class DeviceResponse(BaseModel):
     mobility: str = "fixed"
     token_prefix: str | None = None
     token_rotated_at: datetime | None = None
+    cert_thumbprint: str | None = None
+    cert_subject: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -363,6 +365,10 @@ class ZoneResponse(BaseModel):
     kind: str
     fixed_reader_ids: list[UUID] | None = None
     polygon_geojson: dict[str, Any] | None = None
+    bbox_min_lat: float | None = None
+    bbox_max_lat: float | None = None
+    bbox_min_lon: float | None = None
+    bbox_max_lon: float | None = None
     metadata: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime

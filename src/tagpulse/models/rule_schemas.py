@@ -57,9 +57,43 @@ class StockUnexpectedInZoneCondition(BaseModel):
     allowed_zone_ids: list[str] = Field(min_length=1)
 
 
+# -- Geofence conditions (Sprint 17a) --
+
+
+class ZoneEnteredCondition(BaseModel):
+    """Event-driven: alert when subject enters the named zone.
+
+    Applies to ``subject.zone_changed`` events with matching ``to_zone_id``.
+    ``cooldown_s`` suppresses repeat-alerts for the same (rule, subject) pair
+    within the window, defending against flapping reads.
+    """
+
+    zone_id: str
+    subject_kinds: list[str] | None = None  # None = any (asset, stock_item, device)
+    cooldown_s: int = Field(default=60, ge=0)
+
+
+class ZoneExitedCondition(BaseModel):
+    """Event-driven: alert when subject leaves the named zone."""
+
+    zone_id: str
+    subject_kinds: list[str] | None = None
+    cooldown_s: int = Field(default=60, ge=0)
+
+
+class ZoneDwellExceededCondition(BaseModel):
+    """Periodic: alert when subject dwells in zone longer than threshold."""
+
+    zone_id: str
+    threshold_minutes: int = Field(ge=1)
+    subject_kinds: list[str] | None = None
+    cooldown_s: int = Field(default=300, ge=0)
+
+
 _RULE_CONDITION_PATTERN = (
     r"^(threshold|absence|rate_change|"
-    r"stock\.below_threshold|stock\.expiring_within|stock\.unexpected_in_zone)$"
+    r"stock\.below_threshold|stock\.expiring_within|stock\.unexpected_in_zone|"
+    r"zone\.entered|zone\.exited|zone\.dwell_exceeded)$"
 )
 
 

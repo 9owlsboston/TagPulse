@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     # Per §3.4 / §4 — explicit ingest payload size cap (256 KB).
     max_ingest_payload_bytes: int = 262_144
 
+    # Sprint 17a — geofencing & map.
+    # Off by default per docs/design/geofencing-and-map.md §10 rollout step 2:
+    # ship the migration + UI hidden, then flip the flag in production once the
+    # bbox index is live and the map UI is ready.
+    geofence_evaluation_enabled: bool = False
+    # Per §5.2 dwell-worker scan interval (seconds).
+    dwell_worker_interval_s: int = 60
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

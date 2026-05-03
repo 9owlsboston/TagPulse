@@ -3,15 +3,18 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.api.dependencies import get_device_service
 from tagpulse.api.services.device_service import DeviceNotFoundError, DeviceService
 from tagpulse.core.audit import AuditLogger
-from tagpulse.core.otel_metrics import device_token_rotations_counter
+from tagpulse.core.otel_metrics import (
+    device_cert_attachments_counter,
+    device_token_rotations_counter,
+)
 from tagpulse.core.user_auth import AuthenticatedUser, generate_device_token, require_role
 from tagpulse.models.database import DeviceModel, TenantModel
 from tagpulse.models.schemas import DeviceCreate, DeviceResponse, DeviceUpdate
@@ -144,4 +147,105 @@ async def rotate_device_token(
         token=raw_token,
         prefix=prefix,
         rotated_at=rotated_at,
+    )
+
+
+# -- Sprint 17b: device certificate attachment (ADR-012 Phase 2) --
+
+
+class DeviceCertAttach(BaseModel):
+    """Admin payload for attaching a device certificate.
+
+    Plaintext PEM is **not** stored — only its SHA-256 thumbprint plus the
+    parsed subject. The MQTT broker (Mosquitto with EXTERNAL auth) holds the
+    PKI; the backend uses the thumbprint to map an authenticated cert back
+    to a device row.
+    """
+
+    cert_pem: str = Field(min_length=1, max_length=16_384)
+
+
+class DeviceCertResponse(BaseModel):
+    device_id: UUID
+    thumbprint: str
+    subject: str | None
+    attached_at: datetime
+
+
+@router.post("/{device_id}/cert", response_model=DeviceCertResponse)
+async def attach_device_cert(
+    device_id: UUID,
+    body: DeviceCertAttach = Body(...),
+    user: AuthenticatedUser = require_role("admin"),
+    session: AsyncSession = Depends(get_session),
+) -> DeviceCertResponse:
+    """Attach a client certificate to a device (admin only).
+
+    Stores SHA-256 thumbprint + subject. The actual PEM lives in the MQTT
+    broker's CA store, never in the application database.
+    """
+    # Lazy import to keep cryptography off the hot path for deployments that
+    # don't enable mTLS.
+    import hashlib
+
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import serialization
+    except ImportError as exc:  # pragma: no cover
+        raise HTTPException(
+            status_code=501,
+            detail="cryptography package required for cert attachment",
+        ) from exc
+
+    try:
+        cert = x509.load_pem_x509_certificate(body.cert_pem.encode("utf-8"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"invalid PEM: {exc}"
+        ) from exc
+
+    der = cert.public_bytes(serialization.Encoding.DER)
+    thumbprint = hashlib.sha256(der).hexdigest()
+    subject = cert.subject.rfc4514_string() if cert.subject else None
+
+    stmt = select(DeviceModel).where(
+        DeviceModel.id == device_id,
+        DeviceModel.tenant_id == user.tenant_id,
+    )
+    device = (await session.execute(stmt)).scalar_one_or_none()
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found") from None
+
+    prior_thumbprint = device.cert_thumbprint
+    device.cert_thumbprint = thumbprint
+    device.cert_subject = subject
+    attached_at = datetime.now(UTC)
+
+    audit = AuditLogger(session)
+    await audit.log(
+        user.tenant_id,
+        action="device.cert_attached",
+        resource_type="device",
+        resource_id=device_id,
+        changes={
+            "prior_thumbprint": prior_thumbprint,
+            "new_thumbprint": thumbprint,
+            "subject": subject,
+        },
+        user_id=user.user_id,
+    )
+    try:
+        await session.flush()
+    except Exception as exc:  # uniqueness collision — same cert, different device
+        raise HTTPException(
+            status_code=409,
+            detail="cert thumbprint already attached to another device",
+        ) from exc
+    device_cert_attachments_counter.add(1, {"tenant_id": str(user.tenant_id)})
+
+    return DeviceCertResponse(
+        device_id=device_id,
+        thumbprint=thumbprint,
+        subject=subject,
+        attached_at=attached_at,
     )

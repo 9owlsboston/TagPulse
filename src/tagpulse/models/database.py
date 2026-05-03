@@ -43,6 +43,8 @@ class TenantModel(Base):
     )
     provisioning_key_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     provisioning_key_prefix: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # -- Sprint 17a: per-tenant tile-provider config (NULL = system default) --
+    tile_provider: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -80,6 +82,9 @@ class DeviceModel(Base):
     token_rotated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # -- Sprint 17b: mTLS for MQTT (ADR-012 Phase 2) --
+    cert_thumbprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    cert_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -487,6 +492,11 @@ class ZoneModel(Base):
     polygon_geojson: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True
     )
+    # -- Sprint 17a: denormalized bbox for the geofence prefilter --
+    bbox_min_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bbox_max_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bbox_min_lon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bbox_max_lon: Mapped[float | None] = mapped_column(Float, nullable=True)
     metadata_: Mapped[dict[str, Any] | None] = mapped_column(
         "metadata", JSONB, nullable=True
     )

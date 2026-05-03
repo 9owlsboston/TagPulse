@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import builtins
 import uuid
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.geo import (
+    PolygonValidationError,
+    compute_bbox,
+    validate_polygon,
+)
 from tagpulse.models.database import SiteModel, ZoneModel
 from tagpulse.models.schemas import (
     SiteCreate,
@@ -17,6 +24,23 @@ from tagpulse.models.schemas import (
     ZoneResponse,
     ZoneUpdate,
 )
+
+
+def _bbox_for(
+    polygon: dict[str, Any] | None,
+) -> tuple[float, float, float, float] | None:
+    """Validate ``polygon`` and return its bbox, or None if no polygon set.
+
+    Raises ``ValueError`` (via ``PolygonValidationError``) on invalid input so
+    the API surface returns a 422 with a descriptive message instead of a 500.
+    """
+    if polygon is None:
+        return None
+    try:
+        ring = validate_polygon(polygon)
+    except PolygonValidationError:
+        raise
+    return compute_bbox(ring)
 
 
 def _site_to_response(row: SiteModel) -> SiteResponse:
@@ -45,6 +69,10 @@ def _zone_to_response(row: ZoneModel) -> ZoneResponse:
             else None
         ),
         polygon_geojson=row.polygon_geojson,
+        bbox_min_lat=row.bbox_min_lat,
+        bbox_max_lat=row.bbox_max_lat,
+        bbox_min_lon=row.bbox_min_lon,
+        bbox_max_lon=row.bbox_max_lon,
         metadata=row.metadata_,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -143,6 +171,7 @@ class TimescaleZoneRepository:
     async def create(
         self, tenant_id: uuid.UUID, zone: ZoneCreate
     ) -> ZoneResponse:
+        bbox = _bbox_for(zone.polygon_geojson)
         row = ZoneModel(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
@@ -155,6 +184,10 @@ class TimescaleZoneRepository:
                 else None
             ),
             polygon_geojson=zone.polygon_geojson,
+            bbox_min_lat=bbox[0] if bbox else None,
+            bbox_max_lat=bbox[1] if bbox else None,
+            bbox_min_lon=bbox[2] if bbox else None,
+            bbox_max_lon=bbox[3] if bbox else None,
             metadata_=zone.metadata,
         )
         self._session.add(row)
@@ -211,6 +244,12 @@ class TimescaleZoneRepository:
             patch_data["fixed_reader_ids"] = [
                 str(r) for r in patch_data["fixed_reader_ids"]
             ]
+        if "polygon_geojson" in patch_data:
+            bbox = _bbox_for(patch_data["polygon_geojson"])
+            patch_data["bbox_min_lat"] = bbox[0] if bbox else None
+            patch_data["bbox_max_lat"] = bbox[1] if bbox else None
+            patch_data["bbox_min_lon"] = bbox[2] if bbox else None
+            patch_data["bbox_max_lon"] = bbox[3] if bbox else None
         for key, value in patch_data.items():
             setattr(row, key, value)
         await self._session.flush()
@@ -251,3 +290,28 @@ class TimescaleZoneRepository:
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
         return _zone_to_response(row) if row else None
+
+    async def find_geofence_candidates(
+        self, tenant_id: uuid.UUID, lat: float, lon: float
+    ) -> builtins.list[ZoneResponse]:
+        """Bbox prefilter for the geofence engine (Sprint 17a §4.1).
+
+        Hits the partial index ``ix_zones_bbox`` and returns all geofence
+        zones whose bbox covers the point. Caller still runs
+        ``point_in_polygon`` to confirm.
+        """
+        stmt = (
+            select(ZoneModel)
+            .where(
+                ZoneModel.tenant_id == tenant_id,
+                ZoneModel.kind == "geofence",
+                ZoneModel.polygon_geojson.is_not(None),
+                ZoneModel.bbox_min_lat <= lat,
+                ZoneModel.bbox_max_lat >= lat,
+                ZoneModel.bbox_min_lon <= lon,
+                ZoneModel.bbox_max_lon >= lon,
+            )
+            .order_by(ZoneModel.created_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        return [_zone_to_response(row) for row in result.scalars()]

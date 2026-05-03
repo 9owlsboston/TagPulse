@@ -44,6 +44,7 @@ from tagpulse.integrations.webhook import WebhookDispatcher
 from tagpulse.repositories.timescaledb.session import async_session_factory
 from tagpulse.rules.delivery import AlertDeliveryService
 from tagpulse.rules.evaluator import RuleEvaluator
+from tagpulse.workers.dwell_worker import DwellTracker, DwellWorker
 from tagpulse.workers.inventory_rule_worker import InventoryRuleWorker
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     await inventory_worker.start()
     app.state.inventory_worker = inventory_worker
+
+    # Sprint 17a: dwell tracker + worker for zone.dwell_exceeded rules.
+    dwell_tracker = DwellTracker()
+    await event_bus.subscribe(
+        Topic.SUBJECT_ZONE_CHANGED, dwell_tracker.on_subject_zone_changed
+    )
+    dwell_worker = DwellWorker(
+        session_factory=async_session_factory,
+        event_bus=event_bus,
+        usage_meter=usage_meter,
+        tracker=dwell_tracker,
+        interval_s=float(settings.dwell_worker_interval_s),
+    )
+    await dwell_worker.start()
+    app.state.dwell_tracker = dwell_tracker
+    app.state.dwell_worker = dwell_worker
 
     # Alert delivery — subscribes to alert triggered events
     alert_delivery = AlertDeliveryService()
@@ -133,6 +150,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         mqtt_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await mqtt_task
+    await dwell_worker.stop()
     await inventory_worker.stop()
     await usage_meter.stop()
     for module in analytics_modules:

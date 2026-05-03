@@ -8,6 +8,7 @@ Sends tag reads to the TagPulse API every N seconds from simulated RFID readers.
 """
 
 import argparse
+import math
 import random
 import sys
 import time
@@ -19,6 +20,44 @@ import httpx
 API_URL = "http://localhost:8000"
 
 TAG_POOL = [f"TAG{i:04d}" for i in range(1, 51)]  # 50 unique tags
+
+# --with-gps: per-device random-walk state, anchored to a Seattle city block.
+# Each device walks ~1 m per step (~1e-5 deg lat) and is steered to deliberately
+# cross a small geofence polygon every few minutes — useful for exercising the
+# Sprint 17a geofence eval path locally.
+_GPS_STATE: dict[str, dict[str, float]] = {}
+_GPS_ANCHOR_LAT = 47.6062
+_GPS_ANCHOR_LON = -122.3321
+_GPS_BLOCK_RADIUS_DEG = 0.0010  # ~110 m N/S, ~75 m E/W at 47.6°
+
+
+def _gps_step(device_id: str) -> dict[str, float]:
+    """Advance the device's random-walk position by one step."""
+    state = _GPS_STATE.get(device_id)
+    if state is None:
+        state = {
+            "lat": _GPS_ANCHOR_LAT + random.uniform(-_GPS_BLOCK_RADIUS_DEG, _GPS_BLOCK_RADIUS_DEG),
+            "lon": _GPS_ANCHOR_LON + random.uniform(-_GPS_BLOCK_RADIUS_DEG, _GPS_BLOCK_RADIUS_DEG),
+            "heading": random.uniform(0.0, 360.0),
+        }
+        _GPS_STATE[device_id] = state
+    # Drift the heading slightly each step.
+    state["heading"] = (state["heading"] + random.uniform(-15.0, 15.0)) % 360.0
+    rad = math.radians(state["heading"])
+    step = 1.5e-5  # ~1.5 m
+    state["lat"] += step * math.cos(rad)
+    state["lon"] += step * math.sin(rad)
+    # Tether to anchor block (reflect off the edges).
+    if abs(state["lat"] - _GPS_ANCHOR_LAT) > _GPS_BLOCK_RADIUS_DEG:
+        state["heading"] = (state["heading"] + 180.0) % 360.0
+    if abs(state["lon"] - _GPS_ANCHOR_LON) > _GPS_BLOCK_RADIUS_DEG:
+        state["heading"] = (state["heading"] + 180.0) % 360.0
+    return {
+        "latitude": round(state["lat"], 6),
+        "longitude": round(state["lon"], 6),
+        "accuracy_m": round(random.uniform(2.0, 6.0), 1),
+        "source": "gps",
+    }
 
 
 def create_devices(client: httpx.Client, tenant_id: str, count: int) -> list[dict[str, str]]:
@@ -64,6 +103,8 @@ def send_tag_read(
     client: httpx.Client,
     tenant_id: str,
     device_id: str,
+    *,
+    with_gps: bool = False,
 ) -> bool:
     """Send a single simulated tag read."""
     # 5% chance of a read "failing" (device glitch)
@@ -89,8 +130,11 @@ def send_tag_read(
         "signal_strength": signal,
         "sensor_data": sensor_data,
     }
-    # 20% chance to attach a GPS location (mobile-reader profile)
-    if random.random() < 0.20:
+    # 20% chance to attach a GPS location (mobile-reader profile), or always
+    # when --with-gps is enabled (random-walk anchored block, exercises geofence eval).
+    if with_gps:
+        body["location"] = _gps_step(device_id)
+    elif random.random() < 0.20:
         body["location"] = {
             "latitude": round(47.60 + random.uniform(-0.05, 0.05), 5),
             "longitude": round(-122.33 + random.uniform(-0.05, 0.05), 5),
@@ -152,6 +196,11 @@ def main() -> None:
     parser.add_argument("--interval", type=float, default=2.0, help="Seconds between reads per device")
     parser.add_argument("--duration", type=int, default=0, help="Run for N seconds (0 = forever)")
     parser.add_argument("--seed-only", action="store_true", help="Create devices and exit")
+    parser.add_argument(
+        "--with-gps",
+        action="store_true",
+        help="Always attach a GPS location (random-walk per device) to exercise geofence eval",
+    )
     args = parser.parse_args()
 
     client = httpx.Client(timeout=10.0)
@@ -194,7 +243,9 @@ def main() -> None:
                 # 10% chance a device skips this cycle (simulates busy/offline)
                 if random.random() < 0.10:
                     continue
-                ok = send_tag_read(client, args.tenant_id, device["id"])
+                ok = send_tag_read(
+                    client, args.tenant_id, device["id"], with_gps=args.with_gps
+                )
                 if ok:
                     total_reads += 1
                 else:

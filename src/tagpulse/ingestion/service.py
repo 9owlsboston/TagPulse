@@ -11,6 +11,9 @@ from tagpulse.api.services.telemetry_service import TelemetryService
 from tagpulse.core.config import settings
 from tagpulse.core.otel_metrics import (
     events_rejected_clock_counter,
+    geofence_candidates_per_evaluation,
+    geofence_evaluation_duration,
+    geofence_transitions_counter,
     ingestion_counter,
     inventory_unmapped_sgtin_counter,
     stock_item_auto_created_counter,
@@ -58,6 +61,16 @@ _ZONE_CACHE_MAX = 10_000
 
 _LAST_ZONE_BY_ASSET: dict[tuple[uuid.UUID, uuid.UUID], uuid.UUID | None] = {}
 _LAST_ZONE_BY_STOCK_ITEM: dict[
+    tuple[uuid.UUID, uuid.UUID], uuid.UUID | None
+] = {}
+
+# Sprint 17a: separate caches for geofence-zone transitions per subject. They
+# never collide with reader-bound caches above because zone_kind is included
+# in the emitted event payload, and downstream consumers key on subject_id.
+_LAST_GEOFENCE_BY_ASSET: dict[
+    tuple[uuid.UUID, uuid.UUID], uuid.UUID | None
+] = {}
+_LAST_GEOFENCE_BY_STOCK_ITEM: dict[
     tuple[uuid.UUID, uuid.UUID], uuid.UUID | None
 ] = {}
 
@@ -433,6 +446,14 @@ class IngestionService:
             tenant_id, read.device_id
         )
         if device_mobility != "fixed" or self._zone_repo is None:
+            # Mobile readers still get a geofence eval if the read carries a fix.
+            await self._eval_geofence_for_subject(
+                tenant_id=tenant_id,
+                subject_kind="asset",
+                subject_id=binding.asset_id,
+                read=read,
+                tag_read_id=tag_read_id,
+            )
             return
 
         zone = await self._zone_repo.get_zone_for_reader(
@@ -478,6 +499,133 @@ class IngestionService:
         )
         subject_zone_changed_counter.add(
             1, {"tenant_id": str(tenant_id), "subject_kind": "asset"}
+        )
+        # Geofence eval is independent of reader-bound transitions and emits
+        # its own subject.zone_changed with zone_kind='geofence'.
+        await self._eval_geofence_for_subject(
+            tenant_id=tenant_id,
+            subject_kind="asset",
+            subject_id=binding.asset_id,
+            read=read,
+            tag_read_id=tag_read_id,
+        )
+
+    async def _eval_geofence_for_subject(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        subject_kind: str,
+        subject_id: uuid.UUID,
+        read: TagReadCreate,
+        tag_read_id: uuid.UUID,
+    ) -> None:
+        """Geofence point-in-polygon evaluation per
+        [docs/design/geofencing-and-map.md §4](../../../docs/design/geofencing-and-map.md).
+
+        Only fires when:
+
+        - ``settings.geofence_evaluation_enabled`` is true (rollout flag).
+        - the read carries a ``location`` with lat/lon.
+        - the subject's last-seen geofence-zone differs from the new one.
+
+        Emits ``subject.zone_changed`` with ``zone_kind='geofence'`` so
+        downstream rule evaluators can disambiguate from reader-bound
+        transitions.
+        """
+        if not settings.geofence_evaluation_enabled:
+            return
+        if self._zone_repo is None or read.location is None:
+            return
+        lat = read.location.latitude
+        lon = read.location.longitude
+
+        # Lazy import to keep the hot-path module load minimal in deployments
+        # that disable geofencing entirely.
+        import time
+
+        from tagpulse.geo import point_in_polygon
+
+        start = time.perf_counter()
+        candidates = await self._zone_repo.find_geofence_candidates(
+            tenant_id, lat, lon
+        )
+        geofence_candidates_per_evaluation.record(
+            len(candidates), {"tenant_id": str(tenant_id)}
+        )
+
+        new_zone_id: uuid.UUID | None = None
+        for candidate in candidates:
+            polygon = candidate.polygon_geojson
+            if not polygon:
+                continue
+            try:
+                ring_raw = polygon["coordinates"][0]
+                ring = [(float(p[0]), float(p[1])) for p in ring_raw]
+            except (KeyError, IndexError, TypeError, ValueError):
+                logger.warning(
+                    "geofence.malformed_polygon",
+                    extra={
+                        "tenant_id": str(tenant_id),
+                        "zone_id": str(candidate.id),
+                    },
+                )
+                continue
+            if point_in_polygon(lat, lon, ring):
+                new_zone_id = candidate.id
+                break  # zones are ordered by created_at; first match wins
+
+        geofence_evaluation_duration.record(
+            time.perf_counter() - start, {"tenant_id": str(tenant_id)}
+        )
+
+        cache = (
+            _LAST_GEOFENCE_BY_ASSET
+            if subject_kind == "asset"
+            else _LAST_GEOFENCE_BY_STOCK_ITEM
+        )
+        cache_key = (tenant_id, subject_id)
+        prev_zone_id = cache.get(cache_key)
+        seen_before = cache_key in cache
+        _bounded_set(cache, cache_key, new_zone_id, _ZONE_CACHE_MAX)
+        if not seen_before:
+            return  # seed; first fix never fires
+        if new_zone_id == prev_zone_id:
+            return
+
+        await self._event_bus.publish(
+            Topic.SUBJECT_ZONE_CHANGED,
+            Event(
+                id=uuid.uuid4(),
+                topic=Topic.SUBJECT_ZONE_CHANGED,
+                timestamp=datetime.now(UTC),
+                payload={
+                    "tenant_id": str(tenant_id),
+                    "subject_kind": subject_kind,
+                    "subject_id": str(subject_id),
+                    "zone_kind": "geofence",
+                    "from_zone_id": str(prev_zone_id) if prev_zone_id else None,
+                    "to_zone_id": str(new_zone_id) if new_zone_id else None,
+                    "device_id": str(read.device_id),
+                    "tag_id": read.tag_id,
+                    "epc": read.identity.epc if read.identity else None,
+                    "tid": read.identity.tid if read.identity else None,
+                    "tag_read_id": str(tag_read_id),
+                    "latitude": lat,
+                    "longitude": lon,
+                    "timestamp": read.timestamp.isoformat(),
+                },
+            ),
+        )
+        geofence_transitions_counter.add(
+            1, {"tenant_id": str(tenant_id), "subject_kind": subject_kind}
+        )
+        subject_zone_changed_counter.add(
+            1,
+            {
+                "tenant_id": str(tenant_id),
+                "subject_kind": subject_kind,
+                "zone_kind": "geofence",
+            },
         )
 
     async def _lookup_device_mobility(
@@ -585,6 +733,13 @@ class IngestionService:
             tenant_id, read.device_id
         )
         if device_mobility != "fixed" or self._zone_repo is None:
+            await self._eval_geofence_for_subject(
+                tenant_id=tenant_id,
+                subject_kind="stock_item",
+                subject_id=stock_item.id,
+                read=read,
+                tag_read_id=tag_read_id,
+            )
             return
 
         zone = await self._zone_repo.get_zone_for_reader(
@@ -652,6 +807,13 @@ class IngestionService:
         )
         subject_zone_changed_counter.add(
             1, {"tenant_id": str(tenant_id), "subject_kind": "stock_item"}
+        )
+        await self._eval_geofence_for_subject(
+            tenant_id=tenant_id,
+            subject_kind="stock_item",
+            subject_id=stock_item.id,
+            read=read,
+            tag_read_id=tag_read_id,
         )
 
     async def _infer_lot_id(

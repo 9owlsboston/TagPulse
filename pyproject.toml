@@ -28,6 +28,7 @@ dependencies = [
     "PyJWT>=2.8",
     "python-multipart>=0.0.9",
     "PyYAML>=6.0",
+    "cryptography>=43.0",
 ]
 
 [project.optional-dependencies]

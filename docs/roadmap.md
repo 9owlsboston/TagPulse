@@ -277,27 +277,32 @@
 > Design: [docs/design/geofencing-and-map.md](design/geofencing-and-map.md), [docs/design/tracking-modes.md](design/tracking-modes.md), [docs/design/mobile-carriers-and-manifests.md](design/mobile-carriers-and-manifests.md)
 > Goal: polygon zones + map-based situational awareness in the admin UI — supporting both asset markers, inventory stock-density layers, and moving carriers (trucks/forklifts) with click-through manifests.
 
-- [planned] Store polygon as GeoJSON on `zones.polygon_geojson`
-- [planned] Spatial query: bounding-box prefilter + Python point-in-polygon (no PostGIS)
-- [planned] **OTel instrumentation for PostGIS-trigger threshold** — histogram `geofence.evaluation.duration` (unit `s`, attribute `tenant_id`); histogram `geofence.candidates_per_evaluation` (unit count, measures bbox prefilter selectivity); `tracer.start_as_current_span("geofence.evaluate")` wrap for trace-level debugging. Surfaces via existing Prometheus exporter per [observability.md §2](design/observability.md). Prometheus alert rule (1h sustained: p99 > 10ms OR p95 candidates > 50) opens ADR-013 (PostGIS adoption). Runbook entry in `docs/runbooks/`. Per [geofencing-and-map.md §11 Q5](design/geofencing-and-map.md).
-- [planned] **`MapConfigResolver` abstraction** — `tenants.tile_provider JSONB NULL` column (NULL = system default = OSM public for POC); `GET /tenants/me/map-config` endpoint returning `{tile_url_template, attribution, max_zoom, subdomains?}`; service in `src/tagpulse/services/map_config.py` with one builder per `kind` (`osm`, `mapbox`, `maptiler`, `self_hosted`). Switching providers later is a settings change, not a code change. Per [geofencing-and-map.md §11 Q4](design/geofencing-and-map.md).
-- [planned] Rules engine: `zone.entered`, `zone.exited`, `zone.dwell_exceeded` condition types with `subject_kind` filter (`asset` \| `stock_item` \| `device`)
-- [planned] Ingestion: emit `subject.zone_changed` for geofence transitions in addition to reader-bound — includes `subject_kind='device'` for mobile-reader transitions per [mobile-carriers-and-manifests.md](design/mobile-carriers-and-manifests.md) §6
-- [planned] **UI:** Map page — carriers render as moving icons with click-through manifest pop-out
-- [planned] Simulator: emit synthetic GPS tracks across geofence polygons
+- [done] Store polygon as GeoJSON on `zones.polygon_geojson` with denormalized bbox columns (migration 026) and partial index `ix_zones_bbox` on `(min_lat, max_lat, min_lon, max_lon) WHERE polygon_geojson IS NOT NULL`
+- [done] Spatial query: `tagpulse.geo` module — pure-Python ray-casting `point_in_polygon`, `validate_polygon` (single ring, ≤500 vertices, closed, valid lat/lon), `compute_bbox`, `bbox_contains`. No PostGIS dependency.
+- [done] **OTel instrumentation for PostGIS-trigger threshold** — histograms `geofence_evaluation_duration` (s) and `geofence_candidates_per_evaluation` (1) emitted by the geofence eval path; counters `geofence_transitions_counter`, `dwell_evaluations_counter`, `dwell_alerts_counter`. Prometheus alert rule + runbook entry deferred to Sprint 17c (ops-only).
+- [done] **`MapConfigResolver` abstraction** — `tenants.tile_provider JSONB NULL` (NULL → OSM public default); `GET /tenant/map-config` (any role) + admin-only `PATCH /tenant/map-config`; `src/tagpulse/services/map_config.py` with builders for `osm`, `mapbox`, `maptiler`, `self_hosted`. Validation gates persistence.
+- [done] Rules engine: `zone.entered`, `zone.exited`, `zone.dwell_exceeded` condition types with `subject_kinds` filter (`asset` \| `stock_item` \| `device`) and per-rule per-subject cooldown (`cooldown_s`)
+- [done] Ingestion: emits `subject.zone_changed` for geofence transitions in addition to reader-bound — gated by `settings.geofence_evaluation_enabled` (default `false`); separate `_LAST_GEOFENCE_BY_*` caches so reader and geofence transitions don't clobber each other
+- [done] **DwellWorker** — periodic background task (interval `settings.dwell_worker_interval_s`, default 60s) snapshots in-process tracker, fires `zone.dwell_exceeded` alerts when threshold elapsed; per-rule per-subject cooldown
 - [planned] **UI:** Map page (Leaflet + react-leaflet, **provider-agnostic tiles** via `MapConfigResolver`) — live asset markers + stock-density heat tiles, layer toggle, zone polygon overlay, time-slider path replay. UI footer always renders the resolver's `attribution` string; OSM-default footer note: "Default tiles intended for development; configure a production provider before public deployment."
 - [planned] **UI:** Zone editor — polygon-draw mode (leaflet-draw)
 - [planned] **UI:** Rule wizard — geofence step
+- [planned] **UI:** Carriers render as moving icons with click-through manifest pop-out
+- [planned] Simulator: `scripts/simulate_devices.py --with-gps` — synthetic GPS tracks crossing geofence polygons
+- [deferred → Sprint 17c] **Durable last-known-zone** — promote in-process `_LAST_GEOFENCE_BY_*` cache and `DwellTracker` state to a `subject_current_zone` table for multi-worker durability. v1 trades durability for zero-cost evaluation; acceptable until horizontal scale-out.
+- [deferred → Sprint 17c] **Antimeridian-crossing polygons** — explicitly out of v1; ray-casting + bbox prefilter assume polygons do not cross ±180°.
 
 ## Sprint 17b — mTLS for MQTT (A6 Phase 2)
 
-> Design: ADR-012 (TBD when sprint starts)
+> Design: [docs/adr/012-mtls-for-mqtt.md](adr/012-mtls-for-mqtt.md)
 > Goal: production-grade per-device cryptographic identity.
 
-- [planned] ADR-012 — mTLS for MQTT, broker selection (Mosquitto vs EMQX)
-- [planned] `devices.cert_thumbprint` column + provisioning issues per-device cert
-- [planned] Broker config update; backward-compat path for API-key devices
-- [planned] **UI:** Device detail — cert upload/rotate flow
+- [done] **ADR-012** — Mosquitto 2.x + smallstep step-ca sidecar + per-tenant intermediate CA + 90-day leaf certs + `mosquitto-go-auth` HTTP backend → TagPulse `/internal/mqtt-auth`. Backward-compat dual-auth (token + cert) during migration. EMQX deferred to ADR-014.
+- [done] `devices.cert_thumbprint` + `devices.cert_subject` columns (migration 026) with unique partial index `ix_devices_cert_thumbprint`
+- [done] `POST /device-registry/{device_id}/cert` (admin only) — accepts PEM, parses via `cryptography` (lazy import), stores SHA-256(DER) thumbprint + RFC 4514 subject (PEM is **not** persisted), audits as `device.cert_attached`, increments `device_cert_attachments_counter`
+- [deferred → Sprint 17c] **Broker enforcement & dual-auth** — Mosquitto `tls_version`, listener `cafile`/`certfile`/`keyfile` config; `mosquitto-go-auth` HTTP backend pointing at `/internal/mqtt-auth`; `tenants.require_mtls` flag for opt-in enforcement. Cert scaffolding ships now; broker-side rollout is its own sprint.
+- [deferred → Sprint 17c] **step-ca Helm chart + per-tenant intermediate CA bootstrap**
+- [planned] **UI:** Device detail Security tab — cert thumbprint + subject display, admin-only "Attach cert" upload (POST /device-registry/{id}/cert)
 
 ---
 

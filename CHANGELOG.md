@@ -5,6 +5,23 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Sprint 17a — Geofencing (backend)**:
+  - **`tagpulse.geo` module** — pure-Python ray-casting geofence engine (no PostGIS in v1). `validate_polygon` enforces single-ring closed Polygon, ≤500 vertices, valid lat/lon ranges; `compute_bbox` denormalizes the bounding box; `point_in_polygon` does the ray-cast; `bbox_contains` is the cheap prefilter.
+  - **Migration 026** — `zones.bbox_min_lat/max_lat/min_lon/max_lon` columns + partial index `ix_zones_bbox WHERE polygon_geojson IS NOT NULL` (PostGIS-trigger threshold per ADR-013); `tenants.tile_provider` JSONB; `devices.cert_thumbprint` + `devices.cert_subject` with unique partial index.
+  - **Geofence ingestion eval** — gated by `settings.geofence_evaluation_enabled` (default `false`, opt-in rollout per design §10). When enabled, every tag-read with `location.lat`/`lon` runs the bbox prefilter (`TimescaleZoneRepository.find_geofence_candidates`) + ray-cast and emits a second `subject.zone_changed` event with `zone_kind='geofence'` (in addition to the existing reader-bound emit). Separate `_LAST_GEOFENCE_BY_ASSET` / `_LAST_GEOFENCE_BY_STOCK_ITEM` caches so the two transition kinds don't clobber each other.
+  - **Rule schemas** — `zone.entered`, `zone.exited`, `zone.dwell_exceeded` condition types with optional `subject_kinds` filter (`asset` \| `stock_item` \| `device`) and per-rule per-subject `cooldown_s`. Cooldowns implemented via bounded-FIFO module-level dict in `tagpulse.rules.evaluator` (max 16 384 entries).
+  - **DwellWorker** — `src/tagpulse/workers/dwell_worker.py`. Background task at `settings.dwell_worker_interval_s` (default 60 s) snapshots an in-process `DwellTracker` (subscribed to `Topic.SUBJECT_ZONE_CHANGED`), groups by tenant, fetches `zone.dwell_exceeded` rules per tenant, and fires `severity='warning'` alerts when threshold elapsed. Cooldowns gate per-rule per-subject. Wired into `app.state` lifecycle.
+  - **OTel histograms + counters** — `geofence_evaluation_duration` (s), `geofence_candidates_per_evaluation` (1), `geofence_transitions_counter`, `dwell_evaluations_counter`, `dwell_alerts_counter`.
+  - **MapConfigResolver** — `src/tagpulse/services/map_config.py` with builders for `osm` (default), `mapbox` (requires `access_token`), `maptiler` (requires `api_key`), `self_hosted` (requires `tile_url_template`). New routes `GET /tenant/map-config` (any role) + admin-only `PATCH /tenant/map-config` (validates via the resolver before persisting; audits as `tenant.map_config.update`).
+
+- **Sprint 17b — mTLS for MQTT (cert scaffolding)**:
+  - **ADR-012** — accepted. Mosquitto 2.x + smallstep `step-ca` sidecar + per-tenant intermediate CA + 90-day leaf certs + `mosquitto-go-auth` HTTP backend → TagPulse `/internal/mqtt-auth`. Backward-compat dual-auth (token + cert) during migration. EMQX deferred to ADR-014.
+  - `POST /device-registry/{device_id}/cert` (admin only) — accepts `cert_pem`, parses via `cryptography` (lazy import — kept off ingestion hot path), stores `SHA-256(DER)` thumbprint + RFC 4514 subject. **PEM is not persisted.** Audited as `device.cert_attached`; counter `device_cert_attachments_counter`. Returns 422 on invalid PEM, 409 on thumbprint conflict.
+  - `cryptography>=43.0` added to backend dependencies.
+  - Broker enforcement, dual-auth listener config, step-ca Helm chart, and `tenants.require_mtls` flag are deferred to **Sprint 17c** — the cert column + attach API ship now so devices can pre-register before the broker switches to enforcement.
+
+- **Sprint 17 — tests**: 42 new tests across `test_geo.py` (17), `test_map_config.py` (9), `test_zone_rule_schemas.py` (7), `test_zone_rules_and_dwell.py` (7), `test_device_cert.py` (2). **354 backend tests passing** (was 312).
+
 - **Sprint 16 — gap closure (audit follow-up)**:
   - **Observe-mode flag for clock enforcement** (`settings.ingest_clock_enforce`, defaults `True`). When `False`, out-of-window events are still dead-lettered + metered (with a `mode='observe'` attribute on `tagpulse_events_rejected_clock_total`) but the row is also inserted — supporting the 48 h shadow rollout phase per [docs/design/edge-device-contract.md §10](docs/design/edge-device-contract.md). Two new tests in `test_ingestion_clock.py` (`TestObserveMode`).
   - **Explicit ingest payload-size cap** (`settings.max_ingest_payload_bytes`, defaults `262_144` = 256 KB). New FastAPI middleware rejects POSTs to `/tag-reads*`, `/telemetry*`, `/device-registry*` with `413` when `Content-Length` exceeds the cap, per [edge-device-contract.md §3.4 / §4](docs/design/edge-device-contract.md).
