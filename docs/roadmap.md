@@ -176,28 +176,28 @@
 > Design: [docs/design/telemetry-and-location.md](design/telemetry-and-location.md), [docs/design/rfid-tag-data-model.md](design/rfid-tag-data-model.md)
 > Goal: first-class location on tag reads + dedicated sensor telemetry stream + extended MQTT topic taxonomy + structured RFID tag identity (TID/EPC/user memory) and tag-borne sensor capture.
 
-- [planned] Add `latitude`, `longitude`, `location_accuracy_m`, `location_source` to `tag_reads` (Alembic migration 016)
-- [planned] Add RFID identity columns to `tag_reads`: `epc`, `epc_hex`, `epc_scheme`, `epc_decoded`, `tid`, `user_memory_hex`, `tag_data`, `reader_antenna` (migration 016)
-- [planned] EPC decoder module `tagpulse.rfid.epc` — SGTIN-96/198, SSCC-96, GIAI-96/202, GRAI-96/170, raw fallback
-- [planned] Ingestion: auto-decode `epc_hex` → `epc`/`epc_scheme`/`epc_decoded`; `tag_id` defaults to `epc` when absent
-- [planned] Tag-borne sensor mirror: declared `tag_data` numeric keys also written as `device_telemetry` rows with `metadata.source='tag'` and `metadata.tag_read_id`
-- [planned] **`tag_data` size cap** — 4 KB inline cap on the JSONB blob; on overflow, silently truncate and set `tag_data._truncated=true`. Quarantine remains for malformed/unknown data, not oversized. OTel counter `tag_data_truncations_total{tenant}` so unexpected truncation rates are visible. Per [rfid-tag-data-model.md §9 Q2](design/rfid-tag-data-model.md).
-- [planned] Extend `TagReadCreate` Pydantic with optional `Location`, `Identity` (epc/tid/user_memory), and `tag_data` sub-models
-- [planned] New `device_telemetry` hypertable (tenant_id, device_id, timestamp, metric_name, metric_value, unit, metadata) + RLS
-- [planned] `POST /telemetry` HTTP ingestion endpoint (tenant-scoped, batched)
-- [planned] MQTT topic `tenants/{tenant_id}/devices/{device_id}/telemetry` subscriber branch
-- [planned] MQTT topic `tenants/{tenant_id}/devices/{device_id}/location` subscriber branch
-- [planned] MQTT topic `tenants/{tenant_id}/devices/{device_id}/events` subscriber branch (device-side events)
-- [planned] Validate telemetry against existing `telemetry_models`; quarantine unknown metrics; emit `telemetry.out_of_range` for rules engine
-- [planned] Update `scripts/simulate_devices.py` to publish location, standalone telemetry, and at least one sensor-tag profile (temperature embedded in `tag_data`)
-- [planned] `clients/pi/`: wire `submit_telemetry` / `submit_location` end-to-end through MqttTransport; add `epc`/`tid`/`tag_data` fields on `submit_tag_read`
-- [planned] Metering: new dimension `telemetry_ingestion`
-- [planned] **UI:** Device detail "Location" tab — last known lat/lon + Leaflet mini-map
-- [planned] **UI:** Device detail "Telemetry" tab — per-metric line chart with time-range picker; "source: tag" badge for tag-borne readings, click-through to originating read
-- [planned] **UI:** Telemetry Models page — quarantined readings panel
-- [planned] **UI:** Data Explorer — `epc`, `tid`, `latitude`, `longitude` columns; "has location" filter; EPC scheme filter
-- [planned] **UI:** Device detail "Last read" panel — surface `epc`, `tid`, decoded scheme, `tag_data` keys
-- [planned] **UI:** Overview dashboard — "Devices reporting location" KPI tile
+- [done] Add `latitude`, `longitude`, `location_accuracy_m`, `location_source` to `tag_reads` (Alembic migration 016)
+- [done] Add RFID identity columns to `tag_reads`: `epc`, `epc_hex`, `epc_scheme`, `epc_decoded`, `tid`, `user_memory_hex`, `tag_data`, `reader_antenna` (migration 016)
+- [done] EPC decoder module `tagpulse.rfid.epc` — SGTIN-96/198, SSCC-96, GIAI-96/202, GRAI-96/170, raw fallback
+- [done] Ingestion: auto-decode `epc_hex` → `epc`/`epc_scheme`/`epc_decoded`; `tag_id` defaults to `epc` when absent
+- [done] Tag-borne sensor mirror: declared `tag_data` numeric keys also written as `device_telemetry` rows with `metadata.source='tag'` and `metadata.tag_read_id`
+- [done] **`tag_data` size cap** — 4 KB inline cap on the JSONB blob; on overflow, silently truncate and set `tag_data._truncated=true`. Quarantine remains for malformed/unknown data, not oversized. OTel counter `tag_data_truncations_total{tenant}` so unexpected truncation rates are visible. Per [rfid-tag-data-model.md §9 Q2](design/rfid-tag-data-model.md).
+- [done] Extend `TagReadCreate` Pydantic with optional `Location`, `Identity` (epc/tid/user_memory), and `tag_data` sub-models
+- [done] New `device_telemetry` hypertable (tenant_id, device_id, timestamp, metric_name, metric_value, unit, metadata) + RLS
+- [done] `POST /telemetry` HTTP ingestion endpoint (tenant-scoped, batched)
+- [done] MQTT topic `tenants/{tenant_id}/devices/{device_id}/telemetry` subscriber branch
+- [done] MQTT topic `tenants/{tenant_id}/devices/{device_id}/location` subscriber branch
+- [done] MQTT topic `tenants/{tenant_id}/devices/{device_id}/events` subscriber branch (device-side events)
+- [done] Validate telemetry against existing `telemetry_models`; quarantine unknown metrics; emit `telemetry.out_of_range` for rules engine
+- [done] Update `scripts/simulate_devices.py` to publish location, standalone telemetry, and at least one sensor-tag profile (temperature embedded in `tag_data`)
+- [done] `clients/pi/`: wire `submit_telemetry` / `submit_location` end-to-end through MqttTransport; add `epc`/`tid`/`tag_data` fields on `submit_tag_read`
+- [done] Metering: new dimension `telemetry_ingestion`
+- [done] **UI:** Device detail "Location" tab — last known lat/lon + Leaflet mini-map
+- [done] **UI:** Device detail "Telemetry" tab — per-metric line chart with time-range picker; "source: tag" badge for tag-borne readings, click-through to originating read
+- [done] **UI:** Telemetry Models page — quarantined readings panel
+- [done] **UI:** Data Explorer — `epc`, `tid`, `latitude`, `longitude` columns; "has location" filter; EPC scheme filter
+- [done] **UI:** Device detail "Last read" panel — surface `epc`, `tid`, decoded scheme, `tag_data` keys
+- [done] **UI:** Overview dashboard — "Devices reporting location" KPI tile
 
 ## Sprint 15 — Assets & Zones (asset-tracking mode)
 
