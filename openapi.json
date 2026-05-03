@@ -3215,6 +3215,18 @@
             ],
             "title": "Metadata"
           },
+          "parent_stock_item_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Stock Item Id"
+          },
           "product_id": {
             "format": "uuid",
             "title": "Product Id",
@@ -3301,6 +3313,18 @@
             ],
             "title": "Metadata"
           },
+          "parent_stock_item_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Stock Item Id"
+          },
           "product_id": {
             "format": "uuid",
             "title": "Product Id",
@@ -3357,6 +3381,18 @@
               }
             ],
             "title": "Metadata"
+          },
+          "parent_stock_item_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Stock Item Id"
           },
           "state": {
             "anyOf": [
@@ -4838,6 +4874,24 @@
                 }
               ],
               "title": "Resource Type"
+            }
+          },
+          {
+            "description": "Comma-separated list of actions to filter by (e.g. 'device.token_rotated,device.cert_attached').",
+            "in": "query",
+            "name": "actions",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated list of actions to filter by (e.g. 'device.token_rotated,device.cert_attached').",
+              "title": "Actions"
             }
           },
           {

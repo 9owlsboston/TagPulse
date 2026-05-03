@@ -5,6 +5,17 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Sprint 16 — admin audit-log API filter**:
+  - `AuditLogger.list_logs(actions=…)` and `GET /admin/audit-logs?actions=a,b,c` accept a comma-separated action allow-list (used by the new TagPulse-UI "Device security events" preset). Existing `resource_type` filter unchanged. Backwards compatible — omitting `actions` returns the prior behaviour.
+
+- **Sprint 15b — case/pallet containment**:
+  - **Migration 028** — `stock_items.parent_stock_item_id` self-FK with `ON DELETE SET NULL` and partial index `ix_stock_items_parent WHERE parent_stock_item_id IS NOT NULL`. Mirrored on `StockItemModel`, `StockItemCreate`, `StockItemUpdate`, `StockItemResponse`. Existing rows are top-level by definition (column is nullable). Per [mobile-carriers-and-manifests.md §4.3](docs/design/mobile-carriers-and-manifests.md).
+  - 5 new schema-level tests (`tests/unit/test_stock_item_parent.py`). **361 backend tests passing** (was 356).
+
+- **Sprint 13b — PG-mode scaling ceiling benchmark**:
+  - `scripts/benchmark_pg_metrics.py` — self-contained harness that seeds an isolated `bench_tag_reads` table at multiple fleet sizes (devices × 24 h × reads/h), times `tag_reads_hourly_by_reader` against the cold raw table and against a refreshed materialized view (the v1 PG-mode strategy), and reports p50/p95/p99 in milliseconds plus the matview refresh cost.
+  - **Results table** added to [`docs/design/storage-strategy.md` §6.1](docs/design/storage-strategy.md). Floor numbers on dev hardware (Docker Postgres 16, default config): cold raw-table path crosses the 1 s sub-second-dashboard target between 100 and 500 devices/tenant; matview path stays sub-second through 2k devices and reaches ~700 ms p99 at 5k. Matview refresh grows linearly (67 ms → 5.8 s for 100 → 5,000 devices). **Operational ceiling: ~2,000 devices/tenant on dev hardware** (expected ~5–10k on tuned ops hardware) before the matview refresh window becomes the bottleneck and TimescaleDB continuous aggregates are required — exactly the migration path the `MetricsRepository` abstraction was designed for.
+
 - **Sprint 17a — Geofencing (backend)**:
   - **`tagpulse.geo` module** — pure-Python ray-casting geofence engine (no PostGIS in v1). `validate_polygon` enforces single-ring closed Polygon, ≤500 vertices, valid lat/lon ranges; `compute_bbox` denormalizes the bounding box; `point_in_polygon` does the ray-cast; `bbox_contains` is the cheap prefilter.
   - **Migration 026** — `zones.bbox_min_lat/max_lat/min_lon/max_lon` columns + partial index `ix_zones_bbox WHERE polygon_geojson IS NOT NULL` (PostGIS-trigger threshold per ADR-013); `tenants.tile_provider` JSONB; `devices.cert_thumbprint` + `devices.cert_subject` with unique partial index.

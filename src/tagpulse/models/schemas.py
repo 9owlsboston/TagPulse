@@ -656,6 +656,7 @@ class LotResponse(BaseModel):
 class StockItemCreate(BaseModel):
     product_id: UUID
     lot_id: UUID | None = None
+    parent_stock_item_id: UUID | None = None
     binding_value: str = Field(..., min_length=1, max_length=256)
     binding_kind: Literal["epc", "tid"] = "epc"
     metadata: dict[str, Any] | None = None
@@ -666,6 +667,7 @@ class StockItemUpdate(BaseModel):
         Literal["in_stock", "in_transit", "consumed", "expired", "lost"] | None
     ) = None
     lot_id: UUID | None = None
+    parent_stock_item_id: UUID | None = None
     metadata: dict[str, Any] | None = None
 
 
@@ -674,6 +676,7 @@ class StockItemResponse(BaseModel):
     tenant_id: UUID
     product_id: UUID
     lot_id: UUID | None
+    parent_stock_item_id: UUID | None = None
     binding_value: str
     binding_kind: str
     state: str

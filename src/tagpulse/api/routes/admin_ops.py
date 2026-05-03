@@ -111,6 +111,11 @@ async def abandon_dead_letter(
 @router.get("/audit-logs")
 async def list_audit_logs(
     resource_type: str | None = Query(default=None),
+    actions: str | None = Query(
+        default=None,
+        description="Comma-separated list of actions to filter by (e.g. "
+        "'device.token_rotated,device.cert_attached').",
+    ),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     user: AuthenticatedUser = require_role("admin"),
@@ -118,8 +123,15 @@ async def list_audit_logs(
 ) -> list[dict[str, object]]:
     """List audit logs for this tenant."""
     audit = AuditLogger(session)
+    action_list = (
+        [a.strip() for a in actions.split(",") if a.strip()] if actions else None
+    )
     return await audit.list_logs(
-        user.tenant_id, resource_type=resource_type, limit=limit, offset=offset
+        user.tenant_id,
+        resource_type=resource_type,
+        actions=action_list,
+        limit=limit,
+        offset=offset,
     )
 
 

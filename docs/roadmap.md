@@ -169,7 +169,7 @@
 - [done] `AdminRepository` in `src/tagpulse/repositories/admin.py` for cross-tenant operations gated by admin role at the route layer (will be the home for the `GET /admin/tag-collisions` endpoint added in Sprint 15).
 - [done] `MetricsRepository` abstraction (deterministic; both backends first-class) in `src/tagpulse/repositories/metrics.py`. Selected once at startup from `DATABASE_BACKEND` config (`timescale` \| `postgres`). **Timescale impl** uses `time_bucket` so a continuous aggregate can be plugged in transparently; **PG impl** uses `date_trunc` paired with periodic matview refresh. First method: `tag_reads_hourly_by_reader`. Per [storage-strategy.md §6 Q1](design/storage-strategy.md).
 - [done] CI integration tests for both `MetricsRepository` backends (SQL-dialect assertions + factory selection); review rule: any new method requires both implementations in the same PR.
-- [planned] Document PG-mode scaling ceiling in [storage-strategy.md](design/storage-strategy.md) §6 once benchmarked (expected ~1–2k devices/tenant).
+- [done] PG-mode scaling ceiling benchmark — `scripts/benchmark_pg_metrics.py` harness + results table in [storage-strategy.md §6.1](design/storage-strategy.md#61-pg-mode-scaling-ceiling). Floor numbers on dev hardware: cold raw-table path crosses 1 s between 100 and 500 devices/tenant; matview path is sub-second through 2k devices and ~700 ms p99 at 5k. Operational ceiling ~2k devices/tenant on dev hardware (expected ~5–10k on tuned ops hardware) before matview refresh becomes the bottleneck and TimescaleDB continuous aggregates are required.
 
 ## Sprint 14 — Telemetry & Location Foundations
 
@@ -236,7 +236,7 @@
 - [done] `products` table + CRUD API `/products` (SKU, GTIN, name, category, unit, attributes) — Sprint 15b Phase D
 - [done] `lots` table + nested API `/products/{id}/lots` (lot_code, manufactured_at, expires_at) — Sprint 15b Phase D
 - [done] `stock_items` table — per-tag inventory unit; column `binding_value` from day one — Sprint 15b Phase D (auto-creation by ingestion deferred to Phase D.2)
-- [planned] `stock_items.parent_stock_item_id` — case/pallet containment promoted from backlog per [mobile-carriers-and-manifests.md](design/mobile-carriers-and-manifests.md) §4.3
+- [done] `stock_items.parent_stock_item_id` — case/pallet containment (migration 028); self-FK with `ON DELETE SET NULL`, partial index on non-null values, mirrored on the ORM model and `StockItemCreate` / `StockItemUpdate` / `StockItemResponse` schemas. Per [mobile-carriers-and-manifests.md §4.3](design/mobile-carriers-and-manifests.md). Manifest API (recursive CTE mirroring `assets.parent_asset_id`) ships when the first customer needs SSCC → SGTIN traversal.
 - [done] **`tag_data_mappings` table** — per-(tenant, device_type, product) mapping from `tag_data` keys to semantic fields; most-specific scope wins (Sprint 15b Phase D). Ingestion read path lands with Phase D.2.
 - [done] `stock_movements` hypertable — append-only ledger (enter/exit/transfer/consume) — Sprint 15b Phase D (writes from ingestion deferred to Phase D.2)
 - [done] `stock_levels` SQL view — live count per (product, lot, zone) — Sprint 15b Phase D
@@ -269,7 +269,7 @@
 - [done] **UI:** Device detail "Security" panel — token last-rotated, rotate button (admin), copy-once token reveal modal
 - [done] **UI:** Device detail "Heartbeat" panel — connection state, firmware version, last-seen, mobility, configuration JSON (uptime/queue depth deferred — surface when device publishes them on `…/status`)
 - [done] **UI:** Devices list — admin-only "Last Rotated" column (per design §7)
-- [planned] **UI:** Audit log — "device security events" filter preset (deferred — admin audit-log page not yet shipped; preset will land alongside that page)
+- [done] **UI:** Audit log — admin-only `/admin/audit-logs` page (`src/pages/admin/AuditLog.tsx` in TagPulse-UI) with `Segmented` preset selector. "Device security events" preset filters server-side via `actions=device.token_rotated,device.cert_attached,device.approved,device.rejected`; backend extended (`AuditLogger.list_logs(actions=…)` + `?actions=` query param on `/admin/audit-logs`).
 - [done] **Audit follow-up:** observe-mode flag for clock enforcement (`settings.ingest_clock_enforce`), explicit `MAX_INGEST_PAYLOAD_BYTES` middleware (256 KB), edge-client `TokenRevokedError`, conformance harness scaffold under `tests/conformance/`, operator runbook for first rotation (`docs/runbooks/device-token-rotation.md`)
 
 ## Sprint 17a — Geofencing & Map UI

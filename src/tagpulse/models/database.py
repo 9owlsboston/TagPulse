@@ -718,6 +718,11 @@ class StockItemModel(Base):
     lot_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("lots.id"), nullable=True
     )
+    parent_stock_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("stock_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     binding_value: Mapped[str] = mapped_column(String(256), nullable=False)
     binding_kind: Mapped[str] = mapped_column(
         String(8), nullable=False, server_default="epc"
