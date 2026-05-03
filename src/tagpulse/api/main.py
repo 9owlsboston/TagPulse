@@ -21,6 +21,7 @@ from tagpulse.api.routes.devices import router as devices_router
 from tagpulse.api.routes.health import router as health_router
 from tagpulse.api.routes.ingestion import router as ingestion_router
 from tagpulse.api.routes.integrations import router as integrations_router
+from tagpulse.api.routes.inventory import router as inventory_router
 from tagpulse.api.routes.metrics import router as metrics_router
 from tagpulse.api.routes.provisioning import router as provisioning_router
 from tagpulse.api.routes.query import router as query_router
@@ -216,3 +217,4 @@ app.include_router(users_router)
 app.include_router(provisioning_router)
 app.include_router(sites_zones_router)
 app.include_router(assets_router)
+app.include_router(inventory_router)

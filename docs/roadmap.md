@@ -232,16 +232,16 @@
 > Design: [docs/design/tracking-modes.md](design/tracking-modes.md)
 > Goal: serve the **inventory-tracking** domain (count of stock per SKU/lot/zone, expiration, in/out movements). Sits on the same substrate as Sprint 15; runs in parallel and can ship in either order.
 
-- [planned] `tenants.tracking_modes` JSONB column — `['asset']` default; `'inventory'` opt-in
-- [planned] `products` table + CRUD API `/products` (SKU, GTIN, name, category, unit, attributes)
-- [planned] `lots` table + nested API `/products/{id}/lots` (lot_code, manufactured_at, expires_at)
-- [planned] `stock_items` table — per-tag inventory unit; auto-created by ingestion when SGTIN read matches a registered product. Column **named `binding_value` from day one** (no deprecation dance — table is new in this sprint).
+- [done] `tenants.tracking_modes` JSONB column — `['asset']` default; `'inventory'` opt-in (Sprint 15 Phase A)
+- [done] `products` table + CRUD API `/products` (SKU, GTIN, name, category, unit, attributes) — Sprint 15b Phase D
+- [done] `lots` table + nested API `/products/{id}/lots` (lot_code, manufactured_at, expires_at) — Sprint 15b Phase D
+- [done] `stock_items` table — per-tag inventory unit; column `binding_value` from day one — Sprint 15b Phase D (auto-creation by ingestion deferred to Phase D.2)
 - [planned] `stock_items.parent_stock_item_id` — case/pallet containment promoted from backlog per [mobile-carriers-and-manifests.md](design/mobile-carriers-and-manifests.md) §4.3
-- [planned] **`tag_data_mappings` table** (migration 020b) — per-(tenant, device_type, product) mapping from `tag_data` keys to semantic fields (lot, expiry, batch, mfg date, serial); most-specific scope wins. Replaces the speculative "overload `telemetry_models`" path. Ingestion's lot/expiry inference reads from this table. Per [tracking-modes.md §11 Q2](design/tracking-modes.md).
-- [planned] `stock_movements` hypertable — append-only ledger (enter/exit/transfer/consume)
-- [planned] `stock_levels` SQL view — live count per (product, lot, zone)
-- [planned] Ingestion inventory branch — SKU lookup by GTIN (LRU cached), lot inference from `tag_data`, emit `subject.zone_changed` with `subject_kind='stock_item'` and `stock.movement_recorded`
-- [planned] APIs: `/stock-items`, `/stock-levels`, `/stock-movements` (filter by product/lot/zone/state/time)
+- [done] **`tag_data_mappings` table** — per-(tenant, device_type, product) mapping from `tag_data` keys to semantic fields; most-specific scope wins (Sprint 15b Phase D). Ingestion read path lands with Phase D.2.
+- [done] `stock_movements` hypertable — append-only ledger (enter/exit/transfer/consume) — Sprint 15b Phase D (writes from ingestion deferred to Phase D.2)
+- [done] `stock_levels` SQL view — live count per (product, lot, zone) — Sprint 15b Phase D
+- [planned] **Phase D.2** — Ingestion inventory branch — SKU lookup by GTIN (LRU cached), lot inference from `tag_data` via `tag_data_mappings`, emit `subject.zone_changed` with `subject_kind='stock_item'` and append `stock_movements` rows on zone transitions
+- [done] APIs: `/stock-items`, `/stock-levels`, `/stock-movements` (filter by product/lot/zone/state/time) — Sprint 15b Phase D
 - [planned] Rules engine: `stock.below_threshold`, `stock.expiring_within`, `stock.unexpected_in_zone`
 - [planned] Periodic workers — below-threshold scan (60 s), expiring-soon scan (daily)
 - [planned] CSV import endpoints for products / lots / stock_items (bulk onboarding)

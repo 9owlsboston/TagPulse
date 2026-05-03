@@ -502,3 +502,145 @@ class ManifestResponse(BaseModel):
     name: str
     asset_type: str
     children: list[ManifestEntry] = Field(default_factory=list)
+
+
+# ============================================================================
+# Sprint 15b — Inventory tracking
+# ============================================================================
+
+
+class ProductCreate(BaseModel):
+    sku: str = Field(..., min_length=1, max_length=64)
+    gtin: str | None = Field(default=None, max_length=14)
+    name: str = Field(..., min_length=1, max_length=255)
+    category: str | None = Field(default=None, max_length=64)
+    unit: Literal["each", "case", "pallet"] = "each"
+    attributes: dict[str, Any] | None = None
+
+
+class ProductUpdate(BaseModel):
+    sku: str | None = Field(default=None, min_length=1, max_length=64)
+    gtin: str | None = Field(default=None, max_length=14)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    category: str | None = Field(default=None, max_length=64)
+    unit: Literal["each", "case", "pallet"] | None = None
+    attributes: dict[str, Any] | None = None
+
+
+class ProductResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    sku: str
+    gtin: str | None
+    name: str
+    category: str | None
+    unit: str
+    attributes: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LotCreate(BaseModel):
+    lot_code: str = Field(..., min_length=1, max_length=64)
+    manufactured_at: datetime | None = None
+    expires_at: datetime | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class LotUpdate(BaseModel):
+    lot_code: str | None = Field(default=None, min_length=1, max_length=64)
+    manufactured_at: datetime | None = None
+    expires_at: datetime | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class LotResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    product_id: UUID
+    lot_code: str
+    manufactured_at: datetime | None
+    expires_at: datetime | None
+    metadata: dict[str, Any] | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StockItemCreate(BaseModel):
+    product_id: UUID
+    lot_id: UUID | None = None
+    binding_value: str = Field(..., min_length=1, max_length=256)
+    binding_kind: Literal["epc", "tid"] = "epc"
+    metadata: dict[str, Any] | None = None
+
+
+class StockItemUpdate(BaseModel):
+    state: (
+        Literal["in_stock", "in_transit", "consumed", "expired", "lost"] | None
+    ) = None
+    lot_id: UUID | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class StockItemResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    product_id: UUID
+    lot_id: UUID | None
+    binding_value: str
+    binding_kind: str
+    state: str
+    current_zone_id: UUID | None
+    first_seen_at: datetime
+    last_seen_at: datetime
+    consumed_at: datetime | None
+    metadata: dict[str, Any] | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StockMovementResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    stock_item_id: UUID
+    from_zone_id: UUID | None
+    to_zone_id: UUID | None
+    movement_type: str
+    quantity: int
+    device_id: UUID | None
+    occurred_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StockLevelRow(BaseModel):
+    """One bucket from the ``stock_levels`` view."""
+
+    product_id: UUID
+    lot_id: UUID | None
+    zone_id: UUID | None
+    quantity: int
+
+
+class TagDataMappingCreate(BaseModel):
+    scope_kind: Literal["tenant", "device_type", "product"]
+    scope_id: UUID | None = None
+    semantic_field: str = Field(..., min_length=1, max_length=40)
+    tag_data_key: str = Field(..., min_length=1, max_length=64)
+    transform: str | None = Field(default=None, max_length=40)
+
+
+class TagDataMappingResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    scope_kind: str
+    scope_id: UUID | None
+    semantic_field: str
+    tag_data_key: str
+    transform: str | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

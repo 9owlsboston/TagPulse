@@ -5,6 +5,14 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Sprint 15b — Inventory Tracking (Phase D): products, lots, stock items, movements, mappings**:
+  - Migration `020_inventory.py`: creates `products` (unique `(tenant_id, sku)`, partial index on GTIN, `unit ∈ {each,case,pallet}`), `lots` (unique `(tenant_id, product_id, lot_code)`, partial index for upcoming expirations), `stock_items` (`binding_kind ∈ {epc,tid}`, `state ∈ {in_stock,in_transit,consumed,expired,lost}`, partial unique index on active bindings, aggregation index by `(tenant, product, lot, zone)`), `stock_movements` hypertable on `occurred_at` (`movement_type ∈ {enter,exit,transfer,consume}`), `tag_data_mappings` (with check constraints binding `scope_id` consistency to `scope_kind ∈ {tenant,device_type,product}`). Adds `stock_levels` view (`SELECT product_id, lot_id, current_zone_id, COUNT(*) WHERE state='in_stock'`). All tables enable RLS with `tenant_isolation` policies.
+  - ORM: `ProductModel`, `LotModel`, `StockItemModel`, `StockMovementModel`, `TagDataMappingModel`. Pydantic: `Product*`, `Lot*`, `StockItem*`, `StockMovementResponse`, `StockLevelRow`, `TagDataMapping*`.
+  - Repositories: `TimescaleProductRepository` (delete blocks when active stock items reference the product → 409), `TimescaleLotRepository` (with `expiring_within_days` filter), `TimescaleStockItemRepository` (`get_active_by_binding` for ingestion hot-path; `stock_levels` query against the view), `TimescaleStockMovementRepository`, `TimescaleTagDataMappingRepository`.
+  - `InventoryService` with full audit coverage (`product.created/updated/deleted`, `lot.created/updated`, `stock_item.created/updated`, `tag_data_mapping.created/deleted`).
+  - Routes (mounted at `/products`, `/products/{id}/lots`, `/lots/{id}`, `/stock-items`, `/stock-levels`, `/stock-movements`, `/tag-data-mappings`): viewer+ reads; editor+ stock-item & lot writes; admin-only product CRUD and tag-data-mapping management.
+  - 9 new unit tests in `tests/unit/test_inventory_service.py` (239 passing total).
+  - **Deferred (Phase D.2)**: ingestion inventory branch — SKU lookup by GTIN, lot inference from `tag_data` via `tag_data_mappings`, auto-create `stock_item` on first SGTIN read, append `stock_movements` row + emit `subject.zone_changed` (`subject_kind='stock_item'`). Mirrors the B/B.2 split.
 - **Sprint 15 — Asset Tracking (Phase C): external positions + carrier semantics**:
   - `external_locations` hypertable (migration 019) for non-RFID position fixes — `(tenant_id, asset_id, recorded_at, latitude, longitude, source, accuracy_meters?, speed_kph?, heading_deg?, metadata)`, RLS by `tenant_id`, hypertable on `recorded_at`. Lat/lon range checks at the DB layer.
   - `POST /assets/{asset_id}/external-position` (editor+) and `GET /assets/{asset_id}/external-positions` (viewer+) — generic non-RFID position ingestion. Emits `Topic.EXTERNAL_LOCATION_RECORDED`.

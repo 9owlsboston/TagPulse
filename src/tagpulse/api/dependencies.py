@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.api.services.asset_service import AssetService
 from tagpulse.api.services.device_service import DeviceService
+from tagpulse.api.services.inventory_service import InventoryService
 from tagpulse.api.services.query_service import QueryService
 from tagpulse.api.services.sites_zones_service import SiteZoneService
 from tagpulse.api.services.telemetry_model_service import TelemetryModelService
@@ -152,4 +153,26 @@ async def get_asset_service(
         audit=AuditLogger(session=session),
         external_location_repo=TimescaleExternalLocationRepository(session),
         event_bus=event_bus,
+    )
+
+
+async def get_inventory_service(
+    session: AsyncSession = Depends(get_session),
+) -> AsyncGenerator[InventoryService, None]:
+    """Provide an InventoryService bound to the current session."""
+    from tagpulse.repositories.timescaledb.inventory import (
+        TimescaleLotRepository,
+        TimescaleProductRepository,
+        TimescaleStockItemRepository,
+        TimescaleStockMovementRepository,
+        TimescaleTagDataMappingRepository,
+    )
+
+    yield InventoryService(
+        product_repo=TimescaleProductRepository(session),
+        lot_repo=TimescaleLotRepository(session),
+        stock_repo=TimescaleStockItemRepository(session),
+        movement_repo=TimescaleStockMovementRepository(session),
+        mapping_repo=TimescaleTagDataMappingRepository(session),
+        audit=AuditLogger(session=session),
     )
