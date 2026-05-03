@@ -111,6 +111,59 @@ VALUES (
 
 ---
 
+## 5b. Bootstrap an Admin API Key
+
+A fresh tenant has no users, so the UI cannot log in via the **API Key** tab and the `Authorization: Bearer …` header doesn't work for any privileged API call. Bootstrap the first admin once:
+
+```bash
+# 1. Insert an admin user (idempotent — re-running just upserts the role)
+docker compose exec -T db psql -U tagpulse -d tagpulse -c "
+INSERT INTO users (id, tenant_id, email, name, role, status)
+VALUES (gen_random_uuid(), '11111111-1111-1111-1111-111111111111',
+        'admin@example.com', 'Admin', 'admin', 'active')
+ON CONFLICT (tenant_id, email) DO UPDATE SET role = 'admin', status = 'active';
+"
+
+# 2. Generate a key (prints KEY=, PREFIX=, HASH= — copy them)
+python -c "
+from tagpulse.core.user_auth import generate_api_key
+raw, prefix, h = generate_api_key('test-corp')
+print(f'KEY={raw}')
+print(f'PREFIX={prefix}')
+print(f'HASH={h}')
+"
+
+# 3. Attach the hash + prefix to the user (paste the values from step 2)
+docker compose exec -T db psql -U tagpulse -d tagpulse -c "
+UPDATE users
+SET api_key_hash='<HASH from step 2>',
+    api_key_prefix='<PREFIX from step 2>'
+WHERE tenant_id='11111111-1111-1111-1111-111111111111'
+  AND email='admin@example.com';
+"
+```
+
+> **Store the `KEY` value securely** — only the SHA-256 hash is kept in the DB; the plaintext key is never recoverable. Lost keys must be regenerated via the UI (**Admin → Users → Regenerate API Key**) or by repeating step 2/3.
+
+**Log into the UI:**
+
+1. Open http://localhost:5173 (use `127.0.0.1` if behind a localhost-intercepting proxy).
+2. Pick the **API Key** tab.
+3. Email: `admin@example.com`
+4. API Key: paste the `KEY` value from step 2 (looks like `tp_test-corp_<hex>`).
+5. Click **Sign In** — you'll land on the dashboard with the **admin** badge in the header and the full sidebar (Tenant Settings, Users, Audit Log).
+
+**Use the same key for API calls:**
+
+```bash
+curl -H "Authorization: Bearer tp_test-corp_<your-hex>" \
+     http://localhost:8000/admin/audit-logs
+```
+
+---
+
+---
+
 ## 6. Device Simulator
 
 TagPulse includes a device simulator that creates fake RFID readers and sends continuous tag reads.
