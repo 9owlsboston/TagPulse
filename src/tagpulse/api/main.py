@@ -193,6 +193,42 @@ async def request_id_middleware(
     return response
 
 
+# Sprint 16 §4 — explicit ingest payload size limit. Per
+# docs/design/edge-device-contract.md §3.4 a single MQTT/HTTP message must be
+# ≤256 KB after JSON encoding. Reject early via Content-Length so giant payloads
+# never hit Pydantic.
+_INGEST_PATH_PREFIXES = ("/tag-reads", "/telemetry", "/device-registry")
+
+
+@app.middleware("http")
+async def ingest_payload_size_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    if request.method == "POST" and any(
+        request.url.path.startswith(p) for p in _INGEST_PATH_PREFIXES
+    ):
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                size = int(content_length)
+            except ValueError:
+                size = 0
+            if size > settings.max_ingest_payload_bytes:
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "detail": (
+                            f"Payload exceeds {settings.max_ingest_payload_bytes} "
+                            "bytes (edge contract §3.4)"
+                        ),
+                    },
+                )
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def usage_metering_middleware(
     request: Request,

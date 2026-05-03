@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from tagpulse.api.services.telemetry_service import TelemetryService
+from tagpulse.core.config import settings
 from tagpulse.core.otel_metrics import (
     events_rejected_clock_counter,
     ingestion_counter,
@@ -140,19 +141,26 @@ class IngestionService:
         if reason is not None:
             await self._repo.record_rejection(tenant_id, normalized, reason)
             events_rejected_clock_counter.add(
-                1, {"tenant_id": str(tenant_id), "reason": reason}
+                1,
+                {
+                    "tenant_id": str(tenant_id),
+                    "reason": reason,
+                    "mode": "enforce" if settings.ingest_clock_enforce else "observe",
+                },
             )
             if self._usage_meter is not None:
                 self._usage_meter.record(
                     tenant_id, "events_rejected_clock", "events"
                 )
             logger.warning(
-                "Tag read rejected by clock window: device=%s ts=%s reason=%s",
+                "Tag read out-of-window: device=%s ts=%s reason=%s mode=%s",
                 normalized.device_id,
                 normalized.timestamp,
                 reason,
+                "enforce" if settings.ingest_clock_enforce else "observe",
             )
-            raise ClockRejectionError(reason)
+            if settings.ingest_clock_enforce:
+                raise ClockRejectionError(reason)
         result = await self._repo.insert(tenant_id, normalized)
         ingestion_counter.add(1, {"tenant_id": str(tenant_id), "protocol": "http"})
         logger.info(
@@ -212,14 +220,20 @@ class IngestionService:
             if reason is not None:
                 await self._repo.record_rejection(tenant_id, read, reason)
                 events_rejected_clock_counter.add(
-                    1, {"tenant_id": str(tenant_id), "reason": reason}
+                    1,
+                    {
+                        "tenant_id": str(tenant_id),
+                        "reason": reason,
+                        "mode": "enforce" if settings.ingest_clock_enforce else "observe",
+                    },
                 )
                 if self._usage_meter is not None:
                     self._usage_meter.record(
                         tenant_id, "events_rejected_clock", "events"
                     )
                 rejected += 1
-                continue
+                if settings.ingest_clock_enforce:
+                    continue
             normalized.append(read)
         inserted = await self._repo.insert_batch(tenant_id, normalized)
         count = len(inserted)

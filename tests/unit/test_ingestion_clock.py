@@ -150,3 +150,55 @@ class TestEventBusUnaffectedByRejection:
         assert service._event_bus.publish.await_count == 0  # type: ignore[union-attr]
         # Sanity: Topic enum still resolves
         assert Topic.TAG_READ_CREATED is not None
+
+
+class TestObserveMode:
+    """Sprint 16 §10 — observe-mode flag inserts the row + records rejection."""
+
+    @pytest.mark.asyncio
+    async def test_observe_mode_inserts_old_event_and_records_rejection(
+        self,
+        service: IngestionService,
+        repo: _FakeRepo,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from tagpulse.core import config as config_module
+        from tagpulse.ingestion import service as service_module
+
+        monkeypatch.setattr(
+            service_module.settings, "ingest_clock_enforce", False, raising=True
+        )
+        # Sanity that we hit the same Settings object the service module uses
+        assert config_module.settings.ingest_clock_enforce is False
+
+        old_ts = datetime.now(UTC) - timedelta(hours=48)
+        read = TagReadCreate(device_id=uuid4(), tag_id="T-OBS", timestamp=old_ts)
+        result = await service.ingest(uuid4(), read)
+
+        assert result.tag_id == "T-OBS"
+        assert len(repo.reads) == 1
+        assert len(repo.rejections) == 1
+        assert repo.rejections[0][2] == REASON_TOO_OLD
+
+    @pytest.mark.asyncio
+    async def test_observe_mode_batch_inserts_all_records_rejection(
+        self,
+        service: IngestionService,
+        repo: _FakeRepo,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from tagpulse.ingestion import service as service_module
+
+        monkeypatch.setattr(
+            service_module.settings, "ingest_clock_enforce", False, raising=True
+        )
+        now = datetime.now(UTC)
+        good = TagReadCreate(device_id=uuid4(), tag_id="OK", timestamp=now)
+        bad_old = TagReadCreate(
+            device_id=uuid4(), tag_id="OLD", timestamp=now - timedelta(days=2)
+        )
+        ingested, rejected = await service.ingest_batch(
+            uuid4(), [good, bad_old]
+        )
+        assert ingested == 2
+        assert rejected == 1

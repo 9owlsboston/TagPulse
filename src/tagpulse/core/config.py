@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     jwt_expiry_seconds: int = 3600
     login_rate_limit: int = 5
 
+    # Sprint 16 — edge contract enforcement
+    # Per docs/design/edge-device-contract.md §10 — start in observe mode for
+    # 48h, then flip to enforce. Observe-mode logs + meters but does not reject.
+    ingest_clock_enforce: bool = True
+    # Per §3.4 / §4 — explicit ingest payload size cap (256 KB).
+    max_ingest_payload_bytes: int = 262_144
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

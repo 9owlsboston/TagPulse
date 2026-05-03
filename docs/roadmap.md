@@ -266,9 +266,11 @@
 - [done] `POST /device-registry/{id}/rotate-token` (admin only) — revoke previous token, audit log entry (`device.token_rotated`), Alembic `025_device_tokens.py` adds `devices.token_hash` / `token_prefix` / `token_rotated_at`
 - [done] Provisioning metering: `device_token_rotations` dimension + `tagpulse_device_token_rotations_total` OTel counter
 - [done] Edge client doc — README in `clients/pi/` linked to contract spec
-- [planned] **UI:** Device detail "Security" panel — token last-rotated, rotate button (admin), copy-once token reveal modal
-- [planned] **UI:** Device detail "Heartbeat" panel — uptime, queue depth, firmware, connection state
-- [planned] **UI:** Audit log — "device security events" filter preset
+- [done] **UI:** Device detail "Security" panel — token last-rotated, rotate button (admin), copy-once token reveal modal
+- [done] **UI:** Device detail "Heartbeat" panel — connection state, firmware version, last-seen, mobility, configuration JSON (uptime/queue depth deferred — surface when device publishes them on `…/status`)
+- [done] **UI:** Devices list — admin-only "Last Rotated" column (per design §7)
+- [planned] **UI:** Audit log — "device security events" filter preset (deferred — admin audit-log page not yet shipped; preset will land alongside that page)
+- [done] **Audit follow-up:** observe-mode flag for clock enforcement (`settings.ingest_clock_enforce`), explicit `MAX_INGEST_PAYLOAD_BYTES` middleware (256 KB), edge-client `TokenRevokedError`, conformance harness scaffold under `tests/conformance/`, operator runbook for first rotation (`docs/runbooks/device-token-rotation.md`)
 
 ## Sprint 17a — Geofencing & Map UI
 
