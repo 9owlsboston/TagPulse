@@ -21,8 +21,10 @@ import pytest
 from tagpulse.events.async_bus import AsyncEventBus
 from tagpulse.events.protocol import Topic
 from tagpulse.ingestion.service import (
+    _GTIN_TO_PRODUCT_ID,
     _LAST_ZONE_BY_ASSET,
     _LAST_ZONE_BY_STOCK_ITEM,
+    _TRACKING_MODES,
     IngestionService,
 )
 from tagpulse.models.schemas import (
@@ -282,9 +284,13 @@ def _read(
 def _clear_caches() -> Any:
     _LAST_ZONE_BY_ASSET.clear()
     _LAST_ZONE_BY_STOCK_ITEM.clear()
+    _GTIN_TO_PRODUCT_ID.clear()
+    _TRACKING_MODES.clear()
     yield
     _LAST_ZONE_BY_ASSET.clear()
     _LAST_ZONE_BY_STOCK_ITEM.clear()
+    _GTIN_TO_PRODUCT_ID.clear()
+    _TRACKING_MODES.clear()
 
 
 # ---- Tests -------------------------------------------------------------
@@ -466,3 +472,242 @@ async def test_no_inventory_branch_when_repos_absent() -> None:
     )
     result = await svc.ingest(uuid4(), _read(uuid4()))
     assert result.tag_id.startswith("urn:epc:id:sgtin:")
+
+
+# ---- Audit mitigation tests (Sprint 15b) ------------------------------
+
+
+class FakeTenantRepo:
+    """Tenant repo stub returning configurable tracking_modes."""
+
+    def __init__(self, modes: list[str]) -> None:
+        self._modes = modes
+        self.calls = 0
+
+    async def get_tracking_modes(self, tenant_id: UUID) -> list[str]:  # type: ignore[no-untyped-def]
+        self.calls += 1
+        return list(self._modes)
+
+
+@pytest.mark.asyncio
+async def test_inventory_branch_skipped_when_mode_disabled() -> None:
+    """Tenants without 'inventory' tracking mode bypass stock_item creation."""
+    bus = AsyncEventBus(capacity=10)
+    await bus.start()
+    tenant = uuid4()
+    product = _product(tenant)
+    stock = FakeStockRepo()
+    tenant_repo = FakeTenantRepo(modes=["asset"])
+    svc = IngestionService(
+        repo=FakeRepo(),  # type: ignore[arg-type]
+        event_bus=bus,
+        device_repo=FakeDeviceRepo(),  # type: ignore[arg-type]
+        zone_repo=FakeZoneRepo({}),  # type: ignore[arg-type]
+        product_repo=FakeProductRepo({GTIN: product}),  # type: ignore[arg-type]
+        stock_repo=stock,  # type: ignore[arg-type]
+        tenant_repo=tenant_repo,  # type: ignore[arg-type]
+    )
+    await svc.ingest(tenant, _read(uuid4()))
+    await svc.ingest(tenant, _read(uuid4()))
+    assert stock.creates == 0
+    # tracking_modes lookup is cached → at most one DB call across two reads.
+    assert tenant_repo.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_inventory_branch_runs_when_mode_enabled() -> None:
+    bus = AsyncEventBus(capacity=10)
+    await bus.start()
+    tenant = uuid4()
+    product = _product(tenant)
+    stock = FakeStockRepo()
+    svc = IngestionService(
+        repo=FakeRepo(),  # type: ignore[arg-type]
+        event_bus=bus,
+        device_repo=FakeDeviceRepo(),  # type: ignore[arg-type]
+        zone_repo=FakeZoneRepo({}),  # type: ignore[arg-type]
+        product_repo=FakeProductRepo({GTIN: product}),  # type: ignore[arg-type]
+        stock_repo=stock,  # type: ignore[arg-type]
+        tenant_repo=FakeTenantRepo(modes=["asset", "inventory"]),  # type: ignore[arg-type]
+    )
+    await svc.ingest(tenant, _read(uuid4()))
+    assert stock.creates == 1
+
+
+@pytest.mark.asyncio
+async def test_gtin_lookup_cached_across_reads() -> None:
+    """Repeated reads for the same GTIN should hit the in-process cache."""
+    bus = AsyncEventBus(capacity=10)
+    await bus.start()
+    tenant = uuid4()
+    product = _product(tenant)
+
+    class CountingProductRepo(FakeProductRepo):
+        def __init__(self, m: dict[str, ProductResponse]) -> None:
+            super().__init__(m)
+            self.lookups = 0
+
+        async def get_by_gtin(  # type: ignore[no-untyped-def, override]
+            self, tenant_id: UUID, gtin: str
+        ) -> ProductResponse | None:
+            self.lookups += 1
+            return await super().get_by_gtin(tenant_id, gtin)
+
+    product_repo = CountingProductRepo({GTIN: product})
+    stock = FakeStockRepo()
+    svc = IngestionService(
+        repo=FakeRepo(),  # type: ignore[arg-type]
+        event_bus=bus,
+        device_repo=FakeDeviceRepo(),  # type: ignore[arg-type]
+        zone_repo=FakeZoneRepo({}),  # type: ignore[arg-type]
+        product_repo=product_repo,  # type: ignore[arg-type]
+        stock_repo=stock,  # type: ignore[arg-type]
+    )
+    for serial in ("1", "2", "3"):
+        await svc.ingest(tenant, _read(uuid4(), serial=serial))
+    assert product_repo.lookups == 1
+
+
+@pytest.mark.asyncio
+async def test_first_zone_emits_enter_movement_type() -> None:
+    """Transition from None → zone records movement_type='enter'."""
+    bus = AsyncEventBus(capacity=10)
+    await bus.start()
+    tenant = uuid4()
+    product = _product(tenant)
+    reader_blind, reader_a = uuid4(), uuid4()
+    zone_a = uuid4()
+    stock = FakeStockRepo()
+    movements = FakeMovementRepo()
+    svc = IngestionService(
+        repo=FakeRepo(),  # type: ignore[arg-type]
+        event_bus=bus,
+        device_repo=FakeDeviceRepo(mobility="fixed"),  # type: ignore[arg-type]
+        # reader_blind has no zone -> first observation seeds prev=None.
+        zone_repo=FakeZoneRepo({reader_blind: None, reader_a: zone_a}),  # type: ignore[arg-type]
+        product_repo=FakeProductRepo({GTIN: product}),  # type: ignore[arg-type]
+        stock_repo=stock,  # type: ignore[arg-type]
+        movement_repo=movements,  # type: ignore[arg-type]
+    )
+    await svc.ingest(tenant, _read(reader_blind))  # seed prev=None
+    await svc.ingest(tenant, _read(reader_a))     # transition None -> zone_a
+    assert len(movements.rows) == 1
+    assert movements.rows[0]["movement_type"] == "enter"
+    assert movements.rows[0]["from_zone_id"] is None
+    assert movements.rows[0]["to_zone_id"] == zone_a
+
+
+@pytest.mark.asyncio
+async def test_lot_inference_falls_through_product_to_tenant_scope() -> None:
+    """Product-scope mapping without 'lot' field falls through to tenant scope."""
+    bus = AsyncEventBus(capacity=10)
+    await bus.start()
+    tenant = uuid4()
+    product = _product(tenant)
+    lot = LotResponse(
+        id=uuid4(),
+        tenant_id=tenant,
+        product_id=product.id,
+        lot_code="LOT-Z",
+        manufactured_at=None,
+        expires_at=None,
+        metadata=None,
+        created_at=datetime.now(UTC),
+    )
+    # Product scope has a non-lot mapping; tenant scope provides the lot one.
+    product_mapping = TagDataMappingResponse(
+        id=uuid4(),
+        tenant_id=tenant,
+        scope_kind="product",
+        scope_id=product.id,
+        semantic_field="serial",
+        tag_data_key="serial_no",
+        transform=None,
+        created_at=datetime.now(UTC),
+    )
+    tenant_mapping = TagDataMappingResponse(
+        id=uuid4(),
+        tenant_id=tenant,
+        scope_kind="tenant",
+        scope_id=None,
+        semantic_field="lot",
+        tag_data_key="lot_code",
+        transform=None,
+        created_at=datetime.now(UTC),
+    )
+    stock = FakeStockRepo()
+    svc = IngestionService(
+        repo=FakeRepo(),  # type: ignore[arg-type]
+        event_bus=bus,
+        device_repo=FakeDeviceRepo(),  # type: ignore[arg-type]
+        zone_repo=FakeZoneRepo({}),  # type: ignore[arg-type]
+        product_repo=FakeProductRepo({GTIN: product}),  # type: ignore[arg-type]
+        stock_repo=stock,  # type: ignore[arg-type]
+        lot_repo=FakeLotRepo([lot]),  # type: ignore[arg-type]
+        tag_data_mapping_repo=FakeMappingRepo(  # type: ignore[arg-type]
+            [product_mapping, tenant_mapping]
+        ),
+    )
+    await svc.ingest(tenant, _read(uuid4(), tag_data={"lot_code": "LOT-Z"}))
+    [item] = list(stock.items.values())
+    assert item.lot_id == lot.id
+
+
+@pytest.mark.asyncio
+async def test_auto_create_race_recovers_existing_item() -> None:
+    """If create() races with another worker, second get_active_by_binding wins."""
+    bus = AsyncEventBus(capacity=10)
+    await bus.start()
+    tenant = uuid4()
+    product = _product(tenant)
+    movements = FakeMovementRepo()
+
+    class RacingStockRepo(FakeStockRepo):
+        def __init__(self, winner: StockItemResponse) -> None:
+            super().__init__()
+            self._winner = winner
+            self._first_lookup = True
+            self.items[winner.id] = winner
+
+        async def get_active_by_binding(  # type: ignore[no-untyped-def, override]
+            self, tenant_id: UUID, binding_kind: str, binding_value: str
+        ) -> StockItemResponse | None:
+            if self._first_lookup:
+                self._first_lookup = False
+                return None  # pretend nothing exists -> service tries create()
+            return self._winner
+
+        async def create(  # type: ignore[no-untyped-def, override]
+            self, tenant_id: UUID, payload: StockItemCreate
+        ) -> StockItemResponse:
+            self.creates += 1
+            raise ValueError("duplicate active binding")
+
+    winner = StockItemResponse(
+        id=uuid4(),
+        tenant_id=tenant,
+        product_id=product.id,
+        lot_id=None,
+        binding_value="urn:epc:id:sgtin:0614141.100734.42",
+        binding_kind="epc",
+        state="in_stock",
+        current_zone_id=None,
+        first_seen_at=datetime.now(UTC),
+        last_seen_at=datetime.now(UTC),
+        consumed_at=None,
+        metadata=None,
+    )
+    stock = RacingStockRepo(winner)
+    svc = IngestionService(
+        repo=FakeRepo(),  # type: ignore[arg-type]
+        event_bus=bus,
+        device_repo=FakeDeviceRepo(),  # type: ignore[arg-type]
+        zone_repo=FakeZoneRepo({}),  # type: ignore[arg-type]
+        product_repo=FakeProductRepo({GTIN: product}),  # type: ignore[arg-type]
+        stock_repo=stock,  # type: ignore[arg-type]
+        movement_repo=movements,  # type: ignore[arg-type]
+    )
+    await svc.ingest(tenant, _read(uuid4()))
+    # No new items beyond the seeded winner; create attempted exactly once.
+    assert len(stock.items) == 1
+    assert stock.creates == 1

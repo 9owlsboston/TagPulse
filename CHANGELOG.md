@@ -4,6 +4,23 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Changed
+- **Sprint 15b — Phase D audit mitigations (inventory hardening)**:
+  - Migration `021_inventory_hardening.py`:
+    - `stock_items.lot_id` FK now `ON DELETE SET NULL` (was implicit `NO ACTION` blocking lot deletes).
+    - `stock_movements.stock_item_id` now has an explicit `ON DELETE RESTRICT` FK to `stock_items.id` (was orphan-prone).
+    - Adds partial indexes `ix_stock_movements_from_zone` / `ix_stock_movements_to_zone` (`WHERE X_zone_id IS NOT NULL`, ordered by `occurred_at DESC`) so per-zone history queries no longer scan the whole hypertable.
+    - `stock_levels` view recreated `WITH (security_invoker = true)` so RLS policies are enforced as the calling tenant, not the view owner.
+    - `ck_tag_data_mappings_scope_kind` tightened to `IN ('tenant','product')` — `'device_type'` is dead code (no resolver wired anywhere) and is removed from the schema, the Pydantic `Literal`, and the migration check.
+  - `IngestionService`:
+    - Inventory branch is now gated on the tenant's `tracking_modes` containing `'inventory'` (in-process LRU-cached, bounded). Tenants on `'asset'`-only mode no longer pay the SGTIN→product lookup cost.
+    - GTIN→product_id lookups are cached per `(tenant, gtin)` (bounded LRU); both hits and misses are cached so unmapped SGTIN floods don't hammer the DB.
+    - `_LAST_ZONE_BY_ASSET` and `_LAST_ZONE_BY_STOCK_ITEM` writes now go through a bounded FIFO setter — caches can no longer grow without limit on long-lived workers.
+    - New `tenant_repo: TimescaleTenantRepository | None` constructor parameter, wired through `get_ingestion_service` and `MQTTSubscriber._build_ingestion_service`. When omitted (older test rigs) the inventory branch behaves as before.
+  - `TagDataMappingCreate` now refuses inconsistent payloads at the schema layer: `scope_kind='tenant'` requires `scope_id IS NULL`, all other scopes require a non-null `scope_id` (matches the DB check).
+  - `InventoryService.delete_product` now blocks deletion when **any** stock_items reference the product (not only non-terminal ones), mirroring the FK reality and avoiding 500s on orphaned-history products.
+  - 6 new unit tests in `tests/unit/test_ingestion_inventory.py` cover tracking-mode gating, GTIN cache hit count, `enter` vs `transfer` movement_type, lot-mapping product→tenant fallthrough, and the auto-create race recovery path. **252 passing total.**
+
 ### Added
 - **Sprint 15b — Inventory Tracking (Phase D.5): ingestion inventory branch**:
   - `IngestionService` now resolves SGTIN reads to a registered product (GTIN-14 derived from the EPC's company_prefix + item_ref via the new `tagpulse.rfid.epc.gtin14_from_decoded` helper, mod-10 check digit per GS1 §7.9), auto-creates a `stock_item` on the first sighting (lot inferred from `tag_data` via `tag_data_mappings` — most-specific scope wins, product > tenant), bumps `current_zone_id` + `last_seen_at` on every observation, and on a zone transition appends a `stock_movements` row (`enter` for first-known zone, `transfer` otherwise) plus emits `Topic.SUBJECT_ZONE_CHANGED` with `subject_kind='stock_item'`.

@@ -39,19 +39,50 @@ from tagpulse.repositories.timescaledb.inventory import (
 from tagpulse.repositories.timescaledb.sites_zones import (
     TimescaleZoneRepository,
 )
+from tagpulse.repositories.timescaledb.tenants import TimescaleTenantRepository
 from tagpulse.rfid.epc import decode_epc_hex, gtin14_from_decoded
 
 logger = logging.getLogger(__name__)
 
-# Process-local last-zone-by-asset cache. Crosses requests within a single
-# worker; multi-worker durability lands in Sprint 17 alongside the rules
-# engine's Redis state per docs/design/assets-and-zones.md §5.
-_LAST_ZONE_BY_ASSET: dict[tuple[uuid.UUID, uuid.UUID], uuid.UUID | None] = {}
+# Bounded process-local zone caches. Cross requests within a single worker;
+# multi-worker durability lands in Sprint 17 alongside the rules engine's
+# Redis state per docs/design/assets-and-zones.md §5. Bounded so a long-running
+# worker doesn't accumulate one entry per subject ever seen — oldest insertion
+# is evicted when the cap is hit (FIFO via dict insertion order).
+_ZONE_CACHE_MAX = 10_000
 
-# Mirrors the asset cache for stock_item zone transitions (Sprint 15b Phase D.5).
+_LAST_ZONE_BY_ASSET: dict[tuple[uuid.UUID, uuid.UUID], uuid.UUID | None] = {}
 _LAST_ZONE_BY_STOCK_ITEM: dict[
     tuple[uuid.UUID, uuid.UUID], uuid.UUID | None
 ] = {}
+
+# GTIN -> product_id and (tenant, product, scope_kind) -> mappings caches.
+# Same boundedness story as the zone caches; sized smaller because catalog
+# churn is much rarer than subject churn.
+_GTIN_CACHE_MAX = 4_096
+_MAPPING_CACHE_MAX = 1_024
+_TRACKING_MODES_CACHE_MAX = 1_024
+
+_GTIN_TO_PRODUCT_ID: dict[tuple[uuid.UUID, str], uuid.UUID | None] = {}
+_TRACKING_MODES: dict[uuid.UUID, tuple[str, ...]] = {}
+
+
+def _bounded_set(
+    cache: dict[Any, Any], key: Any, value: Any, maxsize: int
+) -> None:
+    """FIFO-evicting setter; pops the oldest insertion when ``len(cache)`` hits
+    ``maxsize``. Idempotent re-inserts (key already present) do not change
+    insertion order — callers that need LRU semantics should ``pop`` first.
+    """
+    if key not in cache and len(cache) >= maxsize:
+        # Evict the oldest entry; iter(dict) yields in insertion order.
+        try:
+            oldest = next(iter(cache))
+        except StopIteration:  # pragma: no cover — defensive
+            oldest = None
+        if oldest is not None:
+            cache.pop(oldest, None)
+    cache[key] = value
 
 
 class IngestionService:
@@ -70,6 +101,7 @@ class IngestionService:
         stock_repo: TimescaleStockItemRepository | None = None,
         movement_repo: TimescaleStockMovementRepository | None = None,
         tag_data_mapping_repo: TimescaleTagDataMappingRepository | None = None,
+        tenant_repo: TimescaleTenantRepository | None = None,
     ) -> None:
         self._repo = repo
         self._event_bus = event_bus
@@ -82,6 +114,7 @@ class IngestionService:
         self._stock_repo = stock_repo
         self._movement_repo = movement_repo
         self._tag_data_mapping_repo = tag_data_mapping_repo
+        self._tenant_repo = tenant_repo
 
     async def ingest(self, tenant_id: uuid.UUID, read: TagReadCreate) -> TagReadResponse:
         """Validate, persist, and publish a single tag read."""
@@ -283,13 +316,17 @@ class IngestionService:
 
         if cache_key not in _LAST_ZONE_BY_ASSET:
             # First time we see this asset — seed the cache without firing.
-            _LAST_ZONE_BY_ASSET[cache_key] = new_zone_id
+            _bounded_set(
+                _LAST_ZONE_BY_ASSET, cache_key, new_zone_id, _ZONE_CACHE_MAX
+            )
             return
 
         if new_zone_id == prev_zone_id:
             return
 
-        _LAST_ZONE_BY_ASSET[cache_key] = new_zone_id
+        _bounded_set(
+            _LAST_ZONE_BY_ASSET, cache_key, new_zone_id, _ZONE_CACHE_MAX
+        )
         await self._event_bus.publish(
             Topic.SUBJECT_ZONE_CHANGED,
             Event(
@@ -359,8 +396,14 @@ class IngestionService:
         if gtin is None:
             return  # not an SGTIN — no product mapping possible
 
-        product = await self._product_repo.get_by_gtin(tenant_id, gtin)
-        if product is None:
+        # Tenant must have inventory mode enabled. Cached in-process; tenants
+        # rarely flip modes, and a stale read costs at most one un-emitted
+        # transition per worker per restart.
+        if not await self._tenant_has_inventory_mode(tenant_id):
+            return
+
+        product_id = await self._lookup_product_id_by_gtin(tenant_id, gtin)
+        if product_id is None:
             inventory_unmapped_sgtin_counter.add(
                 1, {"tenant_id": str(tenant_id)}
             )
@@ -372,13 +415,13 @@ class IngestionService:
         )
         if stock_item is None:
             lot_id = await self._infer_lot_id(
-                tenant_id, product.id, read.tag_data
+                tenant_id, product_id, read.tag_data
             )
             try:
                 stock_item = await self._stock_repo.create(
                     tenant_id,
                     StockItemCreate(
-                        product_id=product.id,
+                        product_id=product_id,
                         lot_id=lot_id,
                         binding_value=epc,
                         binding_kind="epc",
@@ -421,7 +464,9 @@ class IngestionService:
 
         cache_key = (tenant_id, stock_item.id)
         seen_before = cache_key in _LAST_ZONE_BY_STOCK_ITEM
-        _LAST_ZONE_BY_STOCK_ITEM[cache_key] = new_zone_id
+        _bounded_set(
+            _LAST_ZONE_BY_STOCK_ITEM, cache_key, new_zone_id, _ZONE_CACHE_MAX
+        )
         if not seen_before:
             return  # seed; first observation never fires a transition
         if new_zone_id == prev_zone_id:
@@ -451,7 +496,7 @@ class IngestionService:
                     "tenant_id": str(tenant_id),
                     "subject_kind": "stock_item",
                     "subject_id": str(stock_item.id),
-                    "product_id": str(product.id),
+                    "product_id": str(product_id),
                     "from_zone_id": str(prev_zone_id) if prev_zone_id else None,
                     "to_zone_id": str(new_zone_id) if new_zone_id else None,
                     "device_id": str(read.device_id),
@@ -507,3 +552,42 @@ class IngestionService:
                         return lot.id
                 return None
         return None
+
+    async def _tenant_has_inventory_mode(self, tenant_id: uuid.UUID) -> bool:
+        """Return True iff the tenant opted into inventory tracking.
+
+        Cached in-process to keep the SGTIN hot-path off the database. The
+        cache is bounded; tenants flipping modes will see the new value once
+        the worker restarts (acceptable per docs/design/tracking-modes.md \u00a76).
+        """
+        cached = _TRACKING_MODES.get(tenant_id)
+        if cached is not None:
+            return "inventory" in cached
+        if self._tenant_repo is None:
+            # Backward-compat: ingestion services constructed without a tenant
+            # repo (older tests) treat every tenant as inventory-enabled so
+            # behavior matches the pre-guard implementation.
+            return True
+        modes = await self._tenant_repo.get_tracking_modes(tenant_id)
+        _bounded_set(
+            _TRACKING_MODES, tenant_id, tuple(modes), _TRACKING_MODES_CACHE_MAX
+        )
+        return "inventory" in modes
+
+    async def _lookup_product_id_by_gtin(
+        self, tenant_id: uuid.UUID, gtin: str
+    ) -> uuid.UUID | None:
+        """Resolve ``(tenant, gtin) -> product_id`` with a bounded LRU cache.
+
+        Both hits and misses are cached; a missing product is far more common
+        than a hit when bulk-importing, and re-querying the DB on every read
+        of an unmapped SGTIN would dominate the budget.
+        """
+        assert self._product_repo is not None  # noqa: S101 - guarded by caller
+        key = (tenant_id, gtin)
+        if key in _GTIN_TO_PRODUCT_ID:
+            return _GTIN_TO_PRODUCT_ID[key]
+        product = await self._product_repo.get_by_gtin(tenant_id, gtin)
+        product_id = product.id if product is not None else None
+        _bounded_set(_GTIN_TO_PRODUCT_ID, key, product_id, _GTIN_CACHE_MAX)
+        return product_id

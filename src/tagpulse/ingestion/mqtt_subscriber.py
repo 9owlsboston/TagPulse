@@ -302,6 +302,9 @@ class MqttSubscriber:
         from tagpulse.repositories.timescaledb.sites_zones import (
             TimescaleZoneRepository,
         )
+        from tagpulse.repositories.timescaledb.tenants import (
+            TimescaleTenantRepository,
+        )
 
         return IngestionService(
             repo=TimescaleTagReadRepository(session),
@@ -315,4 +318,5 @@ class MqttSubscriber:
             stock_repo=TimescaleStockItemRepository(session),
             movement_repo=TimescaleStockMovementRepository(session),
             tag_data_mapping_repo=TimescaleTagDataMappingRepository(session),
+            tenant_repo=TimescaleTenantRepository(session),
         )

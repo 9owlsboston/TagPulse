@@ -113,6 +113,9 @@ async def get_ingestion_service(
     from tagpulse.repositories.timescaledb.sites_zones import (
         TimescaleZoneRepository,
     )
+    from tagpulse.repositories.timescaledb.tenants import (
+        TimescaleTenantRepository,
+    )
 
     yield IngestionService(
         repo=repo,
@@ -126,6 +129,7 @@ async def get_ingestion_service(
         stock_repo=TimescaleStockItemRepository(session),
         movement_repo=TimescaleStockMovementRepository(session),
         tag_data_mapping_repo=TimescaleTagDataMappingRepository(session),
+        tenant_repo=TimescaleTenantRepository(session),
     )
 
 

@@ -3021,7 +3021,6 @@
           "scope_kind": {
             "enum": [
               "tenant",
-              "device_type",
               "product"
             ],
             "title": "Scope Kind",

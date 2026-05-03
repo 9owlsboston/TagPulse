@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 LocationSource = Literal["gps", "fixed", "inferred"]
 
@@ -626,11 +626,22 @@ class StockLevelRow(BaseModel):
 
 
 class TagDataMappingCreate(BaseModel):
-    scope_kind: Literal["tenant", "device_type", "product"]
+    scope_kind: Literal["tenant", "product"]
     scope_id: UUID | None = None
     semantic_field: str = Field(..., min_length=1, max_length=40)
     tag_data_key: str = Field(..., min_length=1, max_length=64)
     transform: str | None = Field(default=None, max_length=40)
+
+    @model_validator(mode="after")
+    def _check_scope_consistency(self) -> "TagDataMappingCreate":
+        # Mirrors the DB CHECK constraint so callers get a 422 instead of a 409.
+        if self.scope_kind == "tenant" and self.scope_id is not None:
+            raise ValueError("scope_id must be null when scope_kind='tenant'")
+        if self.scope_kind != "tenant" and self.scope_id is None:
+            raise ValueError(
+                f"scope_id is required when scope_kind='{self.scope_kind}'"
+            )
+        return self
 
 
 class TagDataMappingResponse(BaseModel):

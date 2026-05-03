@@ -208,16 +208,21 @@ class TimescaleProductRepository:
     async def delete(
         self, tenant_id: uuid.UUID, product_id: uuid.UUID
     ) -> bool:
-        """Hard delete; only allowed when no active stock_items reference it."""
-        active_stmt = select(func.count(StockItemModel.id)).where(
+        """Hard delete; only allowed when no stock_items reference it.
+
+        Includes terminal-state items (consumed/expired/lost) — the FK
+        ``stock_items.product_id`` has no ``ON DELETE`` clause, so any
+        referencing row will fail the delete with a 500 otherwise.
+        """
+        ref_stmt = select(func.count(StockItemModel.id)).where(
             StockItemModel.tenant_id == tenant_id,
             StockItemModel.product_id == product_id,
-            StockItemModel.state.notin_(["consumed", "expired", "lost"]),
         )
-        active_count = (await self._session.execute(active_stmt)).scalar_one()
-        if active_count > 0:
+        ref_count = (await self._session.execute(ref_stmt)).scalar_one()
+        if ref_count > 0:
             raise ValueError(
-                f"cannot delete product with {active_count} active stock items"
+                f"cannot delete product with {ref_count} stock items "
+                "(retire it instead)"
             )
         stmt = select(ProductModel).where(
             ProductModel.id == product_id,
