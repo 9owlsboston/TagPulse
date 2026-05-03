@@ -528,7 +528,7 @@ ngrok start tagpulse-api tagpulse-mqtt
 
 ### Security considerations
 
-- **ngrok free tier** URLs are public — anyone with the URL can hit your API. Use the `X-Tenant-ID` header auth (or Bearer tokens from Sprint 12) to restrict access.
+- **ngrok free tier** URLs are public — anyone with the URL can hit your API. Use a Bearer API key (`Authorization: Bearer tp_{slug}_{hex}`, see Step 5b "Bootstrap an Admin API Key") to restrict access.
 - **Do not** leave tunnels running unattended in production.
 - For persistent testing, consider ngrok's reserved domains (`ngrok http --url=tagpulse.ngrok-free.app 8000`) so the URL stays stable across restarts.
 - MQTT tunnels are unauthenticated by default. Add Mosquitto `password_file` or `allow_anonymous false` in `docker/mosquitto.conf` before exposing over the internet.

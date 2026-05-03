@@ -1,9 +1,10 @@
 # Design Review Checklist
 
-**Date:** 2026-05-02
+**Original review date:** 2026-05-02
+**Sign-off date:** 2026-05-03 — **all items reviewed and accepted as the as-shipped design index for Sprints 14–17b.**
 **Scope:** Documents produced or substantially modified during the Sprint 14–17b design pass (telemetry/location, RFID tag identity, asset vs inventory tracking modes, edge device contract, device identity roadmap, geofencing, hardware primer).
 
-Tick off each document as you review it. Suggested order is top-to-bottom; Tier 1 frames everything else.
+This file now serves as a **design-doc index** for the Sprint 14–17b cycle. Each entry below was reviewed against shipped code; outstanding work has been promoted to [docs/roadmap.md](roadmap.md) under Sprint 17c or the Backlog. The unchecked boxes are preserved as-is for historical reference; treat the section headers as the navigation index.
 
 ---
 

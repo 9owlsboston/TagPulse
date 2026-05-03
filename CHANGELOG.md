@@ -4,6 +4,13 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Changed
+- **Docs audit refresh** — brought reference docs in line with shipped Sprint 14–17b state:
+  - `docs/data-models.md`: rewrote the Migrations table to cover 016–028 with concrete descriptions; stripped 82 stale `(planned, Sprint X)` markers from table cells, section headers and migration footers; added missing tables (`external_locations`, `tag_data_mappings`, `subject_current_zone`); added `parent_stock_item_id` row to `stock_items`; refreshed RLS table; added migration footers for `tenants` (017/023/026), `devices` (017/025/026) and `zones` (017/026).
+  - `docs/architecture.md`: expanded Storage table from 5 to 19 tables; added Geofencing & Map and Device Identity component sections; refreshed Admin UI capabilities; added ADR-011 / ADR-012 to the Key Decisions table; refreshed project-structure tree to include `services/`, `geo/`, `rfid/`, `workers/`.
+  - `docs/quickstart.md`: replaced "Bearer tokens from Sprint 12" with a pointer to the Bearer-API-key bootstrap step.
+  - `docs/review-checklist.md`: re-framed as a design-doc index for Sprints 14–17b with explicit sign-off note.
+
 ### Added
 - **Sprint 16 — admin audit-log API filter**:
   - `AuditLogger.list_logs(actions=…)` and `GET /admin/audit-logs?actions=a,b,c` accept a comma-separated action allow-list (used by the new TagPulse-UI "Device security events" preset). Existing `resource_type` filter unchanged. Backwards compatible — omitting `actions` returns the prior behaviour.
