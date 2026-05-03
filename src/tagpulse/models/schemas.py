@@ -356,3 +356,78 @@ class SubjectZoneChanged(BaseModel):
     epc: str | None = None
     tid: str | None = None
     timestamp: datetime
+
+
+# -- Sprint 15 Phase B: Assets & Tag Bindings --
+
+
+class AssetCreate(BaseModel):
+    """Create an asset."""
+
+    name: str = Field(min_length=1, max_length=255)
+    asset_type: str = Field(min_length=1, max_length=50)
+    external_ref: str | None = Field(default=None, max_length=255)
+    status: Literal["active", "retired", "lost"] = Field(default="active")
+    parent_asset_id: UUID | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class AssetUpdate(BaseModel):
+    """Patch an asset."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    asset_type: str | None = Field(default=None, min_length=1, max_length=50)
+    external_ref: str | None = Field(default=None, max_length=255)
+    status: Literal["active", "retired", "lost"] | None = None
+    parent_asset_id: UUID | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class AssetResponse(BaseModel):
+    """Persisted asset row."""
+
+    id: UUID
+    tenant_id: UUID
+    external_ref: str | None
+    name: str
+    asset_type: str
+    status: str
+    parent_asset_id: UUID | None
+    metadata: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AssetTagBindingCreate(BaseModel):
+    """Bind a tag value to an asset."""
+
+    binding_value: str = Field(min_length=1, max_length=256)
+    binding_kind: Literal["epc", "tid", "device"] = Field(default="epc")
+    metadata: dict[str, Any] | None = None
+
+
+class AssetTagBindingResponse(BaseModel):
+    """Persisted asset_tag_bindings row."""
+
+    id: UUID
+    tenant_id: UUID
+    asset_id: UUID
+    binding_value: str
+    binding_kind: str
+    bound_at: datetime
+    unbound_at: datetime | None
+    metadata: dict[str, Any] | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TagCollisionResponse(BaseModel):
+    """Cross-tenant collision report for a binding_value (admin only).
+
+    Never reveals other tenants' identities — only the count.
+    """
+
+    binding_value: str
+    other_tenant_count: int

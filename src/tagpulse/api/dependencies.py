@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.api.services.asset_service import AssetService
 from tagpulse.api.services.device_service import DeviceService
 from tagpulse.api.services.query_service import QueryService
 from tagpulse.api.services.sites_zones_service import SiteZoneService
@@ -119,4 +120,20 @@ async def get_site_zone_service(
         site_repo=TimescaleSiteRepository(session),
         zone_repo=TimescaleZoneRepository(session),
         audit=audit,
+    )
+
+
+async def get_asset_service(
+    session: AsyncSession = Depends(get_session),
+) -> AsyncGenerator["AssetService", None]:
+    """Provide an AssetService bound to the current session."""
+    from tagpulse.repositories.timescaledb.assets import (
+        TimescaleAssetRepository,
+        TimescaleAssetTagBindingRepository,
+    )
+
+    yield AssetService(
+        asset_repo=TimescaleAssetRepository(session),
+        binding_repo=TimescaleAssetTagBindingRepository(session),
+        audit=AuditLogger(session=session),
     )

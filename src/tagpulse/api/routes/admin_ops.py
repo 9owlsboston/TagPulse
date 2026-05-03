@@ -121,3 +121,35 @@ async def list_audit_logs(
     return await audit.list_logs(
         user.tenant_id, resource_type=resource_type, limit=limit, offset=offset
     )
+
+
+# -- Tag Collisions (cross-tenant; admin only) --
+
+
+@router.get("/tag-collisions")
+async def get_tag_collisions(
+    binding_value: str = Query(min_length=1, max_length=256),
+    user: AuthenticatedUser = require_role("admin"),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    """Return cross-tenant collision count for a binding_value.
+
+    Per docs/design/assets-and-zones.md §11 Q3: returns only the count of
+    *other* tenants with an active binding for this value, never their
+    identities. Increments ``tagpulse_tag_collisions_global_total``.
+    """
+    from tagpulse.api.services.asset_service import AssetService
+    from tagpulse.repositories.timescaledb.assets import (
+        TimescaleAssetRepository,
+        TimescaleAssetTagBindingRepository,
+    )
+
+    service = AssetService(
+        asset_repo=TimescaleAssetRepository(session),
+        binding_repo=TimescaleAssetTagBindingRepository(session),
+        audit=AuditLogger(session),
+    )
+    count = await service.count_other_tenant_collisions(
+        user.tenant_id, binding_value
+    )
+    return {"binding_value": binding_value, "other_tenant_count": count}

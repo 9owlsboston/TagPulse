@@ -5,6 +5,12 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Sprint 15 — Asset Tracking (Phase B): assets, tag bindings, collision tooling**:
+  - Migration `018_assets_bindings.py`: `assets` (with `parent_asset_id` self-FK for carrier containment, `external_ref` unique per tenant, `status ∈ {active,retired,lost}` check constraint) and `asset_tag_bindings` (`binding_value` + `binding_kind ∈ {epc,tid,device}` from day one). Partial unique index `ix_asset_tag_bindings_active` enforces one active binding per `(tenant_id, binding_value)`. Non-unique global index `ix_asset_tag_bindings_global_value` powers admin tag-collision tooling. RLS policies on both tables.
+  - ORM: `AssetModel`, `AssetTagBindingModel`. Pydantic schemas: `AssetCreate/Update/Response`, `AssetTagBindingCreate/Response`, `TagCollisionResponse`.
+  - `TimescaleAssetRepository` (CRUD with soft-delete via `status='retired'`, ilike search on `name`/`external_ref`) and `TimescaleAssetTagBindingRepository` (`bind`, `unbind`, `get_active_by_value`, `count_other_tenant_collisions`).
+  - `AssetService` with audit hooks (`asset.created/updated/retired/bound/unbound`); routes mounted at `/assets` (editor+ writes, viewer+ reads), `/assets/{id}/bindings` POST/GET, `/assets/{id}/bindings/{binding_value}` DELETE.
+  - **Admin `GET /admin/tag-collisions?binding_value=…`** — cross-tenant collision count for bulk-import preflight; never reveals tenant identities. Increments OTel counter `tagpulse_tag_collisions_global_total`.
 - **Sprint 15 — Asset Tracking Substrate (Phase A)**:
   - Migration `017_sites_zones_tracking_modes.py`: adds `tenants.tracking_modes` (JSONB, default `["asset"]`), `devices.mobility` (`fixed`|`mobile`, default `fixed`, check-constrained); creates `sites` (tenant-scoped, unique `(tenant_id, name)`, default timezone) and `zones` (per-site, kind `reader_bound` requiring `fixed_reader_ids` JSONB or `geofence` requiring `polygon_geojson`, enforced via check constraint). Adds `tenant_isolation_*` RLS policies using `current_setting('app.current_tenant_id')::uuid`.
   - New ORM models `SiteModel` and `ZoneModel`; new Pydantic schemas `SiteCreate/Update/Response`, `ZoneCreate/Update/Response`, and `SubjectZoneChanged` event payload (Topic.SUBJECT_ZONE_CHANGED reserved for Phase B subject emission).

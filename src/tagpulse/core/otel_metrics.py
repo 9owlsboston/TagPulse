@@ -105,3 +105,9 @@ tag_data_truncations_counter = meter.create_counter(
     description="Tag-data JSONB blobs truncated to inline size cap",
     unit="reads",
 )
+
+tag_collisions_global_counter = meter.create_counter(
+    "tagpulse_tag_collisions_global_total",
+    description="Cross-tenant binding_value collisions inspected by admin",
+    unit="checks",
+)
