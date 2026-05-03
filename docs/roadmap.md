@@ -284,10 +284,10 @@
 - [done] Rules engine: `zone.entered`, `zone.exited`, `zone.dwell_exceeded` condition types with `subject_kinds` filter (`asset` \| `stock_item` \| `device`) and per-rule per-subject cooldown (`cooldown_s`)
 - [done] Ingestion: emits `subject.zone_changed` for geofence transitions in addition to reader-bound — gated by `settings.geofence_evaluation_enabled` (default `false`); separate `_LAST_GEOFENCE_BY_*` caches so reader and geofence transitions don't clobber each other. **Both reader-bound and geofence emits now include `zone_kind` in the payload** so downstream consumers can route per design §4.1.
 - [done] **DwellWorker** — periodic background task (interval `settings.dwell_worker_interval_s`, default 60s) snapshots in-process tracker, fires `zone.dwell_exceeded` alerts when threshold elapsed; per-rule per-subject cooldown. **`DwellTracker` is write-through to `subject_current_zone` (migration 027)** and hydrates from the table on startup so dwell state survives worker restart and works in multi-worker deployments per design §5.2.
-- [planned] **UI:** Map page (Leaflet + react-leaflet, **provider-agnostic tiles** via `MapConfigResolver`) — live asset markers + stock-density heat tiles, layer toggle, zone polygon overlay, time-slider path replay. UI footer always renders the resolver's `attribution` string; OSM-default footer note: "Default tiles intended for development; configure a production provider before public deployment."
-- [planned] **UI:** Zone editor — polygon-draw mode (leaflet-draw)
-- [planned] **UI:** Rule wizard — geofence step
-- [planned] **UI:** Carriers render as moving icons with click-through manifest pop-out
+- [done] **UI:** Map page (Leaflet + react-leaflet, **provider-agnostic tiles** via `MapConfigResolver`) — live asset markers + stock-density heat tiles, layer toggle (Assets / Zones / Stock density), zone polygon overlay, 24h time-slider path replay, mobility ring for `metadata.mobility==='mobile'`. UI footer renders the resolver's `attribution` string; OSM-default footer note shown when tile provider is unset. ([TagPulse-UI#4](https://github.com/9owlsboston/TagPulse-UI/pull/4))
+- [done] **UI:** Zone editor — polygon-draw mode (custom `PolygonDraw` click-to-vertex editor; emits valid closed GeoJSON Polygon — implemented without leaflet-draw to keep bundle lean). ([TagPulse-UI#4](https://github.com/9owlsboston/TagPulse-UI/pull/4))
+- [done] **UI:** Rule wizard — geofence step (three new condition types `zone.entered` / `zone.exited` / `zone.dwell_exceeded` with subject-kind filter + cooldown). ([TagPulse-UI#4](https://github.com/9owlsboston/TagPulse-UI/pull/4))
+- [done] **UI:** Carriers render with mobility ring + click-through manifest pop-out (recursive AntD `Tree` of `GET /assets/{id}/manifest`). ([TagPulse-UI#4](https://github.com/9owlsboston/TagPulse-UI/pull/4))
 - [done] Simulator: `scripts/simulate_devices.py --with-gps` — synthetic GPS tracks crossing geofence polygons
 - [deferred → Sprint 17c] **Antimeridian-crossing polygons** — explicitly out of v1; ray-casting + bbox prefilter assume polygons do not cross ±180°.
 
@@ -301,7 +301,7 @@
 - [done] `POST /device-registry/{device_id}/cert` (admin only) — accepts PEM, parses via `cryptography` (lazy import), stores SHA-256(DER) thumbprint + RFC 4514 subject (PEM is **not** persisted), audits as `device.cert_attached`, increments `device_cert_attachments_counter`
 - [deferred → Sprint 17c] **Broker enforcement & dual-auth** — Mosquitto `tls_version`, listener `cafile`/`certfile`/`keyfile` config; `mosquitto-go-auth` HTTP backend pointing at `/internal/mqtt-auth`; `tenants.require_mtls` flag for opt-in enforcement. Cert scaffolding ships now; broker-side rollout is its own sprint.
 - [deferred → Sprint 17c] **step-ca Helm chart + per-tenant intermediate CA bootstrap**
-- [planned] **UI:** Device detail Security tab — cert thumbprint + subject display, admin-only "Attach cert" upload (POST /device-registry/{id}/cert)
+- [done] **UI:** Device detail Security tab — cert thumbprint + subject display, admin-only "Attach cert" PEM upload modal (POST /device-registry/{id}/cert). ([TagPulse-UI#4](https://github.com/9owlsboston/TagPulse-UI/pull/4))
 
 ---
 
