@@ -5,6 +5,11 @@ All notable changes to TagPulse will be documented in this file.
 ## Unreleased
 
 ### Added
+- **Sprint 15 — Asset Tracking Substrate (Phase A)**:
+  - Migration `017_sites_zones_tracking_modes.py`: adds `tenants.tracking_modes` (JSONB, default `["asset"]`), `devices.mobility` (`fixed`|`mobile`, default `fixed`, check-constrained); creates `sites` (tenant-scoped, unique `(tenant_id, name)`, default timezone) and `zones` (per-site, kind `reader_bound` requiring `fixed_reader_ids` JSONB or `geofence` requiring `polygon_geojson`, enforced via check constraint). Adds `tenant_isolation_*` RLS policies using `current_setting('app.current_tenant_id')::uuid`.
+  - New ORM models `SiteModel` and `ZoneModel`; new Pydantic schemas `SiteCreate/Update/Response`, `ZoneCreate/Update/Response`, and `SubjectZoneChanged` event payload (Topic.SUBJECT_ZONE_CHANGED reserved for Phase B subject emission).
+  - `TimescaleSiteRepository` and `TimescaleZoneRepository`; `get_zone_for_reader(tenant_id, device_id)` does JSONB containment lookup over `zones.fixed_reader_ids`, returning the deterministically-oldest zone per the design's collision rule.
+  - `SiteZoneService` with audit hooks (`site.created/updated/deleted`, `zone.created/updated/deleted`); CRUD routes mounted at `/sites` and `/zones`. Reads gated to viewer+; writes gated to admin per asset-tracking design §4. Route-level guards reject `reader_bound` zones missing `fixed_reader_ids`, `geofence` zones missing `polygon_geojson`, and unknown `kind` values.
 - **Sprint 14 — Telemetry & Location Foundations** (backend slice):
   - Migration `016_telemetry_location_rfid.py`: extends `tag_reads` with location (`latitude`, `longitude`, `location_accuracy_m`, `location_source`), structured RFID identity (`epc`, `epc_hex`, `epc_scheme`, `epc_decoded`, `tid`, `user_memory_hex`), `tag_data`, and `reader_antenna`. Adds partial indexes for location/EPC/TID. Creates `device_telemetry` hypertable + RLS policy + lookup index. Creates `telemetry_quarantine` table + RLS policy.
   - New `device_telemetry` and `telemetry_quarantine` ORM models; `TelemetryRepository` protocol + Timescale implementation.

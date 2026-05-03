@@ -206,16 +206,16 @@
 
 - [planned] `assets` table + CRUD API `/assets` (tenant-scoped, RLS)
 - [planned] `assets.parent_asset_id` for carrier containment per [mobile-carriers-and-manifests.md](design/mobile-carriers-and-manifests.md)
-- [planned] `devices.mobility` flag (`fixed` \| `mobile`); ingestion skips fixed-zone lookup for mobile readers (migration 020a)
+- [partial] `devices.mobility` flag (`fixed` \| `mobile`); ingestion skips fixed-zone lookup for mobile readers (migration 020a) — column + check constraint shipped in migration 017; ingestion branching wires up alongside asset bindings in Phase B
 - [planned] `asset_tag_bindings` table — historical tag-to-asset mappings; column **named `binding_value` from day one** (no deprecation dance — the table is new in this sprint); `binding_kind` ∈ {`epc`,`tid`,`device`} per [rfid-tag-data-model.md](design/rfid-tag-data-model.md) and [mobile-carriers-and-manifests.md](design/mobile-carriers-and-manifests.md)
 - [planned] **Tag-collision admin tooling** — non-unique global index on `asset_tag_bindings(binding_value) WHERE unbound_at IS NULL`; admin-only `GET /admin/tag-collisions?binding_value=…` (returns count of other tenants with an active binding, never tenant identities); bulk-import preflight check ("X of N bindings collide with another tenant"); OTel counter `tag_collisions_global_total`. Lives on `AdminRepository` (Sprint 13b). Per [assets-and-zones.md §11 Q3](design/assets-and-zones.md).
 - [planned] **`external_locations` hypertable** (migration 021) — `(tenant_id, asset_id, latitude, longitude, recorded_at, source, accuracy_meters?, speed_kph?, heading_deg?, metadata)`; RLS by `tenant_id`; compression/retention parity with `device_telemetry`. Per [mobile-carriers-and-manifests.md §10 Q5](design/mobile-carriers-and-manifests.md).
 - [planned] **`POST /assets/{asset_id}/external-position`** endpoint (editor+, tenant rate-limited, default 60/min) — generic ingestion for non-RFID carriers; TMS-specific adapters land in backlog.
 - [planned] `POST /assets/{id}/load`, `POST /assets/{id}/unload`, `GET /assets/{id}/manifest` for carrier semantics
 - [planned] `asset_current_location` SQL view — latest tag read per active binding, **UNION** with the latest `external_locations` row; new `latest_position_source` column lets the UI render "via Samsara" vs "via Reader-12"
-- [planned] `sites` table — physical locations (name, address, default_timezone) — **shared substrate, used by both modes**
-- [planned] `zones` table — reader-bound (polygon nullable, deferred to Sprint 17) — **shared substrate**
-- [planned] `/sites` and `/zones` CRUD APIs
+- [done] `sites` table — physical locations (name, address, default_timezone) — **shared substrate, used by both modes**
+- [done] `zones` table — reader-bound (polygon nullable, deferred to Sprint 17) — **shared substrate**
+- [done] `/sites` and `/zones` CRUD APIs
 - [planned] Ingestion emits `subject.zone_changed` event (with `subject_kind='asset'`) when reader transition crosses zone boundary
 - [planned] Repository: `get_assets_in_zone()`, `get_asset_path()`
 - [planned] Simulator: bind tag IDs to named assets; cross zones over time

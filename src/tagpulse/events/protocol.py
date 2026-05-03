@@ -19,6 +19,7 @@ class Topic(StrEnum):
     DEVICE_DECOMMISSIONED = "device.decommissioned"
     ALERT_TRIGGERED = "alert.triggered"
     TELEMETRY_OUT_OF_RANGE = "telemetry.out_of_range"
+    SUBJECT_ZONE_CHANGED = "subject.zone_changed"
 
 
 @dataclasses.dataclass(frozen=True)

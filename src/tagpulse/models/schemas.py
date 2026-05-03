@@ -266,3 +266,93 @@ class DeviceEventPayload(BaseModel):
     event_type: str = Field(min_length=1, max_length=100)
     details: dict[str, Any] | None = None
 
+
+
+# ---------------------------------------------------------------------------
+# Sprint 15 — Sites & Zones
+# ---------------------------------------------------------------------------
+
+
+class SiteCreate(BaseModel):
+    """Create a site."""
+
+    name: str = Field(min_length=1, max_length=255)
+    address: str | None = None
+    default_timezone: str = Field(default="UTC", max_length=64)
+    metadata: dict[str, Any] | None = None
+
+
+class SiteUpdate(BaseModel):
+    """Patch a site."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    address: str | None = None
+    default_timezone: str | None = Field(default=None, max_length=64)
+    metadata: dict[str, Any] | None = None
+
+
+class SiteResponse(BaseModel):
+    """Persisted site row."""
+
+    id: UUID
+    tenant_id: UUID
+    name: str
+    address: str | None
+    default_timezone: str
+    metadata: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ZoneCreate(BaseModel):
+    """Create a reader-bound zone (geofence kind reserved for Sprint 17a)."""
+
+    site_id: UUID
+    name: str = Field(min_length=1, max_length=255)
+    kind: Literal["reader_bound", "geofence"] = Field(default="reader_bound")
+    fixed_reader_ids: list[UUID] | None = None
+    polygon_geojson: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class ZoneUpdate(BaseModel):
+    """Patch a zone."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    fixed_reader_ids: list[UUID] | None = None
+    polygon_geojson: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class ZoneResponse(BaseModel):
+    """Persisted zone row."""
+
+    id: UUID
+    tenant_id: UUID
+    site_id: UUID
+    name: str
+    kind: str
+    fixed_reader_ids: list[UUID] | None = None
+    polygon_geojson: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubjectZoneChanged(BaseModel):
+    """Payload for the ``subject.zone_changed`` event (Sprint 15)."""
+
+    tenant_id: UUID
+    subject_kind: str  # 'asset' | 'stock_item'
+    subject_id: UUID
+    from_zone_id: UUID | None
+    to_zone_id: UUID | None
+    device_id: UUID
+    tag_id: str | None
+    epc: str | None = None
+    tid: str | None = None
+    timestamp: datetime

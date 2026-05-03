@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.api.services.device_service import DeviceService
 from tagpulse.api.services.query_service import QueryService
+from tagpulse.api.services.sites_zones_service import SiteZoneService
 from tagpulse.api.services.telemetry_model_service import TelemetryModelService
 from tagpulse.api.services.telemetry_service import TelemetryService
 from tagpulse.core.audit import AuditLogger
@@ -101,4 +102,21 @@ async def get_ingestion_service(
         event_bus=event_bus,
         device_repo=device_repo,
         telemetry_service=telemetry_service,
+    )
+
+
+async def get_site_zone_service(
+    session: AsyncSession = Depends(get_session),
+) -> AsyncGenerator[SiteZoneService, None]:
+    """Provide a SiteZoneService bound to the current session."""
+    from tagpulse.repositories.timescaledb.sites_zones import (
+        TimescaleSiteRepository,
+        TimescaleZoneRepository,
+    )
+
+    audit = AuditLogger(session=session)
+    yield SiteZoneService(
+        site_repo=TimescaleSiteRepository(session),
+        zone_repo=TimescaleZoneRepository(session),
+        audit=audit,
     )

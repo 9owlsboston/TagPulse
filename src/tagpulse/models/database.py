@@ -25,6 +25,9 @@ class TenantModel(Base):
     slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     plan: Mapped[str] = mapped_column(String(50), nullable=False, default="standard")
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
+    tracking_modes: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default='["asset"]'
+    )
     provisioning_key_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     provisioning_key_prefix: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -43,6 +46,7 @@ class DeviceModel(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     device_type: Mapped[str] = mapped_column(String(50), nullable=False, default="rfid_reader")
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
+    mobility: Mapped[str] = mapped_column(String(16), nullable=False, server_default="fixed")
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
     )
@@ -408,4 +412,65 @@ class UserModel(Base):
     )
     last_login: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class SiteModel(Base):
+    """Physical location grouping (Sprint 15) — building/yard/warehouse."""
+
+    __tablename__ = "sites"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_timezone: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="UTC"
+    )
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ZoneModel(Base):
+    """Logical area within a site (Sprint 15) — reader-bound; geofence in S17a."""
+
+    __tablename__ = "zones"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sites.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    fixed_reader_ids: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    polygon_geojson: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -24,6 +24,7 @@ from tagpulse.api.routes.metrics import router as metrics_router
 from tagpulse.api.routes.provisioning import router as provisioning_router
 from tagpulse.api.routes.query import router as query_router
 from tagpulse.api.routes.rules import router as rules_router
+from tagpulse.api.routes.sites_zones import router as sites_zones_router
 from tagpulse.api.routes.telemetry import router as telemetry_router
 from tagpulse.api.routes.telemetry_models import router as telemetry_models_router
 from tagpulse.api.routes.users import router as users_router
@@ -212,3 +213,4 @@ app.include_router(admin_router)
 app.include_router(admin_ops_router)
 app.include_router(users_router)
 app.include_router(provisioning_router)
+app.include_router(sites_zones_router)
