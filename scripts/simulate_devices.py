@@ -9,6 +9,7 @@ Sends tag reads to the TagPulse API every N seconds from simulated RFID readers.
 
 import argparse
 import math
+import os
 import random
 import sys
 import time
@@ -19,39 +20,102 @@ import httpx
 
 API_URL = "http://localhost:8000"
 
+# Optional bearer API key (admin/editor) — populated from --api-key or
+# TAGPULSE_API_KEY env. Required for POST/PATCH endpoints since Sprint 12
+# (a bare X-Tenant-ID header authenticates as viewer only).
+_API_KEY: str | None = None
+
+
+def _headers(tenant_id: str) -> dict[str, str]:
+    h = {"X-Tenant-ID": tenant_id}
+    if _API_KEY:
+        h["Authorization"] = f"Bearer {_API_KEY}"
+    return h
+
+
 TAG_POOL = [f"TAG{i:04d}" for i in range(1, 51)]  # 50 unique tags
 
-# --with-gps: per-device random-walk state, anchored to a Seattle city block.
-# Each device walks ~1 m per step (~1e-5 deg lat) and is steered to deliberately
-# cross a small geofence polygon every few minutes — useful for exercising the
-# Sprint 17a geofence eval path locally.
+# Per-device round-robin cursor over TAG_POOL so each tag (= each bound
+# asset) gets reads at a steady cadence. Re-keyed when --tags shrinks the
+# pool.
+_TAG_CURSOR: dict[str, int] = {}
+
+
+def _next_tag(device_id: str) -> str:
+    idx = _TAG_CURSOR.get(device_id, 0)
+    tag = TAG_POOL[idx % len(TAG_POOL)]
+    _TAG_CURSOR[device_id] = idx + 1
+    return tag
+
+# --with-gps: per-device random-walk state, anchored to a San Francisco city
+# block (Bay Area). Two motion modes — see --motion in main():
+#   * random  — wide-angle wander (forklift idling, pedestrian, original
+#               smoke-test behaviour). Heading jitter ±15° per step.
+#   * vehicle — mostly straight runs with occasional sharp turns
+#               (delivery van / forklift route). Heading jitter ±3° per
+#               step, plus a ~1-in-25 "turn at the corner" event.
+# Both tether to a per-tag home bubble so 5 markers stay visually distinct.
 _GPS_STATE: dict[str, dict[str, float]] = {}
-_GPS_ANCHOR_LAT = 47.6062
-_GPS_ANCHOR_LON = -122.3321
-_GPS_BLOCK_RADIUS_DEG = 0.0010  # ~110 m N/S, ~75 m E/W at 47.6°
+_GPS_ANCHOR_LAT = 37.7749
+_GPS_ANCHOR_LON = -122.4194
+_GPS_BLOCK_RADIUS_DEG = 0.0015  # ~165 m N/S, ~130 m E/W at 37.77°
+_GPS_HOME_RADIUS_DEG = 0.0004  # ~45 m wander around each device's home point
+_GPS_STEP_DEG = 5.0e-5  # ~5 m per step (visible at zoom ~16)
+_MOTION_MODE = "random"  # set from --motion in main()
 
 
 def _gps_step(device_id: str) -> dict[str, float]:
-    """Advance the device's random-walk position by one step."""
+    """Advance the device's random-walk position by one step.
+
+    Each device is assigned a deterministic *home* point inside the block on
+    first call (derived from a hash of ``device_id``) and tethers to a small
+    radius around it. This keeps multiple simulated assets visually
+    separated rather than collapsing into one cluster.
+    """
     state = _GPS_STATE.get(device_id)
     if state is None:
+        # Deterministic home offset from the device id so re-runs reproduce.
+        h = hash(device_id)
+        ang = (h % 360) * math.pi / 180.0
+        # Push home points out toward the edge of the block on a circle so
+        # they spread evenly around the anchor.
+        home_offset = _GPS_BLOCK_RADIUS_DEG * 0.7
+        home_lat = _GPS_ANCHOR_LAT + home_offset * math.cos(ang)
+        home_lon = _GPS_ANCHOR_LON + home_offset * math.sin(ang)
         state = {
-            "lat": _GPS_ANCHOR_LAT + random.uniform(-_GPS_BLOCK_RADIUS_DEG, _GPS_BLOCK_RADIUS_DEG),
-            "lon": _GPS_ANCHOR_LON + random.uniform(-_GPS_BLOCK_RADIUS_DEG, _GPS_BLOCK_RADIUS_DEG),
+            "home_lat": home_lat,
+            "home_lon": home_lon,
+            "lat": home_lat,
+            "lon": home_lon,
             "heading": random.uniform(0.0, 360.0),
         }
         _GPS_STATE[device_id] = state
-    # Drift the heading slightly each step.
-    state["heading"] = (state["heading"] + random.uniform(-15.0, 15.0)) % 360.0
+    # Per-step heading jitter — vehicles barely deviate, pedestrians wander.
+    if _MOTION_MODE == "vehicle":
+        state["heading"] = (state["heading"] + random.uniform(-3.0, 3.0)) % 360.0
+        # ~4% chance of a sharp turn at an "intersection".
+        if random.random() < 0.04:
+            state["heading"] = (
+                state["heading"] + random.choice([-90.0, 90.0])
+            ) % 360.0
+    else:  # "random"
+        state["heading"] = (state["heading"] + random.uniform(-15.0, 15.0)) % 360.0
     rad = math.radians(state["heading"])
-    step = 1.5e-5  # ~1.5 m
-    state["lat"] += step * math.cos(rad)
-    state["lon"] += step * math.sin(rad)
-    # Tether to anchor block (reflect off the edges).
-    if abs(state["lat"] - _GPS_ANCHOR_LAT) > _GPS_BLOCK_RADIUS_DEG:
-        state["heading"] = (state["heading"] + 180.0) % 360.0
-    if abs(state["lon"] - _GPS_ANCHOR_LON) > _GPS_BLOCK_RADIUS_DEG:
-        state["heading"] = (state["heading"] + 180.0) % 360.0
+    state["lat"] += _GPS_STEP_DEG * math.cos(rad)
+    state["lon"] += _GPS_STEP_DEG * math.sin(rad)
+    # Gently steer back toward home when wandering past the tether radius.
+    # (Hard 180° reflection produced visible "jumps" in the marker; this
+    # rotates the heading toward the home vector by up to 30° per step so
+    # the trajectory curves smoothly back inside the bubble.)
+    dlat = state["home_lat"] - state["lat"]
+    dlon = state["home_lon"] - state["lon"]
+    drift = math.hypot(dlat, dlon)
+    if drift > _GPS_HOME_RADIUS_DEG:
+        target_heading = math.degrees(math.atan2(dlon, dlat)) % 360.0
+        diff = ((target_heading - state["heading"] + 540.0) % 360.0) - 180.0
+        # Clamp the per-step turn so the motion stays smooth.
+        turn = max(-30.0, min(30.0, diff))
+        state["heading"] = (state["heading"] + turn) % 360.0
     return {
         "latitude": round(state["lat"], 6),
         "longitude": round(state["lon"], 6),
@@ -65,7 +129,7 @@ def create_devices(client: httpx.Client, tenant_id: str, count: int) -> list[dic
 
     Reuses existing devices with matching names to avoid duplicates on re-run.
     """
-    headers = {"X-Tenant-ID": tenant_id}
+    headers = _headers(tenant_id)
 
     # Fetch existing devices
     existing: dict[str, str] = {}
@@ -111,7 +175,7 @@ def send_tag_read(
     if random.random() < 0.05:
         return False
 
-    tag_id = random.choice(TAG_POOL)
+    tag_id = _next_tag(device_id)
     signal = round(random.uniform(-80.0, -20.0), 1)
     sensor_data: dict[str, float] = {
         "temperature": round(random.uniform(18.0, 28.0), 1),
@@ -132,12 +196,15 @@ def send_tag_read(
     }
     # 20% chance to attach a GPS location (mobile-reader profile), or always
     # when --with-gps is enabled (random-walk anchored block, exercises geofence eval).
+    # Key the walk by tag_id (not device_id) so each asset (bound 1:1 to a
+    # tag) has its own home point on the Map — otherwise random tag→device
+    # pairing causes asset positions to bounce across all device walks.
     if with_gps:
-        body["location"] = _gps_step(device_id)
+        body["location"] = _gps_step(tag_id)
     elif random.random() < 0.20:
         body["location"] = {
-            "latitude": round(47.60 + random.uniform(-0.05, 0.05), 5),
-            "longitude": round(-122.33 + random.uniform(-0.05, 0.05), 5),
+            "latitude": round(37.77 + random.uniform(-0.05, 0.05), 5),
+            "longitude": round(-122.42 + random.uniform(-0.05, 0.05), 5),
             "accuracy_m": round(random.uniform(2.0, 12.0), 1),
             "source": "gps",
         }
@@ -154,7 +221,7 @@ def send_tag_read(
 
     resp = client.post(
         f"{API_URL}/tag-reads",
-        headers={"X-Tenant-ID": tenant_id},
+        headers=_headers(tenant_id),
         json=body,
     )
     return resp.status_code == 201
@@ -183,7 +250,7 @@ def send_telemetry(
         })
     resp = client.post(
         f"{API_URL}/telemetry",
-        headers={"X-Tenant-ID": tenant_id},
+        headers=_headers(tenant_id),
         json={"device_id": device_id, "readings": readings},
     )
     return resp.status_code == 201
@@ -201,7 +268,42 @@ def main() -> None:
         action="store_true",
         help="Always attach a GPS location (random-walk per device) to exercise geofence eval",
     )
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("TAGPULSE_API_KEY"),
+        help="Admin/editor API key (Bearer). Required for device creation since Sprint 12. "
+        "Falls back to $TAGPULSE_API_KEY.",
+    )
+    parser.add_argument(
+        "--tags",
+        type=int,
+        default=50,
+        help="Constrain the tag pool to TAG0001..TAG{N:04d} (default: 50). "
+        "Set this to the number of bound assets so every read maps to a marker.",
+    )
+    parser.add_argument(
+        "--motion",
+        choices=("random", "vehicle"),
+        default="random",
+        help=(
+            "GPS walk profile (with --with-gps). 'random' = wide-angle wander "
+            "(forklift idling, pedestrian); 'vehicle' = mostly-straight runs "
+            "with occasional 90° turns (delivery van / route)."
+        ),
+    )
     args = parser.parse_args()
+
+    global _API_KEY, TAG_POOL, _MOTION_MODE
+    _API_KEY = args.api_key
+    _MOTION_MODE = args.motion
+    if args.tags > 0 and args.tags != len(TAG_POOL):
+        TAG_POOL = [f"TAG{i:04d}" for i in range(1, args.tags + 1)]
+    if not _API_KEY:
+        print(
+            "WARNING: no --api-key (or $TAGPULSE_API_KEY) provided — "
+            "device creation/ingestion will fail with 403 since Sprint 12. "
+            "See docs/quickstart.md → Step 5b for how to bootstrap one."
+        )
 
     client = httpx.Client(timeout=10.0)
 

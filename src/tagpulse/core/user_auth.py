@@ -136,8 +136,15 @@ async def get_current_user(
             UserModel.status == "active",
         )
         result = await session.execute(stmt)
-        user = result.scalar_one_or_none()
-        if user is None or not verify_api_key(raw_token, user.api_key_hash or ""):
+        # Multiple users in the same tenant share the same 10-char prefix
+        # (`tp_{slug}_` is identical for them). Verify the full hash against
+        # each candidate and pick the matching one.
+        user: UserModel | None = None
+        for candidate in result.scalars().all():
+            if verify_api_key(raw_token, candidate.api_key_hash or ""):
+                user = candidate
+                break
+        if user is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
         # Look up tenant
         tenant = await session.get(TenantModel, user.tenant_id)

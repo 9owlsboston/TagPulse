@@ -463,6 +463,18 @@ class IngestionService:
         cache_key = (tenant_id, binding.asset_id)
         prev_zone_id = _LAST_ZONE_BY_ASSET.get(cache_key)
 
+        # Geofence point-in-polygon evaluation is independent of reader-bound
+        # zones — it runs whenever the read carries a GPS fix, even for fixed
+        # readers with no reader-bound zone attached. Run it FIRST so the
+        # early returns below (no reader-bound transition) don't skip it.
+        await self._eval_geofence_for_subject(
+            tenant_id=tenant_id,
+            subject_kind="asset",
+            subject_id=binding.asset_id,
+            read=read,
+            tag_read_id=tag_read_id,
+        )
+
         if cache_key not in _LAST_ZONE_BY_ASSET:
             # First time we see this asset — seed the cache without firing.
             _bounded_set(
@@ -500,15 +512,6 @@ class IngestionService:
         )
         subject_zone_changed_counter.add(
             1, {"tenant_id": str(tenant_id), "subject_kind": "asset"}
-        )
-        # Geofence eval is independent of reader-bound transitions and emits
-        # its own subject.zone_changed with zone_kind='geofence'.
-        await self._eval_geofence_for_subject(
-            tenant_id=tenant_id,
-            subject_kind="asset",
-            subject_id=binding.asset_id,
-            read=read,
-            tag_read_id=tag_read_id,
         )
 
     async def _eval_geofence_for_subject(

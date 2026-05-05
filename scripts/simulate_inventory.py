@@ -25,6 +25,7 @@ mapping with matching SKUs and lot_codes.
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import sys
 import time
@@ -33,6 +34,17 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 API_URL = "http://localhost:8000"
+
+# Optional bearer API key (admin/editor) — populated from --api-key or
+# TAGPULSE_API_KEY env. Required for product/lot/device writes since Sprint 12.
+_API_KEY: str | None = None
+
+
+def _headers(tenant_id: str) -> dict[str, str]:
+    h = {"X-Tenant-ID": tenant_id}
+    if _API_KEY:
+        h["Authorization"] = f"Bearer {_API_KEY}"
+    return h
 
 # A tiny synthetic catalog. GTIN-14s are computed below from
 # (company_prefix, item_ref) using the standard mod-10 check digit.
@@ -87,7 +99,7 @@ def _seed_catalog(
     client: httpx.Client, tenant_id: str
 ) -> list[dict[str, str]]:
     """Create products + one lot per product + a tag_data_mapping."""
-    headers = {"X-Tenant-ID": tenant_id}
+    headers = _headers(tenant_id)
     catalog: list[dict[str, str]] = []
     soon = datetime.now(UTC) + timedelta(days=3)
 
@@ -181,7 +193,7 @@ def _seed_catalog(
 def _seed_devices(
     client: httpx.Client, tenant_id: str, count: int
 ) -> list[dict[str, str]]:
-    headers = {"X-Tenant-ID": tenant_id}
+    headers = _headers(tenant_id)
     resp = client.get(
         f"{API_URL}/device-registry", headers=headers, params={"limit": 1000}
     )
@@ -227,7 +239,7 @@ def _send_inventory_read(
     }
     r = client.post(
         f"{API_URL}/tag-reads",
-        headers={"X-Tenant-ID": tenant_id},
+        headers=_headers(tenant_id),
         json=body,
     )
     return r.status_code
@@ -242,7 +254,21 @@ def main() -> None:
     parser.add_argument("--interval", type=float, default=1.5)
     parser.add_argument("--duration", type=int, default=60)
     parser.add_argument("--seed-only", action="store_true")
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("TAGPULSE_API_KEY"),
+        help="Admin/editor API key (Bearer). Falls back to $TAGPULSE_API_KEY.",
+    )
     args = parser.parse_args()
+
+    global _API_KEY
+    _API_KEY = args.api_key
+    if not _API_KEY:
+        print(
+            "WARNING: no --api-key (or $TAGPULSE_API_KEY) provided — "
+            "product/lot/device writes will fail with 403. "
+            "See docs/quickstart.md → Step 5b for how to bootstrap one."
+        )
 
     client = httpx.Client(timeout=10.0)
     try:

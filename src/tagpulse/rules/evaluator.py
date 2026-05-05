@@ -5,10 +5,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.protocol import Event, EventBus, Topic
+from tagpulse.models.database import AssetModel, ZoneModel
 from tagpulse.rules import RulesService
 
 logger = logging.getLogger(__name__)
@@ -154,6 +156,7 @@ class RuleEvaluator:
             # 1) Generic enter/exit rules (Sprint 17a).
             if subject_id_str:
                 await self._eval_zone_entered_exited(
+                    session=session,
                     service=service,
                     tenant_id=tenant_id,
                     subject_id_str=subject_id_str,
@@ -166,6 +169,7 @@ class RuleEvaluator:
             # 2) Phase E stock-item rules.
             if subject_kind == "stock_item" and to_zone_id is not None:
                 await self._eval_stock_unexpected_in_zone(
+                    session=session,
                     service=service,
                     tenant_id=tenant_id,
                     payload=payload,
@@ -175,9 +179,51 @@ class RuleEvaluator:
 
             await session.commit()
 
+    async def _lookup_subject_name(
+        self,
+        session: AsyncSession,
+        tenant_id: UUID,
+        subject_kind: str | None,
+        subject_id_str: str,
+    ) -> str | None:
+        """Look up a subject's display name for use in alert messages.
+
+        Currently only resolves ``asset`` subjects (the only kind that has a
+        user-meaningful name in the Sprint 17a smoke test). Returns ``None``
+        on any lookup failure so callers fall back to the raw UUID.
+        """
+        if subject_kind != "asset":
+            return None
+        try:
+            sid = UUID(subject_id_str)
+        except ValueError:
+            return None
+        stmt = select(AssetModel.name).where(
+            AssetModel.id == sid, AssetModel.tenant_id == tenant_id
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def _lookup_zone_name(
+        self,
+        session: AsyncSession,
+        tenant_id: UUID,
+        zone_id_str: str,
+    ) -> str | None:
+        try:
+            zid = UUID(zone_id_str)
+        except ValueError:
+            return None
+        stmt = select(ZoneModel.name).where(
+            ZoneModel.id == zid, ZoneModel.tenant_id == tenant_id
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def _eval_zone_entered_exited(
         self,
         *,
+        session: AsyncSession,
         service: RulesService,
         tenant_id: UUID,
         subject_id_str: str,
@@ -187,6 +233,13 @@ class RuleEvaluator:
         payload: dict[str, Any],
     ) -> None:
         now = datetime.now(UTC)
+        # Look up subject + zone display names once so alert messages are
+        # human-readable in the UI (e.g. "asset 'Sim-Pallet-03' entered zone
+        # 'Bay Area West Block'" instead of two opaque UUIDs).
+        subject_name = await self._lookup_subject_name(
+            session, tenant_id, subject_kind, subject_id_str
+        )
+        zone_name_cache: dict[str, str | None] = {}
         # Run both condition types in one pass to keep the DB roundtrips low.
         for condition_type, target_zone in (
             ("zone.entered", to_zone_id),
@@ -215,9 +268,17 @@ class RuleEvaluator:
                 _set_cooldown(cooldown_key, now, cooldown_s)
 
                 verb = "entered" if condition_type == "zone.entered" else "exited"
+                if target_zone not in zone_name_cache:
+                    zone_name_cache[target_zone] = await self._lookup_zone_name(
+                        session, tenant_id, target_zone
+                    )
+                zone_label = zone_name_cache[target_zone] or target_zone
+                subject_label = subject_name or subject_id_str
+                kind_label = subject_kind or "subject"
                 message = (
-                    f"Rule '{rule.name}' triggered: {subject_kind or 'subject'} "
-                    f"{subject_id_str} {verb} zone {target_zone}"
+                    f"Rule '{rule.name}' triggered: {kind_label} "
+                    f"'{subject_label}' ({subject_id_str}) {verb} zone "
+                    f"'{zone_label}' ({target_zone})"
                 )
                 alert = await service.create_alert(
                     tenant_id,
@@ -264,6 +325,7 @@ class RuleEvaluator:
     async def _eval_stock_unexpected_in_zone(
         self,
         *,
+        session: AsyncSession,
         service: RulesService,
         tenant_id: UUID,
         payload: dict[str, Any],
@@ -274,6 +336,9 @@ class RuleEvaluator:
         rules = await service.get_active_rules_by_condition_type(
             tenant_id, "stock.unexpected_in_zone"
         )
+        zone_name = await self._lookup_zone_name(session, tenant_id, to_zone_id)
+        zone_label = zone_name or to_zone_id
+        subject_label = subject_id_str or "<unknown>"
         for rule in rules:
             self._meter.record(tenant_id, "rule_evaluations", "evaluations")
             config_product = rule.condition_config.get("product_id")
@@ -286,8 +351,8 @@ class RuleEvaluator:
                 continue
             message = (
                 f"Rule '{rule.name}' triggered: stock_item "
-                f"{subject_id_str} entered zone {to_zone_id} "
-                "(not in allowed list)"
+                f"'{subject_label}' entered zone "
+                f"'{zone_label}' ({to_zone_id}) (not in allowed list)"
             )
             alert = await service.create_alert(
                 tenant_id,

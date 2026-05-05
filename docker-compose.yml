@@ -12,6 +12,11 @@ services:
       LOG_LEVEL: debug
       CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
       JWT_SECRET: "dev-secret-change-in-production"
+      # Sprint 17a geofence point-in-polygon eval is gated by a rollout
+      # flag (off by default in production until the bbox index is live).
+      # Force-enable in dev so the smoke test's zone.entered/exited rules
+      # actually fire — see docs/quickstart.md §6b.
+      GEOFENCE_EVALUATION_ENABLED: "true"
     depends_on:
       db:
         condition: service_healthy

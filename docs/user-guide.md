@@ -226,6 +226,16 @@ python scripts/simulate_devices.py \
 
 Within seconds the **Dashboard** "Reads Today" widget will start incrementing and the **Telemetry** line chart will fill in.
 
+> **Asset tracking?** Position is not a telemetry metric — it travels via three sources (`rfid`, `gps`, `external`). Pick the path that matches your scenario:
+>
+> - **Reader-bound zones** (indoor warehouse) — run [`scripts/simulate_assets.py`](../scripts/simulate_assets.py) to randomise reader hops and fire `zone.entered` / `zone.exited`.
+> - **GPS-tagged reads** (geofences) — re-run `simulate_devices.py` with `--with-gps` to embed lat/lon in every read.
+> - **External push** (no reader, e.g., TMS) — `POST /assets/{id}/external-position` with `{latitude, longitude, recorded_at, source}`.
+>
+> See [docs/quickstart.md → 6b. Asset Tracking Smoke Test](quickstart.md#6b-asset-tracking-smoke-test) for full commands.
+
+> **Inventory tracking?** Run [`scripts/simulate_inventory.py`](../scripts/simulate_inventory.py) to seed a 3-SKU catalog with near-expiry lots, register a `lot_code` tag-data mapping, and stream SGTIN-96 EPCs so **Products**, **Lot Expiry**, **Stock Levels**, and **Stock Movements** all populate. See [docs/quickstart.md → 6c. Inventory Tracking Smoke Test](quickstart.md#6c-inventory-tracking-smoke-test) for full commands.
+
 ### Step 8 — Add rules & alerts
 
 **Where:** sidebar → **Rules** → **Create Rule**.

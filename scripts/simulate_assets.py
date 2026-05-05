@@ -26,6 +26,7 @@ What it does:
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import sys
 import time
@@ -35,6 +36,17 @@ from typing import Any
 import httpx
 
 API_URL = "http://localhost:8000"
+
+# Optional bearer API key (admin/editor) — populated from --api-key or
+# TAGPULSE_API_KEY env. Required for asset/binding writes since Sprint 12.
+_API_KEY: str | None = None
+
+
+def _headers(tenant_id: str) -> dict[str, str]:
+    h = {"X-Tenant-ID": tenant_id}
+    if _API_KEY:
+        h["Authorization"] = f"Bearer {_API_KEY}"
+    return h
 
 
 def _ok(resp: httpx.Response) -> bool:
@@ -46,7 +58,7 @@ def fetch_devices(
 ) -> list[dict[str, Any]]:
     resp = client.get(
         f"{API_URL}/device-registry",
-        headers={"X-Tenant-ID": tenant_id},
+        headers=_headers(tenant_id),
         params={"limit": 1000},
     )
     resp.raise_for_status()
@@ -62,7 +74,7 @@ def fetch_devices(
 def ensure_assets(
     client: httpx.Client, tenant_id: str, count: int
 ) -> list[dict[str, Any]]:
-    headers = {"X-Tenant-ID": tenant_id}
+    headers = _headers(tenant_id)
     resp = client.get(f"{API_URL}/assets", headers=headers, params={"limit": 1000})
     resp.raise_for_status()
     existing = {a["name"]: a for a in resp.json()}
@@ -96,7 +108,7 @@ def ensure_bindings(
     client: httpx.Client, tenant_id: str, assets: list[dict[str, Any]]
 ) -> dict[str, str]:
     """Return mapping ``asset_id -> binding_value`` (EPC). Idempotent."""
-    headers = {"X-Tenant-ID": tenant_id}
+    headers = _headers(tenant_id)
     out: dict[str, str] = {}
     for asset in assets:
         asset_id = asset["id"]
@@ -134,7 +146,7 @@ def emit_tag_reads(
     interval: float,
     iterations: int | None,
 ) -> None:
-    headers = {"X-Tenant-ID": tenant_id}
+    headers = _headers(tenant_id)
     asset_ids = list(bindings.keys())
     if not asset_ids:
         print("No bindings to drive — exiting.")
@@ -174,7 +186,21 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Stop after N reads (default: run forever).",
     )
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("TAGPULSE_API_KEY"),
+        help="Admin/editor API key (Bearer). Falls back to $TAGPULSE_API_KEY.",
+    )
     args = parser.parse_args(argv)
+
+    global _API_KEY
+    _API_KEY = args.api_key
+    if not _API_KEY:
+        print(
+            "WARNING: no --api-key (or $TAGPULSE_API_KEY) provided — "
+            "asset/binding writes will fail with 403. "
+            "See docs/quickstart.md → Step 5b for how to bootstrap one."
+        )
 
     with httpx.Client(timeout=10.0) as client:
         print(f"Loading {args.readers} devices for tenant {args.tenant_id}…")

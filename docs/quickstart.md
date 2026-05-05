@@ -168,6 +168,14 @@ curl -H "Authorization: Bearer tp_test-corp_<your-hex>" \
 
 TagPulse includes a device simulator that creates fake RFID readers and sends continuous tag reads.
 
+> **Authentication:** Device creation, tag-read ingestion, and telemetry POSTs require an **admin or editor** API key (a bare `X-Tenant-ID` header authenticates as `viewer` only). Bootstrap one via [Step 5b](#5b-bootstrap-an-admin-api-key) above, then either pass `--api-key tp_test-corp_<hex>` to every script or export it once for the shell:
+>
+> ```bash
+> export TAGPULSE_API_KEY=tp_test-corp_<your-hex>
+> ```
+>
+> All simulator scripts (`simulate_devices.py`, `simulate_assets.py`, `simulate_inventory.py`, `load_test.py`) accept `--api-key` and fall back to `$TAGPULSE_API_KEY`.
+
 ### Seed devices + run continuous simulation
 
 ```bash
@@ -214,6 +222,336 @@ python scripts/simulate_devices.py \
 | `--interval` | 2.0 | Seconds between reads per device |
 | `--duration` | 0 | Run for N seconds (0 = forever, Ctrl+C to stop) |
 | `--seed-only` | false | Create devices and exit (no tag reads) |
+| `--with-gps` | false | Attach a random-walk GPS `location` to every read (exercises geofence rules and the Map) |
+| `--motion` | `random` | GPS motion model when `--with-gps` is set: `random` (forklift wander, ±15° jitter) or `vehicle` (mostly-straight runs with occasional 90° turns, ±3° jitter) |
+| `--tags` | 50 | Size of the synthetic tag pool — set this to match the number of bound assets (e.g. `--tags 5` if `smoke_setup.py --assets 5`) so every bound asset receives a steady cadence of reads |
+| `--api-key` | `$TAGPULSE_API_KEY` | Admin/editor Bearer key (required for device create + ingest since Sprint 12) |
+
+---
+
+## 6b. Asset Tracking Smoke Test
+
+> **TL;DR:** run `smoke_setup.py` once, then `simulate_devices.py --with-gps`, then open the Map.
+
+Asset position is **not** a telemetry metric — it arrives via one of three sources, all merged by the `asset_current_location` SQL view:
+
+| Source | How it arrives | Use case |
+|--------|----------------|----------|
+| `rfid` (reader-bound) | Implicit — fixed reader sees the tag → asset is in that reader's zone. | Indoor warehouse, fixed readers. |
+| `gps` (embedded) | Optional `location: {latitude, longitude, ...}` field on the tag-read payload. | Mobile/handheld readers with GPS. |
+| `external` (out-of-band) | `POST /assets/{id}/external-position` — independent of any tag read. | TMS push, manual check-in, BLE beacon. |
+
+### The two-script smoke test (recommended)
+
+The smoke test is split into **setup** (one shot, idempotent) and **run** (data-push loop). You don't need to register assets, sites, or zones manually — the setup script does it for you.
+
+#### Step 1 — One-shot bootstrap
+
+```bash
+python scripts/smoke_setup.py            # minimum: tenant + admin + assets
+python scripts/smoke_setup.py --full     # populate every sidebar page
+```
+
+That single command, on a fresh tenant, will:
+
+1. Upsert the demo tenant (`test-corp`, `11111111-1111-1111-1111-111111111111`).
+2. Upsert the admin user (`admin@example.com`) and **issue an API key** — printed to stdout.
+3. Enable **asset tracking** mode on the tenant (`PATCH /tenant/config`).
+4. Create 5 assets (`Sim-Pallet-01` … `Sim-Pallet-05`) bound to `TAG0001` … `TAG0005` so the Map populates as soon as the data-push loop starts.
+
+With `--full` it additionally provisions:
+
+5. **Sites & Zones** → site `Bay Area HQ`, geofence zone `Bay Area West Block` (polygon covering the western half of the smoke-test walk box). If `Sim-Reader-*` devices already exist, also a reader-bound zone `Sim-Reader-01 Dock`.
+6. **Telemetry model** for `rfid_reader` (`temperature`, `humidity`, `battery_pct`) so the Telemetry page renders charts as the simulator pushes `sensor_data`.
+7. **Rules** → high-temperature threshold (>30 C, notification) + `zone.entered` and `zone.exited` notifications on the geofence zone.
+8. **Role users** → `editor@example.com` (role `editor`) and `viewer@example.com` (role `viewer`), each with their own API key. Use these to verify the UI's role gating (Create/Delete buttons hidden for viewers) and that the API returns `403 Requires role: admin, editor` for viewer write attempts.
+
+Together, `--full` populates **Map, Sites & Zones, Telemetry, Rules, Alerts** with non-empty data within ~1 minute of starting `simulate_devices.py --with-gps` (the wandering assets cross the geofence boundary every couple of minutes → `zone.entered` / `zone.exited` events → Alerts).
+
+> **Note:** geofence point-in-polygon evaluation is gated by `GEOFENCE_EVALUATION_ENABLED` ([core/config.py](../src/tagpulse/core/config.py); off by default in production until the bbox index is live). It is force-enabled in `make run` and the dev `docker-compose.yml`. If you start uvicorn another way and the Alerts page stays empty, export `GEOFENCE_EVALUATION_ENABLED=true` before launching the API.
+
+Output ends with a copy-pasteable block that contains both **UI login credentials** and the shell env for the simulator:
+
+```text
+============================================================
+Smoke setup complete.
+============================================================
+
+UI login credentials:
+  URL:      http://localhost:5173
+  Email:    admin@example.com
+  API key:  tp_test-corp_<hex>
+  (NOTE: this is the only time the full key is shown — save it now)
+
+Shell env for the simulator scripts:
+
+  export TAGPULSE_API_KEY=tp_test-corp_<hex>
+
+Run the data-push loop:
+
+  python scripts/simulate_devices.py \
+    --tenant-id 11111111-1111-1111-1111-111111111111 \
+    --devices 5 --tags 5 --interval 2 --with-gps
+
+Then open the Map in the UI and pan to the Bay Area
+(~37.7749, -122.4194). Markers should appear within 5 seconds.
+```
+
+Use the **Email + API key** pair to sign into the web UI at `http://localhost:5173` (override with `TAGPULSE_UI_URL`). The same key, exported as `TAGPULSE_API_KEY`, authenticates the simulators.
+
+The script is **safe to re-run** — it never deletes data, only upserts. If the admin already has a key whose plaintext you've lost, re-run with `--regenerate-key` to rotate.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--tenant-id` | `11111111-…` | Tenant UUID |
+| `--tenant-slug` | `test-corp` | Tenant slug (used in API-key prefix) |
+| `--admin-email` | `admin@example.com` | Admin user email |
+| `--assets` | 5 | Assets to create + bind (`Sim-Pallet-NN` ↔ `TAG000N`) |
+| `--binding-prefix` | `TAG` | Bind to `TAG0001…TAG000N` (matches `simulate_devices.py`'s tag pool) |
+| `--binding-kind` | `device` | Binding kind for the synthetic tags |
+| `--regenerate-key` | false | Rotate the admin API key even if one exists |
+| `--with-zones` | false | Create site `Bay Area HQ` + geofence zone `Bay Area West Block` (+ reader-bound zone if Sim-Reader devices exist) |
+| `--with-telemetry-model` | false | Define the `rfid_reader` telemetry model (temperature + humidity + battery_pct) |
+| `--with-rules` | false | Create demo rules: high-temperature threshold + zone.entered/exited notifications |
+| `--with-roles` | false | Create one user per role (`admin@`, `editor@`, `viewer@example.com`), each with its own API key, for testing role gating and 403 enforcement |
+| `--full` | false | Shortcut for `--with-zones --with-telemetry-model --with-rules --with-roles` — populates every sidebar page and provisions all three role users |
+
+The script reads `TAGPULSE_SMOKE_DB_URL` (default `postgresql://tagpulse:secret@localhost:5432/tagpulse`) for the bootstrap DB writes and `TAGPULSE_API_URL` (default `http://localhost:8000`) for the HTTP calls.
+
+#### Step 2 — Run the data-push loop
+
+```bash
+export TAGPULSE_API_KEY=tp_test-corp_<hex>   # from step 1's output
+
+python scripts/simulate_devices.py \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --devices 5 --tags 5 --interval 2 --with-gps
+```
+
+`--tags 5` constrains the tag pool to `TAG0001`…`TAG0005` so every read hits one of the 5 assets `smoke_setup.py` bound. If you bumped `--assets`, raise `--tags` to match (and `--devices` if you want one device per asset). Without `--tags`, only ~10% of reads hit a bound tag and the Map appears under-populated.
+
+Each read includes a GPS fix anchored to a San Francisco city block (~110 m radius around `37.7749, -122.4194`):
+
+```json
+{
+  "tag_id": "TAG0001",
+  "timestamp": "...",
+  "signal_strength": -45.0,
+  "location": {"latitude": 37.77492, "longitude": -122.41945, "accuracy_m": 5.0, "source": "gps"}
+}
+```
+
+Leave this running in its own terminal.
+
+#### Step 3 — Watch the Map
+
+1. Sidebar → **Map**.
+2. Pan/zoom to **San Francisco** (`37.7749, -122.4194`) — or zoom out to world view, then click any marker → **Zoom here**.
+3. Within ~5 s (SSE refresh) you should see:
+   - **5 markers** wandering inside a small block, one per bound asset.
+   - **Asset name** on hover; click → popup with **Open detail →** and **View manifest →**.
+   - Markers reposition every couple of seconds as new GPS-tagged reads land.
+
+Make sure the **Assets** layer checkbox in the map header is checked. Map config (tile provider) can be changed in **Tenant Settings → Map**; default is OpenStreetMap with a dev banner.
+
+#### Step 4 — See the trail / replay history
+
+The Map doesn't draw a continuous polyline in live mode. Two ways to see the trace:
+
+| View | What you get |
+|------|--------------|
+| **Map → time slider** (bottom of page) | Drag back up to **24 h**. Each marker repositions to where the asset was at that timestamp (via `GET /assets/{id}/path`). |
+| **Assets → [asset] → Path** tab | Tabular `(timestamp, source, zone)` list, newest first — the canonical trail view. |
+
+#### Step 5 (optional) — Add a geofence to fire zone events
+
+1. Sidebar → **Sites & Zones** → create a site if you don't have one.
+2. **Add Zone** → Name `Block Center`, Kind `geofence`.
+3. The draw map appears on the configured tile layer. Click 4–5 vertices around `37.7749, -122.4194` to enclose roughly half the random-walk block. **Done** to close.
+4. Save. Within seconds you should see `zone.entered` / `zone.exited` events as your simulated assets walk in and out of the polygon.
+5. (Optional) Sidebar → **Rules** → Create Rule → Condition `zone.entered` on `Block Center` → Action `notification` → Save. New entries to **Alerts** within seconds.
+
+#### Verify via API
+
+```bash
+TENANT=11111111-1111-1111-1111-111111111111
+
+# Latest tag reads have GPS attached
+curl -H "Authorization: Bearer $TAGPULSE_API_KEY" -H "X-Tenant-ID: $TENANT" \
+     "http://localhost:8000/tag-reads?limit=3" | python -m json.tool | grep -E 'tag_id|latitude'
+
+# An asset's current location is populated
+ASSET_ID=$(curl -s -H "Authorization: Bearer $TAGPULSE_API_KEY" -H "X-Tenant-ID: $TENANT" \
+  "http://localhost:8000/assets" | python -c "import sys,json;print(json.load(sys.stdin)[0]['id'])")
+curl -H "Authorization: Bearer $TAGPULSE_API_KEY" -H "X-Tenant-ID: $TENANT" \
+     "http://localhost:8000/assets/$ASSET_ID" | python -m json.tool
+
+# 24-hour path
+curl -H "Authorization: Bearer $TAGPULSE_API_KEY" -H "X-Tenant-ID: $TENANT" \
+     "http://localhost:8000/assets/$ASSET_ID/path?since=2026-05-03T00:00:00Z"
+```
+
+#### Troubleshooting
+
+| Symptom | Likely cause |
+|---------|--------------|
+| Map is blank but tag reads are flowing | Tags not bound to any asset — re-run `smoke_setup.py`. |
+| Fewer markers than `--devices` (e.g. 4 of 5) | Tag pool larger than bound asset count — add `--tags N` matching `--assets`. |
+| Markers don't appear in San Francisco | Map centered elsewhere — pan to `37.7749, -122.4194` or click any marker → **Zoom here**. |
+| Markers visible but don't move | Simulator is not running with `--with-gps`, or the SSE channel dropped — reload the Map page. |
+| `403 Requires role: admin, editor` | `$TAGPULSE_API_KEY` not exported (see step 1's output). |
+| Geofence rule never fires | The polygon doesn't overlap the random-walk box around `37.7749, -122.4194` — redraw it bigger. |
+| `Create Asset` button missing in UI | Asset tracking not enabled — re-run `smoke_setup.py` (it idempotently turns it on). |
+
+### Alternative — Reader-bound zones (no GPS, indoor warehouse)
+
+For the standard fixed-reader scenario without GPS. Drives `zone.entered` / `zone.exited` as assets "move" between readers, and the Map snaps markers to reader positions.
+
+```bash
+# 1. Bootstrap (creates assets & bindings)
+python scripts/smoke_setup.py --assets 10
+
+export TAGPULSE_API_KEY=tp_test-corp_<hex>   # from step 1 output
+
+# 2. Seed 4 devices to act as zone "anchors"
+python scripts/simulate_devices.py \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --devices 4 --seed-only
+
+# 3. In the UI: Sites & Zones → Add Zone → kind = reader_bound,
+#    assign each zone to one or more of those devices.
+
+# 4. Drive reader-hop transitions
+python scripts/simulate_assets.py \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --assets 10 --readers 4
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--tenant-id` | (required) | Tenant UUID |
+| `--assets` | 10 | Number of simulated assets to ensure exist |
+| `--readers` | 4 | Number of existing devices to use as zone anchors |
+| `--interval` | 1.0 | Seconds between reads |
+| `--iterations` | (forever) | Stop after N reads |
+| `--api-key` | `$TAGPULSE_API_KEY` | Admin/editor Bearer key |
+
+### Alternative — External position push (no RFID)
+
+For an asset with no on-board reader (e.g., a truck reporting via TMS):
+
+```bash
+TENANT=11111111-1111-1111-1111-111111111111
+ASSET_ID=$(curl -s -H "Authorization: Bearer $TAGPULSE_API_KEY" -H "X-Tenant-ID: $TENANT" \
+  "http://localhost:8000/assets" | python -c "import sys,json;print(json.load(sys.stdin)[0]['id'])")
+
+curl -X POST \
+  -H "Authorization: Bearer $TAGPULSE_API_KEY" \
+  -H "X-Tenant-ID: $TENANT" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "latitude": 37.7749,
+    "longitude": -122.4194,
+    "recorded_at": "2026-05-04T12:00:00Z",
+    "source": "tms",
+    "accuracy_meters": 10.0
+  }' \
+  "http://localhost:8000/assets/$ASSET_ID/external-position"
+```
+
+The fix appears immediately on the asset's **Current Location** card and **Map** marker, badged `via tms`.
+
+---
+
+## 6c. Inventory Tracking Smoke Test
+
+> Requires **Inventory tracking** enabled in the UI: **Tenant Settings → General → Inventory tracking**.
+
+The inventory simulator exercises the full pipeline end-to-end: product catalog → lot with near-term expiry → `tag_data_mapping` for `lot_code` → SGTIN-96 EPCs whose company-prefix + item-ref decode to the catalog's GTIN-14s → stock items materialise automatically as tag reads land. Use this when you want to see **Products**, **Lot Expiry**, **Stock Levels**, and **Stock Movements** populate without wiring real readers.
+
+### Prereqs
+
+```bash
+# Seed the readers that will emit the EPC reads
+python scripts/simulate_devices.py \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --devices 2 --seed-only
+```
+
+### Run the inventory simulator
+
+```bash
+python scripts/simulate_inventory.py \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --devices 2 --interval 1.5 --duration 120
+```
+
+What this does:
+
+1. Upserts a 3-SKU catalog (`SKU-MILK-1L`, `SKU-EGGS-12`, `SKU-CHEESE-200`) with valid GTIN-14s.
+2. Creates one lot per product with `expires_at` inside the `stock.expiring_within` rule horizon — so the **Lot Expiry** queue lights up immediately and any `stock.expiring_within` rule fires within one run.
+3. Registers a tenant-level `tag_data_mapping` so `lot_code` is parsed out of the tag-data payload at ingest.
+4. Streams SGTIN-96 EPCs against the readers; the ingest service auto-creates `stock_item` rows and emits `subject.zone_changed` as items move.
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--tenant-id` | (required) | Tenant UUID |
+| `--devices` | 2 | Number of devices to use as ingestion sources (must already exist) |
+| `--interval` | 1.5 | Seconds between reads |
+| `--duration` | 60 | Run for N seconds (0 = forever) |
+| `--seed-only` | false | Create products / lots / mapping and exit (no tag reads) |
+| `--api-key` | `$TAGPULSE_API_KEY` | Admin/editor Bearer key (required for product/lot/device writes) |
+
+The script is **idempotent** — re-running reuses existing products, lots, and mapping by SKU / lot_code.
+
+### Verify in the UI
+
+| View | What you should see |
+|------|---------------------|
+| **Products** | 3 SKUs with the synthetic GTIN-14s. |
+| **Products → [SKU] → Lots** | One lot per product with an `expires_at` in the near future. |
+| **Lot Expiry** | All three lots in the **30 days** filter (default). |
+| **Stock Levels** | Counts climbing in the zone columns as reads land. |
+| **Stock Movements** | `receive` / `move` rows appearing in real time. |
+| **Admin → Tag Data Mappings** | The seeded `lot_code` mapping. |
+
+### Verify via API
+
+```bash
+# Lots expiring in next 30 days
+curl -H "X-Tenant-ID: 11111111-1111-1111-1111-111111111111" \
+  "http://localhost:8000/inventory/lot-expiry?within_days=30"
+
+# Stock levels pivot
+curl -H "X-Tenant-ID: 11111111-1111-1111-1111-111111111111" \
+  http://localhost:8000/inventory/stock-levels
+
+# Recent movements
+curl -H "X-Tenant-ID: 11111111-1111-1111-1111-111111111111" \
+  "http://localhost:8000/inventory/stock-movements?limit=20"
+```
+
+### Trigger an expiry alert
+
+Create a `stock.expiring_within` rule before (or during) the run:
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer tp_test-corp_<your-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Lot expiring soon",
+    "condition_type": "stock.expiring_within",
+    "condition_config": {"within_days": 30},
+    "action_type": "notification",
+    "action_config": {}
+  }' \
+  http://localhost:8000/rules
+```
+
+The next worker tick will flag the simulator's lots and you'll see entries in **Alerts**.
 
 ---
 
@@ -433,6 +771,7 @@ Starts at 50 rps, adds 50 every 10 seconds, caps at 500 rps.
 | `--ramp` | 0 | Increase rps by this amount each step |
 | `--ramp-step` | 10 | Seconds between ramp increases |
 | `--rps-max` | 10x rps | Cap when ramping |
+| `--api-key` | `$TAGPULSE_API_KEY` | Admin/editor Bearer key (required for device create + ingest) |
 
 Results include throughput, p50/p95/p99 latencies, status codes, and error breakdown.
 

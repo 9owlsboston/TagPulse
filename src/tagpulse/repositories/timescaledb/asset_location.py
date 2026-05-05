@@ -188,14 +188,17 @@ class TimescaleAssetLocationRepository:
 
     # ── occupancy ──────────────────────────────────────────────────────────
 
-    _ASSETS_IN_ZONE = text(
+    # Reader-bound zones: an asset is "in" the zone if the latest tag-read
+    # against any of its active bindings was produced by one of the zone's
+    # ``fixed_reader_ids`` (which are device UUIDs serialised as JSONB strings).
+    _ASSETS_IN_READER_BOUND_ZONE = text(
         """
         WITH last_read_per_binding AS (
             SELECT DISTINCT ON (b.asset_id)
                 b.asset_id,
                 b.binding_value,
                 b.binding_kind,
-                tr.reader_id,
+                tr.device_id,
                 tr."timestamp" AS last_seen_at
             FROM asset_tag_bindings b
             JOIN tag_reads tr
@@ -222,10 +225,49 @@ class TimescaleAssetLocationRepository:
           ON z.tenant_id = :tenant_id
          AND z.id = :zone_id
          AND z.kind = 'reader_bound'
-         AND z.fixed_reader_ids ? lr.reader_id::text
+         AND z.fixed_reader_ids ? lr.device_id::text
         WHERE a.status != 'retired'
         ORDER BY lr.last_seen_at DESC
         LIMIT :limit OFFSET :offset
+        """
+    )
+
+    # Geofence zones: an asset is "in" the zone if its current position
+    # (from the ``asset_current_location`` view, which already picks the
+    # newest of RFID + external per asset) falls inside the zone's polygon.
+    # Querying the view rather than ``tag_reads`` directly guarantees we
+    # see the *latest* fix — bbox-prefiltering inside a per-binding
+    # DISTINCT ON would silently keep stale inside-bbox reads after an asset
+    # exited (since newer outside-bbox reads would be filtered out before
+    # the "pick latest" step).
+    _ASSETS_LATEST_GPS_READ = text(
+        """
+        SELECT
+            acl.asset_id,
+            acl.recorded_at AS last_seen_at,
+            acl.latitude,
+            acl.longitude,
+            a.name        AS name,
+            a.asset_type  AS asset_type,
+            b.binding_value,
+            b.binding_kind
+        FROM asset_current_location acl
+        JOIN assets a
+          ON a.id = acl.asset_id
+         AND a.tenant_id = acl.tenant_id
+        LEFT JOIN LATERAL (
+            SELECT binding_value, binding_kind
+            FROM asset_tag_bindings
+            WHERE tenant_id = acl.tenant_id
+              AND asset_id  = acl.asset_id
+              AND unbound_at IS NULL
+            ORDER BY bound_at DESC
+            LIMIT 1
+        ) b ON TRUE
+        WHERE acl.tenant_id = :tenant_id
+          AND a.status != 'retired'
+          AND acl.latitude  BETWEEN :min_lat AND :max_lat
+          AND acl.longitude BETWEEN :min_lon AND :max_lon
         """
     )
 
@@ -239,27 +281,91 @@ class TimescaleAssetLocationRepository:
     ) -> Sequence[AssetInZoneSummary]:
         """Currently-in-zone assets, judged by latest tag read per binding.
 
-        "In zone" = the reader of the latest tag read for any active binding
-        is one of the zone's ``fixed_reader_ids``. This is the same rule the
-        ingestion enrichment uses to emit ``subject.zone_changed``.
+        For ``reader_bound`` zones, "in zone" = the reader (``device_id``) of
+        the latest tag read for any active binding is one of the zone's
+        ``fixed_reader_ids``. For ``geofence`` zones, "in zone" = the latest
+        GPS-bearing tag read for any active binding falls inside the zone's
+        polygon (bbox-prefiltered in SQL, point-in-polygon in Python). Both
+        match the rule the ingestion enrichment uses to emit
+        ``subject.zone_changed``, so this panel and the Alerts page agree.
         """
-        result = await self._session.execute(
-            self._ASSETS_IN_ZONE,
-            {
-                "tenant_id": tenant_id,
-                "zone_id": zone_id,
-                "limit": limit,
-                "offset": offset,
-            },
-        )
-        return [
-            AssetInZoneSummary(
-                asset_id=row.asset_id,
-                name=row.name,
-                asset_type=row.asset_type,
-                last_seen_at=row.last_seen_at,
-                binding_value=row.binding_value,
-                binding_kind=row.binding_kind,
+        zone_row = (
+            await self._session.execute(
+                text(
+                    "SELECT kind, polygon_geojson, "
+                    "bbox_min_lat, bbox_max_lat, "
+                    "bbox_min_lon, bbox_max_lon "
+                    "FROM zones "
+                    "WHERE tenant_id = :tenant_id AND id = :zone_id"
+                ),
+                {"tenant_id": tenant_id, "zone_id": zone_id},
             )
-            for row in result.all()
-        ]
+        ).one_or_none()
+        if zone_row is None:
+            return []
+
+        if zone_row.kind == "reader_bound":
+            result = await self._session.execute(
+                self._ASSETS_IN_READER_BOUND_ZONE,
+                {
+                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
+                    "limit": limit,
+                    "offset": offset,
+                },
+            )
+            return [
+                AssetInZoneSummary(
+                    asset_id=row.asset_id,
+                    name=row.name,
+                    asset_type=row.asset_type,
+                    last_seen_at=row.last_seen_at,
+                    binding_value=row.binding_value,
+                    binding_kind=row.binding_kind,
+                )
+                for row in result.all()
+            ]
+
+        if zone_row.kind == "geofence":
+            polygon = zone_row.polygon_geojson
+            if (
+                polygon is None
+                or zone_row.bbox_min_lat is None
+                or zone_row.bbox_max_lat is None
+                or zone_row.bbox_min_lon is None
+                or zone_row.bbox_max_lon is None
+            ):
+                return []
+            try:
+                ring_raw = polygon["coordinates"][0]
+                ring = [(float(p[0]), float(p[1])) for p in ring_raw]
+            except (KeyError, IndexError, TypeError, ValueError):
+                return []
+            from tagpulse.geo import point_in_polygon
+
+            result = await self._session.execute(
+                self._ASSETS_LATEST_GPS_READ,
+                {
+                    "tenant_id": tenant_id,
+                    "min_lat": zone_row.bbox_min_lat,
+                    "max_lat": zone_row.bbox_max_lat,
+                    "min_lon": zone_row.bbox_min_lon,
+                    "max_lon": zone_row.bbox_max_lon,
+                },
+            )
+            inside = [
+                AssetInZoneSummary(
+                    asset_id=row.asset_id,
+                    name=row.name,
+                    asset_type=row.asset_type,
+                    last_seen_at=row.last_seen_at,
+                    binding_value=row.binding_value,
+                    binding_kind=row.binding_kind,
+                )
+                for row in result.all()
+                if point_in_polygon(row.latitude, row.longitude, ring)
+            ]
+            inside.sort(key=lambda r: r.last_seen_at, reverse=True)
+            return inside[offset : offset + limit]
+
+        return []

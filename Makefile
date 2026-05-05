@@ -16,6 +16,9 @@ format:      ## Auto-format code
 check: lint typecheck test  ## Run all quality gates
 
 run:         ## Start development server
+	# Sprint 17a geofence eval is gated by a rollout flag (off in prod by
+	# default). Force-enable in dev so smoke-test zone rules fire.
+	GEOFENCE_EVALUATION_ENABLED=true \
 	uvicorn tagpulse.api.main:app --reload --host 0.0.0.0 --port 8000
 
 export-openapi:  ## Export the FastAPI OpenAPI spec to openapi.json
