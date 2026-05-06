@@ -143,6 +143,8 @@ You can change this later — disabling a mode just hides the UI; existing data 
 
 In the same panel, **Telemetry subjects** controls which non-device subjects ingestion fans tag-borne telemetry out to. Defaults to `["device"]` (Sprint 14 behavior — every reading lands keyed on the reporting reader). Tick **`asset`** to also key cold-chain readings to the asset that carries the tag, **`lot`** for lot-level cold-chain (the most common cold-chain shape), or **`stock_item`** for serial-level. Without the opt-in the rules editor still accepts a `telemetry.threshold` rule on those subjects, but no event will ever match. The flip propagates to all API workers within ~30 s (the writing worker sees it immediately).
 
+> **Smoke shortcut.** `python scripts/smoke_setup.py --with-subject-telemetry` (or the all-in-one `--full`) does this PATCH for you on `test-corp` — adds `lot` + `stock_item` and verifies the Sprint 21 cutover of `GET /telemetry-models/{device_type}` to `410 Gone` in one shot. Pair with `simulate_devices.py --cold-chain` to drive lot/stock_item readings end-to-end.
+
 ### Step 2 — (Optional) Configure the map provider
 
 **Where:** sidebar → **Tenant Settings** → **Map** tab. Only relevant if you enabled **Asset tracking**.

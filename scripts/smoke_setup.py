@@ -167,6 +167,59 @@ def enable_asset_tracking(
     return new_modes
 
 
+def enable_subject_telemetry(
+    client: httpx.Client,
+    tenant_id: UUID,
+    api_key: str,
+    *,
+    kinds: list[str],
+) -> list[str]:
+    """Sprint 19: opt the tenant into subject-scoped telemetry by adding
+    the requested ``subject_kind``\\ s to ``tenants.telemetry_subject_kinds``.
+
+    Idempotent — a no-op when every kind is already opted in. ``device``
+    is always present and does not need to be passed. Triggers the
+    Sprint 21 ``invalidate_subject_kinds`` cross-process invalidation
+    hook so workers pick up the new flags within one cache-TTL window.
+    """
+    headers = _api_headers(tenant_id, api_key)
+    cfg = client.get(f"{API_URL}/tenant/config", headers=headers)
+    cfg.raise_for_status()
+    current = list(cfg.json().get("telemetry_subject_kinds", ["device"]))
+    target = sorted({*current, *kinds})
+    if set(target) == set(current):
+        return current
+    resp = client.patch(
+        f"{API_URL}/tenant/config",
+        headers=headers,
+        json={"telemetry_subject_kinds": target},
+    )
+    resp.raise_for_status()
+    return list(resp.json().get("telemetry_subject_kinds", target))
+
+
+def assert_legacy_telemetry_models_410(
+    client: httpx.Client, tenant_id: UUID, api_key: str
+) -> bool:
+    """Sprint 21 deprecation cutover: the legacy
+    ``GET /telemetry-models/{device_type}`` endpoint must return 410 Gone.
+    Probes with a synthetic device_type and reports the result.
+    """
+    headers = _api_headers(tenant_id, api_key)
+    resp = client.get(
+        f"{API_URL}/telemetry-models/_smoke_probe_device_type",
+        headers=headers,
+    )
+    if resp.status_code == 410:
+        print("    Sprint 21 cutover OK: legacy endpoint returns 410 Gone")
+        return True
+    print(
+        f"    WARN: legacy GET /telemetry-models/{{device_type}} returned "
+        f"{resp.status_code} (expected 410)"
+    )
+    return False
+
+
 # Geofence polygon covering the western half of the Bay Area smoke-test
 # block (anchor 37.7749, -122.4194). Half the simulated assets start inside
 # this box and roughly half outside, so as they wander the geofence eval
@@ -731,6 +784,19 @@ async def _run(args: argparse.Namespace) -> int:
         modes = enable_asset_tracking(client, args.tenant_id, api_key)
         print(f"  tracking_modes: {modes}")
 
+        if args.with_subject_telemetry:
+            print("  Opting tenant into subject-scoped telemetry…")
+            kinds = enable_subject_telemetry(
+                client,
+                args.tenant_id,
+                api_key,
+                kinds=["lot", "stock_item"],
+            )
+            print(f"    telemetry_subject_kinds: {kinds}")
+            assert_legacy_telemetry_models_410(
+                client, args.tenant_id, api_key
+            )
+
         print(f"  Ensuring {args.assets} assets + bindings…")
         ensure_assets_with_bindings(
             client,
@@ -823,6 +889,7 @@ async def _run(args: argparse.Namespace) -> int:
         and args.with_telemetry_model
         and args.with_rules
         and args.with_roles
+        and args.with_subject_telemetry
     ):
         print("Fixtures provisioned (--full):")
         if args.with_roles:
@@ -845,15 +912,35 @@ async def _run(args: argparse.Namespace) -> int:
                 "  • Rules → high-temperature threshold + "
                 "zone.entered/exited notifications"
             )
+        if args.with_subject_telemetry:
+            print(
+                "  • Tenant → telemetry_subject_kinds includes "
+                "'lot' + 'stock_item' (Sprint 19 opt-in)"
+            )
+            print(
+                "  • Sprint 21 cutover verified: "
+                "GET /telemetry-models/{device_type} → 410 Gone"
+            )
         print(
             "  • Alerts will populate within ~1 min as wandering "
             "assets cross the geofence."
         )
         print()
-    elif not (args.with_zones or args.with_telemetry_model or args.with_rules):
+        print(
+            "TIP: pair with `simulate_devices.py --cold-chain` to drive "
+            "lot/stock_item telemetry and trigger the Sprint 20 "
+            "cold-chain rule."
+        )
+        print()
+    elif not (
+        args.with_zones
+        or args.with_telemetry_model
+        or args.with_rules
+        or args.with_subject_telemetry
+    ):
         print(
             "TIP: re-run with `--full` to also populate Sites & Zones, "
-            "Telemetry, Rules, and Alerts pages."
+            "Telemetry, Rules, Alerts, and subject-scoped telemetry."
         )
         print()
     return 0
@@ -939,11 +1026,22 @@ def main(argv: list[str] | None = None) -> int:
         "UI's role gating and the API's 403 enforcement can be exercised.",
     )
     parser.add_argument(
+        "--with-subject-telemetry",
+        action="store_true",
+        help="Sprint 19/21: opt the tenant into subject-scoped telemetry "
+        "by adding 'lot' and 'stock_item' to telemetry_subject_kinds, and "
+        "verify that the Sprint 21 cutover of "
+        "GET /telemetry-models/{device_type} returns 410 Gone. Required "
+        "for `simulate_devices.py --cold-chain` to actually populate the "
+        "lot/stock_item telemetry rows.",
+    )
+    parser.add_argument(
         "--full",
         action="store_true",
         help="Shortcut for --with-zones --with-telemetry-model --with-rules "
-        "--with-roles. Populates every sidebar page and creates one user "
-        "per role.",
+        "--with-roles --with-subject-telemetry. Populates every sidebar "
+        "page, creates one user per role, and opts the tenant into "
+        "subject-scoped telemetry for lots and stock items.",
     )
     args = parser.parse_args(argv)
     if args.full:
@@ -951,6 +1049,7 @@ def main(argv: list[str] | None = None) -> int:
         args.with_telemetry_model = True
         args.with_rules = True
         args.with_roles = True
+        args.with_subject_telemetry = True
     return asyncio.run(_run(args))
 
 

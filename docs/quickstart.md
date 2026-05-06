@@ -46,7 +46,7 @@ python scripts/simulate_devices.py \
 | Lost admin API key | `python scripts/smoke_setup.py --regenerate-key` (also rotates editor + viewer if they exist) |
 | Want a clean slate | `docker compose down -v && docker compose up -d db mqtt && alembic upgrade head && python scripts/smoke_setup.py --full` |
 
-> **The shortcut for steps 5 + 5b**: `python scripts/smoke_setup.py` (or `--full` to also seed zones, telemetry model, rules, and role users). Idempotent and safe to re-run.
+> **The shortcut for steps 5 + 5b**: `python scripts/smoke_setup.py` (or `--full` to also seed zones, telemetry model, rules, role users, and the Sprint 19 subject-telemetry opt-in). Idempotent and safe to re-run.
 
 ---
 
@@ -311,6 +311,9 @@ With `--full` it additionally provisions:
 6. **Telemetry model** for `rfid_reader` (`temperature`, `humidity`, `battery_pct`) so the Telemetry page renders charts as the simulator pushes `sensor_data`.
 7. **Rules** → high-temperature threshold (>30 C, notification) + `zone.entered` and `zone.exited` notifications on the geofence zone.
 8. **Role users** → `editor@example.com` (role `editor`) and `viewer@example.com` (role `viewer`), each with their own API key. Use these to verify the UI's role gating (Create/Delete buttons hidden for viewers) and that the API returns `403 Requires role: admin, editor` for viewer write attempts.
+9. **Subject-scoped telemetry opt-in** (Sprint 19) → adds `lot` and `stock_item` to `tenants.telemetry_subject_kinds` via `PATCH /tenant/config`, so `simulate_devices.py --cold-chain` actually persists lot/stock_item readings and the Sprint 20 `lot.cold_chain_breach` rule can fire. Also probes `GET /telemetry-models/{device_type}` and asserts the **Sprint 21 cutover** to `410 Gone` (the deprecated per-device-type read endpoint is removed; use `GET /telemetry-models/device/{device_type}` instead).
+
+> Run `--with-subject-telemetry` standalone if you only want the Sprint 19/21 toggle without the rest of `--full`.
 
 Together, `--full` populates **Map, Sites & Zones, Telemetry, Rules, Alerts** with non-empty data within ~1 minute of starting `simulate_devices.py --with-gps` (the wandering assets cross the geofence boundary every couple of minutes → `zone.entered` / `zone.exited` events → Alerts).
 
@@ -707,7 +710,11 @@ TENANT=11111111-1111-1111-1111-111111111111
 
 # 1. Opt the tenant into lot-scoped telemetry (Sprint 19).
 #    Default is ["device"]; the rule will be ACCEPTED but never match
-#    until "lot" is in the list.
+#    until "lot" is in the list. (Skip this step if you've already run
+#    `python scripts/smoke_setup.py --full` or
+#    `--with-subject-telemetry` -- it does the same PATCH for you and
+#    also asserts the Sprint 21 GET /telemetry-models/{device_type}
+#    cutover to 410 Gone.)
 curl -X PATCH \
   -H "Authorization: Bearer $TAGPULSE_API_KEY" \
   -H "X-Tenant-ID: $TENANT" \
