@@ -17,6 +17,32 @@ class ThresholdCondition(BaseModel):
     value: float
 
 
+# -- Subject-scoped telemetry conditions (Sprint 20) --
+
+
+class TelemetryThresholdCondition(BaseModel):
+    """Threshold over a subject-scoped telemetry metric.
+
+    Evaluated when a row lands in ``telemetry_readings`` matching the
+    declared ``subject_kind`` + ``subject_id`` (or any subject of that kind
+    when ``subject_id`` is omitted) + ``metric_name``. Pre-Sprint-20 rules
+    used the generic ``threshold`` condition over a tag-read ``payload``
+    field; this condition explicitly targets the persisted multi-subject
+    telemetry stream introduced in Sprint 18.
+    """
+
+    subject_kind: str = Field(
+        pattern=r"^(device|asset|lot|stock_item|zone)$"
+    )
+    metric_name: str = Field(min_length=1)
+    operator: str = Field(pattern=r"^(gt|lt|gte|lte|eq)$")
+    value: float
+    # Optional pin: alert only for this subject. Stored as UUID-as-string
+    # for JSONB round-trip parity with the other inventory rule configs.
+    subject_id: str | None = None
+    cooldown_s: int = Field(default=300, ge=0)
+
+
 class AbsenceCondition(BaseModel):
     """Absence detection: tag not seen for N minutes."""
 
@@ -93,7 +119,8 @@ class ZoneDwellExceededCondition(BaseModel):
 _RULE_CONDITION_PATTERN = (
     r"^(threshold|absence|rate_change|"
     r"stock\.below_threshold|stock\.expiring_within|stock\.unexpected_in_zone|"
-    r"zone\.entered|zone\.exited|zone\.dwell_exceeded)$"
+    r"zone\.entered|zone\.exited|zone\.dwell_exceeded|"
+    r"telemetry\.threshold)$"
 )
 
 

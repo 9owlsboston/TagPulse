@@ -48,6 +48,58 @@ All tenant-scoped tables enforce isolation via:
 
 ---
 
+## Where is the "tag"? (and why there's no `tags` table)
+
+A common new-contributor question: *we have devices, assets, sites, zones, telemetry — where do RFID tags live?*
+
+**TagPulse intentionally has no first-class `Tag` entity.** A "tag" is a *value* (an EPC / TID / device-emitted string), not a row. It's resolved into business meaning through three independent layers, each with its own lifecycle:
+
+| Where the tag value lives | What it is | Lifecycle |
+|--------------------------|------------|-----------|
+| `tag_reads.tag_id` | The raw string the reader emitted on each scan. | One row per read, append-only TimescaleDB hypertable. Every read is recorded **whether or not** the tag is bound to anything — the event ledger is the source of truth. |
+| `asset_tag_bindings.binding_value` (+ `binding_kind ∈ {epc, tid, device}`) | The **active** mapping `tag_id → asset_id` for asset tracking. | One row per (tenant, tag, asset, bound-window). `bound_at` / `unbound_at` give a full history; the same physical tag can be re-stuck on a new asset (slap-and-ship) without losing the audit trail. |
+| `stock_items.epc` | One unique SGTIN-96 EPC = one inventory unit. | Auto-materialized on **first read** when a `tag_data_mapping` decodes the EPC into `(product, lot)`. Subsequent reads of the same EPC update `current_zone_id` / `last_seen_at` instead of inserting. |
+| `tag_data_mappings` | Tenant-level **rules** that parse fields out of the tag-data blob (e.g. company-prefix → product GTIN, byte-range → `lot_code`). | Catalog rule, not per-tag. Reads inherit the parse at ingest time. |
+
+### Why no `tags` table?
+
+Three deliberate trade-offs:
+
+1. **Ingest stays cheap.** Every read is a single append to `tag_reads` (a TimescaleDB hypertable, see [ADR 003](adr/003-timescaledb-storage.md)). Requiring a `tags` row to exist first would add a SELECT-or-INSERT round-trip per read and halve ingest throughput.
+2. **A "tag" without context is meaningless.** `urn:epc:id:sgtin:0614141.123456.7890` only matters if you can resolve it to *what* (product + lot) or *which* (asset). Different resolution paths have different lifecycles, so collapsing them into one table would over-couple them.
+3. **Tags are rebindable.** A tag peeled off pallet A and stuck on pallet B is the same physical object but a different business meaning. Binding-history rows (rather than mutating a `tags` row in place) preserve the audit trail.
+
+### How the three "what is this tag?" questions get answered
+
+| Question | Answer source |
+|---|---|
+| Which asset is this tag attached to **right now**? | `asset_tag_bindings WHERE binding_value=… AND unbound_at IS NULL` |
+| What product/lot does this EPC represent? | `tag_data_mappings` → decode → `products` + `lots` (auto-creates `stock_items` row on first read) |
+| Where has this tag physically been? | `tag_reads` filtered by `tag_id`, ordered by `recorded_at` (each row carries `device_id` + optional `location`) |
+| What carrier's manifest contains it? | binding → asset → recursive `parent_asset_id` walk via `GET /assets/{id}/manifest` |
+
+### Mental model
+
+> **Devices** *emit* tag reads. **Tag reads** *carry* tag IDs. **Bindings** turn a tag ID into an **asset**. **Mappings** turn an EPC into a **stock item** (product + lot). **Sites + Zones** are the spatial frame everything is observed against. **Telemetry** is the parallel non-tag sensor stream from the same devices.
+
+### UI sidebar → underlying entities
+
+| Sidebar page | Entities |
+|---|---|
+| **Devices** | `devices` (+ `device_health`) |
+| **Assets** | `assets` + `asset_tag_bindings` + `asset_current_location` view |
+| **Sites & Zones** | `sites` + `zones` |
+| **Telemetry / Telemetry Models** | `telemetry_models` + `telemetry_readings` |
+| **Products / Lot Expiry / Stock Levels / Stock Movements** | `products` + `lots` + `stock_items` + `stock_movements` |
+| **Admin → Tag Data Mappings** | `tag_data_mappings` (the closest thing to a "tag config" UI) |
+| **Tag Reads** (under Devices) | `tag_reads` — the raw event log |
+| **Rules / Alerts** | `rules` + `alerts` |
+| **Map** | `assets` ⨝ `asset_current_location` ⨝ `zones` (geofence polygons) |
+
+For the deeper EPC/TID/sensor-data primer (what each chunk of an RFID tag carries on the wire) see [design/rfid-tag-data-model.md](design/rfid-tag-data-model.md).
+
+---
+
 ## Database Tables
 
 ### tenants
@@ -378,9 +430,11 @@ Configuration change audit trail.
 
 ---
 
-### device_telemetry (hypertable)
+### device_telemetry (hypertable — removed Sprint 21)
 
-Time-series sensor metric stream, decoupled from `tag_reads`. Partitioned by `timestamp`. See [design/telemetry-and-location.md](design/telemetry-and-location.md).
+> **Sprint 21 update:** the back-compat `device_telemetry` view + the underlying `telemetry_readings_legacy_device` hypertable were dropped by [migration 032](../migrations/versions/032_drop_legacy_device_telemetry.py) (closes [ADR-015 §6](adr/015-telemetry-rules-and-deprecation.md)). All telemetry now lives in `telemetry_readings` (keyed on `(tenant_id, subject_kind, subject_id, metric_name, timestamp)`) accessed via `TimescaleTelemetryReadingsRepository`. The Sprint 14 device-shaped surface (`insert_reading` / `query` / `quarantine` / `list_quarantine`) is preserved on the same repository — callers swap the class without API changes. The columns below describe the **pre-Sprint 18** schema kept for historical reference.
+
+Time-series sensor metric stream, decoupled from `tag_reads`. Partitioned by `timestamp`. See [design/telemetry-and-location.md](design/telemetry-and-location.md) and [design/subject-scoped-telemetry.md](design/subject-scoped-telemetry.md).
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
@@ -400,6 +454,8 @@ Time-series sensor metric stream, decoupled from `tag_reads`. Partitioned by `ti
 ---
 
 ### telemetry_quarantine
+
+> **Sprint 18 update:** [migration 030](../migrations/versions/030_subject_scoped_telemetry.py) added nullable `subject_kind` + `subject_id` columns. Legacy back-filled rows leave them NULL; multi-subject ingest (Sprint 19) populates them so reviewers see *what* the failed reading was meant to describe.
 
 Readings rejected by validation (unknown metric, out of range, unit mismatch). Capped retention 7 d.
 
@@ -810,6 +866,10 @@ All schemas are defined in `src/tagpulse/models/` and enforce validation at the 
 | 026 | `026_geofence_tile_provider_cert.py` | `zones`, `tenants`, `devices` | Sprint 17a: geofence storage (`polygon_geojson`, bbox columns), `tenants.tile_provider`, `devices.cert_thumbprint` |
 | 027 | `027_subject_current_zone.py` | `subject_current_zone` | Sprint 17a §5.2: durable dwell-tracker state; one row per `(tenant_id, subject_kind, subject_id)`; survives worker restarts |
 | 028 | `028_stock_item_parent.py` | `stock_items` | Sprint 15b: `parent_stock_item_id` self-FK + partial index `ix_stock_items_parent` for SSCC → SGTIN case/pallet containment |
+| 029 | `029_zones_virtual_kind.py` | `zones` | Sprint 17a follow-up: virtual zone kind |
+| 030 | `030_subject_scoped_telemetry.py` | `telemetry_readings`, `telemetry_readings_legacy_device` (renamed from `device_telemetry`), `device_telemetry` (now a view), `telemetry_models`, `telemetry_quarantine` | Sprint 18: subject-scoped telemetry hypertable keyed on `(tenant_id, subject_kind, subject_id, metric_name, timestamp)`; rename + back-fill of `device_telemetry`; back-compat view; `subject_kind` added to `telemetry_models` (with CHECK enforcing `device_type` only for `device` kind) and `telemetry_quarantine` |
+| 031 | `031_telemetry_subject_kinds_and_caggs.py` | `tenants`, `cagg_telemetry_1m`, `cagg_telemetry_1h` | Sprint 19: `tenants.telemetry_subject_kinds JSONB DEFAULT '["device"]'` opt-in column; two TimescaleDB continuous aggregates (1m / 1h) over `telemetry_readings` keyed on `(tenant_id, subject_kind, subject_id, metric_name, bucket)` with `avg`/`min`/`max`/`count`; cagg DDL runs in `op.get_context().autocommit_block()` because `add_continuous_aggregate_policy` cannot run in a transaction |
+| 032 | `032_drop_legacy_device_telemetry.py` | `device_telemetry` (view), `telemetry_readings_legacy_device` (hypertable), `tenant_isolation_device_telemetry` (RLS), `ix_device_telemetry_lookup` (index) | Sprint 21: closes the Sprint 18 deprecation window per [ADR-015 §6](adr/015-telemetry-rules-and-deprecation.md). Drops the back-compat view, the legacy hypertable, the legacy RLS policy, and the Sprint 14 lookup index. Downgrade re-creates empty shells — **not data-reversible**; rollback is restore-from-backup. Pre-flight: `pg_stat_user_tables.idx_scan = 0` for one full retention window, `grep -rn 'device_telemetry' src/` clean, no Grafana / external SQL clients pointing at the view. |
 
 ---
 
@@ -831,7 +891,8 @@ USING (tenant_id = current_setting('app.current_tenant_id')::uuid)
 | `analytics_results` | `tenant_isolation_analytics_results` | 009 |
 | `audit_logs` | `tenant_isolation_audit_logs` | 012 |
 | `dead_letter_events` | `tenant_isolation_dead_letter_events` | 013 |
-| `device_telemetry` | `tenant_isolation_device_telemetry` | 016 |
+| `device_telemetry` | `tenant_isolation_device_telemetry` | 016 (renamed to `telemetry_readings_legacy_device` in 030; **dropped in 032**) |
+| `telemetry_readings` | `tenant_isolation_telemetry_readings` | 030 |
 | `telemetry_quarantine` | `tenant_isolation_telemetry_quarantine` | 016 |
 | `assets` | `tenant_isolation_assets` | 017 |
 | `asset_tag_bindings` | `tenant_isolation_asset_tag_bindings` | 017 |

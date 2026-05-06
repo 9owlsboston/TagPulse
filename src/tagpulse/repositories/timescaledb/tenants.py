@@ -35,3 +35,22 @@ class TimescaleTenantRepository:
         if modes is None:
             return ["asset"]
         return list(modes)
+
+    async def get_telemetry_subject_kinds(
+        self, tenant_id: uuid.UUID
+    ) -> list[str]:
+        """Return ``tenants.telemetry_subject_kinds`` for a tenant.
+
+        Defaults to ``['device']`` for an unknown tenant — same safe
+        fallback pattern as :meth:`get_tracking_modes`. Sprint 19's
+        ingest pipeline uses this to decide which non-device subject
+        rows to fan out into ``telemetry_readings``.
+        """
+        stmt = select(TenantModel.telemetry_subject_kinds).where(
+            TenantModel.id == tenant_id
+        )
+        result = await self._session.execute(stmt)
+        kinds = result.scalar_one_or_none()
+        if kinds is None:
+            return ["device"]
+        return list(kinds)

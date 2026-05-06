@@ -14,6 +14,7 @@ import random
 import sys
 import time
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
@@ -256,6 +257,147 @@ def send_telemetry(
     return resp.status_code == 201
 
 
+# -- Sprint 20: cold-chain milk simulator --
+
+# Stable demo identifiers — idempotent across runs (re-run the simulator
+# with --cold-chain and you get the same lot back, not a new one).
+_COLD_CHAIN_PRODUCT_SKU = "SIM-MILK-001"
+_COLD_CHAIN_LOT_CODE = "SIM-LOT-COLDCHAIN"
+_COLD_CHAIN_EPC = "URN:EPC:ID:SGTIN:0000000.000001.SIM-COLD-001"
+
+
+def _ensure_cold_chain_lot(
+    client: httpx.Client, tenant_id: str
+) -> tuple[str | None, str | None]:
+    """Idempotently create the demo product, lot, stock_item, and binding.
+
+    Returns ``(lot_id, stock_item_id)`` for the demo lot, or ``(None, None)``
+    if the backend rejects any step (e.g. inventory routes disabled). The
+    simulator continues with regular reads in that case.
+    """
+    headers = _headers(tenant_id)
+
+    # Find or create product.
+    product_id: str | None = None
+    resp = client.get(
+        f"{API_URL}/products?sku={_COLD_CHAIN_PRODUCT_SKU}", headers=headers
+    )
+    if resp.status_code == 200 and resp.json():
+        product_id = resp.json()[0]["id"]
+    else:
+        resp = client.post(
+            f"{API_URL}/products",
+            headers=headers,
+            json={
+                "sku": _COLD_CHAIN_PRODUCT_SKU,
+                "name": "Sim Cold-Chain Milk",
+                "uom": "each",
+            },
+        )
+        if resp.status_code in (200, 201):
+            product_id = resp.json()["id"]
+    if not product_id:
+        return (None, None)
+
+    # Find or create lot.
+    lot_id: str | None = None
+    resp = client.get(
+        f"{API_URL}/lots?product_id={product_id}&lot_code={_COLD_CHAIN_LOT_CODE}",
+        headers=headers,
+    )
+    if resp.status_code == 200 and resp.json():
+        lot_id = resp.json()[0]["id"]
+    else:
+        resp = client.post(
+            f"{API_URL}/lots",
+            headers=headers,
+            json={
+                "product_id": product_id,
+                "lot_code": _COLD_CHAIN_LOT_CODE,
+            },
+        )
+        if resp.status_code in (200, 201):
+            lot_id = resp.json()["id"]
+    if not lot_id:
+        return (None, None)
+
+    # Find or create stock_item bound to the demo EPC.
+    stock_item_id: str | None = None
+    resp = client.get(
+        f"{API_URL}/stock-items?binding_value={_COLD_CHAIN_EPC}",
+        headers=headers,
+    )
+    if resp.status_code == 200 and resp.json():
+        stock_item_id = resp.json()[0]["id"]
+    else:
+        resp = client.post(
+            f"{API_URL}/stock-items",
+            headers=headers,
+            json={
+                "product_id": product_id,
+                "lot_id": lot_id,
+                "binding_kind": "epc",
+                "binding_value": _COLD_CHAIN_EPC,
+                "state": "in_stock",
+            },
+        )
+        if resp.status_code in (200, 201):
+            stock_item_id = resp.json()["id"]
+
+    return (lot_id, stock_item_id)
+
+
+def send_cold_chain_telemetry(
+    client: httpx.Client,
+    tenant_id: str,
+    lot_id: str,
+    stock_item_id: str | None,
+    *,
+    cycle: int,
+) -> bool:
+    """Push one lot-scoped temperature reading on a slow drift toward breach.
+
+    Profile: starts at 4°C and adds ~0.05°C per cycle plus jitter, so a rule
+    threshold of 8°C (the ``lot.cold_chain_breach`` template default) trips
+    after ~80 cycles. Posts via ``/telemetry/readings/ingest`` with
+    ``source='external'`` so the path is exercised end-to-end including
+    the Sprint 20 ``Topic.TELEMETRY_RECORDED`` rule fan-out.
+    """
+    base = 4.0 + (cycle * 0.05)
+    temp = round(base + random.uniform(-0.2, 0.4), 2)
+    readings: list[dict[str, Any]] = [
+        {
+            "subject_kind": "lot",
+            "subject_id": lot_id,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "metric_name": "temperature_c",
+            "metric_value": temp,
+            "unit": "C",
+            "source": "external",
+            "metadata": {"simulator": "cold-chain", "cycle": cycle},
+        }
+    ]
+    if stock_item_id:
+        readings.append(
+            {
+                "subject_kind": "stock_item",
+                "subject_id": stock_item_id,
+                "timestamp": datetime.now(UTC).isoformat(),
+                "metric_name": "temperature_c",
+                "metric_value": temp,
+                "unit": "C",
+                "source": "external",
+                "metadata": {"simulator": "cold-chain", "cycle": cycle},
+            }
+        )
+    resp = client.post(
+        f"{API_URL}/telemetry/readings/ingest",
+        headers=_headers(tenant_id),
+        json={"readings": readings},
+    )
+    return resp.status_code == 201
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="TagPulse device simulator")
     parser.add_argument("--tenant-id", required=True, help="Tenant UUID")
@@ -290,6 +432,23 @@ def main() -> None:
             "(forklift idling, pedestrian); 'vehicle' = mostly-straight runs "
             "with occasional 90° turns (delivery van / route)."
         ),
+    )
+    parser.add_argument(
+        "--cold-chain",
+        action="store_true",
+        help=(
+            "Sprint 20: spin up a synthetic milk lot bound to a logger EPC "
+            "and emit lot-scoped temperature readings on a slow drift toward "
+            "breach (4°C → 9°C). Lets the lot.cold_chain_breach rule template "
+            "fire end-to-end without manual data injection. Idempotent: the "
+            "product/lot/binding are created on first run only."
+        ),
+    )
+    parser.add_argument(
+        "--cold-chain-period",
+        type=float,
+        default=10.0,
+        help="Seconds between cold-chain telemetry pushes (default: 10).",
     )
     args = parser.parse_args()
 
@@ -334,6 +493,28 @@ def main() -> None:
         print("Seed-only mode. Exiting.")
         return
 
+    # Sprint 20: provision the cold-chain demo lot once, up-front.
+    cold_chain_lot_id: str | None = None
+    cold_chain_stock_id: str | None = None
+    cold_chain_next_push: float = 0.0
+    cold_chain_cycle = 0
+    if args.cold_chain:
+        print("Provisioning cold-chain demo lot...")
+        cold_chain_lot_id, cold_chain_stock_id = _ensure_cold_chain_lot(
+            client, args.tenant_id
+        )
+        if cold_chain_lot_id:
+            print(
+                f"  Cold-chain lot ready: lot={cold_chain_lot_id} "
+                f"stock_item={cold_chain_stock_id}"
+            )
+            cold_chain_next_push = time.monotonic()
+        else:
+            print(
+                "  Cold-chain provisioning failed (inventory routes "
+                "unavailable?); skipping lot fan-out.\n"
+            )
+
     # Generate tag reads
     print("Sending tag reads (Ctrl+C to stop)...\n")
     start = time.monotonic()
@@ -359,6 +540,19 @@ def main() -> None:
                 print(
                     f"  {status} {device['name']} → {total_reads} sent, {dropped} dropped",
                     end="\r",
+                )
+            # Sprint 20 cold-chain push, paced by --cold-chain-period.
+            if cold_chain_lot_id and time.monotonic() >= cold_chain_next_push:
+                send_cold_chain_telemetry(
+                    client,
+                    args.tenant_id,
+                    cold_chain_lot_id,
+                    cold_chain_stock_id,
+                    cycle=cold_chain_cycle,
+                )
+                cold_chain_cycle += 1
+                cold_chain_next_push = (
+                    time.monotonic() + args.cold_chain_period
                 )
             # Jitter: ±30% of the base interval
             jitter = args.interval * random.uniform(0.7, 1.3)

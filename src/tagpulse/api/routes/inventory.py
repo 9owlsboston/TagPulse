@@ -174,6 +174,20 @@ async def list_all_lots(
     )
 
 
+@router.get("/lots/{lot_id}", response_model=LotResponse)
+async def get_lot(
+    lot_id: UUID,
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    service: InventoryService = Depends(get_inventory_service),
+) -> LotResponse:
+    """Fetch a single lot. Sprint 19: embeds ``latest_telemetry`` when
+    the tenant has opted into ``subject_kind='lot'``."""
+    lot = await service.get_lot(user.tenant_id, lot_id, with_latest_telemetry=True)
+    if lot is None:
+        raise HTTPException(status_code=404, detail="Lot not found")
+    return lot
+
+
 @router.patch("/lots/{lot_id}", response_model=LotResponse)
 async def update_lot(
     lot_id: UUID,

@@ -33,19 +33,49 @@ async def list_telemetry_models(
     return await service.list_all(user.tenant_id)
 
 
-@router.get("/{device_type}", response_model=TelemetryModelResponse)
-async def get_telemetry_model(
-    device_type: str,
+@router.get("/{subject_kind}/{key}", response_model=TelemetryModelResponse)
+async def get_telemetry_model_by_subject(
+    subject_kind: str,
+    key: str,
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
     service: TelemetryModelService = Depends(get_telemetry_model_service),
 ) -> TelemetryModelResponse:
-    """Get telemetry model definition for a device type."""
-    result = await service.get_by_device_type(user.tenant_id, device_type)
+    """Sprint 19 subject-scoped telemetry-model lookup.
+
+    For ``subject_kind='device'`` ``key`` is the device_type;
+    for non-device kinds the only model permitted per tenant is
+    addressed with any non-empty ``key`` (typically the same string as
+    ``subject_kind`` so URLs remain self-describing).
+    """
+    if subject_kind not in {"device", "asset", "lot", "stock_item", "zone"}:
+        raise HTTPException(status_code=404, detail="Unknown subject_kind") from None
+    result = await service.get_by_subject(user.tenant_id, subject_kind, key)
     if result is None:
         raise HTTPException(
             status_code=404, detail="Telemetry model not found"
         ) from None
     return result
+
+
+@router.get("/{device_type}", response_model=None, deprecated=True)
+async def get_telemetry_model_legacy(
+    device_type: str,
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+) -> None:
+    """Removed in Sprint 21 (ADR-015 §6).
+
+    The Sprint 19 301 redirect to ``/telemetry-models/device/{device_type}``
+    has been removed after one full retention cycle. Callers must address
+    the subject-scoped path directly. Returns 410 Gone with a Location-style
+    hint so any forgotten clients still get a clear migration message.
+    """
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "GET /telemetry-models/{device_type} was removed in Sprint 21. "
+            f"Use GET /telemetry-models/device/{device_type} instead."
+        ),
+    )
 
 
 @router.delete("/{model_id}", status_code=204)

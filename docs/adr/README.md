@@ -14,3 +14,6 @@
 | 010 | [Internal event bus](010-internal-event-bus.md) | proposed | 2026-04-25 |
 | 011 | [Device identity roadmap](011-device-identity-roadmap.md) | proposed | 2026-05-02 |
 | 012 | [mTLS for MQTT](012-mtls-for-mqtt.md) | accepted | 2026-05-02 |
+| 013 | [Subject-scoped telemetry](013-telemetry-subject-scoping.md) | accepted | 2026-05-05 |
+| 014 | [Multi-subject telemetry ingest & API](014-telemetry-multi-subject-ingest.md) | accepted | 2026-05-05 |
+| 015 | [Telemetry rules & Sprint 18 deprecation sunset](015-telemetry-rules-and-deprecation.md) | accepted | 2026-05-05 |

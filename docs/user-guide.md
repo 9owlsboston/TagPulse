@@ -139,6 +139,10 @@ Toggle **Asset tracking** and/or **Inventory tracking** on. These flags drive wh
 
 You can change this later — disabling a mode just hides the UI; existing data is preserved.
 
+#### Telemetry subject opt-in (Sprint 19)
+
+In the same panel, **Telemetry subjects** controls which non-device subjects ingestion fans tag-borne telemetry out to. Defaults to `["device"]` (Sprint 14 behavior — every reading lands keyed on the reporting reader). Tick **`asset`** to also key cold-chain readings to the asset that carries the tag, **`lot`** for lot-level cold-chain (the most common cold-chain shape), or **`stock_item`** for serial-level. Without the opt-in the rules editor still accepts a `telemetry.threshold` rule on those subjects, but no event will ever match. The flip propagates to all API workers within ~30 s (the writing worker sees it immediately).
+
 ### Step 2 — (Optional) Configure the map provider
 
 **Where:** sidebar → **Tenant Settings** → **Map** tab. Only relevant if you enabled **Asset tracking**.
@@ -163,13 +167,15 @@ Tell TagPulse what metrics each device type sends. For an `rfid_reader`:
 
 Skipping this step is fine — ingestion still works — but rule conditions and the Telemetry chart get a much better experience when models exist.
 
+> **Subject-scoped models (Sprint 18+).** Each model carries a `subject_kind` (defaults to `device`). For a cold-chain milk lot, define a `lot`-scoped model named `temperature_c` with min/max `-30/30` — the rules editor's **Cold-chain breach (lot)** template will surface it as a target. The `device_type` field is **required only when** `subject_kind = device`; for `asset` / `lot` / `stock_item` models it must be omitted (the API rejects the combination). The legacy `GET /telemetry-models/{device_type}` endpoint is removed in Sprint 21 — use `GET /telemetry-models/device/{device_type}`.
+
 ### Step 4 — Lay out sites & zones (asset mode)
 
 **Where:** sidebar → **Sites & Zones**.
 
 1. **Create a site** (e.g., "Boston DC", "Production Floor"). One per physical building.
 2. **Create zones** within each site. Three kinds:
-   - **`reader_bound`** — implicitly defined by which fixed readers see the tag (no polygon needed; pick the readers that bound the zone).
+   - **`reader_bound`** — implicitly defined by which fixed readers see the tag (no polygon needed; pick the readers that bound the zone). **Requires the readers to be registered first** — if you haven't done Step 5 yet, create the site now and come back to add `reader_bound` zones after registering devices (or start with `geofence` / `virtual` zones, which have no device dependency).
    - **`geofence`** — draw a polygon on the map. Click vertices, **Undo** if you misclick, **Done** to close. The server validates the GeoJSON.
    - **`virtual`** — admin-only logical grouping (e.g., "Cold storage").
 
@@ -195,9 +201,9 @@ After save, the device detail page shows a **Token** (paste into your reader's T
 **Where:** sidebar → **Assets**.
 
 1. **Create an asset** (e.g., "Forklift #4", "Pallet PLT-00123").
-2. **Add a tag binding**: enter the EPC, TID, or device-internal tag ID printed on the RFID label. Bindings can be unbound and re-bound (for tag swaps); only one active binding per asset at a time.
+2. **Add a tag binding**: enter the EPC, TID, or device-internal tag ID printed on the RFID label. An asset can hold **multiple active bindings** at once (e.g. a primary EPC label plus a TID, or a redundant backup tag). The uniqueness rule is per *value*, not per asset: a given `binding_value` can only be active on **one asset per tenant** at a time. Bindings can be unbound and re-bound for tag swaps.
 
-Once bound, every tag read from the field automatically attributes to the asset. The Asset detail page shows the **Path** (last 24 h trail), **Covers Zones**, and the active binding.
+Once bound, every tag read from the field automatically attributes to the asset. The Asset detail page shows the **Path** (last 24 h trail), **Covers Zones**, and all active bindings.
 
 ### Step 6b — Inventory tracking: products, lots, stock items
 
@@ -248,6 +254,9 @@ Useful starter rules:
 | RSSI cliff | Rate change ≥ 50% in 10 min on `signal_strength` | Webhook to Slack |
 | Asset left zone | `zone.exited` from "Cold storage", subject_kinds = `asset` | Email |
 | Pallet idle in dock | `zone.dwell_exceeded` ≥ 60 min in "Dock-Door-A" | Notification |
+| Cold-chain breach | `telemetry.threshold` on `subject_kind=lot`, `temperature_c > 8`, cooldown 15 min | Notification + webhook |
+
+The last row is a Sprint 20 built-in template — see [Rules → Templates](#rules) for the one-click create flow. Other Sprint 20 templates: **Asset over-temperature** (`subject_kind=asset`, `temperature_c > 60`).
 
 Triggered alerts appear under **Alerts** with severity color-coding; click **Acknowledge** to clear.
 
@@ -324,8 +333,69 @@ Click any row to open the device detail page.
    - **Name** — a descriptive label (required, max 255 characters).
    - **Device Type** — e.g., `rfid_reader` (required).
    - **Firmware Version** — optional.
-   - **Metadata** — optional JSON for extra info like location or SKU.
+   - **Metadata** — optional JSON for hardware, network, ownership, and maintenance attributes (see the recommended template below).
 3. Click **Submit**. The device is created with `active` status.
+
+#### Recommended `metadata` template
+
+The `metadata` field is freeform JSON, but TagPulse recommends the following common-denominator schema, which aligns with **GS1 EPCIS / CBV**, **OPC UA for Auto-ID** (IEC 62541-100), **W3C WoT Thing Description**, and **Azure DTDL** (IoT Plug and Play). Use as much or as little of it as fits your deployment.
+
+```json
+{
+  "manufacturer": "Zebra",
+  "model": "FX9600",
+  "serial_number": "FX9600-21A1234567",
+  "firmware_version": "3.16.18",
+  "hardware_revision": "Rev C",
+
+  "antennas": [
+    { "port": 1, "label": "North", "polarization": "circular", "gain_dbi": 6, "cable_loss_db": 1.2 },
+    { "port": 2, "label": "South", "polarization": "circular", "gain_dbi": 6, "cable_loss_db": 1.2 }
+  ],
+
+  "rf_region": "FCC",
+  "protocols": ["EPC-Gen2v2", "ISO-18000-63"],
+  "tx_power_dbm": 30,
+
+  "indoor_position": { "floor": 1, "x_m": 12.4, "y_m": 8.1 },
+
+  "network": {
+    "mac": "00:1A:2B:3C:4D:5E",
+    "ip": "10.4.12.45",
+    "uplink": "ethernet"
+  },
+
+  "ownership": {
+    "owner_email": "ops@example.com",
+    "cost_center": "WH-OPS-100",
+    "asset_tag": "IT-04421",
+    "purchase_date": "2024-08-15",
+    "warranty_expires": "2027-08-15"
+  },
+
+  "maintenance": {
+    "last_serviced": "2026-02-10",
+    "next_service_due": "2026-08-10",
+    "install_date": "2024-09-02"
+  },
+
+  "tags": ["dock-door", "inbound", "high-traffic"]
+}
+```
+
+> **What does NOT belong in `device.metadata`** — anything describing **where** the reader sits in your facility hierarchy. Site name, site code, GLN of the read point, zone name, lat/lon, address, etc. all belong on the **Site** or **Zone** entity (see [Sites & Zones](#sites--zones) below for their own `metadata` templates). The reader's location is **derived** from the `reader_bound` zones it belongs to — keeping it out of `device.metadata` avoids two sources of truth that drift apart.
+>
+> The one exception is `indoor_position` (floor + local x/y inside the building) — that's a property of the physical mount point, not the zone, so it stays on the device.
+
+**Vertical-specific alignment** — if your customer already standardises on one of these frameworks, mirror its field names so exports/integrations are zero-friction:
+
+| Framework | Mirror these field names |
+|-----------|--------------------------|
+| **GS1 EPCIS 2.0 / CBV** (retail, supply chain) | Use `gln` on **Site/Zone** (not on device); reader exports map to `readPoint` and `bizLocation`. |
+| **OPC UA for Auto-ID** (manufacturing, OT) | `manufacturer`, `model`, `serial_number`, `hardware_revision`, `firmware_version`, `antennas[].label` map 1:1 to `RfidReaderDeviceType` properties. |
+| **W3C WoT Thing Description** | The whole block can be embedded under `properties.metadata` of the device's TD JSON-LD. |
+| **Azure DTDL / IoT Plug and Play** | `manufacturer`, `model`, `serial_number`, `firmware_version` map to the standard `dtmi:azure:DeviceManagement:DeviceInformation;1` interface. |
+| **MQTT Sparkplug B** | Birth-certificate `Node Control/Hardware Make`, `…/Model`, `…/Serial Number`, `…/HW Version`, `…/SW Version` map to the corresponding fields. |
 
 ### Device Detail
 
@@ -374,12 +444,13 @@ Toggle between views using the button in the toolbar.
 
 ## Telemetry Models
 
-Telemetry models define the expected metrics schema for each device type (e.g., what readings an `rfid_reader` sends).
+Telemetry models define the expected metrics schema for each subject type (e.g., what readings an `rfid_reader` device sends, or what `temperature_c` looks like at the lot level for cold-chain).
 
 ### Viewing Models
 
 The table shows:
-- **Device Type** — the type this model applies to.
+- **Subject kind** — `device` (default) / `asset` / `lot` / `stock_item` (Sprint 18+).
+- **Device Type** — the device type this model applies to (only meaningful when `subject_kind = device`; empty for the other kinds).
 - **Metrics** — count of defined metrics.
 - **Created** — creation date.
 
@@ -388,10 +459,11 @@ Expand a row to see the full metrics list with columns: name, unit, min, max, an
 ### Creating a Model
 
 1. Click **Create Model**.
-2. Enter the **Device Type** (required).
-3. Add metrics using the metric builder:
-   - **Name** — metric identifier (e.g., `signal_strength`).
-   - **Unit** — measurement unit (e.g., `dBm`).
+2. Pick the **Subject kind** (defaults to `device`). For non-device kinds, the matching opt-in must be enabled in **Tenant Settings → Telemetry subjects** for ingestion to actually fan out to that kind.
+3. Enter the **Device Type** — **required only when** `subject_kind = device`; for `asset` / `lot` / `stock_item` it must be omitted (the API rejects the combination).
+4. Add metrics using the metric builder:
+   - **Name** — metric identifier (e.g., `signal_strength`, `temperature_c`).
+   - **Unit** — measurement unit (e.g., `dBm`, `°C`).
    - **Min / Max** — acceptable value range.
    - **Description** — what this metric measures.
 4. Click **Add Metric** to add more, or the remove button to delete one.
@@ -425,6 +497,11 @@ Click **Create Rule** to open the multi-step wizard.
   - **Threshold** — triggers when a field crosses a value. Configure: operator (`>`, `<`, `==`), field, and threshold value.
   - **Absence** — triggers when no read is received within X minutes. Optionally filter by tag ID.
   - **Rate Change** — triggers on sudden changes. Configure: window (minutes) and change percent (e.g., 50%).
+  - **Telemetry threshold** (`telemetry.threshold`, Sprint 20) — fires on a `telemetry_readings` row whose `metric_value` crosses a threshold. Configure: **subject_kind** (`device` / `asset` / `lot` / `stock_item` — must be in **Tenant Settings → Telemetry subjects**), **metric_name** (e.g., `temperature_c`), **operator** (`gt` / `lt` / `gte` / `lte` / `eq`), **value**, **cooldown_s** (default 600 s), and an optional **subject_id** to pin the rule to one instance. Cooldown is per `(rule, subject_id)` so leaving `subject_id=null` does not suppress alerts across distinct lots / assets.
+  - **Zone entered / exited / dwell** (Sprint 17) — geofence transitions; configure target zone and (for dwell) the duration threshold.
+  - **Stock expiring within** — lot expiry alerts; configure `within_days`.
+
+**Templates (Sprint 20).** `GET /rule-templates` returns pre-filled `RuleCreate` payloads the wizard offers as one-click starting points: **`lot.cold_chain_breach`** (subject_kind=lot, `temperature_c > 8 °C`, 15 min cooldown) and **`asset.high_temperature`** (subject_kind=asset, `temperature_c > 60 °C`, 10 min cooldown). The UI greys out a template if the tenant has not opted that subject_kind in.
 
 **Step 2 — Action:**
 - **Webhook** — sends a POST request to a URL you specify.
@@ -513,8 +590,8 @@ Click **Create Asset** to add one. Required: Name. Optional: Asset Type (free te
 
 Three-tab layout:
 
-- **Overview** — basic info plus the **Current Location** card (last known lat/lon, accuracy, recorded-at, source — `rfid` or `external`). The **Covers Zones** chip strip lists every zone the asset is currently inside (Sprint 15).
-- **Bindings** — table of all bindings (kind = `epc` / `tid` / `device`, value, bound-at, unbound-at). Active bindings have an empty `unbound_at`. Add a binding via **Bind Tag** — only one active binding per asset at a time. Remove via **Unbind**; the historical row is preserved.
+- **Overview** — basic info plus the **Current Location** card (last known lat/lon, accuracy, recorded-at, source — `rfid` or `external`). The **Covers Zones** chip strip lists every zone the asset is currently inside (Sprint 15). When **Tenant Settings → Telemetry subjects** includes `asset`, an extra **Latest telemetry** card lists the most recent reading per metric (Sprint 19); `GET /assets/{id}` populates the `latest_telemetry` field with one entry per `metric_name` (Sprint 21 server-side cache: 30 s, so an F5-mash does not hammer the hypertable).
+- **Bindings** — table of all bindings (kind = `epc` / `tid` / `device`, value, bound-at, unbound-at). Active bindings have an empty `unbound_at`. Add a binding via **Bind Tag**. An asset may hold multiple active bindings simultaneously (e.g. EPC + TID, or redundant labels); uniqueness is enforced on `(tenant_id, binding_value) WHERE unbound_at IS NULL`, so the same `binding_value` cannot be active on two assets in the same tenant. Remove via **Unbind**; the historical row is preserved.
 - **Path** — the recent location trail. Each row shows time, source, and zone (if inside one). The **Map** page shows the same trail visually with a 24-hour time slider.
 
 ### Tag-binding lifecycle
@@ -535,7 +612,22 @@ Bindings are append-only and time-boxed:
 
 ### Sites
 
-Left-hand list. Each site has Name, Address, Default Timezone. Click a site to manage its zones in the right-hand panel.
+Left-hand list. Each site has Name, Address, Default Timezone, and an optional `metadata` JSONB field. Click a site to manage its zones in the right-hand panel.
+
+#### Recommended `Site.metadata` template
+
+Use `Site.metadata` for facility-wide attributes that apply to **everything in the building** — not to one zone or one reader. The GLN of the building is the canonical example.
+
+```json
+{
+  "gln": "0614141999996",            // GS1 GLN of the facility (13 digits)
+  "site_code": "BOS-DC-01",          // your internal site/WMS code
+  "facility_type": "distribution_center",
+  "operator": "Acme Logistics",
+  "region": "NA-East",
+  "opened_at": "2018-03-12"
+}
+```
 
 ### Zones — three kinds
 
@@ -551,7 +643,49 @@ Left-hand list. Each site has Name, Address, Default Timezone. Click a site to m
 2. **Name** + **Kind**.
 3. For `reader_bound`: pick the readers from the multi-select.
 4. For `geofence`: a draw map appears. Click vertices in order, **Undo** removes the last, **Clear** starts over, **Done** auto-closes the ring. The server validates the GeoJSON (reject self-intersecting, < 3 vertices, etc.).
-5. Save.
+5. (Optional) Add `metadata` — see template below.
+6. Save.
+
+#### Recommended `Zone.metadata` template
+
+Use `Zone.metadata` for attributes that describe the **specific area** — not the whole building (use `Site.metadata`) and not a particular reader (use `Device.metadata`).
+
+```json
+{
+  "gln": "0614141999989",            // GS1 sub-location GLN, if you assign them
+  "ext_zone_code": "DOCK-A",         // your WMS/ERP zone identifier
+  "function": "inbound_dock",        // inbound_dock | outbound_dock | staging | storage | cold_storage | quarantine | …
+  "environment": {
+    "temperature_min_c": 2,
+    "temperature_max_c": 8,
+    "humidity_max_pct": 65
+  },
+  "capacity": {
+    "max_pallets": 240,
+    "area_m2": 480
+  },
+  "tags": ["cold-chain", "fda-controlled"]
+}
+```
+
+### Virtual zones — when to use them
+
+Virtual zones have no readers and no polygon — they're pure logical groupings. Use them whenever you need to slice assets, stock, rules, or reports by a dimension that **isn't tied to a physical boundary**.
+
+| Use case | Example virtual zone | Why it's virtual |
+|----------|---------------------|------------------|
+| **Cross-cutting category** | `Cold-chain (≤ 4°C)` spanning multiple coolers across two sites | The category is real, but no single polygon or reader set captures it. |
+| **Compliance / regulatory bucket** | `FDA-controlled`, `ITAR`, `Hazmat-Class-3` | Drives audit-log filtering and rule scoping; membership is a property, not a place. |
+| **Ownership / consignment** | `Consigned-Acme-Corp`, `Customer-owned-returns` | Same physical warehouse, different financial owner — needed for billing reports. |
+| **Lifecycle state** | `In maintenance`, `Quarantine`, `Pending disposal`, `Loaner pool` | Operational state that travels with the asset regardless of location. |
+| **Rule scoping shorthand** | `Critical assets`, `VIP shipments` | Attach a rule to the virtual zone instead of enumerating asset IDs; just add/remove members to change rule coverage. |
+| **Reporting roll-up** | `All cold-chain areas` (umbrella over 3 `reader_bound` coolers + 1 `geofence` outdoor pad) | Executive dashboards want one number, not three. |
+| **Pre-physical placeholder** | `New wing — Q3 build-out` | Lets you wire up rules and integrations before readers are installed; later swap to `reader_bound`/`geofence` without rebuilding the wiring. |
+| **Sandbox / test bucket** | `QA-simulator`, `Demo-fleet` | Production reports filter it out; keeps simulator data from polluting KPIs. |
+| **FEFO / picking pool** | `Expiring-this-week-pick-list` | Inventory operations grouping driven by lot-expiry, not physical location. |
+| **Security / access control** | `High-value` (jewelry, electronics, controlled substances) | Triggers stricter alerts (`zone.exited` → page on-call) without revealing the physical safe location. |
+
+Membership is managed by attaching assets (or stock items) to the virtual zone — the `Covers Zones` chip strip on the [Asset detail](#asset-detail) page shows everything an asset belongs to, physical or virtual.
 
 Zones are tenant-scoped — each tenant has its own private set; nothing crosses the tenant boundary.
 
@@ -596,7 +730,7 @@ Four pages plus an admin sub-page for tag-data mappings.
 
 Click **Create Product** to add one. SKU + Name are required; GTIN, category, and unit are optional. Click a row to open **Product detail**, which shows:
 
-- **Lots** tab — manufacturing batches (lot_code, manufactured_at, expires_at). Lots with expiry dates feed the **Lot Expiry Queue**.
+- **Lots** tab — manufacturing batches (lot_code, manufactured_at, expires_at). Lots with expiry dates feed the **Lot Expiry Queue**. Click a lot to see its detail page; when **Tenant Settings → Telemetry subjects** includes `lot`, a **Latest telemetry** card lists the most recent reading per metric (Sprint 19), surfacing on-tag temperature for cold-chain. `GET /lots/{lot_id}` populates the `latest_telemetry` field; results are cached server-side for 30 s (Sprint 21).
 - **Stock items** tab — every individual tag bound to this product, with its current zone and state.
 
 ### Lot Expiry
@@ -662,6 +796,14 @@ Two switches:
 - **Inventory tracking** — unlocks **Products**, **Lot Expiry**, **Stock Levels**, **Stock Movements**.
 
 At least one mode must remain enabled (the UI rejects disabling both with a toast). Disabling a mode hides the sidebar entries but **does not delete data** — re-enabling restores access.
+
+#### Telemetry subjects (Sprint 19)
+
+A multi-select alongside the tracking-mode switches. Controls which non-device subjects ingestion fans tag-borne telemetry out to. Default `["device"]`; tick `asset`, `lot`, or `stock_item` to opt in. Persists to `tenants.telemetry_subject_kinds` and is recorded in the audit log as `tenant.config.update`.
+
+- **Why opt-in?** Fan-out doubles the ingestion write rate per subject and changes the rules-engine surface area; opt-in keeps the default tenant on Sprint 14's device-only behaviour.
+- **Convergence.** The writing worker invalidates its cache immediately; sibling API workers converge within ~30 s (Sprint 21 `SUBJECT_KINDS_CACHE` TTL). No restart required.
+- **Effect on rules.** A `telemetry.threshold` rule on a non-opted subject_kind is **accepted** by the rules editor but never matches — the readings are not produced. Always flip the opt-in **before** authoring the rule.
 
 ### Map tab — tile provider
 

@@ -4,6 +4,52 @@ Get the full TagPulse platform running locally in under 5 minutes.
 
 ---
 
+## First-time setup vs day-to-day workflow
+
+Steps **1–5b are one-time setup** per workspace (or per fresh DB). After the first run-through, your steady-state cycle is much shorter.
+
+### Day-to-day (after first-time setup)
+
+```bash
+# Terminal 1 — backend
+cd ~/TagPulse && make run
+
+# Terminal 2 — frontend
+cd ~/TagPulse-UI && npm run dev
+
+# Terminal 3 — push data when you want it
+export TAGPULSE_API_KEY=tp_test-corp_<hex>
+python scripts/simulate_devices.py \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --devices 5 --interval 2
+```
+
+### When to repeat earlier steps
+
+| Step | Re-run? | Why |
+|------|---------|-----|
+| **1. Clone repos** | Once | On disk after the first clone. |
+| **2. `docker compose up -d db mqtt`** | After reboot or `compose down` | Idempotent — already-running containers stay up. |
+| **3. `pip install -e ".[dev]"`** | After pulling new deps | Skip otherwise. |
+| **3. `alembic upgrade head`** | After pulling new migrations | Skips already-applied revisions. |
+| **4. `make run` + `npm run dev`** | Every dev session | These are the foreground processes. |
+| **5. Seed tenant** | Once per DB | The `INSERT INTO tenants` is **not** idempotent — re-running fails on the duplicate UUID. Only re-run after wiping the DB. |
+| **5b. Bootstrap admin** | Once per DB (or after key loss) | User upsert is idempotent; key generation rotates the key on re-run. Use [`scripts/smoke_setup.py --regenerate-key`](../scripts/smoke_setup.py) as the safe shortcut. |
+
+### Common scenarios
+
+| Situation | What to repeat |
+|-----------|----------------|
+| Pulled new code | Step 3 only (`pip install` + `alembic upgrade head`) |
+| Rebooted machine | Step 2 + step 4 |
+| `docker compose down -v` (volumes wiped) | Steps 2 → 3 (migrations) → 5 → 5b |
+| Lost admin API key | `python scripts/smoke_setup.py --regenerate-key` (also rotates editor + viewer if they exist) |
+| Want a clean slate | `docker compose down -v && docker compose up -d db mqtt && alembic upgrade head && python scripts/smoke_setup.py --full` |
+
+> **The shortcut for steps 5 + 5b**: `python scripts/smoke_setup.py` (or `--full` to also seed zones, telemetry model, rules, and role users). Idempotent and safe to re-run.
+
+---
+
 ## Prerequisites
 
 - Docker + Docker Compose
@@ -648,6 +694,69 @@ curl -X POST \
 curl -H "X-Tenant-ID: 11111111-1111-1111-1111-111111111111" \
   http://localhost:8000/alerts
 ```
+
+### Cold-chain breach (Sprint 20 telemetry-threshold rule)
+
+Subject-scoped telemetry rules fire on `telemetry_readings` rows whose
+`metric_value` crosses a threshold. Built-in template
+`lot.cold_chain_breach` lights up a refrigerated-dairy alert end-to-end
+without writing JSON by hand.
+
+```bash
+TENANT=11111111-1111-1111-1111-111111111111
+
+# 1. Opt the tenant into lot-scoped telemetry (Sprint 19).
+#    Default is ["device"]; the rule will be ACCEPTED but never match
+#    until "lot" is in the list.
+curl -X PATCH \
+  -H "Authorization: Bearer $TAGPULSE_API_KEY" \
+  -H "X-Tenant-ID: $TENANT" \
+  -H "Content-Type: application/json" \
+  -d '{"telemetry_subject_kinds": ["device", "lot"]}' \
+  http://localhost:8000/tenant/config
+
+# 2. Pull the template (defaults: temperature_c > 8 C, 15 min cooldown).
+curl -H "Authorization: Bearer $TAGPULSE_API_KEY" -H "X-Tenant-ID: $TENANT" \
+  http://localhost:8000/rule-templates/lot.cold_chain_breach
+
+# 3. POST the template body to /rules (edit value/cooldown_s first if you want).
+curl -X POST \
+  -H "Authorization: Bearer $TAGPULSE_API_KEY" \
+  -H "X-Tenant-ID: $TENANT" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Refrigerated dairy cold-chain",
+    "condition_type": "telemetry.threshold",
+    "condition_config": {
+      "subject_kind": "lot",
+      "metric_name": "temperature_c",
+      "operator": "gt",
+      "value": 8.0,
+      "cooldown_s": 900
+    },
+    "action_type": "notification",
+    "action_config": {}
+  }' \
+  http://localhost:8000/rules
+
+# 4. Drive the breach. simulate_devices.py --cold-chain spins up a
+#    synthetic milk lot, binds an EPC, and drifts temperature 4 C -> 9 C
+#    (default period 10 s; tune with --cold-chain-period). The lot/product/
+#    binding are upserted on first run -- safe to re-run.
+python scripts/simulate_devices.py \
+  --tenant-id $TENANT \
+  --devices 2 --tags 5 --interval 2 \
+  --cold-chain --cold-chain-period 5
+
+# 5. Watch the alert land.
+curl -H "Authorization: Bearer $TAGPULSE_API_KEY" -H "X-Tenant-ID: $TENANT" \
+  "http://localhost:8000/alerts?status=firing"
+```
+
+The alert appears within ~7-8 minutes (8 C threshold, 0.05 C/cycle drift,
+5 s period). Asset-temperature works the same way using template
+`asset.high_temperature` (defaults: subject_kind=`asset`,
+`temperature_c > 60 C`, 10 min cooldown).
 
 ---
 

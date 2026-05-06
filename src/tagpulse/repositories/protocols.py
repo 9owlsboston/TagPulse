@@ -8,11 +8,14 @@ from tagpulse.models.schemas import (
     DeviceCreate,
     DeviceResponse,
     DeviceUpdate,
+    LatestTelemetryEntry,
     ReadsPerHour,
     TagReadCreate,
     TagReadResponse,
+    TelemetryAggregateBucket,
     TelemetryQuarantineResponse,
     TelemetryReading,
+    TelemetryReadingResponse,
     TelemetryResponse,
     UniqueTagsPerWindow,
 )
@@ -125,8 +128,18 @@ class DeviceRepository(Protocol):
     ) -> None: ...
 
 
-class TelemetryRepository(Protocol):
-    """Contract for device telemetry persistence (Sprint 14)."""
+class TelemetryReadingsRepository(Protocol):
+    """Subject-scoped telemetry persistence (Sprint 18 schema).
+
+    Sprint 21 (ADR-015 §6) folded the Sprint 14 device-shaped surface
+    (``insert_reading`` / ``query`` / ``quarantine`` / ``list_quarantine``)
+    into this protocol after the legacy ``TelemetryRepository`` was
+    removed. The subject-aware methods (``insert`` / ``query_by_subject`` /
+    ``latest_per_metric`` / ``aggregate``) target the
+    ``telemetry_readings`` hypertable directly.
+    """
+
+    # -- Sprint 14 device-shaped surface --
 
     async def insert_reading(
         self,
@@ -165,3 +178,53 @@ class TelemetryRepository(Protocol):
         limit: int = 100,
         offset: int = 0,
     ) -> list[TelemetryQuarantineResponse]: ...
+
+    # -- Subject-aware surface (Sprint 18+) --
+
+    async def insert(
+        self,
+        *,
+        tenant_id: UUID,
+        subject_kind: str,
+        subject_id: UUID,
+        timestamp: datetime,
+        metric_name: str,
+        metric_value: float,
+        device_id: UUID | None = None,
+        unit: str | None = None,
+        source: str = "device",
+        metadata: dict[str, Any] | None = None,
+    ) -> TelemetryReadingResponse: ...
+
+    async def query_by_subject(
+        self,
+        *,
+        tenant_id: UUID,
+        subject_kind: str,
+        subject_id: UUID,
+        metric_name: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 100,
+    ) -> list[TelemetryReadingResponse]: ...
+
+    async def latest_per_metric(
+        self,
+        *,
+        tenant_id: UUID,
+        subject_kind: str,
+        subject_id: UUID,
+        limit: int = 5,
+    ) -> list[LatestTelemetryEntry]: ...
+
+    async def aggregate(
+        self,
+        *,
+        tenant_id: UUID,
+        subject_kind: str,
+        subject_id: UUID,
+        metric_name: str,
+        bucket_seconds: int,
+        start: datetime,
+        end: datetime,
+    ) -> list[TelemetryAggregateBucket]: ...

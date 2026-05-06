@@ -1,4 +1,4 @@
-.PHONY: lint typecheck test format check run export-openapi
+.PHONY: lint typecheck test format check run export-openapi migration-check
 
 lint:        ## Run linter
 	ruff check src tests
@@ -8,6 +8,13 @@ typecheck:   ## Run type checker
 
 test:        ## Run unit tests
 	pytest tests/unit -v --tb=short
+
+migration-check:  ## Sprint 19: round-trip alembic upgrade head -> downgrade -1 -> upgrade head
+	@if [ -z "$$TAGPULSE_INTEGRATION_DB_URL" ]; then \
+	  echo "TAGPULSE_INTEGRATION_DB_URL not set; export it to a TimescaleDB URL first." >&2; \
+	  exit 1; \
+	fi
+	pytest tests/integration/test_migration_round_trip.py -v --tb=short
 
 format:      ## Auto-format code
 	ruff format src tests

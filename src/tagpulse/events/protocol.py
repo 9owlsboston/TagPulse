@@ -23,6 +23,13 @@ class Topic(StrEnum):
     ASSET_LOADED = "asset.loaded"
     ASSET_UNLOADED = "asset.unloaded"
     EXTERNAL_LOCATION_RECORDED = "asset.external_location_recorded"
+    # Sprint 20: subject-scoped telemetry write notifications. Published by
+    # ``IngestionService`` (tag fan-out) and the ``POST /telemetry/readings/ingest``
+    # admin endpoint after a row has landed in ``telemetry_readings``. The
+    # rules engine consumes this for ``telemetry.threshold`` evaluation; the
+    # legacy device-scoped path keeps using ``Topic.TAG_READ_CREATED`` so the
+    # Sprint 14 contract is unchanged.
+    TELEMETRY_RECORDED = "telemetry.recorded"
 
 
 @dataclasses.dataclass(frozen=True)

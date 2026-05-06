@@ -179,6 +179,102 @@ class RuleEvaluator:
 
             await session.commit()
 
+    async def on_telemetry_recorded(self, event: Event) -> None:
+        """Evaluate ``telemetry.threshold`` rules on ``Topic.TELEMETRY_RECORDED``.
+
+        Sprint 20 — additive to the Sprint 14 ``threshold`` path. Only fires
+        for rules whose ``condition_type='telemetry.threshold'`` matches the
+        event's ``subject_kind`` + ``metric_name`` (and optional pinned
+        ``subject_id``). Per-(tenant, rule, subject) cooldown reuses the
+        same suppression table as zone rules so a slow-drifting cold-chain
+        breach doesn't stamp out an alert per minute.
+        """
+        payload = event.payload
+        tenant_id_str = payload.get("tenant_id")
+        if not tenant_id_str:
+            return
+        try:
+            tenant_id = UUID(tenant_id_str)
+        except ValueError:
+            return
+        subject_id_str = payload.get("subject_id")
+        if not subject_id_str:
+            return
+        subject_kind = payload.get("subject_kind") or "device"
+        metric_name = payload.get("metric_name") or ""
+        now = datetime.now(UTC)
+
+        async with self._session_factory() as session:
+            service = RulesService(session)
+            rules = await service.get_active_rules_by_condition_type(
+                tenant_id, "telemetry.threshold"
+            )
+            for rule in rules:
+                self._meter.record(tenant_id, "rule_evaluations", "evaluations")
+                if not _eval_telemetry_threshold(rule.condition_config, payload):
+                    continue
+                # Cooldown key: (tenant, rule, subject) — pinned per subject so
+                # an asset crossing into breach doesn't suppress alerts on a
+                # different asset bound to the same rule.
+                cooldown_key = (tenant_id, rule.id, subject_id_str)
+                if _cooldown_active(cooldown_key, now):
+                    continue
+                cooldown_s = int(
+                    rule.condition_config.get("cooldown_s", 300)
+                )
+                _set_cooldown(cooldown_key, now, cooldown_s)
+
+                op = rule.condition_config.get("operator", "")
+                threshold = rule.condition_config.get("value")
+                actual = payload.get("metric_value")
+                message = (
+                    f"Rule '{rule.name}' triggered: {subject_kind} "
+                    f"{subject_id_str} {metric_name}={actual} {op} {threshold}"
+                )
+                alert = await service.create_alert(
+                    tenant_id,
+                    rule.id,
+                    device_id=None,
+                    severity="warning",
+                    message=message,
+                    context={
+                        "rule_name": rule.name,
+                        "condition_type": rule.condition_type,
+                        "condition_config": rule.condition_config,
+                        "event_payload": payload,
+                    },
+                )
+                self._meter.record(tenant_id, "alerts_fired", "events")
+                logger.info(
+                    "Telemetry threshold alert: alert=%s rule=%s "
+                    "subject=%s/%s metric=%s value=%s",
+                    alert.id,
+                    rule.id,
+                    subject_kind,
+                    subject_id_str,
+                    metric_name,
+                    actual,
+                )
+                await self._event_bus.publish(
+                    Topic.ALERT_TRIGGERED,
+                    Event(
+                        id=alert.id,
+                        topic=Topic.ALERT_TRIGGERED,
+                        timestamp=alert.triggered_at,
+                        payload={
+                            "alert_id": str(alert.id),
+                            "tenant_id": str(tenant_id),
+                            "rule_id": str(rule.id),
+                            "device_id": None,
+                            "severity": alert.severity,
+                            "message": alert.message,
+                            "action_type": rule.action_type,
+                            "action_config": rule.action_config,
+                        },
+                    ),
+                )
+            await session.commit()
+
     async def _lookup_subject_name(
         self,
         session: AsyncSession,
@@ -201,8 +297,19 @@ class RuleEvaluator:
         stmt = select(AssetModel.name).where(
             AssetModel.id == sid, AssetModel.tenant_id == tenant_id
         )
-        result = await session.execute(stmt)
-        return result.scalar_one_or_none()
+        try:
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+        except Exception:
+            # Defensive: any session/DB error (or a test fake without
+            # ``execute``) falls back to the raw UUID rather than blowing
+            # up the alert-creation path. The message is cosmetic; we
+            # never want a name lookup to suppress an alert.
+            logger.debug(
+                "subject name lookup failed; falling back to UUID",
+                exc_info=True,
+            )
+            return None
 
     async def _lookup_zone_name(
         self,
@@ -217,8 +324,15 @@ class RuleEvaluator:
         stmt = select(ZoneModel.name).where(
             ZoneModel.id == zid, ZoneModel.tenant_id == tenant_id
         )
-        result = await session.execute(stmt)
-        return result.scalar_one_or_none()
+        try:
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+        except Exception:
+            logger.debug(
+                "zone name lookup failed; falling back to UUID",
+                exc_info=True,
+            )
+            return None
 
     async def _eval_zone_entered_exited(
         self,
@@ -491,3 +605,44 @@ def _eval_rate_change(config: dict[str, Any], payload: dict[str, Any]) -> bool:
 
     deviation = abs((signal_f - baseline_f) / baseline_f) * 100
     return deviation > change_f
+
+
+def _eval_telemetry_threshold(
+    config: dict[str, Any], payload: dict[str, Any]
+) -> bool:
+    """Evaluate ``telemetry.threshold``: subject_kind/metric_name/op/value.
+
+    The event payload is the new ``Topic.TELEMETRY_RECORDED`` shape:
+    ``{tenant_id, subject_kind, subject_id, metric_name, metric_value,
+    timestamp, device_id?, source}``.
+    """
+    if config.get("subject_kind") != payload.get("subject_kind"):
+        return False
+    if config.get("metric_name") != payload.get("metric_name"):
+        return False
+    pinned = config.get("subject_id")
+    if pinned and pinned != payload.get("subject_id"):
+        return False
+    threshold = config.get("value")
+    if threshold is None:
+        return False
+    actual = payload.get("metric_value")
+    if actual is None:
+        return False
+    try:
+        actual_f = float(actual)
+        threshold_f = float(threshold)
+    except (ValueError, TypeError):
+        return False
+    op = config.get("operator", "")
+    if op == "gt":
+        return actual_f > threshold_f
+    if op == "lt":
+        return actual_f < threshold_f
+    if op == "gte":
+        return actual_f >= threshold_f
+    if op == "lte":
+        return actual_f <= threshold_f
+    if op == "eq":
+        return actual_f == threshold_f
+    return False

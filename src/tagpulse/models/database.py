@@ -38,6 +38,15 @@ class TenantModel(Base):
     tracking_modes: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default='["asset"]'
     )
+    # -- Sprint 19: subject kinds the ingest pipeline is allowed to
+    # fan-out telemetry to. ``["device"]`` (the default) preserves
+    # Sprint 14 behaviour byte-for-byte; operators opt into
+    # ``"asset"`` / ``"lot"`` / ``"stock_item"`` / ``"zone"`` once they
+    # have a matching telemetry_models entry. See
+    # docs/design/subject-scoped-telemetry.md §4. --
+    telemetry_subject_kinds: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default='["device"]'
+    )
     db_pool_key: Mapped[str] = mapped_column(
         String(64), nullable=False, server_default="shared_default"
     )
@@ -130,10 +139,18 @@ class TagReadModel(Base):
     )
 
 
-class DeviceTelemetryModel(Base):
-    """Device telemetry hypertable — sensor and metric readings (Sprint 14)."""
+class TelemetryReadingModel(Base):
+    """Subject-scoped telemetry hypertable (Sprint 18).
 
-    __tablename__ = "device_telemetry"
+    Authoritative store. Keyed on ``(tenant_id, subject_kind, subject_id)``
+    so a single reading can be attributed to the device that reported it,
+    the asset bound to the tag it scanned, the lot/stock-item the tag
+    decodes to, or the zone it currently sits in. See
+    :doc:`docs/design/subject-scoped-telemetry` for the full data model
+    and ADR-013 for the rename-not-drop migration strategy.
+    """
+
+    __tablename__ = "telemetry_readings"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -141,20 +158,33 @@ class DeviceTelemetryModel(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
     )
-    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    subject_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), primary_key=True, index=True
     )
     metric_name: Mapped[str] = mapped_column(String(100), nullable=False)
     metric_value: Mapped[float] = mapped_column(Float, nullable=False)
     unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="device"
+    )
     metadata_: Mapped[dict[str, Any] | None] = mapped_column(
         "metadata", JSONB, nullable=True
     )
 
 
 class TelemetryQuarantineModel(Base):
-    """Quarantine for unknown / out-of-range telemetry readings (Sprint 14)."""
+    """Quarantine for unknown / out-of-range telemetry readings (Sprint 14).
+
+    Sprint 18 added nullable ``subject_kind`` / ``subject_id`` columns so
+    multi-subject ingest can record the resolved subject when the reading
+    fails validation. Legacy rows (back-filled from ``device_telemetry``)
+    leave both columns NULL.
+    """
 
     __tablename__ = "telemetry_quarantine"
 
@@ -172,10 +202,23 @@ class TelemetryQuarantineModel(Base):
     metric_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     reason: Mapped[str] = mapped_column(String(40), nullable=False)
+    subject_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    subject_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
 
 
 class TelemetryModelDef(Base):
-    """Telemetry model definitions — per-device-type metric schemas."""
+    """Telemetry model definitions — per-subject metric schemas.
+
+    Sprint 18 added the ``subject_kind`` column. ``device_type`` is now
+    only required when ``subject_kind='device'`` (the original Sprint 14
+    case); for ``asset`` / ``lot`` / ``stock_item`` / ``zone`` it must be
+    ``NULL`` and the model is shared across all subjects of that kind for
+    the tenant. Uniqueness is enforced by
+    ``ix_telemetry_models_tenant_subject`` on
+    ``(tenant_id, subject_kind, COALESCE(device_type, ''))``.
+    """
 
     __tablename__ = "telemetry_models"
 
@@ -185,7 +228,10 @@ class TelemetryModelDef(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
     )
-    device_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    subject_kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="device"
+    )
+    device_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     metrics: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

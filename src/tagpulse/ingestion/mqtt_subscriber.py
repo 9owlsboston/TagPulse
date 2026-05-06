@@ -14,7 +14,7 @@ from tagpulse.api.services.device_service import DeviceService
 from tagpulse.api.services.telemetry_model_service import TelemetryModelService
 from tagpulse.api.services.telemetry_service import TelemetryService
 from tagpulse.core.usage_meter import UsageMeter
-from tagpulse.events.protocol import EventBus
+from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.ingestion.service import IngestionService
 from tagpulse.models.schemas import (
     DeviceEventPayload,
@@ -26,13 +26,22 @@ from tagpulse.models.schemas import (
 )
 from tagpulse.repositories.timescaledb.devices import TimescaleDeviceRepository
 from tagpulse.repositories.timescaledb.tag_reads import TimescaleTagReadRepository
-from tagpulse.repositories.timescaledb.telemetry import TimescaleTelemetryRepository
+from tagpulse.repositories.timescaledb.telemetry import (
+    TimescaleTelemetryReadingsRepository,
+)
 
 logger = logging.getLogger(__name__)
 
 # Wildcard catches all per-device topic suffixes — handler branches on suffix.
 TOPIC_FILTER = "tenants/+/devices/+/+"
 KNOWN_SUFFIXES = {"tag-reads", "status", "telemetry", "location", "events"}
+
+# Sprint 19: subject-scoped telemetry topic. External integrations
+# (TMS, BMS, mobile apps) publish here when they have already resolved
+# the subject and don't need the EPC fan-out path. The handler writes
+# straight into ``telemetry_readings`` via ``insert``.
+SUBJECT_TOPIC_FILTER = "tenants/+/subjects/+/+/telemetry"
+SUBJECT_KINDS = {"device", "asset", "lot", "stock_item", "zone"}
 
 
 def _parse_topic(topic: str) -> tuple[UUID | None, UUID | None, str | None]:
@@ -46,6 +55,36 @@ def _parse_topic(topic: str) -> tuple[UUID | None, UUID | None, str | None]:
             logger.warning("Invalid UUID in MQTT topic: %s", topic)
             return None, None, None
         return tenant_id, device_id, parts[4]
+    return None, None, None
+
+
+def _parse_subject_topic(
+    topic: str,
+) -> tuple[UUID | None, str | None, UUID | None]:
+    """Parse ``tenants/{tid}/subjects/{kind}/{sid}/telemetry`` (Sprint 19).
+
+    Returns ``(tenant_id, subject_kind, subject_id)`` or all-None when
+    the topic does not match the expected shape or carries an unknown
+    subject_kind.
+    """
+    parts = str(topic).split("/")
+    if (
+        len(parts) == 6
+        and parts[0] == "tenants"
+        and parts[2] == "subjects"
+        and parts[5] == "telemetry"
+    ):
+        try:
+            tenant_id = UUID(parts[1])
+            subject_id = UUID(parts[4])
+        except ValueError:
+            logger.warning("Invalid UUID in MQTT subject topic: %s", topic)
+            return None, None, None
+        kind = parts[3]
+        if kind not in SUBJECT_KINDS:
+            logger.warning("Unknown subject_kind in MQTT topic: %s", topic)
+            return None, None, None
+        return tenant_id, kind, subject_id
     return None, None, None
 
 
@@ -80,12 +119,33 @@ class MqttSubscriber:
             password=self._password,
         ) as client:
             await client.subscribe(TOPIC_FILTER)
-            logger.info("MQTT subscribed to %s", TOPIC_FILTER)
+            await client.subscribe(SUBJECT_TOPIC_FILTER)
+            logger.info(
+                "MQTT subscribed to %s, %s",
+                TOPIC_FILTER,
+                SUBJECT_TOPIC_FILTER,
+            )
             async for message in client.messages:
                 await self._handle_message(message)
 
     async def _handle_message(self, message: aiomqtt.Message) -> None:
         """Route message to the appropriate handler with a fresh DB session."""
+        # Sprint 19: route the subject-scoped topic family first so its
+        # 6-segment shape is matched before falling through to the
+        # legacy 5-segment device topics.
+        s_tenant_id, subject_kind, subject_id = _parse_subject_topic(
+            str(message.topic)
+        )
+        if (
+            s_tenant_id is not None
+            and subject_kind is not None
+            and subject_id is not None
+        ):
+            await self._handle_subject_telemetry(
+                s_tenant_id, subject_kind, subject_id, message
+            )
+            return
+
         tenant_id, device_id, topic_type = _parse_topic(str(message.topic))
         if tenant_id is None or device_id is None or topic_type is None:
             logger.warning("Skipping message with unparseable topic: %s", message.topic)
@@ -281,11 +341,106 @@ class MqttSubscriber:
                 "Failed to ingest device event from MQTT: device=%s", device_id
             )
 
+    async def _handle_subject_telemetry(
+        self,
+        tenant_id: UUID,
+        subject_kind: str,
+        subject_id: UUID,
+        message: aiomqtt.Message,
+    ) -> None:
+        """Sprint 19: write subject-scoped telemetry rows directly.
+
+        Payload accepts either a single reading or ``{"readings": [...]}``.
+        The reading shape mirrors :class:`TelemetryReading` (the device
+        path's body) — subject is taken from the topic, not the body,
+        so a misrouted publish cannot smuggle a different subject in.
+        """
+        try:
+            payload: dict[str, Any] = json.loads(message.payload)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(
+                "Skipping subject telemetry with invalid JSON on %s",
+                message.topic,
+            )
+            return
+
+        if isinstance(payload.get("readings"), list):
+            readings_raw: list[dict[str, Any]] = list(payload["readings"])
+        else:
+            readings_raw = [payload]
+        try:
+            readings = [TelemetryReading(**r) for r in readings_raw]
+        except ValueError:
+            logger.warning(
+                "Skipping subject telemetry with invalid reading schema on %s",
+                message.topic,
+            )
+            return
+
+        try:
+            async with self._session_factory() as session:
+                repo = TimescaleTelemetryReadingsRepository(session)
+                published: list[tuple[Any, str, float, str | None]] = []
+                for reading in readings:
+                    metadata = dict(reading.metadata or {})
+                    metadata.setdefault("source", "external")
+                    row = await repo.insert(
+                        tenant_id=tenant_id,
+                        subject_kind=subject_kind,
+                        subject_id=subject_id,
+                        timestamp=reading.timestamp,
+                        metric_name=reading.metric_name,
+                        metric_value=reading.metric_value,
+                        unit=reading.unit,
+                        source="external",
+                        metadata=metadata,
+                    )
+                    published.append(
+                        (row, reading.metric_name, reading.metric_value, reading.unit)
+                    )
+                await session.commit()
+            # Sprint 20: publish AFTER commit so rule-engine handlers
+            # never see a row the caller cannot read back.
+            for row, metric_name, metric_value, unit in published:
+                try:
+                    await self._event_bus.publish(
+                        Topic.TELEMETRY_RECORDED,
+                        Event(
+                            id=row.id,
+                            topic=Topic.TELEMETRY_RECORDED,
+                            timestamp=row.timestamp,
+                            payload={
+                                "tenant_id": str(tenant_id),
+                                "subject_kind": subject_kind,
+                                "subject_id": str(subject_id),
+                                "metric_name": metric_name,
+                                "metric_value": metric_value,
+                                "unit": unit,
+                                "device_id": None,
+                                "source": "external",
+                                "timestamp": row.timestamp.isoformat(),
+                            },
+                        ),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "telemetry.recorded publish failed for %s/%s metric %s",
+                        subject_kind,
+                        subject_id,
+                        metric_name,
+                    )
+        except Exception:
+            logger.exception(
+                "Failed to ingest subject telemetry from MQTT: %s/%s",
+                subject_kind,
+                subject_id,
+            )
+
     # -- Helpers --
 
     def _build_telemetry_service(self, session: AsyncSession) -> TelemetryService:
         return TelemetryService(
-            repo=TimescaleTelemetryRepository(session),
+            repo=TimescaleTelemetryReadingsRepository(session),
             event_bus=self._event_bus,
             model_service=TelemetryModelService(session),
             device_repo=TimescaleDeviceRepository(session),
@@ -322,5 +477,6 @@ class MqttSubscriber:
             movement_repo=TimescaleStockMovementRepository(session),
             tag_data_mapping_repo=TimescaleTagDataMappingRepository(session),
             tenant_repo=TimescaleTenantRepository(session),
+            telemetry_readings_repo=TimescaleTelemetryReadingsRepository(session),
             usage_meter=self._usage_meter,
         )

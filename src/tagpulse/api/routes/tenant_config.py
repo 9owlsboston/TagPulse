@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.core.audit import AuditLogger
+from tagpulse.core.telemetry_caches import invalidate_subject_kinds
 from tagpulse.core.tenant_auth import Tenant, get_current_tenant
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.database import TenantModel
@@ -29,6 +30,7 @@ from tagpulse.services.map_config import (
 router = APIRouter(prefix="/tenant", tags=["tenant"])
 
 TrackingMode = Literal["asset", "inventory"]
+TelemetrySubjectKind = Literal["device", "asset", "lot", "stock_item", "zone"]
 
 
 class TenantConfig(BaseModel):
@@ -39,12 +41,25 @@ class TenantConfig(BaseModel):
     slug: str
     plan: str
     tracking_modes: list[TrackingMode]
+    telemetry_subject_kinds: list[TelemetrySubjectKind] = Field(
+        default_factory=lambda: ["device"]  # type: ignore[arg-type]
+    )
 
 
 class TenantConfigUpdate(BaseModel):
-    """Admin-only payload for toggling tenant feature flags."""
+    """Admin-only payload for toggling tenant feature flags.
 
-    tracking_modes: list[TrackingMode] = Field(min_length=1, max_length=2)
+    All fields are optional; PATCH semantics — only fields explicitly
+    provided are written. Sprint 19 added ``telemetry_subject_kinds``
+    so existing clients that PATCH only ``tracking_modes`` keep working.
+    """
+
+    tracking_modes: list[TrackingMode] | None = Field(
+        default=None, min_length=1, max_length=2
+    )
+    telemetry_subject_kinds: list[TelemetrySubjectKind] | None = Field(
+        default=None, min_length=1, max_length=5
+    )
 
 
 def _to_response(row: TenantModel) -> TenantConfig:
@@ -54,6 +69,7 @@ def _to_response(row: TenantModel) -> TenantConfig:
         slug=row.slug,
         plan=row.plan,
         tracking_modes=list(row.tracking_modes),  # type: ignore[arg-type]
+        telemetry_subject_kinds=list(row.telemetry_subject_kinds),  # type: ignore[arg-type]
     )
 
 
@@ -82,17 +98,38 @@ async def update_tenant_config(
     if row is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    new_modes = sorted(set(body.tracking_modes))
-    old_modes = sorted(set(row.tracking_modes))
-    if new_modes != old_modes:
-        row.tracking_modes = new_modes  # type: ignore[assignment]
+    changes: dict[str, dict[str, Any]] = {}
+
+    if body.tracking_modes is not None:
+        new_modes = sorted(set(body.tracking_modes))
+        old_modes = sorted(set(row.tracking_modes))
+        if new_modes != old_modes:
+            row.tracking_modes = new_modes  # type: ignore[assignment]
+            changes["tracking_modes"] = {"from": old_modes, "to": new_modes}
+
+    if body.telemetry_subject_kinds is not None:
+        new_kinds = sorted(set(body.telemetry_subject_kinds))
+        old_kinds = sorted(set(row.telemetry_subject_kinds))
+        if new_kinds != old_kinds:
+            row.telemetry_subject_kinds = new_kinds  # type: ignore[assignment]
+            changes["telemetry_subject_kinds"] = {
+                "from": old_kinds,
+                "to": new_kinds,
+            }
+            # Sprint 21 (ADR-015 §5 carry-over): drop the local
+            # SUBJECT_KINDS_CACHE entry so this worker sees the new
+            # opt-in immediately. Sibling workers converge within the
+            # cache TTL (30 s by default).
+            invalidate_subject_kinds(user.tenant_id)
+
+    if changes:
         await session.flush()
         await AuditLogger(session=session).log(
             user.tenant_id,
             "tenant.config.update",
             "tenant",
             user.tenant_id,
-            changes={"tracking_modes": {"from": old_modes, "to": new_modes}},
+            changes=changes,
             user_id=user.user_id,
         )
     return _to_response(row)

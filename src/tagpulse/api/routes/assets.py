@@ -63,13 +63,34 @@ async def list_assets(
     )
 
 
+@router.get(
+    "/current-locations",
+    response_model=list[AssetCurrentLocation],
+)
+async def list_assets_current_locations(
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    service: AssetService = Depends(get_asset_service),
+) -> list[AssetCurrentLocation]:
+    """Bulk current-location feed for the Assets list page.
+
+    One row per asset that has *any* known position (RFID or external),
+    ordered newest-first. Powers the live Last-seen / Location columns
+    without N+1 fetches.
+    """
+    return await service.list_current_locations(
+        user.tenant_id, limit=limit, offset=offset
+    )
+
+
 @router.get("/{asset_id}", response_model=AssetResponse)
 async def get_asset(
     asset_id: UUID,
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
     service: AssetService = Depends(get_asset_service),
 ) -> AssetResponse:
-    asset = await service.get_asset(user.tenant_id, asset_id)
+    asset = await service.get_asset(user.tenant_id, asset_id, with_latest_telemetry=True)
     if asset is None:
         raise HTTPException(status_code=404, detail="Asset not found")
     return asset

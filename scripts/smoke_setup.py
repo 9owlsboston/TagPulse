@@ -657,23 +657,42 @@ async def _run(args: argparse.Namespace) -> int:
 
         # Optional: also create one editor and one viewer so the UI's role
         # gating and the API's 403 behavior can be exercised end-to-end.
-        role_users: list[tuple[str, str, str | None]] = []
+        # Any non-admin users that already exist in the tenant (e.g. from a
+        # prior --full run) are picked up automatically so --regenerate-key
+        # rotates *all* keys, not just the admin's.
+        existing_role_rows = await conn.fetch(
+            "SELECT email, name, role FROM users "
+            "WHERE tenant_id = $1 AND email <> $2 "
+            "AND role IN ('editor', 'viewer') "
+            "ORDER BY role, email",
+            args.tenant_id,
+            args.admin_email,
+        )
+        role_targets: list[tuple[str, str, str]] = [
+            (r["role"], r["email"], r["name"]) for r in existing_role_rows
+        ]
         if args.with_roles:
+            existing_emails = {r["email"] for r in existing_role_rows}
             for role, email, display in (
                 ("editor", "editor@example.com", "Editor"),
                 ("viewer", "viewer@example.com", "Viewer"),
             ):
-                print(f"      Upserting {role} user '{email}'…")
-                role_key, _ = await upsert_role_user(
-                    conn,
-                    tenant_id=args.tenant_id,
-                    email=email,
-                    name=display,
-                    role=role,
-                    tenant_slug=args.tenant_slug,
-                    regenerate=args.regenerate_key,
-                )
-                role_users.append((role, email, role_key))
+                if email not in existing_emails:
+                    role_targets.append((role, email, display))
+
+        role_users: list[tuple[str, str, str | None]] = []
+        for role, email, display in role_targets:
+            print(f"      Upserting {role} user '{email}'…")
+            role_key, _ = await upsert_role_user(
+                conn,
+                tenant_id=args.tenant_id,
+                email=email,
+                name=display,
+                role=role,
+                tenant_slug=args.tenant_slug,
+                regenerate=args.regenerate_key,
+            )
+            role_users.append((role, email, role_key))
     finally:
         await conn.close()
 
@@ -761,7 +780,7 @@ async def _run(args: argparse.Namespace) -> int:
             "save it now)"
         )
 
-    if args.with_roles and role_users:
+    if role_users:
         for role, email, role_key in role_users:
             print()
             print(f"  Email:    {email}")
@@ -889,7 +908,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--regenerate-key",
         action="store_true",
-        help="Rotate the admin API key even if one exists.",
+        help="Rotate the admin API key even if one exists. Also rotates "
+        "keys for any existing editor/viewer users in the tenant so all "
+        "three role keys are reissued together.",
     )
     parser.add_argument(
         "--with-zones",

@@ -14,8 +14,37 @@ from tagpulse.models.rule_schemas import (
 )
 from tagpulse.repositories.timescaledb.session import get_session
 from tagpulse.rules import RulesService
+from tagpulse.rules.templates import get_template, get_templates
 
 router = APIRouter(tags=["rules"])
+
+
+# -- Rule templates (Sprint 20) --
+
+
+@router.get("/rule-templates")
+async def list_rule_templates(
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+) -> list[dict[str, object]]:
+    """List built-in rule templates the UI can offer as starting points.
+
+    The ``requires_subject_kind`` field is a discoverability hint — the
+    backend does not gate access. The UI is expected to filter the list
+    against the tenant's configured ``telemetry_subject_kinds`` and
+    available ``telemetry_models`` rows.
+    """
+    return [tpl.to_dict() for tpl in get_templates()]
+
+
+@router.get("/rule-templates/{template_key}")
+async def get_rule_template(
+    template_key: str,
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+) -> dict[str, object]:
+    tpl = get_template(template_key)
+    if tpl is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return tpl.to_dict()
 
 
 # -- Rules CRUD --

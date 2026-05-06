@@ -25,7 +25,7 @@ def cap_tag_data(
     Strategy when oversized: drop keys in iteration order until the JSON
     representation fits, then add ``_truncated=true`` so consumers can
     tell the blob is incomplete. Increments a tenant-scoped OTel counter.
-    The full blob remains available in ``device_telemetry`` rows that the
+    The full blob remains available in ``telemetry_readings`` rows that the
     ingestion mirror writes per [rfid-tag-data-model.md §6].
     """
     if not payload:

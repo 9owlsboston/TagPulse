@@ -144,17 +144,36 @@ class MetricDefinition(BaseModel):
 
 
 class TelemetryModelCreate(BaseModel):
-    """Define the telemetry schema for a device type."""
+    """Define the telemetry schema for a subject (Sprint 14 → Sprint 18).
 
-    device_type: str = Field(min_length=1, max_length=50)
+    ``device_type`` is required when ``subject_kind='device'`` (the
+    original Sprint 14 case) and must be omitted otherwise. The DB
+    enforces the same rule via ``ck_telemetry_models_device_type_required``.
+    """
+
+    subject_kind: Literal["device", "asset", "lot", "stock_item", "zone"] = "device"
+    device_type: str | None = Field(default=None, min_length=1, max_length=50)
     metrics: list[MetricDefinition] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_device_type(self) -> "TelemetryModelCreate":
+        if self.subject_kind == "device" and self.device_type is None:
+            raise ValueError(
+                "device_type is required when subject_kind='device'"
+            )
+        if self.subject_kind != "device" and self.device_type is not None:
+            raise ValueError(
+                "device_type must be omitted when subject_kind != 'device'"
+            )
+        return self
 
 
 class TelemetryModelResponse(BaseModel):
     """Telemetry model definition returned from the API."""
 
     id: UUID
-    device_type: str
+    subject_kind: Literal["device", "asset", "lot", "stock_item", "zone"] = "device"
+    device_type: str | None = None
     metrics: list[MetricDefinition]
     created_at: datetime
     updated_at: datetime
@@ -239,7 +258,13 @@ class TelemetryResponse(BaseModel):
 
 
 class TelemetryQuarantineResponse(BaseModel):
-    """A quarantined telemetry reading awaiting model fix-up or review."""
+    """A quarantined telemetry reading awaiting model fix-up or review.
+
+    Sprint 18 added optional ``subject_kind`` / ``subject_id`` fields:
+    legacy back-filled rows leave them ``None``; multi-subject ingest
+    (Sprint 19) populates them so reviewers can see *what* the failed
+    reading was meant to describe.
+    """
 
     id: UUID
     device_id: UUID
@@ -248,8 +273,99 @@ class TelemetryQuarantineResponse(BaseModel):
     metric_value: float | None
     raw_payload: dict[str, Any]
     reason: str
+    subject_kind: Literal["device", "asset", "lot", "stock_item", "zone"] | None = None
+    subject_id: UUID | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TelemetryReadingResponse(BaseModel):
+    """A persisted ``telemetry_readings`` row (Sprint 18).
+
+    The subject-scoped successor to :class:`TelemetryResponse`. Carries
+    the resolved subject (kind + id), the reporting device when known,
+    and the source vocabulary defined in
+    :doc:`docs/design/rfid-tag-data-model` §D4.
+    """
+
+    id: UUID
+    subject_kind: Literal["device", "asset", "lot", "stock_item", "zone"]
+    subject_id: UUID
+    device_id: UUID | None
+    timestamp: datetime
+    metric_name: str
+    metric_value: float
+    unit: str | None
+    source: Literal["device", "tag", "external", "derived"]
+    metadata: dict[str, Any] | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# -- Sprint 19: subject-scoped ingest + aggregate + latest --
+
+
+class TelemetryReadingIngest(BaseModel):
+    """A single subject-scoped telemetry reading (HTTP / MQTT ingest).
+
+    Same shape as :class:`TelemetryReading` plus the resolved subject
+    fields the caller wants attribution against. ``device_id`` is the
+    optional reporting device for cross-reference (e.g. the gateway
+    that uplinked an external observation).
+    """
+
+    subject_kind: Literal["device", "asset", "lot", "stock_item", "zone"]
+    subject_id: UUID
+    timestamp: datetime
+    metric_name: str = Field(min_length=1, max_length=100)
+    metric_value: float
+    unit: str | None = Field(default=None, max_length=20)
+    source: Literal["device", "tag", "external", "derived"] = "external"
+    device_id: UUID | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class TelemetryReadingsBatch(BaseModel):
+    """Batched subject-scoped telemetry payload (HTTP / MQTT)."""
+
+    readings: list[TelemetryReadingIngest] = Field(min_length=1, max_length=500)
+
+
+class TelemetryAggregateBucket(BaseModel):
+    """One bucket from ``/telemetry/aggregates``.
+
+    Returned in chronological order. Backed by ``cagg_telemetry_1m`` or
+    ``cagg_telemetry_1h`` depending on the requested ``bucket_seconds``;
+    falls back to a live ``time_bucket`` over ``telemetry_readings`` for
+    arbitrary intervals.
+    """
+
+    subject_kind: Literal["device", "asset", "lot", "stock_item", "zone"]
+    subject_id: UUID
+    metric_name: str
+    bucket: datetime
+    avg_value: float
+    min_value: float
+    max_value: float
+    sample_count: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LatestTelemetryEntry(BaseModel):
+    """Most-recent reading for a single metric on a subject.
+
+    Embedded on ``GET /assets/{id}`` and ``GET /lots/{id}`` (capped at
+    the 5 most-recently-written metrics per subject) so callers do not
+    have to issue a follow-up ``/telemetry/readings?...&limit=1`` for
+    each metric they want to display.
+    """
+
+    metric_name: str
+    metric_value: float
+    unit: str | None = None
+    timestamp: datetime
+    source: Literal["device", "tag", "external", "derived"]
 
 
 class LocationPayload(BaseModel):
@@ -312,11 +428,23 @@ class SiteResponse(BaseModel):
 
 
 class ZoneCreate(BaseModel):
-    """Create a reader-bound zone (geofence kind reserved for Sprint 17a)."""
+    """Create a zone.
+
+    Three kinds (mirrors the DB ``ck_zones_kind_payload`` CHECK):
+
+    * ``reader_bound`` — requires a non-empty ``fixed_reader_ids`` list.
+    * ``geofence`` — requires ``polygon_geojson`` (a GeoJSON ``Polygon``).
+    * ``virtual`` — admin-defined logical grouping (no readers, no polygon).
+      Used for cross-cutting categories like ``Cold-chain``, ``FDA-controlled``,
+      or ``Critical assets``. Must NOT carry ``fixed_reader_ids`` or
+      ``polygon_geojson``.
+    """
 
     site_id: UUID
     name: str = Field(min_length=1, max_length=255)
-    kind: Literal["reader_bound", "geofence"] = Field(default="reader_bound")
+    kind: Literal["reader_bound", "geofence", "virtual"] = Field(
+        default="reader_bound"
+    )
     fixed_reader_ids: list[UUID] | None = None
     polygon_geojson: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
@@ -329,6 +457,12 @@ class ZoneCreate(BaseModel):
             )
         if self.kind == "geofence" and not self.polygon_geojson:
             raise ValueError("geofence zones require polygon_geojson")
+        if self.kind == "virtual" and (
+            self.fixed_reader_ids or self.polygon_geojson
+        ):
+            raise ValueError(
+                "virtual zones must not have fixed_reader_ids or polygon_geojson"
+            )
         return self
 
 
@@ -429,6 +563,11 @@ class AssetResponse(BaseModel):
     metadata: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
+    # -- Sprint 19: optional embed for the most recent telemetry per
+    # metric on this asset (capped server-side at 5 entries). Populated
+    # only by ``GET /assets/{id}`` when the tenant has opted into
+    # subject_kind='asset' telemetry; ``None`` otherwise. --
+    latest_telemetry: list[LatestTelemetryEntry] | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -649,6 +788,11 @@ class LotResponse(BaseModel):
     expires_at: datetime | None
     metadata: dict[str, Any] | None = None
     created_at: datetime
+    # -- Sprint 19: optional embed for the most recent telemetry per
+    # metric on this lot (capped server-side at 5 entries). Populated
+    # only by ``GET /lots/{id}`` when the tenant has opted into
+    # subject_kind='lot' telemetry; ``None`` otherwise. --
+    latest_telemetry: list[LatestTelemetryEntry] | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

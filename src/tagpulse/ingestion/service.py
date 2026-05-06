@@ -21,6 +21,7 @@ from tagpulse.core.otel_metrics import (
     subject_zone_changed_counter,
     tag_reads_without_asset_counter,
 )
+from tagpulse.core.telemetry_caches import SUBJECT_KINDS_CACHE
 from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.ingestion.clock import ClockRejectionError, check_clock_window
@@ -46,6 +47,9 @@ from tagpulse.repositories.timescaledb.inventory import (
 )
 from tagpulse.repositories.timescaledb.sites_zones import (
     TimescaleZoneRepository,
+)
+from tagpulse.repositories.timescaledb.telemetry import (
+    TimescaleTelemetryReadingsRepository,
 )
 from tagpulse.repositories.timescaledb.tenants import TimescaleTenantRepository
 from tagpulse.rfid.epc import decode_epc_hex, gtin14_from_decoded
@@ -83,6 +87,13 @@ _TRACKING_MODES_CACHE_MAX = 1_024
 
 _GTIN_TO_PRODUCT_ID: dict[tuple[uuid.UUID, str], uuid.UUID | None] = {}
 _TRACKING_MODES: dict[uuid.UUID, tuple[str, ...]] = {}
+
+# Sprint 19: cache for tenants.telemetry_subject_kinds. Sprint 21
+# replaced the unbounded process-local dict with the shared
+# ``SUBJECT_KINDS_CACHE`` (30 s TTL) so a ``PATCH /tenant/config``
+# flip propagates within one TTL across workers without requiring
+# a restart. Local writers also call ``invalidate_subject_kinds``
+# for immediate convergence within the writing worker.
 
 # Phase A-C audit mitigations (#5, #6): bound the per-read DB hits in the
 # asset-tracking branch. Bindings rarely flip; mobility almost never does.
@@ -131,6 +142,9 @@ class IngestionService:
         movement_repo: TimescaleStockMovementRepository | None = None,
         tag_data_mapping_repo: TimescaleTagDataMappingRepository | None = None,
         tenant_repo: TimescaleTenantRepository | None = None,
+        telemetry_readings_repo: (
+            TimescaleTelemetryReadingsRepository | None
+        ) = None,
         usage_meter: UsageMeter | None = None,
     ) -> None:
         self._repo = repo
@@ -145,6 +159,7 @@ class IngestionService:
         self._movement_repo = movement_repo
         self._tag_data_mapping_repo = tag_data_mapping_repo
         self._tenant_repo = tenant_repo
+        self._telemetry_readings_repo = telemetry_readings_repo
         self._usage_meter = usage_meter
 
     async def ingest(self, tenant_id: uuid.UUID, read: TagReadCreate) -> TagReadResponse:
@@ -337,13 +352,23 @@ class IngestionService:
         read: TagReadCreate,
         tag_read_id: uuid.UUID,
     ) -> None:
-        """Mirror declared numeric tag_data keys into device_telemetry rows.
+        """Mirror declared numeric tag_data keys into telemetry rows.
 
         Per [docs/design/rfid-tag-data-model.md §6 / D4]: tag-borne sensor
-        readings are written to ``device_telemetry`` with provenance metadata
-        so analytics treat them uniformly with device-borne metrics.
+        readings are written to the telemetry pipeline with provenance
+        metadata so analytics treat them uniformly with device-borne
+        metrics.
+
+        Sprint 19 fan-out: in addition to the device-scoped
+        ``telemetry_readings`` row (subject_kind='device') written via
+        ``telemetry_service.ingest_reading``, each numeric tag_data key
+        also lands as one ``telemetry_readings`` row per resolved
+        subject (asset / stock_item / lot) the tenant has opted into
+        via ``tenants.telemetry_subject_kinds``. Resolution is best-
+        effort: an unresolved subject is logged at INFO level
+        (``telemetry.subject_unresolved``) and skipped — never an error.
         """
-        if not read.tag_data or self._telemetry_service is None:
+        if not read.tag_data:
             return
         provenance: dict[str, Any] = {
             "source": "tag",
@@ -354,25 +379,187 @@ class IngestionService:
         if read.identity and read.identity.tid:
             provenance["tid"] = read.identity.tid
 
-        for key, value in read.tag_data.items():
-            if key.startswith("_") or not isinstance(value, int | float):
-                continue
-            reading = TelemetryReading(
-                timestamp=read.timestamp,
-                metric_name=key,
-                metric_value=float(value),
-                metadata=provenance,
+        numeric_items = [
+            (k, float(v))
+            for k, v in read.tag_data.items()
+            if not k.startswith("_") and isinstance(v, int | float)
+        ]
+        if not numeric_items:
+            return
+
+        # 1) legacy device-scoped path (Sprint 14 contract; unchanged).
+        if self._telemetry_service is not None:
+            for key, value in numeric_items:
+                reading = TelemetryReading(
+                    timestamp=read.timestamp,
+                    metric_name=key,
+                    metric_value=value,
+                    metadata=provenance,
+                )
+                try:
+                    await self._telemetry_service.ingest_reading(
+                        tenant_id, read.device_id, reading
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Failed to mirror tag-borne metric %s for tag_read %s",
+                        key,
+                        tag_read_id,
+                    )
+
+        # 2) Sprint 19 subject fan-out.
+        if self._telemetry_readings_repo is None:
+            return
+        opted_in = await self._get_telemetry_subject_kinds(tenant_id)
+        non_device = [k for k in opted_in if k != "device"]
+        if not non_device:
+            return
+
+        subjects = await self._resolve_telemetry_subjects(tenant_id, read)
+        if not subjects:
+            logger.info(
+                "telemetry.subject_unresolved tenant=%s tag=%s tag_read=%s",
+                tenant_id,
+                read.tag_id,
+                tag_read_id,
             )
-            try:
-                await self._telemetry_service.ingest_reading(
-                    tenant_id, read.device_id, reading
+            return
+
+        for subject_kind, subject_id in subjects:
+            if subject_kind not in non_device:
+                continue
+            for key, value in numeric_items:
+                try:
+                    inserted = await self._telemetry_readings_repo.insert(
+                        tenant_id=tenant_id,
+                        subject_kind=subject_kind,
+                        subject_id=subject_id,
+                        timestamp=read.timestamp,
+                        metric_name=key,
+                        metric_value=value,
+                        device_id=read.device_id,
+                        source="tag",
+                        metadata=provenance,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Failed to fan-out tag-borne metric %s "
+                        "to subject %s/%s for tag_read %s",
+                        key,
+                        subject_kind,
+                        subject_id,
+                        tag_read_id,
+                    )
+                    continue
+                # Sprint 20: notify rules engine. Best-effort — failure to
+                # publish must not roll back the persisted row.
+                try:
+                    await self._event_bus.publish(
+                        Topic.TELEMETRY_RECORDED,
+                        Event(
+                            id=inserted.id,
+                            topic=Topic.TELEMETRY_RECORDED,
+                            timestamp=inserted.timestamp,
+                            payload={
+                                "tenant_id": str(tenant_id),
+                                "subject_kind": subject_kind,
+                                "subject_id": str(subject_id),
+                                "metric_name": key,
+                                "metric_value": value,
+                                "unit": inserted.unit,
+                                "device_id": str(read.device_id),
+                                "source": "tag",
+                                "timestamp": inserted.timestamp.isoformat(),
+                            },
+                        ),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "telemetry.recorded publish failed for %s/%s metric %s",
+                        subject_kind,
+                        subject_id,
+                        key,
+                    )
+
+    async def _resolve_telemetry_subjects(
+        self,
+        tenant_id: uuid.UUID,
+        read: TagReadCreate,
+    ) -> list[tuple[str, uuid.UUID]]:
+        """Resolve a tag-read into the list of subject_kind/id targets.
+
+        Looks up:
+
+        * ``asset`` — via the active ``asset_tag_bindings`` row on the
+          read's ``tag_id`` (uses the existing per-process cache).
+        * ``stock_item`` — via the active stock_item bound to the
+          read's ``tag_id`` (no auto-create here; that is the
+          inventory branch's job).
+        * ``lot`` — derived from the resolved stock_item's ``lot_id``.
+
+        Returns an empty list if nothing resolves; callers log at INFO.
+        """
+        subjects: list[tuple[str, uuid.UUID]] = []
+
+        if self._binding_repo is not None and read.tag_id:
+            cache_key = (tenant_id, read.tag_id)
+            cached = _BINDING_BY_VALUE.get(cache_key)
+            if cached is None and cache_key not in _BINDING_BY_VALUE:
+                binding = await self._binding_repo.get_active_by_value(
+                    tenant_id, read.tag_id
                 )
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "Failed to mirror tag-borne metric %s for tag_read %s",
-                    key,
-                    tag_read_id,
+                value = (
+                    (binding.asset_id, binding.id)
+                    if binding is not None
+                    else None
                 )
+                _bounded_set(
+                    _BINDING_BY_VALUE,
+                    cache_key,
+                    value,
+                    _BINDING_CACHE_MAX,
+                )
+                cached = value
+            if cached is not None:
+                subjects.append(("asset", cached[0]))
+
+        if self._stock_repo is not None and read.tag_id:
+            # Subject fan-out resolution covers both EPC- and TID-bound
+            # stock items; the inventory branch may also auto-create on
+            # first sight via a different binding_kind. We try the most
+            # common kind ('epc') and fall back to ('tid'); a future
+            # change can plumb the resolved binding_kind through here.
+            stock = await self._stock_repo.get_active_by_binding(
+                tenant_id, "epc", read.tag_id
+            )
+            if stock is None:
+                stock = await self._stock_repo.get_active_by_binding(
+                    tenant_id, "tid", read.tag_id
+                )
+            if stock is not None:
+                subjects.append(("stock_item", stock.id))
+                if stock.lot_id is not None:
+                    subjects.append(("lot", stock.lot_id))
+
+        return subjects
+
+    async def _get_telemetry_subject_kinds(
+        self, tenant_id: uuid.UUID
+    ) -> tuple[str, ...]:
+        """Cached read of ``tenants.telemetry_subject_kinds`` (Sprint 21
+        TTL cache; see :mod:`tagpulse.core.telemetry_caches`)."""
+        cached = SUBJECT_KINDS_CACHE.get(tenant_id)
+        if cached is not None:
+            return cached
+        if self._tenant_repo is None:
+            value: tuple[str, ...] = ("device",)
+        else:
+            kinds = await self._tenant_repo.get_telemetry_subject_kinds(
+                tenant_id
+            )
+            value = tuple(kinds)
+        SUBJECT_KINDS_CACHE.set(tenant_id, value)
+        return value
 
     async def _enrich_with_asset_zone(
         self,

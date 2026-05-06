@@ -107,8 +107,8 @@ Single database engine for both time-series and relational data:
 | Table | Type | Purpose |
 |-------|------|---------|
 | `tag_reads` | Hypertable | Time-series tag read events (auto-partitioned, compressed); EPC/TID/user-memory + location columns |
-| `device_telemetry` | Hypertable | Sensor metric stream, decoupled from tag reads |
-| `telemetry_quarantine` | Regular | Rejected readings (capped 7 d retention) |
+| `telemetry_readings` | Hypertable | Subject-scoped sensor metric stream keyed on `(tenant_id, subject_kind, subject_id, metric_name, timestamp)` (Sprint 18). Replaces the original `device_telemetry` hypertable, which was renamed to `telemetry_readings_legacy_device` and re-exposed as a back-compat view. See [design/subject-scoped-telemetry.md](design/subject-scoped-telemetry.md), ADR-013/014/015. |
+| `telemetry_quarantine` | Regular | Rejected readings (capped 7 d retention); Sprint 18 added nullable `subject_kind` / `subject_id` |
 | `stock_movements` | Hypertable | Append-only inventory ledger |
 | `external_locations` | Hypertable | Positions pushed by TMS / mobile-carrier adapters |
 | `alerts` | Hypertable | Alert history |

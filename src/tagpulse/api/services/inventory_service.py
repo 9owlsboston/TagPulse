@@ -13,6 +13,10 @@ from datetime import datetime
 from uuid import UUID
 
 from tagpulse.core.audit import AuditLogger
+from tagpulse.core.telemetry_caches import (
+    LATEST_TELEMETRY_CACHE,
+    SUBJECT_KINDS_CACHE,
+)
 from tagpulse.models.schemas import (
     LotCreate,
     LotResponse,
@@ -35,6 +39,10 @@ from tagpulse.repositories.timescaledb.inventory import (
     TimescaleStockMovementRepository,
     TimescaleTagDataMappingRepository,
 )
+from tagpulse.repositories.timescaledb.telemetry import (
+    TimescaleTelemetryReadingsRepository,
+)
+from tagpulse.repositories.timescaledb.tenants import TimescaleTenantRepository
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +66,10 @@ class InventoryService:
         movement_repo: TimescaleStockMovementRepository,
         mapping_repo: TimescaleTagDataMappingRepository,
         audit: AuditLogger,
+        telemetry_readings_repo: (
+            TimescaleTelemetryReadingsRepository | None
+        ) = None,
+        tenant_repo: TimescaleTenantRepository | None = None,
     ) -> None:
         self._products = product_repo
         self._lots = lot_repo
@@ -65,6 +77,8 @@ class InventoryService:
         self._movements = movement_repo
         self._mappings = mapping_repo
         self._audit = audit
+        self._telemetry_readings = telemetry_readings_repo
+        self._tenant_repo = tenant_repo
 
     # -- Products --
 
@@ -188,6 +202,45 @@ class InventoryService:
             limit=limit,
             offset=offset,
         )
+
+    async def get_lot(
+        self,
+        tenant_id: UUID,
+        lot_id: UUID,
+        *,
+        with_latest_telemetry: bool = False,
+    ) -> LotResponse | None:
+        """Fetch a single lot, optionally with embedded latest telemetry.
+
+        Sprint 19: when ``with_latest_telemetry=True`` and the tenant
+        has opted into ``subject_kind='lot'`` telemetry, embeds up to
+        5 most-recent metrics per the same contract as
+        :meth:`AssetService.get_asset`.
+        """
+        lot = await self._lots.get(tenant_id, lot_id)
+        if lot is None or not with_latest_telemetry:
+            return lot
+        if self._telemetry_readings is None or self._tenant_repo is None:
+            return lot
+        kinds = SUBJECT_KINDS_CACHE.get(tenant_id)
+        if kinds is None:
+            kinds = tuple(
+                await self._tenant_repo.get_telemetry_subject_kinds(tenant_id)
+            )
+            SUBJECT_KINDS_CACHE.set(tenant_id, kinds)
+        if "lot" not in kinds:
+            return lot
+        cache_key = (tenant_id, "lot", lot_id)
+        latest = LATEST_TELEMETRY_CACHE.get(cache_key)
+        if latest is None:
+            latest = await self._telemetry_readings.latest_per_metric(
+                tenant_id=tenant_id,
+                subject_kind="lot",
+                subject_id=lot_id,
+                limit=5,
+            )
+            LATEST_TELEMETRY_CACHE.set(cache_key, latest)
+        return lot.model_copy(update={"latest_telemetry": latest})
 
     async def update_lot(
         self,

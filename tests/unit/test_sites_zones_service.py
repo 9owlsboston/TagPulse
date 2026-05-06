@@ -255,7 +255,7 @@ async def test_create_zone_rejects_reader_bound_without_readers() -> None:
 
 @pytest.mark.asyncio
 async def test_create_zone_rejects_unknown_kind() -> None:
-    """Pydantic Literal["reader_bound","geofence"] rejects unknown values at construction."""
+    """Pydantic Literal rejects unknown kinds at construction time."""
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
@@ -265,3 +265,45 @@ async def test_create_zone_rejects_unknown_kind() -> None:
             kind="quantum",  # type: ignore[arg-type]
             fixed_reader_ids=[_uuid4()],
         )
+
+
+@pytest.mark.asyncio
+async def test_create_virtual_zone_accepts_no_payload() -> None:
+    """Virtual zones (Sprint 17) require neither readers nor polygon."""
+    z = ZoneCreate(site_id=_uuid4(), name="Cold-chain", kind="virtual")
+    assert z.kind == "virtual"
+    assert z.fixed_reader_ids is None
+    assert z.polygon_geojson is None
+
+
+@pytest.mark.asyncio
+async def test_create_virtual_zone_rejects_fixed_reader_ids() -> None:
+    """Virtual zones must not carry reader bindings — use reader_bound for that."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as exc:
+        ZoneCreate(
+            site_id=_uuid4(),
+            name="Bad-virtual",
+            kind="virtual",
+            fixed_reader_ids=[_uuid4()],
+        )
+    assert "virtual" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_create_virtual_zone_rejects_polygon() -> None:
+    """Virtual zones must not carry a polygon — use geofence for that."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as exc:
+        ZoneCreate(
+            site_id=_uuid4(),
+            name="Bad-virtual",
+            kind="virtual",
+            polygon_geojson={
+                "type": "Polygon",
+                "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]],
+            },
+        )
+    assert "virtual" in str(exc.value)

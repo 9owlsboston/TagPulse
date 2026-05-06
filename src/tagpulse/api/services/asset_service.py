@@ -13,6 +13,10 @@ from tagpulse.core.otel_metrics import (
     external_locations_counter,
     tag_collisions_global_counter,
 )
+from tagpulse.core.telemetry_caches import (
+    LATEST_TELEMETRY_CACHE,
+    SUBJECT_KINDS_CACHE,
+)
 from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.models.schemas import (
     AssetCreate,
@@ -38,6 +42,10 @@ from tagpulse.repositories.timescaledb.assets import (
 from tagpulse.repositories.timescaledb.external_locations import (
     TimescaleExternalLocationRepository,
 )
+from tagpulse.repositories.timescaledb.telemetry import (
+    TimescaleTelemetryReadingsRepository,
+)
+from tagpulse.repositories.timescaledb.tenants import TimescaleTenantRepository
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +65,10 @@ class AssetService:
         external_location_repo: TimescaleExternalLocationRepository | None = None,
         event_bus: EventBus | None = None,
         asset_location_repo: TimescaleAssetLocationRepository | None = None,
+        telemetry_readings_repo: (
+            TimescaleTelemetryReadingsRepository | None
+        ) = None,
+        tenant_repo: TimescaleTenantRepository | None = None,
     ) -> None:
         self._assets = asset_repo
         self._bindings = binding_repo
@@ -64,6 +76,8 @@ class AssetService:
         self._external = external_location_repo
         self._event_bus = event_bus
         self._asset_location = asset_location_repo
+        self._telemetry_readings = telemetry_readings_repo
+        self._tenant_repo = tenant_repo
 
     # -- Assets --
 
@@ -82,9 +96,44 @@ class AssetService:
         return asset
 
     async def get_asset(
-        self, tenant_id: UUID, asset_id: UUID
+        self,
+        tenant_id: UUID,
+        asset_id: UUID,
+        *,
+        with_latest_telemetry: bool = False,
     ) -> AssetResponse | None:
-        return await self._assets.get(tenant_id, asset_id)
+        """Fetch a single asset.
+
+        Sprint 19: pass ``with_latest_telemetry=True`` from the
+        ``GET /assets/{id}`` route to embed the latest telemetry per
+        metric (capped at 5). Skipped silently when the tenant has not
+        opted into ``subject_kind='asset'`` telemetry, when the
+        readings repo is not wired, or when no readings exist yet.
+        """
+        asset = await self._assets.get(tenant_id, asset_id)
+        if asset is None or not with_latest_telemetry:
+            return asset
+        if self._telemetry_readings is None or self._tenant_repo is None:
+            return asset
+        kinds = SUBJECT_KINDS_CACHE.get(tenant_id)
+        if kinds is None:
+            kinds = tuple(
+                await self._tenant_repo.get_telemetry_subject_kinds(tenant_id)
+            )
+            SUBJECT_KINDS_CACHE.set(tenant_id, kinds)
+        if "asset" not in kinds:
+            return asset
+        cache_key = (tenant_id, "asset", asset_id)
+        latest = LATEST_TELEMETRY_CACHE.get(cache_key)
+        if latest is None:
+            latest = await self._telemetry_readings.latest_per_metric(
+                tenant_id=tenant_id,
+                subject_kind="asset",
+                subject_id=asset_id,
+                limit=5,
+            )
+            LATEST_TELEMETRY_CACHE.set(cache_key, latest)
+        return asset.model_copy(update={"latest_telemetry": latest})
 
     async def list_assets(
         self,

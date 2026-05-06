@@ -19,12 +19,13 @@ from tagpulse.ingestion.service import IngestionService
 from tagpulse.repositories.protocols import (
     DeviceRepository,
     TagReadRepository,
-    TelemetryRepository,
 )
 from tagpulse.repositories.timescaledb.devices import TimescaleDeviceRepository
 from tagpulse.repositories.timescaledb.session import get_session
 from tagpulse.repositories.timescaledb.tag_reads import TimescaleTagReadRepository
-from tagpulse.repositories.timescaledb.telemetry import TimescaleTelemetryRepository
+from tagpulse.repositories.timescaledb.telemetry import (
+    TimescaleTelemetryReadingsRepository,
+)
 
 
 async def get_tag_read_repo(
@@ -80,15 +81,24 @@ async def get_telemetry_model_service(
     yield TelemetryModelService(session=session)
 
 
-async def get_telemetry_repo(
+async def get_telemetry_readings_repo(
     session: AsyncSession = Depends(get_session),
-) -> TelemetryRepository:
-    """Provide a TelemetryRepository bound to the current session."""
-    return TimescaleTelemetryRepository(session)
+) -> TimescaleTelemetryReadingsRepository:
+    """Provide the subject-scoped readings repo bound to the session.
+
+    Sprint 19's ``/telemetry/readings`` and ``/telemetry/aggregates``
+    endpoints depend on this directly; the ingest pipeline picks the
+    same instance up via :func:`get_ingestion_service`. Sprint 21
+    folded the Sprint 14 device-shaped surface into this same repo,
+    so :class:`TelemetryService` also takes its instance from here.
+    """
+    return TimescaleTelemetryReadingsRepository(session)
 
 
 async def get_telemetry_service(
-    repo: TelemetryRepository = Depends(get_telemetry_repo),
+    repo: TimescaleTelemetryReadingsRepository = Depends(
+        get_telemetry_readings_repo
+    ),
     device_repo: DeviceRepository = Depends(get_device_repo),
     event_bus: EventBus = Depends(get_event_bus),
     model_service: TelemetryModelService = Depends(get_telemetry_model_service),
@@ -124,6 +134,9 @@ async def get_ingestion_service(
     from tagpulse.repositories.timescaledb.sites_zones import (
         TimescaleZoneRepository,
     )
+    from tagpulse.repositories.timescaledb.telemetry import (
+        TimescaleTelemetryReadingsRepository,
+    )
     from tagpulse.repositories.timescaledb.tenants import (
         TimescaleTenantRepository,
     )
@@ -141,6 +154,7 @@ async def get_ingestion_service(
         movement_repo=TimescaleStockMovementRepository(session),
         tag_data_mapping_repo=TimescaleTagDataMappingRepository(session),
         tenant_repo=TimescaleTenantRepository(session),
+        telemetry_readings_repo=TimescaleTelemetryReadingsRepository(session),
         usage_meter=usage_meter,
     )
 
@@ -177,6 +191,9 @@ async def get_asset_service(
     from tagpulse.repositories.timescaledb.external_locations import (
         TimescaleExternalLocationRepository,
     )
+    from tagpulse.repositories.timescaledb.tenants import (
+        TimescaleTenantRepository,
+    )
 
     yield AssetService(
         asset_repo=TimescaleAssetRepository(session),
@@ -185,6 +202,8 @@ async def get_asset_service(
         external_location_repo=TimescaleExternalLocationRepository(session),
         event_bus=event_bus,
         asset_location_repo=TimescaleAssetLocationRepository(session),
+        telemetry_readings_repo=TimescaleTelemetryReadingsRepository(session),
+        tenant_repo=TimescaleTenantRepository(session),
     )
 
 
@@ -199,6 +218,9 @@ async def get_inventory_service(
         TimescaleStockMovementRepository,
         TimescaleTagDataMappingRepository,
     )
+    from tagpulse.repositories.timescaledb.tenants import (
+        TimescaleTenantRepository,
+    )
 
     yield InventoryService(
         product_repo=TimescaleProductRepository(session),
@@ -207,4 +229,6 @@ async def get_inventory_service(
         movement_repo=TimescaleStockMovementRepository(session),
         mapping_repo=TimescaleTagDataMappingRepository(session),
         audit=AuditLogger(session=session),
+        telemetry_readings_repo=TimescaleTelemetryReadingsRepository(session),
+        tenant_repo=TimescaleTenantRepository(session),
     )
