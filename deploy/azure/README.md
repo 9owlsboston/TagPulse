@@ -161,24 +161,92 @@ TAGPULSE_API_URL="$API_URL" python scripts/smoke_setup.py --full
 
 ## CD (GitHub Actions)
 
-`.github/workflows/deploy-azure.yml` runs on push of a `v*` tag (and on
-manual dispatch). It:
+`.github/workflows/deploy-azure.yml` runs:
 
-1. Federates to Azure via OIDC (no secrets stored in GitHub — uses the `production` environment + a GitHub-issued token).
-2. Pulls the images already published by `build-and-push.yml` (B3) — no rebuild.
-3. Tags them in ACR (`docker pull ghcr.io/.../tagpulse-{component}:<sha>` → `docker tag` → `docker push <acr>.azurecr.io/...`).
-4. Runs the `tagpulse-migrations` Container Apps Job and waits for completion.
-5. Updates `tagpulse-api` and `tagpulse-worker` to the new image tag.
+- automatically on push of a `v*` tag → deploys to the **`production`** GitHub Environment;
+- on `workflow_dispatch` with an `environment` input → `dev` | `staging` | `production`.
 
-Required GitHub repo secrets / variables (set under **Settings → Environments → production**):
+It federates to Azure via OIDC (no long-lived secrets), verifies the three
+images already exist in ACR at the target tag, runs the `tagpulse-migrations`
+Container Apps Job to completion, then `az containerapp update`s api +
+worker and smoke-tests `/health/ready`.
 
-| Variable / secret | Value |
+### One-time setup (per environment)
+
+For each of `dev`, `staging`, `production`:
+
+**1. Create the GitHub Environment** (Settings → Environments → New environment).
+Add required reviewers on `production` only.
+
+**2. Create an Entra app registration + federated credential** scoped to that environment:
+
+```sh
+ENV=dev                                    # or staging | production
+APP_NAME="tagpulse-deploy-${ENV}"
+REPO=9owlsboston/TagPulse
+
+# Create the app + service principal
+APP_ID=$(az ad app create --display-name "$APP_NAME" --query appId -o tsv)
+az ad sp create --id "$APP_ID"
+
+# Federated credential: GitHub-issued tokens for this Environment can assume the SP
+az ad app federated-credential create --id "$APP_ID" --parameters "{
+  \"name\": \"github-${ENV}\",
+  \"issuer\": \"https://token.actions.githubusercontent.com\",
+  \"subject\": \"repo:${REPO}:environment:${ENV}\",
+  \"audiences\": [\"api://AzureADTokenExchange\"]
+}"
+
+# Grant Contributor on the env's resource group + AcrPush on its ACR
+SUB=$(az account show --query id -o tsv)
+RG=tagpulse-${ENV/prod/prod}-rg            # tagpulse-dev-rg / tagpulse-staging-rg / tagpulse-prod-rg
+ACR=$(az acr list -g "$RG" --query '[0].name' -o tsv)
+
+az role assignment create --assignee "$APP_ID" --role Contributor \
+  --scope "/subscriptions/${SUB}/resourceGroups/${RG}"
+az role assignment create --assignee "$APP_ID" --role AcrPush \
+  --scope "/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.ContainerRegistry/registries/${ACR}"
+
+echo "AZURE_CLIENT_ID=$APP_ID"
+echo "AZURE_TENANT_ID=$(az account show --query tenantId -o tsv)"
+echo "AZURE_SUBSCRIPTION_ID=$SUB"
+```
+
+**3. Set five Environment-scoped variables** (Settings → Environments → `<env>` → Variables):
+
+| Variable | Value |
 |---|---|
-| `AZURE_CLIENT_ID` | App registration client ID with federated credential bound to this repo |
-| `AZURE_TENANT_ID` | Azure AD tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | Target subscription |
-| `AZURE_RESOURCE_GROUP` | `tagpulse-rg` (or your override) |
+| `AZURE_CLIENT_ID` | App registration appId from step 2 |
+| `AZURE_TENANT_ID` | Tenant ID from step 2 |
+| `AZURE_SUBSCRIPTION_ID` | Target subscription ID |
+| `AZURE_RESOURCE_GROUP` | `tagpulse-dev-rg` / `tagpulse-staging-rg` / `tagpulse-prod-rg` |
 | `AZURE_ACR_NAME` | ACR name (without `.azurecr.io`) |
+
+These are GitHub *variables*, not secrets — none of them are sensitive on
+their own; the federated credential is what gates token issuance to the
+right repo + environment.
+
+### Triggering a deploy
+
+```sh
+# Production via tag push (auto-runs on tag, gated by production reviewers):
+git tag v0.22.0 && git push --tags
+
+# Manual dispatch to any environment:
+gh workflow run deploy-azure.yml \
+  -f environment=staging \
+  -f image_tag=sha-abc123      # optional, defaults to the tag/SHA
+```
+
+The `production` environment can additionally be configured to allow
+deploys only from `main` and `v*` tag refs (Settings → Environments →
+production → Deployment branches).
+
+### Rollback
+
+Re-run `deploy-azure.yml` with the previous tag — every container-app
+revision is immutable so traffic flips back atomically.
+
 
 ## Hardening backlog (deferred, by design)
 
