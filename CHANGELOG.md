@@ -4,6 +4,10 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### CI/CD onboarding scripts
+
+- **`scripts/azd-cicd-setup.sh <env>`** + **`scripts/azd-cicd-verify.sh <env>`** ([scripts/azd-cicd-setup.sh](scripts/azd-cicd-setup.sh), [scripts/azd-cicd-verify.sh](scripts/azd-cicd-verify.sh)). Idempotent automation for Phase 4 of [docs/runbooks/azure-first-deploy.md](docs/runbooks/azure-first-deploy.md): creates the GitHub Environment, the Entra app + service principal, the federated credential (subject `repo:9owlsboston/TagPulse:environment:<env>`), the Contributor + AcrPush role assignments, and the 5 Environment-scoped variables (`AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID` / `AZURE_RESOURCE_GROUP` / `AZURE_ACR_NAME`). Verify script does a read-only drift check (exits non-zero on first failure). Replaces the manual `az ad app …` snippet that was previously copy-pasted from [deploy/azure/README.md](deploy/azure/README.md). Runbook Phase 4 updated to point at the scripts as the recommended path.
+
 ### Sprint 23 — Network hardening (in progress)
 
 > ADR-017, [docs/roadmap.md § Sprint 23](docs/roadmap.md). Companion to the Sprint 22-C deploy; targets the corporate `Modify`-mode storage policy + the same-day KV `publicNetworkAccess` enforcement.

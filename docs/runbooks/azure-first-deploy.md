@@ -77,6 +77,16 @@ For each new environment (`dev` / `staging` / `prod`), run **once**:
 
 ## Phase 4 — Wire up CI/CD (one-time, per environment)
 
+> **Shortcut:** run [`scripts/azd-cicd-setup.sh <env>`](../../scripts/azd-cicd-setup.sh)
+> after `azd up` succeeds. It is idempotent and performs every step in this
+> phase (GitHub Environment, Entra app + federated credential, RBAC, the
+> 5 Environment variables). Then run
+> [`scripts/azd-cicd-verify.sh <env>`](../../scripts/azd-cicd-verify.sh)
+> to confirm. The manual checklist below documents what those scripts do
+> for audit / drift purposes.
+
+- [ ] `scripts/azd-cicd-setup.sh <env>` exits 0
+- [ ] `scripts/azd-cicd-verify.sh <env>` exits 0
 - [ ] **GitHub Environment created** (Settings → Environments → New) named exactly `dev` / `staging` / `production`
   - [ ] `production`: required reviewer added; deployment branches restricted to `main` + `v*` tags
 - [ ] **Entra app registration + federated credential created** per environment (see [deploy/azure/README.md § One-time setup](../../deploy/azure/README.md#one-time-setup-per-environment) for the `az ad app …` snippet)
