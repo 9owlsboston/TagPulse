@@ -17,3 +17,4 @@
 | 013 | [Subject-scoped telemetry](013-telemetry-subject-scoping.md) | accepted | 2026-05-05 |
 | 014 | [Multi-subject telemetry ingest & API](014-telemetry-multi-subject-ingest.md) | accepted | 2026-05-05 |
 | 015 | [Telemetry rules & Sprint 18 deprecation sunset](015-telemetry-rules-and-deprecation.md) | accepted | 2026-05-05 |
+| 016 | [Multi-cloud deployment strategy](016-multi-cloud-deployment-strategy.md) | proposed | 2026-05-06 |

@@ -54,6 +54,12 @@ class TenantModel(Base):
     provisioning_key_prefix: Mapped[str | None] = mapped_column(String(10), nullable=True)
     # -- Sprint 17a: per-tenant tile-provider config (NULL = system default) --
     tile_provider: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # -- Sprint 22 A4: per-tenant rate-limit overrides (NULL = use globals).
+    # Shape: {"ingest": int, "read": int, "write": int, "admin": int}.
+    # Any subset of keys allowed; missing keys fall back to Settings. --
+    rate_limit_overrides: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

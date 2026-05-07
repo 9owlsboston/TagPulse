@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.core.audit import AuditLogger
+from tagpulse.core.rate_limit import RATE_LIMITER
 from tagpulse.core.telemetry_caches import invalidate_subject_kinds
 from tagpulse.core.tenant_auth import Tenant, get_current_tenant
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
@@ -44,14 +45,17 @@ class TenantConfig(BaseModel):
     telemetry_subject_kinds: list[TelemetrySubjectKind] = Field(
         default_factory=lambda: ["device"]  # type: ignore[arg-type]
     )
+    rate_limit_overrides: dict[str, int] | None = None
 
 
 class TenantConfigUpdate(BaseModel):
     """Admin-only payload for toggling tenant feature flags.
 
     All fields are optional; PATCH semantics — only fields explicitly
-    provided are written. Sprint 19 added ``telemetry_subject_kinds``
-    so existing clients that PATCH only ``tracking_modes`` keep working.
+    provided are written. Sprint 19 added ``telemetry_subject_kinds``;
+    Sprint 22 added ``rate_limit_overrides`` (per-tenant ceilings —
+    keys ∈ ``{ingest, read, write, admin}``, values are
+    requests-per-minute; pass ``{}`` to clear all overrides).
     """
 
     tracking_modes: list[TrackingMode] | None = Field(
@@ -60,9 +64,11 @@ class TenantConfigUpdate(BaseModel):
     telemetry_subject_kinds: list[TelemetrySubjectKind] | None = Field(
         default=None, min_length=1, max_length=5
     )
+    rate_limit_overrides: dict[str, int] | None = None
 
 
 def _to_response(row: TenantModel) -> TenantConfig:
+    overrides = row.rate_limit_overrides if isinstance(row.rate_limit_overrides, dict) else None
     return TenantConfig(
         id=str(row.id),
         name=row.name,
@@ -70,6 +76,7 @@ def _to_response(row: TenantModel) -> TenantConfig:
         plan=row.plan,
         tracking_modes=list(row.tracking_modes),  # type: ignore[arg-type]
         telemetry_subject_kinds=list(row.telemetry_subject_kinds),  # type: ignore[arg-type]
+        rate_limit_overrides=overrides,
     )
 
 
@@ -121,6 +128,41 @@ async def update_tenant_config(
             # opt-in immediately. Sibling workers converge within the
             # cache TTL (30 s by default).
             invalidate_subject_kinds(user.tenant_id)
+
+    if body.rate_limit_overrides is not None:
+        # Sprint 22 A4: validate keys + coerce to int. ``{}`` clears.
+        valid_keys = {"ingest", "read", "write", "admin"}
+        bad_keys = set(body.rate_limit_overrides) - valid_keys
+        if bad_keys:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"rate_limit_overrides keys must be subset of "
+                    f"{sorted(valid_keys)}; got unexpected {sorted(bad_keys)}"
+                ),
+            )
+        for key, value in body.rate_limit_overrides.items():
+            if not isinstance(value, int) or value <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"rate_limit_overrides[{key!r}] must be a positive "
+                        f"integer (requests-per-minute); got {value!r}"
+                    ),
+                )
+        new_overrides = dict(body.rate_limit_overrides) or None
+        old_overrides = (
+            dict(row.rate_limit_overrides)
+            if isinstance(row.rate_limit_overrides, dict)
+            else None
+        )
+        if new_overrides != old_overrides:
+            row.rate_limit_overrides = new_overrides
+            changes["rate_limit_overrides"] = {
+                "from": old_overrides,
+                "to": new_overrides,
+            }
+            RATE_LIMITER.invalidate(user.tenant_id)
 
     if changes:
         await session.flush()

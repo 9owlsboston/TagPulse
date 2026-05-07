@@ -4,6 +4,26 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Sprint 22 — Cloud Readiness
+
+#### Phase A — Config & runtime hardening (shipped)
+- **`Settings` strict-mode validator** ([src/tagpulse/core/config.py](src/tagpulse/core/config.py)). New `environment: Literal["dev","staging","production"]` field; `jwt_secret` and `database_url` no longer fall back to dev sentinels in staging/production; CORS wildcard `*` and blank entries rejected when `environment != "dev"`; `strict_migration_check` is forced `True` outside dev. Closes the "every cloud deployment shares the same JWT key if env var unset" foot-gun (Phase A1).
+- **Explicit CORS methods/headers** ([src/tagpulse/api/main.py](src/tagpulse/api/main.py)). `cors_allow_methods` / `cors_allow_headers` are first-class `Settings` fields; the FastAPI `CORSMiddleware` now receives parsed lists instead of `["*"]`. Phase A2.
+- **Geofence-flag startup WARN** ([src/tagpulse/api/main.py](src/tagpulse/api/main.py)). When `environment != "dev"` boots with `geofence_evaluation_enabled=False`, `lifespan` logs a structured WARN; the flag is also surfaced in `/health/ready`'s config snapshot. Phase A3.
+- **In-process per-tenant rate limiter** ([src/tagpulse/core/rate_limit.py](src/tagpulse/core/rate_limit.py), [src/tagpulse/api/main.py](src/tagpulse/api/main.py)). Token-bucket keyed on `(tenant_id, route_class)` with route classes `ingest` / `read` / `write` / `admin` and per-class globals in `Settings`. Bypass list for `/health`, `/metrics`, `/auth/login`, `/docs`, `/openapi`, `/redoc`. 429 response carries `Retry-After: 60` and a JSON body `{detail, route_class, limit_per_min}`. Closes the Sprint 15 / backlog "global API rate-limit middleware" deferral and removes the public-internet DoS surface flagged in the cloud-readiness review. Phase A4.
+- **Per-tenant rate-limit overrides** ([migrations/versions/033_tenant_rate_limit_overrides.py](migrations/versions/033_tenant_rate_limit_overrides.py), [src/tagpulse/models/database.py](src/tagpulse/models/database.py), [src/tagpulse/api/routes/tenant_config.py](src/tagpulse/api/routes/tenant_config.py)). New `tenants.rate_limit_overrides JSONB` column accepting `{"ingest"|"read"|"write"|"admin": positive_int}`. `PATCH /tenant/config` validates keys + values, `{}` clears, audited via the existing `AuditLogger`, and on change the limiter cache is invalidated for the tenant via `RATE_LIMITER.invalidate(tenant_id)`. Phase A4.
+- **`/health/ready` and `/health/detail` config snapshot** ([src/tagpulse/api/routes/health.py](src/tagpulse/api/routes/health.py)). Both bodies now embed `config: {environment, max_ingest_payload_bytes, ingest_clock_enforce, geofence_evaluation_enabled, rate_limit_enabled, strict_migration_check}` so Container Apps / k8s operators can verify env-var wiring without shelling into the container. Phase A5.
+- **`/health/live` alias** ([src/tagpulse/api/routes/health.py](src/tagpulse/api/routes/health.py)). New liveness route distinct from `/health/ready` (DB + MQTT subscriber + migration-head check). Existing `/health` still returns liveness for backward compatibility. Phase A6.
+- **Startup migration-version assertion** ([src/tagpulse/core/migration_check.py](src/tagpulse/core/migration_check.py), [src/tagpulse/api/main.py](src/tagpulse/api/main.py)). `MigrationVersionMismatch` raised from `lifespan` when `alembic_version` ≠ code's `head` while `strict_migration_check=True` (forced outside dev). `expected_head_revision()` is `lru_cache`'d. `/health/ready` runs the same check. Phase A7.
+
+#### Tests
+- **19 new tests** in [tests/unit/test_sprint22_cloud_readiness.py](tests/unit/test_sprint22_cloud_readiness.py): `Settings` strict-mode (dev defaults preserved; production rejects dev secrets, wildcard / blank CORS; staging behaves like production; strict-migration-check force-set); `classify_route` for admin / ingest / read / write; `RateLimiter` token-bucket exhaustion, per-tenant isolation, override-supersedes-global; `rate_limit_middleware` bypasses `/health`, abstains without `X-Tenant-ID`, returns 429 + `Retry-After: 60` after the limit; `/health/live` and `/health` both 200; `expected_head_revision()` resolves to `>= "033"`.
+- **Full unit suite green at 427 tests** (was 408; +19 new). `make check` clean (ruff + mypy + pytest).
+
+#### Documentation
+- **New [ADR-016 — Multi-cloud deployment strategy](docs/adr/016-multi-cloud-deployment-strategy.md)** records the three-layer topology (per-cloud IaC / portable Helm chart / portable `pg_dump --where=tenant_id` data layer), pins Bicep-on-Azure-first with Terraform-elsewhere, locks in the `tagpulse.storage.BlobStore` abstraction shape, and parameterizes the MQTT broker module so EMQX cutover stays a config flip. Status: Proposed (flips to Accepted on first cloud deploy).
+- **Sprint 22 plan added to [docs/roadmap.md](docs/roadmap.md)** — 7 phases (A config hardening, B container/migration pipeline, C Azure Bicep + `azd`, D portable data layer, E observability, F AWS/GCP skeletons, G docs) closing all 12 cloud-readiness gaps from the pre-deploy review. Phase A complete; B–G remain `[planned]`.
+
 ### Sprint 21 — Subject-Scoped Telemetry: UI & Deprecation Sunset (backend)
 
 #### Smoke / DX

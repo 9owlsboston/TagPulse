@@ -382,6 +382,84 @@
 
 ---
 
+## Sprint 22 — Cloud Readiness (Azure first, multi-cloud-shaped)
+
+> Design: ADR-016 (this sprint), [docs/adr/008-multi-tenancy-strategy.md](adr/008-multi-tenancy-strategy.md) (tenant-export shape), [docs/adr/002-mqtt-device-connectivity.md](adr/002-mqtt-device-connectivity.md) (broker target)
+> Goal: close the 12 must-fix gaps that block first cloud deploy. Land a per-provider IaC layout with Azure as the v1 target; keep the data layer portable so cross-cloud migration is a `pg_dump --where=tenant_id` + Helm-replay drill, not a rewrite. EMQX broker cutover, mTLS broker rollout (Sprint 17c), and AWS/GCP IaC implementations stay deferred — Sprint 22 ships only the **structure** for the latter two so they aren't a refactor when scheduled.
+
+### Phase A — Config & runtime hardening (no cloud account required; ship first)
+
+- [done] **A1 — Strip dev defaults from `Settings`.** `jwt_secret` and `database_url` lose their hardcoded fallbacks; new `environment: Literal["dev","staging","production"] = "dev"` field; `Settings` validator raises at import time when `environment != "dev"` and either secret is missing or matches a known dev value. Closes the "every cloud deployment shares the same JWT key if env var unset" foot-gun. ([src/tagpulse/core/config.py](../src/tagpulse/core/config.py))
+- [done] **A2 — CORS hardening.** `allow_methods` + `allow_headers` become explicit lists in `Settings`; wildcard `*` origin rejected at startup when `environment != "dev"`. ([src/tagpulse/api/main.py](../src/tagpulse/api/main.py))
+- [done] **A3 — Geofence flag default audit.** Kept default `False`; startup emits a WARN when `environment != "dev"` boots with geofence evaluation off, and the flag now appears in `/health/ready`'s config snapshot for cloud operators. ([src/tagpulse/api/main.py](../src/tagpulse/api/main.py), [src/tagpulse/api/routes/health.py](../src/tagpulse/api/routes/health.py))
+- [done] **A4 — Global rate-limit middleware.** In-process token bucket keyed on `(tenant_id, route_class)`; routes classified as `ingest` / `read` / `write` / `admin` with separate per-tenant limits in `Settings`. Per-tenant overrides via new `tenants.rate_limit_overrides JSONB` (Alembic migration 033) and a `PATCH /tenant/config` extension that invalidates the limiter cache. ([src/tagpulse/core/rate_limit.py](../src/tagpulse/core/rate_limit.py), [migrations/versions/033_tenant_rate_limit_overrides.py](../migrations/versions/033_tenant_rate_limit_overrides.py), [src/tagpulse/api/routes/tenant_config.py](../src/tagpulse/api/routes/tenant_config.py))
+- [done] **A5 — `MAX_INGEST_PAYLOAD_BYTES` surfaced in `/health/ready`.** `/health/ready` and `/health/detail` now embed a `config` snapshot (environment, max-payload bytes, clock-enforce, geofence flag, rate-limit-enabled, strict-migration-check) so cloud operators can verify env-var wiring without shelling into the container. ([src/tagpulse/api/routes/health.py](../src/tagpulse/api/routes/health.py))
+- [done] **A6 — `/health/live` vs `/health/ready` split.** Container Apps / k8s convention: `/health/live` = process up; `/health/ready` = DB reachable + MQTT subscriber connected + `alembic_version == head`. Existing single `/health` keeps working (delegates to liveness). ([src/tagpulse/api/routes/health.py](../src/tagpulse/api/routes/health.py))
+- [done] **A7 — Startup migration-version assertion.** API refuses to boot if `alembic_version` ≠ `head` when `strict_migration_check=True` (forced by the strict-mode validator in staging/production, opt-in in dev). `/health/ready` reports the same comparison. ([src/tagpulse/core/migration_check.py](../src/tagpulse/core/migration_check.py), [src/tagpulse/api/main.py](../src/tagpulse/api/main.py))
+
+### Phase B — Container & migration pipeline
+
+- [planned] **B1 — Split Dockerfile into three images.** `tagpulse-api`, `tagpulse-worker` (MQTT subscriber + `DwellWorker` + `inventory_rule_worker`), `tagpulse-migrations` (one-shot `alembic upgrade head`). Worker today is colocated in FastAPI `lifespan` — pulling it out is the precondition for scaling ingestion independently of HTTP traffic in cloud. ([Dockerfile](../Dockerfile))
+- [planned] **B2 — `deploy/common/migrations-job.yaml`.** k8s Job + Container Apps job equivalent that runs `tagpulse-migrations` to completion before API rollout proceeds. Wired into both the Bicep deploy (Phase C) and the Helm chart (B4).
+- [planned] **B3 — GitHub Actions `build-and-push.yml`.** Matrix builds `tagpulse-{api,worker,migrations}`, tags `ghcr.io/9owlsboston/tagpulse-{component}:{git-sha}` + `:latest` on `main`; provenance attestation via `actions/attest-build-provenance`.
+- [planned] **B4 — `deploy/common/helm/tagpulse/` chart.** Provider-agnostic Helm chart deploying api + worker + migrations-job + ServiceMonitor + PodDisruptionBudget. Values overlay per cloud — Bicep (Phase C) renders Container Apps natively but the chart is the canonical "what runs where" spec for AWS/GCP later.
+
+### Phase C — Azure deployment (first provider)
+
+- [planned] **C1 — `deploy/azure/bicep/` modules.** Subscription-scope `main.bicep` orchestrating:
+  - **postgres** — Azure Database for PostgreSQL Flexible Server, TimescaleDB extension via `azure.extensions`, Entra ID admin, private endpoint into VNet, geo-redundant backup, `pgvector` enabled (future-proofs AI Phase 1 backlog).
+  - **container-apps** — three apps (api, worker, ui) + one job (migrations); managed identity for Postgres + Key Vault; KEDA scaling on HTTP for api, static `1` worker for v1 (MQTT-queue-depth scaler deferred).
+  - **keyvault** — JWT secret, Postgres admin password (until passwordless), MQTT broker creds; managed identity → `Key Vault Secrets User`.
+  - **acr** — container registry; Container Apps pulls via managed identity.
+  - **log-analytics + app-insights** — destination for the existing Sprint 11 OTel exporter; Container Apps native integration.
+  - **mqtt** — parameterized: (a) ACI-hosted Mosquitto for v1 (~$15/mo, single-node, no HA), or (b) external EMQX Cloud subscription wired in via `keyvault` (managed, ~$50+/mo, HA). Pick at deploy time; module signature identical.
+  - **front-door + storage-static-site** — static SWA for [TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI) + Front Door for TLS/WAF in front of Container Apps.
+- [planned] **C2 — `azd up` integration.** `deploy/azure/azure.yaml` + service hooks; `azd up` from a clean Azure subscription provisions everything, runs the migrations job, deploys all three images.
+- [planned] **C3 — OTel → App Insights wiring.** `OTEL_EXPORTER_OTLP_ENDPOINT` env var sourced from App Insights connection string; existing Sprint 11 OTel SDK does the rest.
+
+### Phase D — Portable data layer (the "easy migration between clouds" deliverable)
+
+- [planned] **D1 — `deploy/portable/data-migration/export_tenant.py`.** Wraps `pg_dump --table=… --where="tenant_id='…'"` for every tenant-scoped table in FK-dependency order, plus the `tenants` row + `tenant_quotas` + `users` + `api_keys`. Output: a single `.tar.zst` per tenant + a JSON manifest with row counts and source schema version. Builds directly on the ADR-008 Tier-2 sovereign-tenant promotion runbook that's been a backlog item since Sprint 13b.
+- [planned] **D2 — `deploy/portable/data-migration/import_tenant.py`.** Validates manifest schema-version matches `alembic_version head` of the target, optionally remaps `tenant_id` (UUID collision avoidance), restores in dependency order, runs `COUNT(*)` parity checks against the manifest. Refuses to import partial/corrupt archives.
+- [planned] **D3 — Cross-cloud DR runbook `docs/runbooks/cross-cloud-migration.md`.** Azure → AWS step-by-step (provision target → run migrations → export from source → upload archive → import to target → DNS cutover → decommission source). The actual cross-cloud drill is Sprint 23+ work; the runbook is the deliverable for Sprint 22.
+- [planned] **D4 — `tagpulse.storage` blob abstraction.** Protocol `BlobStore` with implementations for Azure Blob, S3, GCS, local FS. Used by D1/D2 immediately; unblocks the Sprint 8 backlog "scheduled CSV exports" item without a second abstraction. Selected at runtime via `STORAGE_BACKEND` + provider-specific env vars.
+
+### Phase E — Observability & operations
+
+- [planned] **E1 — Prometheus scrape wiring.** `ServiceMonitor` template in the Helm chart (B4); for Container Apps, the Azure Monitor managed Prometheus add-on with a scrape config targeting the api + worker `/metrics` endpoints. `ops/prometheus/alerts.yml` ported into Helm values + Azure Managed Grafana dashboard JSON checked into `deploy/azure/grafana/`.
+- [planned] **E2 — First-deploy runbook `docs/runbooks/azure-first-deploy.md`.** Prerequisites (subscription, az CLI, azd, GitHub PAT for ACR), `azd up` walkthrough, smoke test using `scripts/smoke_setup.py --full` against the deployed instance, troubleshooting top-10. Skeleton mirrors at `docs/runbooks/aws-first-deploy.md` + `gcp-first-deploy.md` (TODO-only — gated on Sprint 23+).
+- [planned] **E3 — CI gating on migration round-trip.** Promote the existing `TAGPULSE_INTEGRATION_DB_URL` round-trip test (Sprint 19) into the GitHub Actions matrix with a TimescaleDB service container so `make migration-check` blocks merge to `main`. Closes the Sprint 19 carry-over flagged in the cloud-readiness review.
+
+### Phase F — Other-cloud skeletons (no implementation, just structure)
+
+- [planned] **F1 — `deploy/aws/` skeleton.** README + Terraform module skeleton listing the 1:1 mapping (Container Apps → ECS Fargate or EKS, Azure DB → RDS Postgres + Timescale extension *or* Aiven, Front Door → CloudFront + WAF, Key Vault → Secrets Manager, App Insights → CloudWatch + AMP, ACR → ECR). Stub `main.tf` is `# TODO Sprint 23+`; no resources provision.
+- [planned] **F2 — `deploy/gcp/` skeleton.** Same shape (Cloud Run / GKE → Cloud SQL → Cloud Armor + Cloud Load Balancing → Secret Manager → Cloud Logging → Artifact Registry).
+
+### Phase G — Documentation
+
+- [planned] **G1 — ADR-016 — Multi-cloud deployment strategy.** Records the "Helm chart is the portable spec, IaC is per-provider, data layer is `pg_dump --where=tenant_id`" decision; pins the Azure-first ordering; documents the rate-limit-middleware design choice (in-process vs Redis); locks in the `tagpulse.storage` blob abstraction shape.
+- [planned] **G2 — `docs/architecture.md` updated** with deployment topology diagram (Azure first; per-provider variants stubbed).
+- [planned] **G3 — `CHANGELOG.md` Sprint 22 section** + per-phase commits.
+
+### Acceptance criteria
+
+- `azd up` from a clean Azure subscription stands up the working stack; `python scripts/smoke_setup.py --full` green against the deployed instance.
+- `python deploy/portable/data-migration/export_tenant.py --tenant <id> --out azure-blob://…` round-trips into a second Azure deployment via `import_tenant.py` cleanly. (Cross-cloud — Azure → AWS — drill is deferred to Sprint 23 once Phase F has real implementations.)
+- Phase A items shipped; `make check` clean; `make migration-check` runs in CI and blocks merge.
+- No regression for `ENVIRONMENT=dev` developer workflow — `make run` + `scripts/smoke_setup.py` still work without setting any of the new strict-mode env vars.
+- Helm chart (B4) deploys cleanly against `kind` (local) for portability sanity-check, even though k8s isn't the v1 production target.
+
+### Deferred to Sprint 23+
+
+- Real AWS / GCP IaC (only skeletons in Sprint 22).
+- EMQX Cloud production cutover (separate ADR — mTLS broker rollout per Sprint 17c is the natural pairing).
+- Cross-cloud DR drill (real export-from-Azure → import-to-AWS dry run).
+- Passwordless Postgres via Entra ID (Phase C1 wires the secret today; flip to passwordless once first deployment is stable).
+- KEDA scaling of `tagpulse-worker` on MQTT queue depth (static `replicas=1` for v1).
+- `slowapi` / Redis-backed distributed rate limiter (A4 ships in-process; revisit when first multi-replica API tier hits rate-limit drift).
+
+---
+
 ## Backlog (not scheduled)
 - Cloud-to-device commands (reader configuration push via MQTT) (G8)
 - Bulk device operations / jobs (G9)

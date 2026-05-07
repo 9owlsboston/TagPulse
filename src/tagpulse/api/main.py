@@ -34,6 +34,11 @@ from tagpulse.api.routes.tenant_config import router as tenant_config_router
 from tagpulse.api.routes.users import router as users_router
 from tagpulse.core.config import settings
 from tagpulse.core.logging import setup_logging
+from tagpulse.core.migration_check import (
+    MigrationVersionMismatch,
+    assert_migration_head,
+)
+from tagpulse.core.rate_limit import rate_limit_middleware
 from tagpulse.core.telemetry import setup_telemetry
 from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.async_bus import AsyncEventBus
@@ -55,6 +60,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifecycle — start/stop EventBus and MQTT subscriber."""
     setup_logging(settings.log_level)
     setup_telemetry(app)
+
+    # Sprint 22 A7: refuse to boot when DB schema doesn't match the
+    # code's alembic head. Always-on in staging/production (forced by
+    # the Settings validator); opt-in in dev so an in-flight migration
+    # branch doesn't block ``make run``.
+    if settings.strict_migration_check:
+        try:
+            await assert_migration_head(async_session_factory)
+        except MigrationVersionMismatch:
+            logger.exception("strict_migration_check failed; aborting startup")
+            raise
+
+    # Sprint 22 A3: warn loudly when geofence evaluation is off in a
+    # non-dev environment. Operators can still flip the flag at runtime;
+    # this is just a "did you mean to leave this off?" guardrail.
+    if (
+        settings.environment != "dev"
+        and not settings.geofence_evaluation_enabled
+    ):
+        logger.warning(
+            "geofence_evaluation_enabled is False in environment=%s; "
+            "zone.entered/exited/dwell rules will not fire. "
+            "Set GEOFENCE_EVALUATION_ENABLED=true to enable.",
+            settings.environment,
+        )
 
     # EventBus — create but don't start yet (start after all subscriptions)
     event_bus = AsyncEventBus(
@@ -197,12 +227,20 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins.split(","),
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=[
+        m.strip() for m in settings.cors_allow_methods.split(",") if m.strip()
+    ],
+    allow_headers=[
+        h.strip() for h in settings.cors_allow_headers.split(",") if h.strip()
+    ],
     expose_headers=["X-Request-ID"],
 )
+
+# Sprint 22 A4: global per-(tenant, route_class) rate limiter. Bypass list
+# in tagpulse.core.rate_limit covers /health, /metrics, /auth/login, docs.
+app.middleware("http")(rate_limit_middleware)
 
 
 @app.middleware("http")
