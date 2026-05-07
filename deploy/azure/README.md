@@ -33,6 +33,16 @@ sourced from **Azure Key Vault** via a user-assigned managed identity.
 
 ## Prerequisites
 
+Run the automated preflight first — it checks tooling versions, Azure
+login, resource-provider registration, RBAC on the subscription, and
+workspace state, and exits non-zero with fix commands on any failure:
+
+```sh
+scripts/azd-preflight.sh
+```
+
+If any check fails, fix it and re-run. Manual setup if you prefer:
+
 ```sh
 # Tools
 brew install azure-cli azd            # macOS

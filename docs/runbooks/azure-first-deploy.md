@@ -12,6 +12,11 @@ resource group, Container Registry, Key Vault, and CD identity.
 
 ## Phase 0 — Prerequisites (one-time, per workstation)
 
+> **Shortcut:** run [`scripts/azd-preflight.sh`](../../scripts/azd-preflight.sh)
+> to check every item below in one shot. It exits non-zero on any blocking
+> failure and prints exact `az provider register …` / `az login` fix
+> commands. Re-run after fixing each issue until it passes.
+
 - [ ] **Azure CLI ≥ 2.60** — `az version`
 - [ ] **azd ≥ 1.10** — `azd version`
 - [ ] **Docker** running locally (azd builds images via Docker)
@@ -19,6 +24,7 @@ resource group, Container Registry, Key Vault, and CD identity.
 - [ ] `az login` and `azd auth login` complete; `az account show` returns the right tenant
 - [ ] Subscription has the **`Microsoft.App`**, **`Microsoft.ContainerRegistry`**, **`Microsoft.DBforPostgreSQL`**, **`Microsoft.OperationalInsights`**, **`Microsoft.Insights`**, **`Microsoft.KeyVault`**, **`Microsoft.ContainerInstance`**, and **`Microsoft.Web`** resource providers registered (`az provider list --query "[?registrationState=='Registered'].namespace" -o tsv`)
 - [ ] You have **Owner** or **Contributor + User Access Administrator** on the target subscription (RBAC role assignments require it)
+- [ ] `scripts/azd-preflight.sh` exits 0
 
 ---
 
