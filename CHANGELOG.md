@@ -4,6 +4,12 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Sprint 23 — Network hardening (in progress)
+
+> ADR-017, [docs/roadmap.md § Sprint 23](docs/roadmap.md). Companion to the Sprint 22-C deploy; targets the corporate `Modify`-mode storage policy + the same-day KV `publicNetworkAccess` enforcement.
+
+- **Sprint 23 plan tightened after audit** ([docs/roadmap.md](docs/roadmap.md)). Reconciled four discrepancies between the roadmap entry and ADR-017 surfaced during a pre-implementation audit on the Sprint 23 branch: (1) Phase B feature-flag name normalised to `disablePublicNetworkAccess` (was `disableKeyVaultPublicAccess` in the roadmap), default `false` so opt-in (was `true`, which would have regressed Sprint 22 envs); (2) ACR firewall allow-list dropped from B5 — GHA hosted-runner egress can't be allow-listed cleanly, so closing public ACR is moved to the new "Deferred to Sprint 24+" item; (3) Phase A2 expanded with the actual `mqtt.bicep` knock-on changes (drop `mqttStorageName` var, drop `output mqttStorageAccountName`, add `acrLoginServer`/`imageTag`/`userAssignedIdentityId` params, add `imageRegistryCredentials` block — ACI requires this for managed-identity ACR pull) plus an explicit `git rm scripts/azd-bootstrap-mqtt.sh`; (4) Phase C tooling switched from `nslookup` to `python -c "import socket; …"` because the slim Python container doesn't ship `nslookup`/`dig`. Added Phase A5 (test plan) and a `make check`-clean acceptance criterion. ADR-017 D1 marked `[shipped]` (it landed on the Sprint 22-C merge).
+
 ### Sprint 22 — Cloud Readiness
 
 #### Phase C — Azure deployment (shipped)
