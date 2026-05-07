@@ -42,6 +42,7 @@ TagPulse is an IoT platform that provides device registration/configuration, dat
 - Do not import from `tests/` in `src/`
 
 ## Process & Artifacts
+- **Starting a new sprint:** run `scripts/start-sprint.sh <NN> <topic-slug> ["PR title"]`. This is the canonical workflow — it enforces branch naming (`sprint-NN/topic-slug`), creates the draft PR with the standard checklist, and verifies a clean tree. Do not branch + open PRs manually.
 - Before starting work, check `docs/roadmap.md` to confirm the task is in-scope
 - Every PR must update `CHANGELOG.md` under an `## Unreleased` section
 - When making a non-obvious technical decision, create an ADR in `docs/adr/`

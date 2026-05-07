@@ -118,7 +118,15 @@ async def test_accepted_reading_persists_and_counts() -> None:
     assert result is not None
     assert len(repo.readings) == 1
     assert not repo.quarantined
-    assert not bus.published
+    # Sprint 20 audit fix: accepted readings now publish
+    # ``Topic.TELEMETRY_RECORDED`` so device-scoped ``telemetry.threshold``
+    # rules can fire. Quarantine path still publishes only on
+    # ``TELEMETRY_OUT_OF_RANGE``.
+    from tagpulse.events.protocol import Topic
+
+    assert len(bus.published) == 1
+    topic, _event = bus.published[0]
+    assert topic == Topic.TELEMETRY_RECORDED
 
 
 @pytest.mark.asyncio

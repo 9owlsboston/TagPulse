@@ -61,7 +61,7 @@ IngestionService.ingest()
 | `tenant_id` | UUID FK -> tenants | Indexed |
 | `name` | VARCHAR(255) | |
 | `description` | TEXT | |
-| `condition_type` | VARCHAR(50) | `threshold`, `absence`, `rate_change` |
+| `condition_type` | VARCHAR(50) | `threshold`, `absence`, `rate_change` (v1); `zone.entered`, `zone.exited`, `zone.dwell_exceeded` (Sprint 17a); `telemetry.threshold` (Sprint 20 \u2014 see [ADR-015](../adr/015-telemetry-rules-and-deprecation.md) and [GET /rule-templates](../../src/tagpulse/api/routes/rules.py)) |
 | `condition_config` | JSONB | Condition-specific parameters |
 | `action_type` | VARCHAR(50) | `webhook`, `email`, `notification` |
 | `action_config` | JSONB | Action target parameters |

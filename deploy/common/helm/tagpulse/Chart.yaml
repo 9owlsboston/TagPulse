@@ -1,0 +1,22 @@
+apiVersion: v2
+name: tagpulse
+description: |
+  TagPulse IoT platform — provider-agnostic Helm chart deploying api,
+  worker, and migrations-job from the multi-target Dockerfile. The
+  canonical "what runs where" spec; cloud-specific IaC layers
+  (deploy/azure/bicep, deploy/aws/terraform — Sprint 22 C/F) render the
+  same shape natively when k8s isn't the target.
+
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - iot
+  - rfid
+  - timescaledb
+  - mqtt
+home: https://github.com/9owlsboston/TagPulse
+sources:
+  - https://github.com/9owlsboston/TagPulse
+maintainers:
+  - name: 9owlsboston

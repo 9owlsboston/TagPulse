@@ -24,13 +24,15 @@ class TelemetryModelService:
         row = TelemetryModelDef(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
+            subject_kind=body.subject_kind,
             device_type=body.device_type,
             metrics=[m.model_dump() for m in body.metrics],
         )
         self._session.add(row)
         await self._session.flush()
         logger.info(
-            "Telemetry model created: device_type=%s tenant=%s",
+            "Telemetry model created: subject_kind=%s device_type=%s tenant=%s",
+            body.subject_kind,
             body.device_type,
             tenant_id,
         )
@@ -42,7 +44,7 @@ class TelemetryModelService:
         stmt = (
             select(TelemetryModelDef)
             .where(TelemetryModelDef.tenant_id == tenant_id)
-            .order_by(TelemetryModelDef.device_type)
+            .order_by(TelemetryModelDef.subject_kind, TelemetryModelDef.device_type)
         )
         result = await self._session.execute(stmt)
         return [_to_response(row) for row in result.scalars()]
@@ -50,10 +52,43 @@ class TelemetryModelService:
     async def get_by_device_type(
         self, tenant_id: uuid.UUID, device_type: str
     ) -> TelemetryModelResponse | None:
+        """Look up a device-scoped telemetry model by its device_type.
+
+        Sprint 18 limited the lookup to ``subject_kind='device'`` rows so
+        a future ``asset`` model with the same string in some other
+        column can't shadow it. Sprint 19 added :meth:`get_by_subject`
+        for non-device kinds; this device-only path is preserved for
+        the Sprint 14 ``GET /telemetry-models/{device_type}`` route.
+        """
         stmt = select(TelemetryModelDef).where(
             TelemetryModelDef.tenant_id == tenant_id,
+            TelemetryModelDef.subject_kind == "device",
             TelemetryModelDef.device_type == device_type,
         )
+        result = await self._session.execute(stmt)
+        row = result.scalar_one_or_none()
+        return _to_response(row) if row else None
+
+    async def get_by_subject(
+        self,
+        tenant_id: uuid.UUID,
+        subject_kind: str,
+        key: str,
+    ) -> TelemetryModelResponse | None:
+        """Subject-scoped telemetry model lookup (Sprint 19).
+
+        ``key`` is interpreted as ``device_type`` for
+        ``subject_kind='device'`` and ignored otherwise (only one row
+        per (tenant, subject_kind != 'device') is permitted by the
+        Sprint 18 unique constraint, since non-device kinds do not
+        sub-classify by device_type).
+        """
+        stmt = select(TelemetryModelDef).where(
+            TelemetryModelDef.tenant_id == tenant_id,
+            TelemetryModelDef.subject_kind == subject_kind,
+        )
+        if subject_kind == "device":
+            stmt = stmt.where(TelemetryModelDef.device_type == key)
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
         return _to_response(row) if row else None
@@ -79,6 +114,7 @@ class TelemetryModelService:
 def _to_response(row: TelemetryModelDef) -> TelemetryModelResponse:
     return TelemetryModelResponse(
         id=row.id,
+        subject_kind=row.subject_kind,  # type: ignore[arg-type]
         device_type=row.device_type,
         metrics=row.metrics,  # type: ignore[arg-type]
         created_at=row.created_at,

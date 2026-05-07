@@ -1,0 +1,54 @@
+# Sprint 22 B2 — pre-rollout migration job (provider-agnostic).
+#
+# Runs ``alembic upgrade head`` to completion before the API/Worker
+# Deployments roll. Both the Helm chart (templates/migrations-job.yaml,
+# Sprint 22 B4) and the Bicep deploy (Phase C, Container Apps job) consume
+# the same image (``tagpulse-migrations``) built from the ``migrations``
+# Dockerfile target.
+#
+# k8s expectations:
+#   - DATABASE_URL secret mounted from a tenant-scoped Secret.
+#   - Job restartPolicy=OnFailure; Helm chart sets backoffLimit=2 so a
+#     transient DB-not-yet-ready failure recovers without manual rerun.
+#   - Argo CD / Flux: PreSync / pre-install hook semantics; ensure the
+#     Job completes before api/worker Rollouts proceed.
+#
+# Container Apps equivalent (Phase C): a Container Apps Job with
+# ``triggerType: Manual``, invoked by ``azd deploy`` before the api/worker
+# revision swap. Same image, same env-var contract.
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tagpulse-migrations
+  labels:
+    app.kubernetes.io/name: tagpulse
+    app.kubernetes.io/component: migrations
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600  # auto-clean after 1 h so reruns aren't blocked
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tagpulse
+        app.kubernetes.io/component: migrations
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrations
+          # Image tag is stamped by CI (B3) — :{git-sha} for traceability.
+          image: ghcr.io/9owlsboston/tagpulse-migrations:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: tagpulse-database
+                  key: url
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

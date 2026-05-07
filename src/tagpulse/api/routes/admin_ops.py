@@ -111,6 +111,11 @@ async def abandon_dead_letter(
 @router.get("/audit-logs")
 async def list_audit_logs(
     resource_type: str | None = Query(default=None),
+    actions: str | None = Query(
+        default=None,
+        description="Comma-separated list of actions to filter by (e.g. "
+        "'device.token_rotated,device.cert_attached').",
+    ),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     user: AuthenticatedUser = require_role("admin"),
@@ -118,6 +123,45 @@ async def list_audit_logs(
 ) -> list[dict[str, object]]:
     """List audit logs for this tenant."""
     audit = AuditLogger(session)
-    return await audit.list_logs(
-        user.tenant_id, resource_type=resource_type, limit=limit, offset=offset
+    action_list = (
+        [a.strip() for a in actions.split(",") if a.strip()] if actions else None
     )
+    return await audit.list_logs(
+        user.tenant_id,
+        resource_type=resource_type,
+        actions=action_list,
+        limit=limit,
+        offset=offset,
+    )
+
+
+# -- Tag Collisions (cross-tenant; admin only) --
+
+
+@router.get("/tag-collisions")
+async def get_tag_collisions(
+    binding_value: str = Query(min_length=1, max_length=256),
+    user: AuthenticatedUser = require_role("admin"),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    """Return cross-tenant collision count for a binding_value.
+
+    Per docs/design/assets-and-zones.md §11 Q3: returns only the count of
+    *other* tenants with an active binding for this value, never their
+    identities. Increments ``tagpulse_tag_collisions_global_total``.
+    """
+    from tagpulse.api.services.asset_service import AssetService
+    from tagpulse.repositories.timescaledb.assets import (
+        TimescaleAssetRepository,
+        TimescaleAssetTagBindingRepository,
+    )
+
+    service = AssetService(
+        asset_repo=TimescaleAssetRepository(session),
+        binding_repo=TimescaleAssetTagBindingRepository(session),
+        audit=AuditLogger(session),
+    )
+    count = await service.count_other_tenant_collisions(
+        user.tenant_id, binding_value
+    )
+    return {"binding_value": binding_value, "other_tenant_count": count}

@@ -35,6 +35,29 @@ class Publisher(Protocol):
     def stop(self) -> None: ...
 
 
+class TokenRevokedError(Exception):
+    """Raised/surfaced when the broker rejects auth (MQTT v5 reason code 135).
+
+    Per docs/design/edge-device-contract.md §8, the agent should swap in a new
+    token (delivered out-of-band) and reconnect rather than retrying the same
+    revoked credential indefinitely.
+    """
+
+
+# MQTT v5 reason codes that mean "the token is no longer valid". paho exposes
+# integer codes via ReasonCode.value; we accept either a bare int or an object
+# with `.value`.
+_MQTT_NOT_AUTHORIZED_CODES = frozenset({4, 5, 134, 135})
+
+
+def _reason_is_not_authorized(reason_code: Any) -> bool:
+    code = getattr(reason_code, "value", reason_code)
+    try:
+        return int(code) in _MQTT_NOT_AUTHORIZED_CODES
+    except (TypeError, ValueError):
+        return False
+
+
 class MqttTransport:
     """paho-mqtt wrapper with full-jitter exponential backoff."""
 
@@ -43,10 +66,12 @@ class MqttTransport:
         config: EdgeConfig,
         on_connect: Callable[[], None] | None = None,
         on_disconnect: Callable[[], None] | None = None,
+        on_token_revoked: Callable[[TokenRevokedError], None] | None = None,
     ) -> None:
         self._config = config
         self._on_connect_cb = on_connect or (lambda: None)
         self._on_disconnect_cb = on_disconnect or (lambda: None)
+        self._on_token_revoked_cb = on_token_revoked or (lambda _exc: None)
 
         self._connected = threading.Event()
         self._stop = threading.Event()
@@ -113,6 +138,15 @@ class MqttTransport:
     # -- Internals --
 
     def _handle_connect(self, _client: Any, _ud: Any, _flags: Any, reason_code: Any, _props: Any) -> None:
+        if _reason_is_not_authorized(reason_code):
+            err = TokenRevokedError(
+                f"broker rejected credentials (reason={reason_code})"
+            )
+            logger.error(
+                "Device token appears revoked; awaiting reload — %s", err
+            )
+            self._on_token_revoked_cb(err)
+            return
         if reason_code == 0 or getattr(reason_code, "is_failure", False) is False:
             logger.info("MQTT connected to %s:%d", self._config.broker_host, self._config.broker_port)
             self._connected.set()
@@ -126,6 +160,14 @@ class MqttTransport:
         if was_connected:
             logger.warning("MQTT disconnected: %s", reason_code)
             self._on_disconnect_cb()
+        if _reason_is_not_authorized(reason_code):
+            err = TokenRevokedError(
+                f"broker forced disconnect (reason={reason_code})"
+            )
+            logger.error(
+                "Device token appears revoked; awaiting reload — %s", err
+            )
+            self._on_token_revoked_cb(err)
 
     def _reconnect_loop(self) -> None:
         """Drive (re)connection with full-jitter exponential backoff."""

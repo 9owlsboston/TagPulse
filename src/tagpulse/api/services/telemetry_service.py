@@ -1,9 +1,15 @@
 """Telemetry ingestion service (Sprint 14).
 
 Validates readings against per-tenant ``telemetry_models`` definitions, then
-either persists them to ``device_telemetry`` or routes them to
-``telemetry_quarantine`` with a reason. Out-of-range readings additionally
-emit a ``telemetry.out_of_range`` event for the rules engine to consume.
+either persists them to ``telemetry_readings`` (subject_kind='device') or
+routes them to ``telemetry_quarantine`` with a reason. Out-of-range readings
+additionally emit a ``telemetry.out_of_range`` event for the rules engine to
+consume.
+
+Sprint 21 (ADR-015 §6): swapped the underlying repository from the now-
+removed ``TimescaleTelemetryRepository`` to
+:class:`TelemetryReadingsRepository`; the public service contract is
+unchanged.
 """
 
 from __future__ import annotations
@@ -31,7 +37,10 @@ from tagpulse.models.schemas import (
     TelemetryReading,
     TelemetryResponse,
 )
-from tagpulse.repositories.protocols import DeviceRepository, TelemetryRepository
+from tagpulse.repositories.protocols import (
+    DeviceRepository,
+    TelemetryReadingsRepository,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +61,7 @@ class TelemetryService:
 
     def __init__(
         self,
-        repo: TelemetryRepository,
+        repo: TelemetryReadingsRepository,
         event_bus: EventBus,
         model_service: TelemetryModelService,
         device_repo: DeviceRepository | None = None,
@@ -126,7 +135,7 @@ class TelemetryService:
             ("location.latitude", payload.latitude),
             ("location.longitude", payload.longitude),
         ):
-            await self._repo.insert_reading(
+            response = await self._repo.insert_reading(
                 tenant_id,
                 payload.device_id,
                 TelemetryReading(
@@ -136,6 +145,9 @@ class TelemetryService:
                     unit="deg",
                 ),
                 metadata=metadata,
+            )
+            await self._publish_telemetry_recorded(
+                tenant_id, payload.device_id, response, source="device"
             )
         location_updates_counter.add(1, {"tenant_id": str(tenant_id)})
 
@@ -238,6 +250,9 @@ class TelemetryService:
             1,
             {"tenant_id": str(tenant_id), "metric_name": reading.metric_name},
         )
+        await self._publish_telemetry_recorded(
+            tenant_id, device_id, response, source="device"
+        )
         return "accepted", response
 
     async def query(
@@ -294,6 +309,48 @@ class TelemetryService:
                 "reason": reason.value,
             },
         )
+
+    async def _publish_telemetry_recorded(
+        self,
+        tenant_id: UUID,
+        device_id: UUID,
+        response: TelemetryResponse,
+        *,
+        source: str,
+    ) -> None:
+        """Sprint 20 audit fix: device-scoped writes also publish
+        ``Topic.TELEMETRY_RECORDED`` so ``telemetry.threshold`` rules
+        with ``subject_kind='device'`` fire for tag-borne metrics, the
+        legacy MQTT ``devices/{id}/telemetry`` topic, and HTTP batch
+        ingest. Best-effort — failure to publish must not roll back
+        the persisted row.
+        """
+        try:
+            await self._event_bus.publish(
+                Topic.TELEMETRY_RECORDED,
+                Event(
+                    id=response.id,
+                    topic=Topic.TELEMETRY_RECORDED,
+                    timestamp=response.timestamp,
+                    payload={
+                        "tenant_id": str(tenant_id),
+                        "subject_kind": "device",
+                        "subject_id": str(device_id),
+                        "metric_name": response.metric_name,
+                        "metric_value": response.metric_value,
+                        "unit": response.unit,
+                        "device_id": str(device_id),
+                        "source": source,
+                        "timestamp": response.timestamp.isoformat(),
+                    },
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "telemetry.recorded publish failed for device %s metric %s",
+                device_id,
+                response.metric_name,
+            )
 
 
 def _timestamp_acceptable(ts: datetime) -> bool:

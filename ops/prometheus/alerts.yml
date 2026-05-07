@@ -1,0 +1,61 @@
+# TagPulse Prometheus alert rules
+#
+# These rules surface the OTel-exported histograms and counters that the
+# backend emits via the Prometheus exporter (see docs/design/observability.md
+# §2). They are loaded by the Prometheus server as a `rule_files` entry; the
+# Helm chart wires them into the `tagpulse-platform` namespace by default.
+#
+# Conventions:
+# - All rules carry `service: tagpulse` so multi-tenant Alertmanager routing
+#   can match on it.
+# - Rules that should *open an ADR* (rather than page on-call) carry
+#   `category: adr-trigger` and a `runbook` annotation pointing to docs/runbooks/.
+
+groups:
+  - name: tagpulse.geofence
+    interval: 30s
+    rules:
+      # ADR-013 (PostGIS adoption) trigger #1 — per design §11 Q5.
+      - alert: GeofenceEvaluationLatencyP99High
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le, tenant_id) (
+              rate(tagpulse_geofence_evaluation_duration_seconds_bucket[5m])
+            )
+          ) > 0.010
+        for: 1h
+        labels:
+          severity: warning
+          service: tagpulse
+          category: adr-trigger
+        annotations:
+          summary: |
+            Geofence eval p99 > 10ms for tenant {{ $labels.tenant_id }} (1h sustained)
+          description: |
+            Per ADR-013 trigger threshold, this opens the PostGIS-adoption ADR
+            draft. Run a PostGIS migration spike and schedule a sprint.
+          runbook: docs/runbooks/geofence-postgis-trigger.md
+
+      # ADR-013 trigger #2 — bbox prefilter selectivity collapse.
+      - alert: GeofenceCandidatesP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, tenant_id) (
+              rate(tagpulse_geofence_candidates_per_evaluation_bucket[5m])
+            )
+          ) > 50
+        for: 1h
+        labels:
+          severity: warning
+          service: tagpulse
+          category: adr-trigger
+        annotations:
+          summary: |
+            Geofence candidates/eval p95 > 50 for tenant {{ $labels.tenant_id }} (1h sustained)
+          description: |
+            The bbox prefilter is no longer selective enough; ray-casting CPU
+            grows linearly with candidate count. Per ADR-013 trigger, open the
+            PostGIS-adoption ADR draft.
+          runbook: docs/runbooks/geofence-postgis-trigger.md

@@ -1,0 +1,119 @@
+# Default values for the TagPulse Helm chart (Sprint 22 B4).
+#
+# Cloud-specific overlays live alongside their IaC:
+#   deploy/azure/helm-values.yaml  (Sprint 22 C)
+#   deploy/aws/helm-values.yaml    (Sprint 22 F + future)
+#   deploy/gcp/helm-values.yaml    (Sprint 22 F + future)
+# Production deploys layer those over this file via ``helm install -f``.
+
+image:
+  registry: ghcr.io
+  repository: 9owlsboston
+  # Component suffix (-api, -worker, -migrations) is appended at template time.
+  tag: latest
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# Sprint 22 A1: must be one of dev / staging / production. Strict-mode
+# Settings validator forces non-dev to ship without dev secret defaults.
+environment: production
+
+api:
+  replicaCount: 2
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+worker:
+  # v1: single replica. MQTT subscriber is single-instance-per-broker by
+  # design (no consumer-group semantics yet); inventory + dwell workers
+  # use DB-row leasing and could scale, but that's Sprint 23+ work.
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+
+migrations:
+  # Pre-rollout one-shot Job (Sprint 22 B2). Helm hook ensures it runs
+  # before the api/worker Deployments roll on every upgrade.
+  enabled: true
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+# Settings env vars surfaced as a ConfigMap. Secrets (database_url,
+# jwt_secret, mqtt creds) are expected via existing Secret references
+# below — cloud overlays wire those to Key Vault / Secrets Manager / etc.
+config:
+  logLevel: info
+  corsOrigins: "https://app.example.com"
+  geofenceEvaluationEnabled: "true"
+  rateLimitEnabled: "true"
+  strictMigrationCheck: "true"
+  ingestClockEnforce: "true"
+
+secrets:
+  # Existing Secret with keys: database-url, jwt-secret,
+  # mqtt-username (optional), mqtt-password (optional). Cloud overlays
+  # provision this via Key Vault CSI driver / IRSA / Workload Identity.
+  existing: tagpulse-secrets
+
+mqtt:
+  # External broker (EMQX Cloud, Mosquitto-on-ACI, etc.). Hostname is
+  # plain-text; credentials live in the Secret above.
+  broker:
+    host: "mqtt.example.com"
+    port: 1883
+
+monitoring:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    additionalLabels: {}
+
+podDisruptionBudget:
+  api:
+    enabled: true
+    minAvailable: 1
+  worker:
+    enabled: false  # single replica today; revisit when worker scales
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

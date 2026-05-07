@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import asyncio
+import os
 import random
 import sys
 import time
@@ -22,6 +23,19 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
+
+# Optional bearer API key (admin/editor) — populated from --api-key or
+# TAGPULSE_API_KEY env. Required for device creation since Sprint 12.
+_API_KEY: str | None = None
+
+
+def _headers(tenant_id: str, *, json: bool = False) -> dict[str, str]:
+    h = {"X-Tenant-ID": tenant_id}
+    if json:
+        h["Content-Type"] = "application/json"
+    if _API_KEY:
+        h["Authorization"] = f"Bearer {_API_KEY}"
+    return h
 
 API_URL = "http://localhost:8000"
 TAG_POOL = [f"TAG{i:04d}" for i in range(1, 201)]  # 200 unique tags
@@ -98,7 +112,7 @@ async def seed_devices(
     client: httpx.AsyncClient, tenant_id: str, count: int
 ) -> list[str]:
     """Create devices and return their IDs."""
-    headers = {"X-Tenant-ID": tenant_id}
+    headers = _headers(tenant_id)
     # Fetch existing
     resp = await client.get(
         f"{API_URL}/device-registry", headers=headers, params={"limit": 1000}
@@ -133,7 +147,7 @@ async def worker(
     total_limit: int,
 ) -> None:
     """Send tag reads until stopped or total limit reached."""
-    headers = {"X-Tenant-ID": tenant_id, "Content-Type": "application/json"}
+    headers = _headers(tenant_id, json=True)
     while not stop.is_set():
         if total_counter is not None:
             if total_counter[0] >= total_limit:
@@ -303,7 +317,21 @@ Examples:
                         help="Seconds between ramp increases (default: 10)")
     parser.add_argument("--rps-max", type=int, default=0,
                         help="Max rps when ramping (default: 10x initial)")
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("TAGPULSE_API_KEY"),
+        help="Admin/editor API key (Bearer). Falls back to $TAGPULSE_API_KEY.",
+    )
     args = parser.parse_args()
+
+    global _API_KEY
+    _API_KEY = args.api_key
+    if not _API_KEY:
+        print(
+            "WARNING: no --api-key (or $TAGPULSE_API_KEY) provided — "
+            "device creation/ingestion will fail with 403. "
+            "See docs/quickstart.md → Step 5b for how to bootstrap one."
+        )
 
     if args.total == 0 and args.duration == 0:
         parser.error("Specify --total or --duration")
