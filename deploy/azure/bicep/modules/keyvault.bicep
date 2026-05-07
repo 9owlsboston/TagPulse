@@ -18,6 +18,9 @@ param secrets object
 @description('Common tags applied to every resource.')
 param tags object = {}
 
+@description('When true, enables purge protection (irrevocable 7-day soft-delete window). Required for production; leave false in dev so teardowns do not lock the KV name for a week.')
+param enablePurgeProtection bool = true
+
 resource kv 'Microsoft.KeyVault/vaults@2024-04-01-preview' = {
   name: keyVaultName
   location: location
@@ -31,7 +34,7 @@ resource kv 'Microsoft.KeyVault/vaults@2024-04-01-preview' = {
     enableRbacAuthorization: true
     enableSoftDelete: true
     softDeleteRetentionInDays: 7
-    enablePurgeProtection: true
+    enablePurgeProtection: enablePurgeProtection ? true : null
     publicNetworkAccess: 'Enabled'
   }
 }
