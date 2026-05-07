@@ -83,6 +83,9 @@ module kv 'modules/keyvault.bicep' = {
       postgresAdminPassword: postgresAdminPassword
       mqttPassword: mqttPassword
     }
+    // Purge protection is irreversible and pins the KV name for 7 days after
+    // teardown. Enable for staging/production only; dev iterates frequently.
+    enablePurgeProtection: appEnvironment != 'dev'
     tags: tags
   }
 }
