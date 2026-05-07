@@ -71,11 +71,18 @@ hooks:
   # (or a partial provision failure) hits `VaultAlreadyExists` because KV
   # names are globally unique and soft-delete reserves the name for 7–90
   # days. The script is idempotent and a no-op when nothing matches.
+  #
+  # Then build the Mosquitto image into ACR if ACR exists (no-op on first
+  # provision; populates `tagpulse-mqtt` from the second `azd up` onwards).
+  # Finally, image-check probes ACR for all four repos and toggles
+  # AZURE_USE_IMAGE_PLACEHOLDERS so first provision uses public placeholders
+  # and subsequent runs use the real images.
   preprovision:
     shell: sh
     run: |
       set -e
       ./scripts/azd-kv-recover.sh
+      ./scripts/azd-mqtt-build.sh
       ./scripts/azd-image-check.sh
 
   # After provisioning: capture ACR login server + image tag into env vars so
@@ -96,7 +103,8 @@ hooks:
       echo "ACR=$ACR_LOGIN_SERVER  TAG=$(azd env get-value AZURE_IMAGE_TAG)"
 
   # After all services are deployed (images pushed): run the migrations job to
-  # completion before users hit the new api revision.
+  # completion before users hit the new api revision. Then run the Sprint 23
+  # network reachability smoke (no-op unless the VNet flags are on).
   postdeploy:
     shell: sh
     run: |
@@ -105,14 +113,26 @@ hooks:
       JOB=$(az deployment sub show --name $AZURE_ENV_NAME --query 'properties.outputs.migrationsJobName.value' -o tsv)
       echo "Starting migrations job $JOB in $RG"
       EXEC=$(az containerapp job start --name "$JOB" --resource-group "$RG" --query 'name' -o tsv)
-      echo "Execution: $EXEC — waiting for completion (timeout 10m)"
+      echo "Execution: $EXEC -- waiting for completion (timeout 10m)"
+      MIGRATIONS_OK=0
       for i in $(seq 1 60); do
         STATUS=$(az containerapp job execution show --name "$JOB" --resource-group "$RG" --job-execution-name "$EXEC" --query 'properties.status' -o tsv 2>/dev/null || echo Running)
         case "$STATUS" in
-          Succeeded) echo "Migrations succeeded"; exit 0 ;;
+          Succeeded) echo "Migrations succeeded"; MIGRATIONS_OK=1; break ;;
           Failed|Degraded) echo "Migrations failed: $STATUS"; exit 1 ;;
           *) sleep 10 ;;
         esac
       done
-      echo "Migrations job timed out"
-      exit 1
+      if [ "$MIGRATIONS_OK" != "1" ]; then
+        echo "Migrations job timed out"
+        exit 1
+      fi
+      # Sprint 23 Phase C1 -- network reachability smoke test. The script
+      # itself no-ops unless both AZURE_ENABLE_VNET and
+      # AZURE_DISABLE_PUBLIC_NETWORK_ACCESS resolve to 'true'.
+      AZURE_KEYVAULT_NAME=$(az deployment sub show --name $AZURE_ENV_NAME --query 'properties.outputs.keyVaultName.value' -o tsv) \
+      AZURE_POSTGRES_FQDN=$(az deployment sub show --name $AZURE_ENV_NAME --query 'properties.outputs.postgresFqdn.value' -o tsv) \
+      AZURE_API_APP_NAME=$(az deployment sub show --name $AZURE_ENV_NAME --query 'properties.outputs.apiAppName.value' -o tsv) \
+      AZURE_ENABLE_VNET=$(azd env get-value AZURE_ENABLE_VNET 2>/dev/null || echo false) \
+      AZURE_DISABLE_PUBLIC_NETWORK_ACCESS=$(azd env get-value AZURE_DISABLE_PUBLIC_NETWORK_ACCESS 2>/dev/null || echo false) \
+        ./scripts/azd-network-check.sh
