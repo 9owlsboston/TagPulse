@@ -66,6 +66,18 @@ services:
       tag: ${AZURE_IMAGE_TAG}
 
 hooks:
+  # Before provisioning: auto-recover any soft-deleted Key Vault whose name
+  # matches this env's prefix. Without this, redeploying after a teardown
+  # (or a partial provision failure) hits `VaultAlreadyExists` because KV
+  # names are globally unique and soft-delete reserves the name for 7–90
+  # days. The script is idempotent and a no-op when nothing matches.
+  preprovision:
+    shell: sh
+    run: |
+      set -e
+      ./scripts/azd-kv-recover.sh
+      ./scripts/azd-image-check.sh
+
   # After provisioning: capture ACR login server + image tag into env vars so
   # subsequent service deploys reference the right registry.
   postprovision:

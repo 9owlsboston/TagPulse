@@ -41,9 +41,20 @@ param staticWebAppLocation string = 'centralus'
 @allowed(['dev','staging','production'])
 param appEnvironment string = 'production'
 
+@description('Optional short suffix appended to the Key Vault name to dodge soft-delete name reservations after a prior teardown. Empty = clean name.')
+param keyVaultNameSuffix string = ''
+
+@description('Use public placeholder images on first provision (before azd deploy has pushed app images to ACR).')
+param useImagePlaceholders bool = false
+
+// Public placeholder images used when ACR has no images yet. azd deploy
+// later replaces these via `az containerapp update --image ...`.
+var appPlaceholderImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+var jobPlaceholderImage = 'mcr.microsoft.com/k8se/quickstart-jobs:latest'
+
 // Naming
 var acrName = toLower('${namePrefix}acr${uniqueSuffix}')
-var keyVaultName = toLower('${namePrefix}-kv-${take(uniqueSuffix, 8)}')
+var keyVaultName = empty(keyVaultNameSuffix) ? toLower('${namePrefix}-kv-${take(uniqueSuffix, 8)}') : toLower('${namePrefix}-kv-${take(uniqueSuffix, 8)}-${keyVaultNameSuffix}')
 var postgresName = toLower('${namePrefix}-pg-${take(uniqueSuffix, 8)}')
 var mqttStorageName = toLower('${namePrefix}mqtt${take(uniqueSuffix, 8)}')
 var mqttContainerGroupName = '${namePrefix}-mqtt'
@@ -139,7 +150,7 @@ module apiApp 'modules/container-app.bicep' = {
     location: location
     environmentId: acaEnv.outputs.id
     userAssignedIdentityId: identity.outputs.id
-    image: '${acr.outputs.loginServer}/tagpulse-api:${imageTag}'
+    image: useImagePlaceholders ? appPlaceholderImage : '${acr.outputs.loginServer}/tagpulse-api:${imageTag}'
     acrLoginServer: acr.outputs.loginServer
     enableIngress: true
     workersInline: false
@@ -165,7 +176,7 @@ module workerApp 'modules/container-app.bicep' = {
     location: location
     environmentId: acaEnv.outputs.id
     userAssignedIdentityId: identity.outputs.id
-    image: '${acr.outputs.loginServer}/tagpulse-worker:${imageTag}'
+    image: useImagePlaceholders ? appPlaceholderImage : '${acr.outputs.loginServer}/tagpulse-worker:${imageTag}'
     acrLoginServer: acr.outputs.loginServer
     enableIngress: false
     workersInline: true
@@ -191,7 +202,7 @@ module migrationsJob 'modules/migrations-job.bicep' = {
     location: location
     environmentId: acaEnv.outputs.id
     userAssignedIdentityId: identity.outputs.id
-    image: '${acr.outputs.loginServer}/tagpulse-migrations:${imageTag}'
+    image: useImagePlaceholders ? jobPlaceholderImage : '${acr.outputs.loginServer}/tagpulse-migrations:${imageTag}'
     acrLoginServer: acr.outputs.loginServer
     postgresFqdn: postgres.outputs.fqdn
     postgresDatabaseName: postgres.outputs.databaseName

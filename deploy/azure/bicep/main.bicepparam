@@ -19,6 +19,8 @@ param mqttUsername = 'tagpulse'
 param mqttPassword = readEnvironmentVariable('AZURE_MQTT_PASSWORD')
 param staticWebAppLocation = 'centralus'
 param appEnvironment = readEnvironmentVariable('TAGPULSE_ENVIRONMENT', 'production')
+param keyVaultNameSuffix = readEnvironmentVariable('AZURE_KV_NAME_SUFFIX', '')
+param useImagePlaceholders = bool(readEnvironmentVariable('AZURE_USE_IMAGE_PLACEHOLDERS', 'false'))
 
 param tags = {
   workload: 'tagpulse'

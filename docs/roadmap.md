@@ -454,6 +454,62 @@
 
 ---
 
+## Sprint 23 — Network Hardening (KV private endpoint + VNet-integrated ACA)
+
+> Design: ADR-017 (this sprint), [docs/runbooks/azure-first-deploy.md](runbooks/azure-first-deploy.md) (impacted), [deploy/azure/README.md](../deploy/azure/README.md) (hardening backlog → promoted)
+> Goal: comply with the corporate "no public network access on Key Vault / Storage" policy that the platform team is enforcing tenant-wide. First deployment in Sprint 22-C exposed two problems: (1) the storage policy is `Modify`-mode and silently reverted `allowSharedKeyAccess=true`, breaking the Mosquitto Azure Files mount; (2) the KV policies are currently `Audit`-only but flagged for promotion to `Deny`. Sprint 23 lands the proper VNet + private-endpoint topology so neither service depends on public network access, *and* removes the Mosquitto Files dependency entirely.
+
+### Phase A — Same-day mitigation (no VNet required)
+
+> Ships within 24h to keep the Azure deploy unblocked while Phase B is built.
+
+- [planned] **A1 — Custom Mosquitto image with config baked in.** New `docker/mosquitto.Dockerfile` (`FROM eclipse-mosquitto:2`) that COPYs `mosquitto.conf` and runs a small entrypoint that materializes `mosquitto.passwd` from `MOSQUITTO_USERNAME` / `MOSQUITTO_PASSWORD` env vars at boot. Add `mqtt` as a fourth service in [azure.yaml](../azure.yaml) so `azd deploy mqtt` builds + pushes to ACR. ACR repo: `tagpulse-mqtt`.
+- [planned] **A2 — Drop Azure Files dependency from `mqtt.bicep`.** Remove the storage account, both Files shares, the `volumes` block, and both `volumeMounts`. ACI now pulls the custom image from ACR via UAMI. KV `mqtt-password` secret continues to feed the ACI as a `secureValue` env var (no API change for api/worker clients). Removes [scripts/azd-bootstrap-mqtt.sh](../scripts/azd-bootstrap-mqtt.sh) from Phase 2 of the first-deploy runbook.
+- [planned] **A3 — Trade-off documented.** ADR-017 §Phase A captures the loss of broker retained-message persistence across restarts (devices republish on reconnect — acceptable for v1; obviated by Sprint 24 EMQX cutover anyway).
+- [planned] **A4 — Update [docs/runbooks/azure-first-deploy.md](runbooks/azure-first-deploy.md)** Phase 2: drop the MQTT bootstrap step; add a "if `allowSharedKeyAccess` policy is enforced in your subscription, Sprint 23 Phase A is mandatory" callout.
+
+### Phase B — VNet + private endpoints (the policy-recommended path)
+
+- [planned] **B1 — `network.bicep` module.** New `deploy/azure/bicep/modules/network.bicep`: VNet `tpdev-vnet` (10.10.0.0/16), three subnets — `aca-infra` (10.10.0.0/23, delegated to `Microsoft.App/environments`, NSG with default-deny + ACA service-tag allow), `pe` (10.10.2.0/27, no delegation, for private endpoints), `mgmt` (10.10.3.0/27, reserved for future Bastion). Service endpoints not used (we go full private-endpoint).
+- [planned] **B2 — VNet-integrated Container Apps environment.** Update [container-apps-env.bicep](../deploy/azure/bicep/modules/container-apps-env.bicep) to set `vnetConfiguration.infrastructureSubnetId` + `internal=false` (still public ingress for the api, just with controlled egress). **Breaking change:** ACA env is immutable on this property → Sprint 22 deployments must be torn down and recreated. Migration runbook in B6.
+- [planned] **B3 — Key Vault private endpoint.** New `deploy/azure/bicep/modules/private-endpoint-kv.bicep`. Toggle KV `publicNetworkAccess=Disabled` + `networkAcls.defaultAction=Deny` (controlled via `disableKeyVaultPublicAccess` bool param, default `true`). Add Private DNS Zone `privatelink.vaultcore.azure.net` linked to the VNet; A-record auto-created via the `privateDnsZoneGroups` block on the PE.
+- [planned] **B4 — Postgres private endpoint** (was already on the hardening backlog — promoted). Same shape as B3; zone `privatelink.postgres.database.azure.com`. Removes the `0.0.0.0` firewall rule from [postgres.bicep](../deploy/azure/bicep/modules/postgres.bicep).
+- [planned] **B5 — ACR private endpoint.** Optional but cheap to ship now. Zone `privatelink.azurecr.io`. ACR keeps `publicNetworkAccess=Enabled` for laptop `docker push` during local testing; add `networkRuleSet` allow-list for the GitHub Actions runner egress range when `deploy-azure.yml` runs.
+- [planned] **B6 — Migration runbook `docs/runbooks/sprint-23-network-cutover.md`.** Order of operations for an existing Sprint 22 environment: (1) `azd env set DISABLE_KEY_VAULT_PUBLIC_ACCESS true` and other Phase-B feature flags; (2) `azd down --purge --force` (ACA env recreate is destructive); (3) `azd provision` (Phase B Bicep applies); (4) re-seed KV secrets via `scripts/azd-bootstrap.sh` (already does this); (5) `azd deploy`; (6) verify `/health/ready` from the api's public ingress (still works) and that `az keyvault secret show` from your laptop fails with `Forbidden` (proves the firewall is on).
+- [planned] **B7 — Bastion-or-jumpbox decision (small).** For laptop access to KV/PG when public access is disabled. Choices documented in ADR-017: (a) Azure Bastion in the `mgmt` subnet (~$140/mo, always-on), (b) ad-hoc dev container app with a public ingress + `az` CLI for break-glass, (c) deploy-time-only public access toggle via the Phase-B bool params. Recommendation: **(c) for dev, (a) for production**.
+
+### Phase C — Tooling & CI updates
+
+- [planned] **C1 — `scripts/azd-network-check.sh`.** New preflight script that confirms the VNet + 4 private endpoints + 3 private DNS zones exist and resolve to the expected `10.10.x.x` addresses from inside the ACA env (uses `az containerapp exec` to nslookup). Wired as a `postdeploy` hook in [azure.yaml](../azure.yaml).
+- [planned] **C2 — `deploy-azure.yml` GHA networking.** Add a smoke step that runs `nslookup` against KV's private FQDN from inside the ACA env and asserts the result is in the `10.10.x.x` range — fails the deploy if a misconfiguration leaves clients hitting the public IP.
+- [planned] **C3 — Update [scripts/azd-preflight.sh](../scripts/azd-preflight.sh)** to verify `Microsoft.Network` resource provider is registered.
+
+### Phase D — Documentation
+
+- [planned] **D1 — ADR-017 — Network hardening: VNet integration + private endpoints.** Records the Phase A vs Phase B split, the cost of the immutable ACA env recreate, the Bastion vs ad-hoc-toggle choice for dev access, and the explicit non-goal: "Phase B does not migrate the api ingress to private/internal — public ingress is intentional for v1; Front Door + WAF stays on the post-Sprint-23 hardening backlog."
+- [planned] **D2 — Update [deploy/azure/README.md](../deploy/azure/README.md)** "Hardening backlog" section: KV private endpoint + Postgres private endpoint move from "deferred" to "shipped in Sprint 23"; add EMQX HA, Front Door + WAF, passwordless Postgres, geo-redundant backup as the new top of the deferred list.
+- [planned] **D3 — Update [docs/runbooks/azd-survival-guide.md](runbooks/azd-survival-guide.md)** "Common gotchas" with the `allowSharedKeyAccess` policy tell-tale and the `KeyVault: Forbidden from container app` symptom + DNS resolution check.
+- [planned] **D4 — `CHANGELOG.md` Sprint 23 section.**
+
+### Acceptance criteria
+
+- `azd up` from a clean Azure subscription with the corporate policy in `Deny` mode succeeds end-to-end (no manual policy exemptions required).
+- `az keyvault secret show` from outside the VNet returns `Forbidden`; the api can still read the same secret at startup (proves private endpoint + DNS work).
+- `nslookup tpdev-kv-*.vault.azure.net` from inside an ACA replica returns a `10.10.x.x` address.
+- `scripts/azd-network-check.sh` exits 0 against a freshly provisioned env.
+- No regression in the Sprint 22 first-deploy runbook for environments that opt out of Phase B (`disableKeyVaultPublicAccess=false`) — both modes coexist behind the flag.
+- Mosquitto ACI boots without any Azure Files mount, with config + password sourced from the custom image + KV.
+
+### Deferred to Sprint 24+
+
+- Front Door + WAF in front of the api ingress.
+- Internal-only ACA ingress (api goes fully private; consumed via Front Door or VPN).
+- EMQX Cloud production cutover (replaces the single-node Mosquitto ACI entirely; obviates the Phase A custom image).
+- Passwordless Postgres via Entra ID.
+- Production-grade Bastion + jumpbox standard for `staging` + `production` envs.
+
+---
+
 ## Backlog (not scheduled)
 - Cloud-to-device commands (reader configuration push via MQTT) (G8)
 - Bulk device operations / jobs (G9)
