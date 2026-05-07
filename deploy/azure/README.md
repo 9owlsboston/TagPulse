@@ -4,6 +4,12 @@ This directory ships TagPulse on **Azure Container Apps (ACA)**, with the
 container images pulled from **Azure Container Registry (ACR)** and secrets
 sourced from **Azure Key Vault** via a user-assigned managed identity.
 
+> **Doing your first deploy?** Follow the
+> [**Azure first-deploy checklist**](../../docs/runbooks/azure-first-deploy.md)
+> — it walks the prerequisites, bootstrap, `azd up`, smoke tests, CI/CD wiring,
+> and production cutover gates step-by-step. This README is the reference
+> companion (module list, SKUs, hardening backlog).
+
 ## What gets deployed
 
 | Resource | SKU / Tier | Purpose |
