@@ -103,3 +103,9 @@ output migrationsJobName string = workload.outputs.migrationsJobName
 output staticWebAppName string = workload.outputs.staticWebAppName
 output staticWebAppHostname string = workload.outputs.staticWebAppHostname
 output appInsightsConnectionString string = workload.outputs.appInsightsConnectionString
+// Sprint 23 Phase B -- surfaces whether the safety-coerced flag landed as
+// `true` or fell back to `false` (set DPNA without VNet -> bricked env).
+// Operators verify post-cutover via:
+//   az deployment sub show --name $AZURE_ENV_NAME \
+//     --query 'properties.outputs.disablePublicNetworkAccessEffective.value'
+output disablePublicNetworkAccessEffective bool = workload.outputs.disablePublicNetworkAccessEffective

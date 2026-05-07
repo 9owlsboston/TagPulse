@@ -18,7 +18,7 @@ sourced from **Azure Key Vault** via a user-assigned managed identity.
 | Container Registry (ACR) | Basic (~$5/mo) | Holds `tagpulse-{api,worker,migrations}` images |
 | Key Vault | Standard (~$0/mo) | `jwt-secret`, `postgres-admin-password`, `mqtt-broker-password` |
 | User-assigned managed identity | — | ACR pull + KV read for ACA apps + job |
-| Postgres Flexible Server | `Standard_B1ms`, 32 GiB (~$15/mo) | TimescaleDB extension, public access + firewall (replace with private endpoint in hardening sprint) |
+| Postgres Flexible Server | `Standard_B1ms`, 32 GiB (~$15/mo) | TimescaleDB extension; public access + firewall by default. Private endpoint + closed firewall available behind the Sprint 23 `AZURE_DISABLE_PUBLIC_NETWORK_ACCESS=true` flag. |
 | ACI (Mosquitto) | 0.5 vCPU / 1 GiB (~$15/mo) | Single-node MQTT broker for v1 |
 | Storage account | Standard_LRS | Persistent volume for Mosquitto data + config |
 | Log Analytics workspace | PerGB2018 | Stdout/stderr from ACA |
@@ -283,9 +283,18 @@ revision is immutable so traffic flips back atomically.
 
 These intentionally do **not** ship in v1 to keep the cost floor and complexity low. Each is a self-contained follow-on:
 
-- **Postgres private endpoint + VNet** — replace the `0.0.0.0` firewall with a VNet + private endpoint; ACA env subnet-injected.
+### Shipped in Sprint 23
+
+- **VNet integration + private endpoints for Key Vault, Postgres, and ACR** — see [ADR-017](../../docs/adr/017-network-hardening.md) and the [Sprint 23 cutover runbook](../../docs/runbooks/sprint-23-network-cutover.md). Opt-in per env via `azd env set AZURE_ENABLE_VNET true && azd env set AZURE_DISABLE_PUBLIC_NETWORK_ACCESS true`. Both flags default `false` so subscriptions without the corporate `Deny`-mode KV/Storage policy keep the Sprint 22 deploy path. ACR jumps to Premium SKU (~$11/mo extra) when private endpoints are on; ACR public access stays `Enabled` because GitHub-hosted-runner image push needs it (closing public ACR is in the Sprint 24+ backlog below).
+- **Custom Mosquitto image (no Azure Files dependency)** — Phase A side-step for the corporate `Modify`-mode storage policy. Conf + entrypoint baked into `eclipse-mosquitto:2`; password materialised from `MOSQUITTO_USERNAME`/`MOSQUITTO_PASSWORD` at boot. Trade-off: broker retained-message persistence is lost across restarts (devices republish on reconnect; obviated by Sprint 24 EMQX).
+
+### Deferred to Sprint 24+
+
 - **Front Door + WAF** — TLS termination + WAF rules + custom domain.
-- **EMQX (or AKS-hosted Mosquitto cluster)** — HA MQTT broker; the ACI broker is single-node.
+- **Internal-only ACA ingress** — api goes fully private; consumed via Front Door or VPN.
+- **Close ACR public access** (`publicNetworkAccess=Disabled` + private-endpoint-only). Requires either (a) self-hosted GHA runners inside the VNet, or (b) `dataEndpointEnabled=true` + ACR-tasks-based push pipeline. Out of scope for Sprint 23.
+- **EMQX (or AKS-hosted Mosquitto cluster)** — HA MQTT broker; the ACI broker is single-node and obviates the Phase A custom image.
 - **Postgres passwordless auth via Entra ID** — drop the admin-password Key Vault secret entirely.
 - **Geo-redundant Postgres backup + cross-region failover** — set `geoRedundantBackup: 'Enabled'` and add the failover module.
 - **mTLS broker rollout** (Sprint 17c) — landed via the cert columns from Sprint 17b but broker-side enforcement is its own sprint.
+- **Production-grade Bastion in the `mgmt` subnet** — the Sprint 23 VNet provisions a `mgmt` /27 placeholder; production deployments should expand it to an `AzureBastionSubnet` (/26) and add the Bastion host (~$140/mo always-on). Dev envs use the deploy-time `AZURE_DISABLE_PUBLIC_NETWORK_ACCESS=false` toggle for break-glass instead.

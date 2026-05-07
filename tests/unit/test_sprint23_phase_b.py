@@ -160,8 +160,7 @@ class TestWorkloadWiring:
 
     def test_effective_value_exposed_as_output(self) -> None:
         expected = (
-            "output disablePublicNetworkAccessEffective bool = "
-            "disablePublicNetworkAccessEffective"
+            "output disablePublicNetworkAccessEffective bool = disablePublicNetworkAccessEffective"
         )
         assert expected in self.bicep_code
 
@@ -207,6 +206,14 @@ class TestMainBicepWiring:
         # policy keep the Sprint 22 deploy path.
         assert "'AZURE_ENABLE_VNET', 'false'" in self.param_code
         assert "'AZURE_DISABLE_PUBLIC_NETWORK_ACCESS', 'false'" in self.param_code
+
+    def test_main_propagates_effective_output(self) -> None:
+        # Audit gap: the safety-coerced value is exposed in workload.bicep
+        # but the runbook tells operators to query it via `az deployment sub
+        # show --query 'properties.outputs.disablePublicNetworkAccessEffective.value'`,
+        # which only works if main.bicep re-exports the workload output.
+        assert "output disablePublicNetworkAccessEffective bool" in self.main_code
+        assert "workload.outputs.disablePublicNetworkAccessEffective" in self.main_code
 
 
 class TestNetworkCheckScript:
