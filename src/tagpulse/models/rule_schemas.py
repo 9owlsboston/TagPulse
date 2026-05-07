@@ -17,6 +17,32 @@ class ThresholdCondition(BaseModel):
     value: float
 
 
+# -- Subject-scoped telemetry conditions (Sprint 20) --
+
+
+class TelemetryThresholdCondition(BaseModel):
+    """Threshold over a subject-scoped telemetry metric.
+
+    Evaluated when a row lands in ``telemetry_readings`` matching the
+    declared ``subject_kind`` + ``subject_id`` (or any subject of that kind
+    when ``subject_id`` is omitted) + ``metric_name``. Pre-Sprint-20 rules
+    used the generic ``threshold`` condition over a tag-read ``payload``
+    field; this condition explicitly targets the persisted multi-subject
+    telemetry stream introduced in Sprint 18.
+    """
+
+    subject_kind: str = Field(
+        pattern=r"^(device|asset|lot|stock_item|zone)$"
+    )
+    metric_name: str = Field(min_length=1)
+    operator: str = Field(pattern=r"^(gt|lt|gte|lte|eq)$")
+    value: float
+    # Optional pin: alert only for this subject. Stored as UUID-as-string
+    # for JSONB round-trip parity with the other inventory rule configs.
+    subject_id: str | None = None
+    cooldown_s: int = Field(default=300, ge=0)
+
+
 class AbsenceCondition(BaseModel):
     """Absence detection: tag not seen for N minutes."""
 
@@ -31,6 +57,73 @@ class RateChangeCondition(BaseModel):
     change_percent: float = Field(gt=0)
 
 
+# -- Inventory conditions (Sprint 15b Phase E) --
+
+
+class StockBelowThresholdCondition(BaseModel):
+    """Periodic scan: alert when (product[, lot][, zone]) stock falls below N."""
+
+    product_id: str  # UUID-as-string for JSONB round-trip parity
+    lot_id: str | None = None
+    zone_id: str | None = None
+    threshold: int = Field(ge=0)
+
+
+class StockExpiringWithinCondition(BaseModel):
+    """Periodic scan: alert when any lot for product expires within N days."""
+
+    product_id: str | None = None  # None = all products in tenant
+    days: int = Field(ge=0)
+
+
+class StockUnexpectedInZoneCondition(BaseModel):
+    """Event-driven: alert on stock_item entering zone NOT in allowed list."""
+
+    product_id: str | None = None  # None = applies to all products
+    allowed_zone_ids: list[str] = Field(min_length=1)
+
+
+# -- Geofence conditions (Sprint 17a) --
+
+
+class ZoneEnteredCondition(BaseModel):
+    """Event-driven: alert when subject enters the named zone.
+
+    Applies to ``subject.zone_changed`` events with matching ``to_zone_id``.
+    ``cooldown_s`` suppresses repeat-alerts for the same (rule, subject) pair
+    within the window, defending against flapping reads.
+    """
+
+    zone_id: str
+    subject_kinds: list[str] | None = None  # None = any (asset, stock_item, device)
+    cooldown_s: int = Field(default=60, ge=0)
+
+
+class ZoneExitedCondition(BaseModel):
+    """Event-driven: alert when subject leaves the named zone."""
+
+    zone_id: str
+    subject_kinds: list[str] | None = None
+    cooldown_s: int = Field(default=60, ge=0)
+
+
+class ZoneDwellExceededCondition(BaseModel):
+    """Periodic: alert when subject dwells in zone longer than threshold."""
+
+    zone_id: str
+    threshold_minutes: int = Field(ge=1)
+    subject_kinds: list[str] | None = None
+    cooldown_s: int = Field(default=300, ge=0)
+
+
+_RULE_CONDITION_PATTERN = (
+    r"^(threshold|absence|rate_change|"
+    r"stock\.below_threshold|stock\.expiring_within|stock\.unexpected_in_zone|"
+    r"zone\.entered|zone\.exited|zone\.dwell_exceeded|"
+    r"telemetry\.threshold)$"
+)
+
+
 # -- Rules --
 
 
@@ -39,7 +132,7 @@ class RuleCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
-    condition_type: str = Field(pattern=r"^(threshold|absence|rate_change)$")
+    condition_type: str = Field(pattern=_RULE_CONDITION_PATTERN)
     condition_config: dict[str, Any]
     action_type: str = Field(pattern=r"^(webhook|email|notification)$")
     action_config: dict[str, Any]
@@ -53,7 +146,7 @@ class RuleUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     condition_type: str | None = Field(
-        default=None, pattern=r"^(threshold|absence|rate_change)$"
+        default=None, pattern=_RULE_CONDITION_PATTERN
     )
     condition_config: dict[str, Any] | None = None
     action_type: str | None = Field(

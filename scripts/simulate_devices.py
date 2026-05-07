@@ -8,17 +8,121 @@ Sends tag reads to the TagPulse API every N seconds from simulated RFID readers.
 """
 
 import argparse
+import math
+import os
 import random
 import sys
 import time
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
 
 API_URL = "http://localhost:8000"
 
+# Optional bearer API key (admin/editor) — populated from --api-key or
+# TAGPULSE_API_KEY env. Required for POST/PATCH endpoints since Sprint 12
+# (a bare X-Tenant-ID header authenticates as viewer only).
+_API_KEY: str | None = None
+
+
+def _headers(tenant_id: str) -> dict[str, str]:
+    h = {"X-Tenant-ID": tenant_id}
+    if _API_KEY:
+        h["Authorization"] = f"Bearer {_API_KEY}"
+    return h
+
+
 TAG_POOL = [f"TAG{i:04d}" for i in range(1, 51)]  # 50 unique tags
+
+# Per-device round-robin cursor over TAG_POOL so each tag (= each bound
+# asset) gets reads at a steady cadence. Re-keyed when --tags shrinks the
+# pool.
+_TAG_CURSOR: dict[str, int] = {}
+
+
+def _next_tag(device_id: str) -> str:
+    idx = _TAG_CURSOR.get(device_id, 0)
+    tag = TAG_POOL[idx % len(TAG_POOL)]
+    _TAG_CURSOR[device_id] = idx + 1
+    return tag
+
+# --with-gps: per-device random-walk state, anchored to a San Francisco city
+# block (Bay Area). Two motion modes — see --motion in main():
+#   * random  — wide-angle wander (forklift idling, pedestrian, original
+#               smoke-test behaviour). Heading jitter ±15° per step.
+#   * vehicle — mostly straight runs with occasional sharp turns
+#               (delivery van / forklift route). Heading jitter ±3° per
+#               step, plus a ~1-in-25 "turn at the corner" event.
+# Both tether to a per-tag home bubble so 5 markers stay visually distinct.
+_GPS_STATE: dict[str, dict[str, float]] = {}
+_GPS_ANCHOR_LAT = 37.7749
+_GPS_ANCHOR_LON = -122.4194
+_GPS_BLOCK_RADIUS_DEG = 0.0015  # ~165 m N/S, ~130 m E/W at 37.77°
+_GPS_HOME_RADIUS_DEG = 0.0004  # ~45 m wander around each device's home point
+_GPS_STEP_DEG = 5.0e-5  # ~5 m per step (visible at zoom ~16)
+_MOTION_MODE = "random"  # set from --motion in main()
+
+
+def _gps_step(device_id: str) -> dict[str, float]:
+    """Advance the device's random-walk position by one step.
+
+    Each device is assigned a deterministic *home* point inside the block on
+    first call (derived from a hash of ``device_id``) and tethers to a small
+    radius around it. This keeps multiple simulated assets visually
+    separated rather than collapsing into one cluster.
+    """
+    state = _GPS_STATE.get(device_id)
+    if state is None:
+        # Deterministic home offset from the device id so re-runs reproduce.
+        h = hash(device_id)
+        ang = (h % 360) * math.pi / 180.0
+        # Push home points out toward the edge of the block on a circle so
+        # they spread evenly around the anchor.
+        home_offset = _GPS_BLOCK_RADIUS_DEG * 0.7
+        home_lat = _GPS_ANCHOR_LAT + home_offset * math.cos(ang)
+        home_lon = _GPS_ANCHOR_LON + home_offset * math.sin(ang)
+        state = {
+            "home_lat": home_lat,
+            "home_lon": home_lon,
+            "lat": home_lat,
+            "lon": home_lon,
+            "heading": random.uniform(0.0, 360.0),
+        }
+        _GPS_STATE[device_id] = state
+    # Per-step heading jitter — vehicles barely deviate, pedestrians wander.
+    if _MOTION_MODE == "vehicle":
+        state["heading"] = (state["heading"] + random.uniform(-3.0, 3.0)) % 360.0
+        # ~4% chance of a sharp turn at an "intersection".
+        if random.random() < 0.04:
+            state["heading"] = (
+                state["heading"] + random.choice([-90.0, 90.0])
+            ) % 360.0
+    else:  # "random"
+        state["heading"] = (state["heading"] + random.uniform(-15.0, 15.0)) % 360.0
+    rad = math.radians(state["heading"])
+    state["lat"] += _GPS_STEP_DEG * math.cos(rad)
+    state["lon"] += _GPS_STEP_DEG * math.sin(rad)
+    # Gently steer back toward home when wandering past the tether radius.
+    # (Hard 180° reflection produced visible "jumps" in the marker; this
+    # rotates the heading toward the home vector by up to 30° per step so
+    # the trajectory curves smoothly back inside the bubble.)
+    dlat = state["home_lat"] - state["lat"]
+    dlon = state["home_lon"] - state["lon"]
+    drift = math.hypot(dlat, dlon)
+    if drift > _GPS_HOME_RADIUS_DEG:
+        target_heading = math.degrees(math.atan2(dlon, dlat)) % 360.0
+        diff = ((target_heading - state["heading"] + 540.0) % 360.0) - 180.0
+        # Clamp the per-step turn so the motion stays smooth.
+        turn = max(-30.0, min(30.0, diff))
+        state["heading"] = (state["heading"] + turn) % 360.0
+    return {
+        "latitude": round(state["lat"], 6),
+        "longitude": round(state["lon"], 6),
+        "accuracy_m": round(random.uniform(2.0, 6.0), 1),
+        "source": "gps",
+    }
 
 
 def create_devices(client: httpx.Client, tenant_id: str, count: int) -> list[dict[str, str]]:
@@ -26,7 +130,7 @@ def create_devices(client: httpx.Client, tenant_id: str, count: int) -> list[dic
 
     Reuses existing devices with matching names to avoid duplicates on re-run.
     """
-    headers = {"X-Tenant-ID": tenant_id}
+    headers = _headers(tenant_id)
 
     # Fetch existing devices
     existing: dict[str, str] = {}
@@ -64,13 +168,15 @@ def send_tag_read(
     client: httpx.Client,
     tenant_id: str,
     device_id: str,
+    *,
+    with_gps: bool = False,
 ) -> bool:
     """Send a single simulated tag read."""
     # 5% chance of a read "failing" (device glitch)
     if random.random() < 0.05:
         return False
 
-    tag_id = random.choice(TAG_POOL)
+    tag_id = _next_tag(device_id)
     signal = round(random.uniform(-80.0, -20.0), 1)
     sensor_data: dict[str, float] = {
         "temperature": round(random.uniform(18.0, 28.0), 1),
@@ -89,11 +195,17 @@ def send_tag_read(
         "signal_strength": signal,
         "sensor_data": sensor_data,
     }
-    # 20% chance to attach a GPS location (mobile-reader profile)
-    if random.random() < 0.20:
+    # 20% chance to attach a GPS location (mobile-reader profile), or always
+    # when --with-gps is enabled (random-walk anchored block, exercises geofence eval).
+    # Key the walk by tag_id (not device_id) so each asset (bound 1:1 to a
+    # tag) has its own home point on the Map — otherwise random tag→device
+    # pairing causes asset positions to bounce across all device walks.
+    if with_gps:
+        body["location"] = _gps_step(tag_id)
+    elif random.random() < 0.20:
         body["location"] = {
-            "latitude": round(47.60 + random.uniform(-0.05, 0.05), 5),
-            "longitude": round(-122.33 + random.uniform(-0.05, 0.05), 5),
+            "latitude": round(37.77 + random.uniform(-0.05, 0.05), 5),
+            "longitude": round(-122.42 + random.uniform(-0.05, 0.05), 5),
             "accuracy_m": round(random.uniform(2.0, 12.0), 1),
             "source": "gps",
         }
@@ -110,7 +222,7 @@ def send_tag_read(
 
     resp = client.post(
         f"{API_URL}/tag-reads",
-        headers={"X-Tenant-ID": tenant_id},
+        headers=_headers(tenant_id),
         json=body,
     )
     return resp.status_code == 201
@@ -139,8 +251,149 @@ def send_telemetry(
         })
     resp = client.post(
         f"{API_URL}/telemetry",
-        headers={"X-Tenant-ID": tenant_id},
+        headers=_headers(tenant_id),
         json={"device_id": device_id, "readings": readings},
+    )
+    return resp.status_code == 201
+
+
+# -- Sprint 20: cold-chain milk simulator --
+
+# Stable demo identifiers — idempotent across runs (re-run the simulator
+# with --cold-chain and you get the same lot back, not a new one).
+_COLD_CHAIN_PRODUCT_SKU = "SIM-MILK-001"
+_COLD_CHAIN_LOT_CODE = "SIM-LOT-COLDCHAIN"
+_COLD_CHAIN_EPC = "URN:EPC:ID:SGTIN:0000000.000001.SIM-COLD-001"
+
+
+def _ensure_cold_chain_lot(
+    client: httpx.Client, tenant_id: str
+) -> tuple[str | None, str | None]:
+    """Idempotently create the demo product, lot, stock_item, and binding.
+
+    Returns ``(lot_id, stock_item_id)`` for the demo lot, or ``(None, None)``
+    if the backend rejects any step (e.g. inventory routes disabled). The
+    simulator continues with regular reads in that case.
+    """
+    headers = _headers(tenant_id)
+
+    # Find or create product.
+    product_id: str | None = None
+    resp = client.get(
+        f"{API_URL}/products?sku={_COLD_CHAIN_PRODUCT_SKU}", headers=headers
+    )
+    if resp.status_code == 200 and resp.json():
+        product_id = resp.json()[0]["id"]
+    else:
+        resp = client.post(
+            f"{API_URL}/products",
+            headers=headers,
+            json={
+                "sku": _COLD_CHAIN_PRODUCT_SKU,
+                "name": "Sim Cold-Chain Milk",
+                "uom": "each",
+            },
+        )
+        if resp.status_code in (200, 201):
+            product_id = resp.json()["id"]
+    if not product_id:
+        return (None, None)
+
+    # Find or create lot.
+    lot_id: str | None = None
+    resp = client.get(
+        f"{API_URL}/lots?product_id={product_id}&lot_code={_COLD_CHAIN_LOT_CODE}",
+        headers=headers,
+    )
+    if resp.status_code == 200 and resp.json():
+        lot_id = resp.json()[0]["id"]
+    else:
+        resp = client.post(
+            f"{API_URL}/lots",
+            headers=headers,
+            json={
+                "product_id": product_id,
+                "lot_code": _COLD_CHAIN_LOT_CODE,
+            },
+        )
+        if resp.status_code in (200, 201):
+            lot_id = resp.json()["id"]
+    if not lot_id:
+        return (None, None)
+
+    # Find or create stock_item bound to the demo EPC.
+    stock_item_id: str | None = None
+    resp = client.get(
+        f"{API_URL}/stock-items?binding_value={_COLD_CHAIN_EPC}",
+        headers=headers,
+    )
+    if resp.status_code == 200 and resp.json():
+        stock_item_id = resp.json()[0]["id"]
+    else:
+        resp = client.post(
+            f"{API_URL}/stock-items",
+            headers=headers,
+            json={
+                "product_id": product_id,
+                "lot_id": lot_id,
+                "binding_kind": "epc",
+                "binding_value": _COLD_CHAIN_EPC,
+                "state": "in_stock",
+            },
+        )
+        if resp.status_code in (200, 201):
+            stock_item_id = resp.json()["id"]
+
+    return (lot_id, stock_item_id)
+
+
+def send_cold_chain_telemetry(
+    client: httpx.Client,
+    tenant_id: str,
+    lot_id: str,
+    stock_item_id: str | None,
+    *,
+    cycle: int,
+) -> bool:
+    """Push one lot-scoped temperature reading on a slow drift toward breach.
+
+    Profile: starts at 4°C and adds ~0.05°C per cycle plus jitter, so a rule
+    threshold of 8°C (the ``lot.cold_chain_breach`` template default) trips
+    after ~80 cycles. Posts via ``/telemetry/readings/ingest`` with
+    ``source='external'`` so the path is exercised end-to-end including
+    the Sprint 20 ``Topic.TELEMETRY_RECORDED`` rule fan-out.
+    """
+    base = 4.0 + (cycle * 0.05)
+    temp = round(base + random.uniform(-0.2, 0.4), 2)
+    readings: list[dict[str, Any]] = [
+        {
+            "subject_kind": "lot",
+            "subject_id": lot_id,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "metric_name": "temperature_c",
+            "metric_value": temp,
+            "unit": "C",
+            "source": "external",
+            "metadata": {"simulator": "cold-chain", "cycle": cycle},
+        }
+    ]
+    if stock_item_id:
+        readings.append(
+            {
+                "subject_kind": "stock_item",
+                "subject_id": stock_item_id,
+                "timestamp": datetime.now(UTC).isoformat(),
+                "metric_name": "temperature_c",
+                "metric_value": temp,
+                "unit": "C",
+                "source": "external",
+                "metadata": {"simulator": "cold-chain", "cycle": cycle},
+            }
+        )
+    resp = client.post(
+        f"{API_URL}/telemetry/readings/ingest",
+        headers=_headers(tenant_id),
+        json={"readings": readings},
     )
     return resp.status_code == 201
 
@@ -152,7 +405,64 @@ def main() -> None:
     parser.add_argument("--interval", type=float, default=2.0, help="Seconds between reads per device")
     parser.add_argument("--duration", type=int, default=0, help="Run for N seconds (0 = forever)")
     parser.add_argument("--seed-only", action="store_true", help="Create devices and exit")
+    parser.add_argument(
+        "--with-gps",
+        action="store_true",
+        help="Always attach a GPS location (random-walk per device) to exercise geofence eval",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("TAGPULSE_API_KEY"),
+        help="Admin/editor API key (Bearer). Required for device creation since Sprint 12. "
+        "Falls back to $TAGPULSE_API_KEY.",
+    )
+    parser.add_argument(
+        "--tags",
+        type=int,
+        default=50,
+        help="Constrain the tag pool to TAG0001..TAG{N:04d} (default: 50). "
+        "Set this to the number of bound assets so every read maps to a marker.",
+    )
+    parser.add_argument(
+        "--motion",
+        choices=("random", "vehicle"),
+        default="random",
+        help=(
+            "GPS walk profile (with --with-gps). 'random' = wide-angle wander "
+            "(forklift idling, pedestrian); 'vehicle' = mostly-straight runs "
+            "with occasional 90° turns (delivery van / route)."
+        ),
+    )
+    parser.add_argument(
+        "--cold-chain",
+        action="store_true",
+        help=(
+            "Sprint 20: spin up a synthetic milk lot bound to a logger EPC "
+            "and emit lot-scoped temperature readings on a slow drift toward "
+            "breach (4°C → 9°C). Lets the lot.cold_chain_breach rule template "
+            "fire end-to-end without manual data injection. Idempotent: the "
+            "product/lot/binding are created on first run only."
+        ),
+    )
+    parser.add_argument(
+        "--cold-chain-period",
+        type=float,
+        default=10.0,
+        help="Seconds between cold-chain telemetry pushes (default: 10).",
+    )
     args = parser.parse_args()
+
+    global _API_KEY, TAG_POOL, _MOTION_MODE
+    _API_KEY = args.api_key
+    _MOTION_MODE = args.motion
+    if args.tags > 0 and args.tags != len(TAG_POOL):
+        TAG_POOL = [f"TAG{i:04d}" for i in range(1, args.tags + 1)]
+    if not _API_KEY:
+        print(
+            "WARNING: no --api-key (or $TAGPULSE_API_KEY) provided — "
+            "device creation/ingestion will fail with 403 since Sprint 12. "
+            "See docs/quickstart.md → Step 5b for how to bootstrap one."
+        )
 
     client = httpx.Client(timeout=10.0)
 
@@ -183,6 +493,28 @@ def main() -> None:
         print("Seed-only mode. Exiting.")
         return
 
+    # Sprint 20: provision the cold-chain demo lot once, up-front.
+    cold_chain_lot_id: str | None = None
+    cold_chain_stock_id: str | None = None
+    cold_chain_next_push: float = 0.0
+    cold_chain_cycle = 0
+    if args.cold_chain:
+        print("Provisioning cold-chain demo lot...")
+        cold_chain_lot_id, cold_chain_stock_id = _ensure_cold_chain_lot(
+            client, args.tenant_id
+        )
+        if cold_chain_lot_id:
+            print(
+                f"  Cold-chain lot ready: lot={cold_chain_lot_id} "
+                f"stock_item={cold_chain_stock_id}"
+            )
+            cold_chain_next_push = time.monotonic()
+        else:
+            print(
+                "  Cold-chain provisioning failed (inventory routes "
+                "unavailable?); skipping lot fan-out.\n"
+            )
+
     # Generate tag reads
     print("Sending tag reads (Ctrl+C to stop)...\n")
     start = time.monotonic()
@@ -194,7 +526,9 @@ def main() -> None:
                 # 10% chance a device skips this cycle (simulates busy/offline)
                 if random.random() < 0.10:
                     continue
-                ok = send_tag_read(client, args.tenant_id, device["id"])
+                ok = send_tag_read(
+                    client, args.tenant_id, device["id"], with_gps=args.with_gps
+                )
                 if ok:
                     total_reads += 1
                 else:
@@ -206,6 +540,19 @@ def main() -> None:
                 print(
                     f"  {status} {device['name']} → {total_reads} sent, {dropped} dropped",
                     end="\r",
+                )
+            # Sprint 20 cold-chain push, paced by --cold-chain-period.
+            if cold_chain_lot_id and time.monotonic() >= cold_chain_next_push:
+                send_cold_chain_telemetry(
+                    client,
+                    args.tenant_id,
+                    cold_chain_lot_id,
+                    cold_chain_stock_id,
+                    cycle=cold_chain_cycle,
+                )
+                cold_chain_cycle += 1
+                cold_chain_next_push = (
+                    time.monotonic() + args.cold_chain_period
                 )
             # Jitter: ±30% of the base interval
             jitter = args.interval * random.uniform(0.7, 1.3)

@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: api
     ports:
       - "8000:8000"
     environment:
@@ -12,11 +13,21 @@ services:
       LOG_LEVEL: debug
       CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
       JWT_SECRET: "dev-secret-change-in-production"
+      # Sprint 22 B1: API container hosts HTTP only; the ``worker`` service
+      # below runs the MQTT subscriber + inventory/dwell/alert workers.
+      WORKERS_INLINE: "false"
+      # Sprint 17a geofence point-in-polygon eval is gated by a rollout
+      # flag (off by default in production until the bbox index is live).
+      # Force-enable in dev so the smoke test's zone.entered/exited rules
+      # actually fire — see docs/quickstart.md §6b.
+      GEOFENCE_EVALUATION_ENABLED: "true"
     depends_on:
       db:
         condition: service_healthy
       mqtt:
         condition: service_started
+      migrations:
+        condition: service_completed_successfully
     volumes:
       - ./src:/app/src
     networks:
@@ -27,6 +38,41 @@ services:
       uvicorn tagpulse.api.main:app
       --host 0.0.0.0 --port 8000 --reload
       --reload-dir /app/src
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    environment:
+      DATABASE_URL: postgresql+asyncpg://tagpulse:secret@db:5432/tagpulse
+      MQTT_BROKER_HOST: mqtt
+      MQTT_BROKER_PORT: "1883"
+      LOG_LEVEL: debug
+      JWT_SECRET: "dev-secret-change-in-production"
+      WORKERS_INLINE: "true"
+      GEOFENCE_EVALUATION_ENABLED: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+      migrations:
+        condition: service_completed_successfully
+    volumes:
+      - ./src:/app/src
+
+  migrations:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrations
+    environment:
+      DATABASE_URL: postgresql+asyncpg://tagpulse:secret@db:5432/tagpulse
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
 
   ui:
     build:

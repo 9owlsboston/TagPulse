@@ -105,3 +105,113 @@ tag_data_truncations_counter = meter.create_counter(
     description="Tag-data JSONB blobs truncated to inline size cap",
     unit="reads",
 )
+
+tag_collisions_global_counter = meter.create_counter(
+    "tagpulse_tag_collisions_global_total",
+    description="Cross-tenant binding_value collisions inspected by admin",
+    unit="checks",
+)
+
+tag_reads_without_asset_counter = meter.create_counter(
+    "tagpulse_tag_reads_without_asset_total",
+    description="Tag reads ingested with no active asset binding",
+    unit="reads",
+)
+
+subject_zone_changed_counter = meter.create_counter(
+    "tagpulse_subject_zone_changed_total",
+    description="Asset/stock-item zone-transition events emitted",
+    unit="events",
+)
+
+external_locations_counter = meter.create_counter(
+    "tagpulse_external_locations_recorded_total",
+    description="External (non-RFID) location fixes recorded per asset",
+    unit="positions",
+)
+
+asset_load_counter = meter.create_counter(
+    "tagpulse_asset_load_operations_total",
+    description="Carrier load/unload operations on the assets containment tree",
+    unit="ops",
+)
+
+stock_item_auto_created_counter = meter.create_counter(
+    "tagpulse_stock_items_auto_created_total",
+    description="Stock items auto-created by ingestion on first SGTIN read",
+    unit="items",
+)
+
+stock_movements_recorded_counter = meter.create_counter(
+    "tagpulse_stock_movements_recorded_total",
+    description="Stock movement rows appended by ingestion on zone transitions",
+    unit="movements",
+)
+
+inventory_unmapped_sgtin_counter = meter.create_counter(
+    "tagpulse_inventory_unmapped_sgtin_total",
+    description="SGTIN reads with no matching product (GTIN lookup miss)",
+    unit="reads",
+)
+
+# -- Sprint 16: edge contract & identity hardening --
+events_rejected_clock_counter = meter.create_counter(
+    "tagpulse_events_rejected_clock_total",
+    description="Tag-read events rejected by the ingestion clock window "
+    "(too old or too far in the future) per docs/design/edge-device-contract.md §3.5",
+    unit="events",
+)
+
+device_token_rotations_counter = meter.create_counter(
+    "tagpulse_device_token_rotations_total",
+    description="Per-device Bearer token rotations (ADR-011 Phase 1)",
+    unit="rotations",
+)
+
+device_cert_attachments_counter = meter.create_counter(
+    "tagpulse_device_cert_attachments_total",
+    description=(
+        "Device-certificate attachments via POST /device-registry/{id}/cert "
+        "(ADR-012 Phase 2 mTLS for MQTT)."
+    ),
+    unit="attachments",
+)
+
+# -- Sprint 17a: geofencing & map --
+geofence_evaluation_duration = meter.create_histogram(
+    "geofence_evaluation_duration",
+    description=(
+        "Per-evaluation latency for the in-process geofence point-in-polygon "
+        "test. p99 > 10ms sustained 1h opens ADR-013 (PostGIS adoption) per "
+        "docs/design/geofencing-and-map.md §11 Q5."
+    ),
+    unit="s",
+)
+
+geofence_candidates_per_evaluation = meter.create_histogram(
+    "geofence_candidates_per_evaluation",
+    description=(
+        "Polygons surviving the SQL bbox prefilter per ingest. p95 > 50 "
+        "sustained 1h opens ADR-013 (PostGIS adoption) per "
+        "docs/design/geofencing-and-map.md §11 Q5."
+    ),
+    unit="1",
+)
+
+geofence_transitions_counter = meter.create_counter(
+    "tagpulse_geofence_transitions_total",
+    description="Geofence-zone enter/exit transitions emitted by ingestion.",
+    unit="events",
+)
+
+dwell_evaluations_counter = meter.create_counter(
+    "tagpulse_dwell_evaluations_total",
+    description="Dwell-worker scans of asset_current_zone (Sprint 17a §5.2).",
+    unit="scans",
+)
+
+dwell_alerts_counter = meter.create_counter(
+    "tagpulse_dwell_alerts_total",
+    description="Synthetic zone.dwell_exceeded alerts emitted by the dwell worker.",
+    unit="alerts",
+)

@@ -15,20 +15,30 @@ from tagpulse.analytics.read_frequency import ReadFrequencyModule
 from tagpulse.api.routes.admin import router as admin_router
 from tagpulse.api.routes.admin_ops import router as admin_ops_router
 from tagpulse.api.routes.analytics import router as analytics_router
+from tagpulse.api.routes.assets import router as assets_router
 from tagpulse.api.routes.auth import router as auth_router
 from tagpulse.api.routes.devices import router as devices_router
 from tagpulse.api.routes.health import router as health_router
 from tagpulse.api.routes.ingestion import router as ingestion_router
 from tagpulse.api.routes.integrations import router as integrations_router
+from tagpulse.api.routes.inventory import router as inventory_router
+from tagpulse.api.routes.inventory_imports import router as inventory_imports_router
 from tagpulse.api.routes.metrics import router as metrics_router
 from tagpulse.api.routes.provisioning import router as provisioning_router
 from tagpulse.api.routes.query import router as query_router
 from tagpulse.api.routes.rules import router as rules_router
+from tagpulse.api.routes.sites_zones import router as sites_zones_router
 from tagpulse.api.routes.telemetry import router as telemetry_router
 from tagpulse.api.routes.telemetry_models import router as telemetry_models_router
+from tagpulse.api.routes.tenant_config import router as tenant_config_router
 from tagpulse.api.routes.users import router as users_router
 from tagpulse.core.config import settings
 from tagpulse.core.logging import setup_logging
+from tagpulse.core.migration_check import (
+    MigrationVersionMismatch,
+    assert_migration_head,
+)
+from tagpulse.core.rate_limit import rate_limit_middleware
 from tagpulse.core.telemetry import setup_telemetry
 from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.async_bus import AsyncEventBus
@@ -39,6 +49,8 @@ from tagpulse.integrations.webhook import WebhookDispatcher
 from tagpulse.repositories.timescaledb.session import async_session_factory
 from tagpulse.rules.delivery import AlertDeliveryService
 from tagpulse.rules.evaluator import RuleEvaluator
+from tagpulse.workers.dwell_worker import DwellTracker, DwellWorker
+from tagpulse.workers.inventory_rule_worker import InventoryRuleWorker
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +60,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifecycle — start/stop EventBus and MQTT subscriber."""
     setup_logging(settings.log_level)
     setup_telemetry(app)
+
+    # Sprint 22 A7: refuse to boot when DB schema doesn't match the
+    # code's alembic head. Always-on in staging/production (forced by
+    # the Settings validator); opt-in in dev so an in-flight migration
+    # branch doesn't block ``make run``.
+    if settings.strict_migration_check:
+        try:
+            await assert_migration_head(async_session_factory)
+        except MigrationVersionMismatch:
+            logger.exception("strict_migration_check failed; aborting startup")
+            raise
+
+    # Sprint 22 A3: warn loudly when geofence evaluation is off in a
+    # non-dev environment. Operators can still flip the flag at runtime;
+    # this is just a "did you mean to leave this off?" guardrail.
+    if (
+        settings.environment != "dev"
+        and not settings.geofence_evaluation_enabled
+    ):
+        logger.warning(
+            "geofence_evaluation_enabled is False in environment=%s; "
+            "zone.entered/exited/dwell rules will not fire. "
+            "Set GEOFENCE_EVALUATION_ENABLED=true to enable.",
+            settings.environment,
+        )
 
     # EventBus — create but don't start yet (start after all subscriptions)
     event_bus = AsyncEventBus(
@@ -61,49 +98,105 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await usage_meter.start()
     app.state.usage_meter = usage_meter
 
-    # Rule evaluator — subscribes to tag read events
-    evaluator = RuleEvaluator(
-        session_factory=async_session_factory,
-        event_bus=event_bus,
-        usage_meter=usage_meter,
-    )
-    await event_bus.subscribe(Topic.TAG_READ_CREATED, evaluator.on_tag_read)
+    # Sprint 22 B1: worker components run in this process only when
+    # ``workers_inline`` is True. In cloud deployments the API container
+    # sets ``WORKERS_INLINE=false`` and a sibling worker container
+    # (same image, default ``WORKERS_INLINE=true``) hosts these. The
+    # event_bus + usage_meter above are unconditional because HTTP
+    # routes / SSE / dependencies read them from ``app.state``.
+    inventory_worker: InventoryRuleWorker | None = None
+    dwell_worker: DwellWorker | None = None
+    dwell_tracker: DwellTracker | None = None
+    alert_delivery: AlertDeliveryService | None = None
+    analytics_modules: list[AnalyticsModule] = []
+    webhook_dispatcher: WebhookDispatcher | None = None
+    mqtt_task: asyncio.Task[None] | None = None
 
-    # Alert delivery — subscribes to alert triggered events
-    alert_delivery = AlertDeliveryService()
-    await alert_delivery.start()
-    await event_bus.subscribe(
-        Topic.ALERT_TRIGGERED, alert_delivery.on_alert_triggered
-    )
-    app.state.alert_delivery = alert_delivery
+    if settings.workers_inline:
+        # Rule evaluator — subscribes to tag read events
+        evaluator = RuleEvaluator(
+            session_factory=async_session_factory,
+            event_bus=event_bus,
+            usage_meter=usage_meter,
+        )
+        await event_bus.subscribe(Topic.TAG_READ_CREATED, evaluator.on_tag_read)
+        await event_bus.subscribe(
+            Topic.SUBJECT_ZONE_CHANGED, evaluator.on_subject_zone_changed
+        )
+        # Sprint 20: subject-scoped telemetry threshold rules.
+        await event_bus.subscribe(
+            Topic.TELEMETRY_RECORDED, evaluator.on_telemetry_recorded
+        )
 
-    # Analytics modules
-    analytics_modules: list[AnalyticsModule] = [
-        ReadFrequencyModule(session_factory=async_session_factory),
-    ]
-    for module in analytics_modules:
-        await module.start()
-        for topic in module.subscribed_topics:
-            await event_bus.subscribe(topic, module.on_event)
-    app.state.analytics_modules = analytics_modules
+        # Inventory rule worker — periodic scans for stock.below_threshold and
+        # stock.expiring_within rules + daily stock_items_active metering snapshot.
+        inventory_worker = InventoryRuleWorker(
+            session_factory=async_session_factory,
+            event_bus=event_bus,
+            usage_meter=usage_meter,
+        )
+        await inventory_worker.start()
+        app.state.inventory_worker = inventory_worker
 
-    # Webhook dispatcher — subscribes to all events for webhook delivery
-    webhook_dispatcher = WebhookDispatcher(
-        session_factory=async_session_factory, usage_meter=usage_meter
-    )
-    await webhook_dispatcher.start()
-    for topic in Topic:
-        await event_bus.subscribe(topic, webhook_dispatcher.on_event)
-    app.state.webhook_dispatcher = webhook_dispatcher
+        # Sprint 17a: dwell tracker + worker for zone.dwell_exceeded rules.
+        # Tracker is write-through to subject_current_zone (migration 027) so
+        # dwell state survives restart and is shared across workers.
+        dwell_tracker = DwellTracker(session_factory=async_session_factory)
+        await dwell_tracker.hydrate()
+        await event_bus.subscribe(
+            Topic.SUBJECT_ZONE_CHANGED, dwell_tracker.on_subject_zone_changed
+        )
+        dwell_worker = DwellWorker(
+            session_factory=async_session_factory,
+            event_bus=event_bus,
+            usage_meter=usage_meter,
+            tracker=dwell_tracker,
+            interval_s=float(settings.dwell_worker_interval_s),
+        )
+        await dwell_worker.start()
+        app.state.dwell_tracker = dwell_tracker
+        app.state.dwell_worker = dwell_worker
+
+        # Alert delivery — subscribes to alert triggered events
+        alert_delivery = AlertDeliveryService()
+        await alert_delivery.start()
+        await event_bus.subscribe(
+            Topic.ALERT_TRIGGERED, alert_delivery.on_alert_triggered
+        )
+        app.state.alert_delivery = alert_delivery
+
+        # Analytics modules
+        analytics_modules = [
+            ReadFrequencyModule(session_factory=async_session_factory),
+        ]
+        for module in analytics_modules:
+            await module.start()
+            for topic in module.subscribed_topics:
+                await event_bus.subscribe(topic, module.on_event)
+        app.state.analytics_modules = analytics_modules
+
+        # Webhook dispatcher — subscribes to all events for webhook delivery
+        webhook_dispatcher = WebhookDispatcher(
+            session_factory=async_session_factory, usage_meter=usage_meter
+        )
+        await webhook_dispatcher.start()
+        for topic in Topic:
+            await event_bus.subscribe(topic, webhook_dispatcher.on_event)
+        app.state.webhook_dispatcher = webhook_dispatcher
+    else:
+        logger.info(
+            "workers_inline=False; this process serves HTTP only. "
+            "Run a sibling container with WORKERS_INLINE=true to host "
+            "MQTT subscriber + inventory/dwell/alert/analytics/webhook workers."
+        )
 
     # Start EventBus AFTER all subscribers are registered
     await event_bus.start()
 
-    # MQTT subscriber background task
-    mqtt_task: asyncio.Task[None] | None = None
-    if settings.mqtt_broker_host:
+    # MQTT subscriber background task (worker process only)
+    if settings.workers_inline and settings.mqtt_broker_host:
         mqtt_task = asyncio.create_task(
-            _run_mqtt_subscriber(event_bus)
+            _run_mqtt_subscriber(event_bus, usage_meter)
         )
         logger.info("MQTT subscriber task started")
 
@@ -114,15 +207,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         mqtt_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await mqtt_task
+    if dwell_worker is not None:
+        await dwell_worker.stop()
+    if inventory_worker is not None:
+        await inventory_worker.stop()
     await usage_meter.stop()
     for module in analytics_modules:
         await module.stop()
-    await webhook_dispatcher.stop()
-    await alert_delivery.stop()
+    if webhook_dispatcher is not None:
+        await webhook_dispatcher.stop()
+    if alert_delivery is not None:
+        await alert_delivery.stop()
     await event_bus.drain(timeout=10.0)
 
 
-async def _run_mqtt_subscriber(event_bus: AsyncEventBus) -> None:
+async def _run_mqtt_subscriber(
+    event_bus: AsyncEventBus, usage_meter: UsageMeter
+) -> None:
     """Run MQTT subscriber with per-message sessions to avoid stale ORM state."""
     subscriber = MqttSubscriber(
         host=settings.mqtt_broker_host,
@@ -131,6 +232,7 @@ async def _run_mqtt_subscriber(event_bus: AsyncEventBus) -> None:
         event_bus=event_bus,
         username=settings.mqtt_username,
         password=settings.mqtt_password,
+        usage_meter=usage_meter,
     )
     try:
         await subscriber.run()
@@ -149,12 +251,20 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins.split(","),
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=[
+        m.strip() for m in settings.cors_allow_methods.split(",") if m.strip()
+    ],
+    allow_headers=[
+        h.strip() for h in settings.cors_allow_headers.split(",") if h.strip()
+    ],
     expose_headers=["X-Request-ID"],
 )
+
+# Sprint 22 A4: global per-(tenant, route_class) rate limiter. Bypass list
+# in tagpulse.core.rate_limit covers /health, /metrics, /auth/login, docs.
+app.middleware("http")(rate_limit_middleware)
 
 
 @app.middleware("http")
@@ -168,6 +278,42 @@ async def request_id_middleware(
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
     return response
+
+
+# Sprint 16 §4 — explicit ingest payload size limit. Per
+# docs/design/edge-device-contract.md §3.4 a single MQTT/HTTP message must be
+# ≤256 KB after JSON encoding. Reject early via Content-Length so giant payloads
+# never hit Pydantic.
+_INGEST_PATH_PREFIXES = ("/tag-reads", "/telemetry", "/device-registry")
+
+
+@app.middleware("http")
+async def ingest_payload_size_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    if request.method == "POST" and any(
+        request.url.path.startswith(p) for p in _INGEST_PATH_PREFIXES
+    ):
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                size = int(content_length)
+            except ValueError:
+                size = 0
+            if size > settings.max_ingest_payload_bytes:
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "detail": (
+                            f"Payload exceeds {settings.max_ingest_payload_bytes} "
+                            "bytes (edge contract §3.4)"
+                        ),
+                    },
+                )
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -212,3 +358,8 @@ app.include_router(admin_router)
 app.include_router(admin_ops_router)
 app.include_router(users_router)
 app.include_router(provisioning_router)
+app.include_router(sites_zones_router)
+app.include_router(assets_router)
+app.include_router(inventory_router)
+app.include_router(inventory_imports_router)
+app.include_router(tenant_config_router)

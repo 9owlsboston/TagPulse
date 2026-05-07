@@ -1,8 +1,10 @@
 # Design Document: Telemetry & Location Foundations (Sprint 14)
 
 **Date:** 2026-05-02
-**Status:** proposed
-**Related:** [asset-tracking-gap-analysis.md](asset-tracking-gap-analysis.md) (A1, A2, A7), [storage-strategy.md](storage-strategy.md), [data-models.md](../data-models.md), [rfid-tag-data-model.md](rfid-tag-data-model.md), [mobile-carriers-and-manifests.md](mobile-carriers-and-manifests.md) (uses the `…/location` topic + `EdgeConfig` throttling defined here)
+**Status:** proposed (superseded by [subject-scoped-telemetry.md](subject-scoped-telemetry.md) for the Sprint 18+ schema)
+**Related:** [asset-tracking-gap-analysis.md](asset-tracking-gap-analysis.md) (A1, A2, A7), [storage-strategy.md](storage-strategy.md), [data-models.md](../data-models.md), [rfid-tag-data-model.md](rfid-tag-data-model.md), [mobile-carriers-and-manifests.md](mobile-carriers-and-manifests.md) (uses the `\u2026/location` topic + `EdgeConfig` throttling defined here), [subject-scoped-telemetry.md](subject-scoped-telemetry.md), [ADR-013](../adr/013-telemetry-subject-scoping.md), [ADR-014](../adr/014-telemetry-multi-subject-ingest.md), [ADR-015](../adr/015-telemetry-rules-and-deprecation.md)
+
+> **Sprint 18+ update:** the `device_telemetry` hypertable described below was renamed to `telemetry_readings_legacy_device` by [migration 030](../../migrations/versions/030_subject_scoped_telemetry.py) and replaced by the subject-scoped `telemetry_readings` hypertable keyed on `(tenant_id, subject_kind, subject_id, metric_name, timestamp)`. The `device_telemetry` name now resolves to a read-only back-compat view (`SELECT \u2026 FROM telemetry_readings WHERE subject_kind='device'`). The Sprint 14 ingest contract is preserved byte-for-byte \u2014 every original code path still works \u2014 but new code should target `telemetry_readings` and the `TimescaleTelemetryReadingsRepository`. The legacy table + view + deprecated repository are scheduled for sunset in Sprint 21 (gated on retention cycle). See [subject-scoped-telemetry.md](subject-scoped-telemetry.md) for the new schema and rollout.
 
 ---
 

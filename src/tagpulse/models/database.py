@@ -4,7 +4,17 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, SmallInteger, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -25,8 +35,31 @@ class TenantModel(Base):
     slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     plan: Mapped[str] = mapped_column(String(50), nullable=False, default="standard")
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
+    tracking_modes: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default='["asset"]'
+    )
+    # -- Sprint 19: subject kinds the ingest pipeline is allowed to
+    # fan-out telemetry to. ``["device"]`` (the default) preserves
+    # Sprint 14 behaviour byte-for-byte; operators opt into
+    # ``"asset"`` / ``"lot"`` / ``"stock_item"`` / ``"zone"`` once they
+    # have a matching telemetry_models entry. See
+    # docs/design/subject-scoped-telemetry.md §4. --
+    telemetry_subject_kinds: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default='["device"]'
+    )
+    db_pool_key: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="shared_default"
+    )
     provisioning_key_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     provisioning_key_prefix: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # -- Sprint 17a: per-tenant tile-provider config (NULL = system default) --
+    tile_provider: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # -- Sprint 22 A4: per-tenant rate-limit overrides (NULL = use globals).
+    # Shape: {"ingest": int, "read": int, "write": int, "admin": int}.
+    # Any subset of keys allowed; missing keys fall back to Settings. --
+    rate_limit_overrides: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -43,6 +76,7 @@ class DeviceModel(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     device_type: Mapped[str] = mapped_column(String(50), nullable=False, default="rfid_reader")
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
+    mobility: Mapped[str] = mapped_column(String(16), nullable=False, server_default="fixed")
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
     )
@@ -57,6 +91,15 @@ class DeviceModel(Base):
     last_seen: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # -- Sprint 16: rotatable per-device token (ADR-011 Phase 1) --
+    token_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    token_prefix: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    token_rotated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # -- Sprint 17b: mTLS for MQTT (ADR-012 Phase 2) --
+    cert_thumbprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    cert_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -102,10 +145,18 @@ class TagReadModel(Base):
     )
 
 
-class DeviceTelemetryModel(Base):
-    """Device telemetry hypertable — sensor and metric readings (Sprint 14)."""
+class TelemetryReadingModel(Base):
+    """Subject-scoped telemetry hypertable (Sprint 18).
 
-    __tablename__ = "device_telemetry"
+    Authoritative store. Keyed on ``(tenant_id, subject_kind, subject_id)``
+    so a single reading can be attributed to the device that reported it,
+    the asset bound to the tag it scanned, the lot/stock-item the tag
+    decodes to, or the zone it currently sits in. See
+    :doc:`docs/design/subject-scoped-telemetry` for the full data model
+    and ADR-013 for the rename-not-drop migration strategy.
+    """
+
+    __tablename__ = "telemetry_readings"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -113,20 +164,33 @@ class DeviceTelemetryModel(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
     )
-    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    subject_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), primary_key=True, index=True
     )
     metric_name: Mapped[str] = mapped_column(String(100), nullable=False)
     metric_value: Mapped[float] = mapped_column(Float, nullable=False)
     unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="device"
+    )
     metadata_: Mapped[dict[str, Any] | None] = mapped_column(
         "metadata", JSONB, nullable=True
     )
 
 
 class TelemetryQuarantineModel(Base):
-    """Quarantine for unknown / out-of-range telemetry readings (Sprint 14)."""
+    """Quarantine for unknown / out-of-range telemetry readings (Sprint 14).
+
+    Sprint 18 added nullable ``subject_kind`` / ``subject_id`` columns so
+    multi-subject ingest can record the resolved subject when the reading
+    fails validation. Legacy rows (back-filled from ``device_telemetry``)
+    leave both columns NULL.
+    """
 
     __tablename__ = "telemetry_quarantine"
 
@@ -144,10 +208,23 @@ class TelemetryQuarantineModel(Base):
     metric_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     reason: Mapped[str] = mapped_column(String(40), nullable=False)
+    subject_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    subject_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
 
 
 class TelemetryModelDef(Base):
-    """Telemetry model definitions — per-device-type metric schemas."""
+    """Telemetry model definitions — per-subject metric schemas.
+
+    Sprint 18 added the ``subject_kind`` column. ``device_type`` is now
+    only required when ``subject_kind='device'`` (the original Sprint 14
+    case); for ``asset`` / ``lot`` / ``stock_item`` / ``zone`` it must be
+    ``NULL`` and the model is shared across all subjects of that kind for
+    the tenant. Uniqueness is enforced by
+    ``ix_telemetry_models_tenant_subject`` on
+    ``(tenant_id, subject_kind, COALESCE(device_type, ''))``.
+    """
 
     __tablename__ = "telemetry_models"
 
@@ -157,7 +234,10 @@ class TelemetryModelDef(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
     )
-    device_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    subject_kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="device"
+    )
+    device_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     metrics: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -408,4 +488,367 @@ class UserModel(Base):
     )
     last_login: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class SiteModel(Base):
+    """Physical location grouping (Sprint 15) — building/yard/warehouse."""
+
+    __tablename__ = "sites"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_timezone: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="UTC"
+    )
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class ZoneModel(Base):
+    """Logical area within a site (Sprint 15) — reader-bound; geofence in S17a."""
+
+    __tablename__ = "zones"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sites.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    fixed_reader_ids: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    polygon_geojson: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    # -- Sprint 17a: denormalized bbox for the geofence prefilter --
+    bbox_min_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bbox_max_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bbox_min_lon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bbox_max_lon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class SubjectCurrentZoneModel(Base):
+    """Latest known zone per subject (Sprint 17a §5.2).
+
+    Persistence backing for ``DwellTracker``. One row per
+    ``(tenant_id, subject_kind, subject_id)``; upserted by the ingestion path
+    on every ``subject.zone_changed`` event so the dwell worker survives
+    restart and works in multi-worker deployments.
+    """
+
+    __tablename__ = "subject_current_zone"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    subject_kind: Mapped[str] = mapped_column(String(32), primary_key=True)
+    subject_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True
+    )
+    zone_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    zone_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    entered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AssetModel(Base):
+    """Tenant-scoped tracked thing (Sprint 15)."""
+
+    __tablename__ = "assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    external_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    asset_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="active"
+    )
+    parent_asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class AssetTagBindingModel(Base):
+    """Historical tag-to-asset binding (Sprint 15)."""
+
+    __tablename__ = "asset_tag_bindings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    binding_value: Mapped[str] = mapped_column(String(256), nullable=False)
+    binding_kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="epc"
+    )
+    bound_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    unbound_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
+
+
+class ExternalLocationModel(Base):
+    """Non-RFID position fix for an asset (Sprint 15 Phase C)."""
+
+    __tablename__ = "external_locations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True, nullable=False
+    )
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    accuracy_meters: Mapped[float | None] = mapped_column(Float, nullable=True)
+    speed_kph: Mapped[float | None] = mapped_column(Float, nullable=True)
+    heading_deg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
+
+
+# ============================================================================
+# Sprint 15b — Inventory tracking
+# ============================================================================
+
+
+class ProductModel(Base):
+    """SKU catalog row (Sprint 15b)."""
+
+    __tablename__ = "products"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    sku: Mapped[str] = mapped_column(String(64), nullable=False)
+    gtin: Mapped[str | None] = mapped_column(String(14), nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    unit: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="each"
+    )
+    attributes: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class LotModel(Base):
+    """Production batch / expiry (Sprint 15b)."""
+
+    __tablename__ = "lots"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    lot_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    manufactured_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class StockItemModel(Base):
+    """Per-tag inventory unit (Sprint 15b)."""
+
+    __tablename__ = "stock_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("products.id"), nullable=False
+    )
+    lot_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("lots.id"), nullable=True
+    )
+    parent_stock_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("stock_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    binding_value: Mapped[str] = mapped_column(String(256), nullable=False)
+    binding_kind: Mapped[str] = mapped_column(
+        String(8), nullable=False, server_default="epc"
+    )
+    state: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="in_stock"
+    )
+    current_zone_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
+
+
+class StockMovementModel(Base):
+    """Append-only inventory movement ledger (Sprint 15b)."""
+
+    __tablename__ = "stock_movements"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    stock_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    from_zone_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    to_zone_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    movement_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    quantity: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True, nullable=False
+    )
+
+
+class TagDataMappingModel(Base):
+    """Per-(tenant, scope) mapping tag_data key -> semantic field (Sprint 15b)."""
+
+    __tablename__ = "tag_data_mappings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    scope_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    scope_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    semantic_field: Mapped[str] = mapped_column(String(40), nullable=False)
+    tag_data_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    transform: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

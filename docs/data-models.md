@@ -4,7 +4,7 @@ This document is the single reference for all database tables, Pydantic API sche
 
 > **RFID domain primer:** what an RFID tag actually carries (TID, EPC, user memory, sensor data) and how those fields land in `tag_reads` and `device_telemetry` is captured in [design/rfid-tag-data-model.md](design/rfid-tag-data-model.md).
 >
-> **Mobile readers / carriers:** the `devices.mobility` flag, `assets.parent_asset_id` / `stock_items.parent_stock_item_id` containment columns, and the `binding_kind='device'` extension to `asset_tag_bindings` are specified in [design/mobile-carriers-and-manifests.md](design/mobile-carriers-and-manifests.md). They land additively in Sprints 15 / 15b / 17a; this document will be updated when those migrations ship.
+> **Mobile readers / carriers:** the `devices.mobility` flag, `assets.parent_asset_id` / `stock_items.parent_stock_item_id` containment columns, and the `binding_kind='device'` extension to `asset_tag_bindings` are specified in [design/mobile-carriers-and-manifests.md](design/mobile-carriers-and-manifests.md). All landed across migrations 017–019 and 028.
 
 ---
 
@@ -15,16 +15,19 @@ tenants
   |-- 1:N -- devices
   |-- 1:N -- users
   |-- 1:N -- tag_reads
-  |-- 1:N -- device_telemetry          (planned, Sprint 14)
-  |-- 1:N -- telemetry_quarantine      (planned, Sprint 14)
-  |-- 1:N -- assets                    (planned, Sprint 15)        — asset-tracking mode
-  |           |-- 1:N -- asset_tag_bindings  (planned, Sprint 15)
-  |-- 1:N -- products                  (planned, Sprint 15b)       — inventory mode
-  |           |-- 1:N -- lots          (planned, Sprint 15b)
-  |                       |-- 1:N -- stock_items   (planned, Sprint 15b)
-  |                                       |-- 1:N -- stock_movements (planned, Sprint 15b)
-  |-- 1:N -- sites                     (planned, Sprint 15)        — shared substrate
-  |           |-- 1:N -- zones         (planned, Sprint 15, polygon S17)
+  |-- 1:N -- device_telemetry
+  |-- 1:N -- telemetry_quarantine
+  |-- 1:N -- external_locations               — TMS-pushed positions
+  |-- 1:N -- assets                           — asset-tracking mode
+  |           |-- 1:N -- asset_tag_bindings
+  |-- 1:N -- products                         — inventory mode
+  |           |-- 1:N -- lots
+  |                       |-- 1:N -- stock_items   (parent_stock_item_id self-FK)
+  |                                       |-- 1:N -- stock_movements
+  |-- 1:N -- sites                            — shared substrate
+  |           |-- 1:N -- zones                — reader_bound | geofence (polygon)
+  |-- 1:N -- subject_current_zone             — durable dwell-tracker state
+  |-- 1:N -- tag_data_mappings                — tag_data key → semantic field
   |-- 1:N -- rules
   |           |-- 1:N -- alerts
   |-- 1:N -- telemetry_models
@@ -45,6 +48,58 @@ All tenant-scoped tables enforce isolation via:
 
 ---
 
+## Where is the "tag"? (and why there's no `tags` table)
+
+A common new-contributor question: *we have devices, assets, sites, zones, telemetry — where do RFID tags live?*
+
+**TagPulse intentionally has no first-class `Tag` entity.** A "tag" is a *value* (an EPC / TID / device-emitted string), not a row. It's resolved into business meaning through three independent layers, each with its own lifecycle:
+
+| Where the tag value lives | What it is | Lifecycle |
+|--------------------------|------------|-----------|
+| `tag_reads.tag_id` | The raw string the reader emitted on each scan. | One row per read, append-only TimescaleDB hypertable. Every read is recorded **whether or not** the tag is bound to anything — the event ledger is the source of truth. |
+| `asset_tag_bindings.binding_value` (+ `binding_kind ∈ {epc, tid, device}`) | The **active** mapping `tag_id → asset_id` for asset tracking. | One row per (tenant, tag, asset, bound-window). `bound_at` / `unbound_at` give a full history; the same physical tag can be re-stuck on a new asset (slap-and-ship) without losing the audit trail. |
+| `stock_items.epc` | One unique SGTIN-96 EPC = one inventory unit. | Auto-materialized on **first read** when a `tag_data_mapping` decodes the EPC into `(product, lot)`. Subsequent reads of the same EPC update `current_zone_id` / `last_seen_at` instead of inserting. |
+| `tag_data_mappings` | Tenant-level **rules** that parse fields out of the tag-data blob (e.g. company-prefix → product GTIN, byte-range → `lot_code`). | Catalog rule, not per-tag. Reads inherit the parse at ingest time. |
+
+### Why no `tags` table?
+
+Three deliberate trade-offs:
+
+1. **Ingest stays cheap.** Every read is a single append to `tag_reads` (a TimescaleDB hypertable, see [ADR 003](adr/003-timescaledb-storage.md)). Requiring a `tags` row to exist first would add a SELECT-or-INSERT round-trip per read and halve ingest throughput.
+2. **A "tag" without context is meaningless.** `urn:epc:id:sgtin:0614141.123456.7890` only matters if you can resolve it to *what* (product + lot) or *which* (asset). Different resolution paths have different lifecycles, so collapsing them into one table would over-couple them.
+3. **Tags are rebindable.** A tag peeled off pallet A and stuck on pallet B is the same physical object but a different business meaning. Binding-history rows (rather than mutating a `tags` row in place) preserve the audit trail.
+
+### How the three "what is this tag?" questions get answered
+
+| Question | Answer source |
+|---|---|
+| Which asset is this tag attached to **right now**? | `asset_tag_bindings WHERE binding_value=… AND unbound_at IS NULL` |
+| What product/lot does this EPC represent? | `tag_data_mappings` → decode → `products` + `lots` (auto-creates `stock_items` row on first read) |
+| Where has this tag physically been? | `tag_reads` filtered by `tag_id`, ordered by `recorded_at` (each row carries `device_id` + optional `location`) |
+| What carrier's manifest contains it? | binding → asset → recursive `parent_asset_id` walk via `GET /assets/{id}/manifest` |
+
+### Mental model
+
+> **Devices** *emit* tag reads. **Tag reads** *carry* tag IDs. **Bindings** turn a tag ID into an **asset**. **Mappings** turn an EPC into a **stock item** (product + lot). **Sites + Zones** are the spatial frame everything is observed against. **Telemetry** is the parallel non-tag sensor stream from the same devices.
+
+### UI sidebar → underlying entities
+
+| Sidebar page | Entities |
+|---|---|
+| **Devices** | `devices` (+ `device_health`) |
+| **Assets** | `assets` + `asset_tag_bindings` + `asset_current_location` view |
+| **Sites & Zones** | `sites` + `zones` |
+| **Telemetry / Telemetry Models** | `telemetry_models` + `telemetry_readings` |
+| **Products / Lot Expiry / Stock Levels / Stock Movements** | `products` + `lots` + `stock_items` + `stock_movements` |
+| **Admin → Tag Data Mappings** | `tag_data_mappings` (the closest thing to a "tag config" UI) |
+| **Tag Reads** (under Devices) | `tag_reads` — the raw event log |
+| **Rules / Alerts** | `rules` + `alerts` |
+| **Map** | `assets` ⨝ `asset_current_location` ⨝ `zones` (geofence polygons) |
+
+For the deeper EPC/TID/sensor-data primer (what each chunk of an RFID tag carries on the wire) see [design/rfid-tag-data-model.md](design/rfid-tag-data-model.md).
+
+---
+
 ## Database Tables
 
 ### tenants
@@ -60,12 +115,12 @@ Organization accounts on the platform.
 | `status` | VARCHAR(50) | NOT NULL, default `'active'` | `active`, `suspended` |
 | `provisioning_key_hash` | VARCHAR(255) | NULLABLE | SHA-256 hash of device provisioning key |
 | `provisioning_key_prefix` | VARCHAR(10) | NULLABLE | First 10 chars for O(1) lookup |
-| `tracking_modes` | JSONB | NOT NULL, default `'["asset"]'` | (planned, Sprint 15b) Array of `asset` \| `inventory`; controls which domain layer is exposed |
-| `db_pool_key` | VARCHAR(64) | NOT NULL, default `'shared_default'` | (planned) Routing key into the startup-built `PoolRegistry`. Most tenants share `'shared_default'` (RLS-isolated); sovereign tenants get a dedicated key pointing at a region-specific cluster. See [adr/008-multi-tenancy-strategy.md](adr/008-multi-tenancy-strategy.md) and [design/storage-strategy.md §6 Q2](design/storage-strategy.md). |
-| `tile_provider` | JSONB | NULLABLE | (planned, Sprint 17) Per-tenant map tile provider override. Shape: `{"kind": "osm" \| "mapbox" \| "maptiler" \| "self_hosted", "config": {...}}`. NULL = system default (OSM public for POC). Resolved by `MapConfigResolver`; switching providers is a settings change, not a code change. See [design/geofencing-and-map.md §11](design/geofencing-and-map.md) Q4. |
+| `tracking_modes` | JSONB | NOT NULL, default `'["asset"]'` | Array of `asset` \| `inventory`; controls which domain layer is exposed |
+| `db_pool_key` | VARCHAR(64) | NOT NULL, default `'shared_default'` | Routing key into the startup-built `PoolRegistry`. Most tenants share `'shared_default'` (RLS-isolated); sovereign tenants get a dedicated key pointing at a region-specific cluster. See [adr/008-multi-tenancy-strategy.md](adr/008-multi-tenancy-strategy.md) and [design/storage-strategy.md §6 Q2](design/storage-strategy.md). |
+| `tile_provider` | JSONB | NULLABLE | Per-tenant map tile provider override. Shape: `{"kind": "osm" \| "mapbox" \| "maptiler" \| "self_hosted", "config": {...}}`. NULL = system default (OSM public for POC). Resolved by `MapConfigResolver`; switching providers is a settings change, not a code change. See [design/geofencing-and-map.md §11](design/geofencing-and-map.md) Q4. |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
 
-**Migration:** 005, 014
+**Migration:** 005, 014, 017 (tracking_modes), 023 (db_pool_key), 026 (tile_provider)
 
 ---
 
@@ -85,15 +140,15 @@ Registered readers and IoT devices.
 | `firmware_version` | VARCHAR(50) | NULLABLE | |
 | `connection_state` | VARCHAR(50) | NOT NULL, default `'unknown'` | `online`, `offline`, `unknown` |
 | `last_seen` | TIMESTAMPTZ | NULLABLE | Updated on each ingestion |
-| `token_hash` | VARCHAR(255) | NULLABLE | (planned, Sprint 16) SHA-256 hash of per-device token |
-| `token_prefix` | VARCHAR(10) | NULLABLE | (planned, Sprint 16) First chars for O(1) lookup |
-| `token_rotated_at` | TIMESTAMPTZ | NULLABLE | (planned, Sprint 16) Last rotation timestamp |
-| `cert_thumbprint` | VARCHAR(128) | NULLABLE | (planned, Sprint 17b) X.509 mTLS cert thumbprint |
+| `token_hash` | VARCHAR(255) | NULLABLE | SHA-256 hash of per-device token |
+| `token_prefix` | VARCHAR(10) | NULLABLE | First chars for O(1) lookup |
+| `token_rotated_at` | TIMESTAMPTZ | NULLABLE | Last rotation timestamp |
+| `cert_thumbprint` | VARCHAR(128) | NULLABLE | X.509 mTLS cert thumbprint |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
 | `updated_at` | TIMESTAMPTZ | NOT NULL, auto-updated | |
 
 **RLS:** Yes (migration 007)
-**Migration:** 001, 002, 003, 005, *018 (planned, Sprint 16)*
+**Migration:** 001, 002, 003, 005, 017 (mobility), 025 (tokens), 026 (cert_thumbprint)
 
 ---
 
@@ -107,25 +162,25 @@ Time-series RFID tag read events. Partitioned by `timestamp` via TimescaleDB.
 | `device_id` | UUID | NOT NULL, indexed | Source reader |
 | `tenant_id` | UUID | FK → tenants.id, NOT NULL, indexed | |
 | `tag_id` | TEXT | NOT NULL, indexed | Application-facing identifier (defaults to `epc`); see [design/rfid-tag-data-model.md](design/rfid-tag-data-model.md) |
-| `epc` | VARCHAR(256) | NULLABLE, indexed | (planned, Sprint 14) Decoded EPC URI form |
-| `epc_hex` | VARCHAR(128) | NULLABLE | (planned, Sprint 14) Raw wire-format EPC hex |
-| `epc_scheme` | VARCHAR(32) | NULLABLE | (planned, Sprint 14) `sgtin-96` \| `sgtin-198` \| `sscc-96` \| `giai-96` \| `giai-202` \| `grai-96` \| `grai-170` \| `raw` |
-| `epc_decoded` | JSONB | NULLABLE | (planned, Sprint 14) Parsed parts: company_prefix, item_ref, serial, … |
-| `tid` | VARCHAR(64) | NULLABLE, indexed | (planned, Sprint 14) Factory-programmed Tag Identifier hex |
-| `user_memory_hex` | TEXT | NULLABLE | (planned, Sprint 14) Bank-11 raw hex (truncated to first 4 KB) |
-| `tag_data` | JSONB | NULLABLE | (planned, Sprint 14) Decoded user memory + inline sensor mirrors (e.g. `temperature_c`, `batch`, `expiry`) |
-| `reader_antenna` | SMALLINT | NULLABLE | (planned, Sprint 14) Antenna / port number, 0–255 |
+| `epc` | VARCHAR(256) | NULLABLE, indexed | Decoded EPC URI form |
+| `epc_hex` | VARCHAR(128) | NULLABLE | Raw wire-format EPC hex |
+| `epc_scheme` | VARCHAR(32) | NULLABLE | `sgtin-96` \| `sgtin-198` \| `sscc-96` \| `giai-96` \| `giai-202` \| `grai-96` \| `grai-170` \| `raw` |
+| `epc_decoded` | JSONB | NULLABLE | Parsed parts: company_prefix, item_ref, serial, … |
+| `tid` | VARCHAR(64) | NULLABLE, indexed | Factory-programmed Tag Identifier hex |
+| `user_memory_hex` | TEXT | NULLABLE | Bank-11 raw hex (truncated to first 4 KB) |
+| `tag_data` | JSONB | NULLABLE | Decoded user memory + inline sensor mirrors (e.g. `temperature_c`, `batch`, `expiry`) |
+| `reader_antenna` | SMALLINT | NULLABLE | Antenna / port number, 0–255 |
 | `timestamp` | TIMESTAMPTZ | NOT NULL, indexed | When the read occurred |
 | `signal_strength` | FLOAT | NULLABLE | RSSI or dBm value |
-| `latitude` | DOUBLE PRECISION | NULLABLE | (planned, Sprint 14) WGS84 |
-| `longitude` | DOUBLE PRECISION | NULLABLE | (planned, Sprint 14) WGS84 |
-| `location_accuracy_m` | DOUBLE PRECISION | NULLABLE | (planned, Sprint 14) Reported accuracy in meters |
-| `location_source` | VARCHAR(20) | NULLABLE | (planned, Sprint 14) `gps` \| `fixed` \| `inferred` |
+| `latitude` | DOUBLE PRECISION | NULLABLE | WGS84 |
+| `longitude` | DOUBLE PRECISION | NULLABLE | WGS84 |
+| `location_accuracy_m` | DOUBLE PRECISION | NULLABLE | Reported accuracy in meters |
+| `location_source` | VARCHAR(20) | NULLABLE | `gps` \| `fixed` \| `inferred` |
 | `sensor_data` | JSONB | NULLABLE | Optional sensor payload |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | When ingested |
 
 **RLS:** Yes (migration 007)
-**Migration:** 001, 003, 005, *016 (planned, Sprint 14)*
+**Migration:** 001, 003, 005, 016
 
 ---
 
@@ -375,9 +430,11 @@ Configuration change audit trail.
 
 ---
 
-### device_telemetry (hypertable) — *(planned, Sprint 14)*
+### device_telemetry (hypertable — removed Sprint 21)
 
-Time-series sensor metric stream, decoupled from `tag_reads`. Partitioned by `timestamp`. See [design/telemetry-and-location.md](design/telemetry-and-location.md).
+> **Sprint 21 update:** the back-compat `device_telemetry` view + the underlying `telemetry_readings_legacy_device` hypertable were dropped by [migration 032](../migrations/versions/032_drop_legacy_device_telemetry.py) (closes [ADR-015 §6](adr/015-telemetry-rules-and-deprecation.md)). All telemetry now lives in `telemetry_readings` (keyed on `(tenant_id, subject_kind, subject_id, metric_name, timestamp)`) accessed via `TimescaleTelemetryReadingsRepository`. The Sprint 14 device-shaped surface (`insert_reading` / `query` / `quarantine` / `list_quarantine`) is preserved on the same repository — callers swap the class without API changes. The columns below describe the **pre-Sprint 18** schema kept for historical reference.
+
+Time-series sensor metric stream, decoupled from `tag_reads`. Partitioned by `timestamp`. See [design/telemetry-and-location.md](design/telemetry-and-location.md) and [design/subject-scoped-telemetry.md](design/subject-scoped-telemetry.md).
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
@@ -391,12 +448,14 @@ Time-series sensor metric stream, decoupled from `tag_reads`. Partitioned by `ti
 | `metadata` | JSONB | NULLABLE | Free-form per-reading context |
 
 **Index:** `(tenant_id, device_id, metric_name, timestamp DESC)`
-**RLS:** Yes (planned)
-**Migration:** *016 (planned, Sprint 14)*
+**RLS:** Yes
+**Migration:** 016
 
 ---
 
-### telemetry_quarantine — *(planned, Sprint 14)*
+### telemetry_quarantine
+
+> **Sprint 18 update:** [migration 030](../migrations/versions/030_subject_scoped_telemetry.py) added nullable `subject_kind` + `subject_id` columns. Legacy back-filled rows leave them NULL; multi-subject ingest (Sprint 19) populates them so reviewers see *what* the failed reading was meant to describe.
 
 Readings rejected by validation (unknown metric, out of range, unit mismatch). Capped retention 7 d.
 
@@ -411,12 +470,12 @@ Readings rejected by validation (unknown metric, out of range, unit mismatch). C
 | `raw_payload` | JSONB | NOT NULL | |
 | `reason` | VARCHAR(40) | NOT NULL | `unknown_metric` \| `out_of_range` \| `unit_mismatch` |
 
-**RLS:** Yes (planned)
-**Migration:** *016 (planned, Sprint 14)*
+**RLS:** Yes
+**Migration:** 016
 
 ---
 
-### assets — *(planned, Sprint 15)*
+### assets
 
 The physical thing being tracked, distinct from the reader. See [design/assets-and-zones.md](design/assets-and-zones.md).
 
@@ -433,12 +492,12 @@ The physical thing being tracked, distinct from the reader. See [design/assets-a
 | `updated_at` | TIMESTAMPTZ | NOT NULL, auto-updated | |
 
 **Unique constraint:** `(tenant_id, external_ref)`
-**RLS:** Yes (planned)
-**Migration:** *017 (planned, Sprint 15)*
+**RLS:** Yes
+**Migration:** 017
 
 ---
 
-### asset_tag_bindings — *(planned, Sprint 15)*
+### asset_tag_bindings
 
 Historical mapping of RFID tag IDs to assets. Bindings carry an open or closed lifetime. The `tag_id` value may be the EPC or the TID depending on `binding_kind` — see [design/rfid-tag-data-model.md](design/rfid-tag-data-model.md).
 
@@ -455,12 +514,12 @@ Historical mapping of RFID tag IDs to assets. Bindings carry an open or closed l
 
 **PK:** `(asset_id, tag_id, bound_at)`
 **Partial unique index:** `(tenant_id, binding_kind, tag_id) WHERE unbound_at IS NULL` — a tag can have at most one active binding per tenant per kind
-**RLS:** Yes (planned)
-**Migration:** *017 (planned, Sprint 15)*
+**RLS:** Yes
+**Migration:** 017
 
 ---
 
-### sites — *(planned, Sprint 15)*
+### sites
 
 Physical locations.
 
@@ -475,12 +534,12 @@ Physical locations.
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
 
 **Unique constraint:** `(tenant_id, name)`
-**RLS:** Yes (planned)
-**Migration:** *017 (planned, Sprint 15)*
+**RLS:** Yes
+**Migration:** 017
 
 ---
 
-### zones — *(planned, Sprint 15; polygon columns Sprint 17a)*
+### zones
 
 Reader-bound or geofence zones inside a site.
 
@@ -503,12 +562,12 @@ Reader-bound or geofence zones inside a site.
 
 **Unique constraint:** `(site_id, name)`
 **Check constraint:** `(kind='reader_bound' AND fixed_reader_ids IS NOT NULL) OR (kind='geofence' AND polygon_geojson IS NOT NULL)`
-**RLS:** Yes (planned)
-**Migration:** *017 (planned, Sprint 15)*, *019 (planned, Sprint 17a)*
+**RLS:** Yes
+**Migration:** 017, 026 (polygon + bbox columns)
 
 ---
 
-### asset_current_location (view) — *(planned, Sprint 15)*
+### asset_current_location (view)
 
 Latest `tag_read` per active binding. Defined in [design/assets-and-zones.md](design/assets-and-zones.md) §3.4.
 
@@ -526,7 +585,7 @@ Latest `tag_read` per active binding. Defined in [design/assets-and-zones.md](de
 
 ---
 
-### products — *(planned, Sprint 15b)*
+### products
 
 SKU catalog — the **inventory** domain layer's anchor entity. See [design/tracking-modes.md](design/tracking-modes.md).
 
@@ -543,12 +602,12 @@ SKU catalog — the **inventory** domain layer's anchor entity. See [design/trac
 | `created_at` / `updated_at` | TIMESTAMPTZ | | |
 
 **Unique constraint:** `(tenant_id, sku)`
-**RLS:** Yes (planned)
-**Migration:** *020 (planned, Sprint 15b)*
+**RLS:** Yes
+**Migration:** 020
 
 ---
 
-### lots — *(planned, Sprint 15b)*
+### lots
 
 Production batch / expiration grouping under a product.
 
@@ -563,12 +622,12 @@ Production batch / expiration grouping under a product.
 | `metadata` | JSONB | NULLABLE | |
 
 **Unique constraint:** `(tenant_id, product_id, lot_code)`
-**RLS:** Yes (planned)
-**Migration:** *020 (planned, Sprint 15b)*
+**RLS:** Yes
+**Migration:** 020
 
 ---
 
-### stock_items — *(planned, Sprint 15b)*
+### stock_items
 
 Per-tag inventory unit. One row per RFID-tagged item; auto-created by ingestion when an SGTIN read matches a registered product.
 
@@ -587,15 +646,16 @@ Per-tag inventory unit. One row per RFID-tagged item; auto-created by ingestion 
 | `first_seen_at` | TIMESTAMPTZ | NOT NULL | |
 | `last_seen_at` | TIMESTAMPTZ | NOT NULL | |
 | `consumed_at` | TIMESTAMPTZ | NULLABLE | Set when state → consumed |
+| `parent_stock_item_id` | UUID | FK → stock_items.id, NULLABLE | Self-FK for SSCC → SGTIN containment (case/pallet hierarchy). Per [design/mobile-carriers-and-manifests.md](design/mobile-carriers-and-manifests.md). |
 
 **Partial unique:** `(tenant_id, binding_kind, tag_id) WHERE state NOT IN ('consumed','expired','lost')`
-**Index:** `(tenant_id, product_id, lot_id, current_zone_id)`
-**RLS:** Yes (planned)
-**Migration:** *020 (planned, Sprint 15b)*
+**Index:** `(tenant_id, product_id, lot_id, current_zone_id)`; partial `ix_stock_items_parent` on `(tenant_id, parent_stock_item_id) WHERE parent_stock_item_id IS NOT NULL`
+**RLS:** Yes
+**Migration:** 020, 028 (parent_stock_item_id)
 
 ---
 
-### stock_movements (hypertable) — *(planned, Sprint 15b)*
+### stock_movements (hypertable)
 
 Append-only ledger of inventory movements. Partitioned by `occurred_at`.
 
@@ -611,12 +671,12 @@ Append-only ledger of inventory movements. Partitioned by `occurred_at`.
 | `device_id` | UUID | NULLABLE | Source reader |
 | `occurred_at` | TIMESTAMPTZ | NOT NULL, indexed | |
 
-**RLS:** Yes (planned)
-**Migration:** *020 (planned, Sprint 15b)*
+**RLS:** Yes
+**Migration:** 020
 
 ---
 
-### stock_levels (view) — *(planned, Sprint 15b)*
+### stock_levels (view)
 
 Live count of in-stock items per (product, lot, zone). Defined in [design/tracking-modes.md](design/tracking-modes.md) §4.5.
 
@@ -629,6 +689,71 @@ Live count of in-stock items per (product, lot, zone). Defined in [design/tracki
 | `quantity` | BIGINT | COUNT of `stock_items` where `state='in_stock'` |
 
 **Inherits RLS** from underlying tables.
+
+---
+
+### external_locations (hypertable)
+
+Positions pushed by external systems (TMS adapters, mobile-carrier apps) for assets without an onboard reader. Partitioned by `recorded_at`. UNION'd with reader-derived positions in the `asset_current_location` view (Sprint 15 Phase C).
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | UUID | PK (composite with `recorded_at`) | |
+| `tenant_id` | UUID | FK → tenants.id, NOT NULL | |
+| `asset_id` | UUID | FK → assets.id, NOT NULL, indexed | |
+| `recorded_at` | TIMESTAMPTZ | NOT NULL, indexed | When the position was sampled at the source |
+| `received_at` | TIMESTAMPTZ | NOT NULL, default `now()` | When TagPulse ingested it |
+| `latitude` | DOUBLE PRECISION | NOT NULL | WGS84 |
+| `longitude` | DOUBLE PRECISION | NOT NULL | WGS84 |
+| `accuracy_m` | DOUBLE PRECISION | NULLABLE | |
+| `source` | VARCHAR(64) | NOT NULL | Adapter / vendor identifier (e.g. `samsara`, `geotab`) |
+| `metadata` | JSONB | NULLABLE | |
+
+**RLS:** Yes
+**Migration:** 019
+
+---
+
+### tag_data_mappings
+
+Per-tenant / per-scope (device-type or product) mappings from `tag_reads.tag_data` keys to semantic fields (`lot`, `expiry`, `batch`, `mfg_date`, `serial`, …). Drives ingestion-time enrichment without code changes. Per [design/tracking-modes.md §11](design/tracking-modes.md).
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | UUID | PK | |
+| `tenant_id` | UUID | FK → tenants.id, NOT NULL | |
+| `scope_kind` | VARCHAR(20) | NOT NULL | `tenant` \| `device_type` \| `product` |
+| `scope_id` | TEXT | NULLABLE | NULL when `scope_kind='tenant'`; device_type string or product UUID otherwise |
+| `tag_data_key` | VARCHAR(64) | NOT NULL | Key inside `tag_reads.tag_data` JSONB |
+| `semantic_field` | VARCHAR(32) | NOT NULL | `lot` \| `expiry` \| `batch` \| `mfg_date` \| `serial` |
+| `value_format` | VARCHAR(32) | NULLABLE | Optional parser hint (e.g. `iso8601`, `yyyymmdd`) |
+
+**Check constraint:** `ck_tag_data_mappings_scope_kind` (scope_kind enum)
+**Check constraint:** `ck_tag_data_mappings_scope_id_consistency` (scope_id NULL iff scope_kind='tenant')
+**Unique constraint:** `uq_tag_data_mappings_scope_field` `(tenant_id, scope_kind, scope_id, semantic_field)`
+**RLS:** Yes
+**Migration:** 020
+
+---
+
+### subject_current_zone
+
+Durable dwell-tracker state. One row per `(tenant_id, subject_kind, subject_id)`; upserted on every `subject.zone_changed` event. Replaces the in-process `DwellTracker._state` map so `zone.dwell_exceeded` rules survive worker restarts and work in multi-worker deployments. Per Sprint 17a §5.2.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `tenant_id` | UUID | FK → tenants.id ON DELETE CASCADE, NOT NULL | |
+| `subject_kind` | VARCHAR(32) | NOT NULL | `asset` \| `stock_item` \| `device` |
+| `subject_id` | UUID | NOT NULL | |
+| `zone_id` | UUID | NULLABLE | NULL = subject not currently in any zone |
+| `zone_kind` | VARCHAR(32) | NULLABLE | `reader_bound` \| `geofence` |
+| `entered_at` | TIMESTAMPTZ | NOT NULL | When the subject entered the current zone |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
+
+**PK:** `(tenant_id, subject_kind, subject_id)`
+**Partial index:** `ix_subject_current_zone_zone` on `(tenant_id, zone_id) WHERE zone_id IS NOT NULL`
+**RLS:** Yes
+**Migration:** 027
 
 ---
 
@@ -728,13 +853,23 @@ All schemas are defined in `src/tagpulse/models/` and enforce validation at the 
 | 013 | `013_dead_letter_rls.py` | `dead_letter_events` | RLS policy |
 | 014 | `014_users_provisioning.py` | `users`, `tenants` | Users table + provisioning keys on tenants |
 | 015 | `015_audit_user_id.py` | `audit_logs` | Add `user_id` column |
-| 016 | *planned* (Sprint 14) | `tag_reads`, `device_telemetry`, `telemetry_quarantine` | Location columns + telemetry hypertable + quarantine + RLS |
-| 017 | *planned* (Sprint 15) | `assets`, `asset_tag_bindings`, `sites`, `zones`, view `asset_current_location` | Asset / site / zone model (reader-bound) |
-| 018 | *planned* (Sprint 16) | `devices` | Per-device token rotation columns (`token_hash`, `token_prefix`, `token_rotated_at`) |
-| 019 | *planned* (Sprint 17a) | `zones` | Polygon bbox columns + bbox index for geofence prefilter |
-| 020 | *planned* (Sprint 15b) | `tenants`, `products`, `lots`, `stock_items`, `stock_movements`, view `stock_levels` | Inventory domain layer + `tenants.tracking_modes` flag |
-| 020b | *planned* (Sprint 15b) | `tag_data_mappings` | Per-tenant / per-device-type / per-product mappings from `tag_data` keys to semantic fields (lot, expiry, batch, mfg date, serial). Per [tracking-modes.md §11](design/tracking-modes.md). |
-| 021 | *planned* (Sprint 15) | `external_locations`, `asset_current_location` (view) | New `external_locations` hypertable for TMS-pushed positions; updates `asset_current_location` view to UNION reader-derived and external positions with `latest_position_source`. Per [mobile-carriers-and-manifests.md §10 Q5](design/mobile-carriers-and-manifests.md). |
+| 016 | `016_telemetry_location_rfid.py` | `tag_reads`, `device_telemetry`, `telemetry_quarantine` | Sprint 14: location columns on `tag_reads` (`latitude`, `longitude`, `location_accuracy_m`, `location_source`); RFID identity columns (`epc`, `epc_hex`, `epc_scheme`, `epc_decoded`, `tid`, `user_memory_hex`, `tag_data`, `reader_antenna`); new `device_telemetry` and `telemetry_quarantine` hypertables with RLS |
+| 017 | `017_sites_zones_tracking_modes.py` | `tenants`, `devices`, `sites`, `zones` | Sprint 15 Phase A: shared substrate — `sites`, `zones` (reader-bound + geofence kinds), `tenants.tracking_modes` JSONB flag, `devices.mobility` |
+| 018 | `018_assets_bindings.py` | `assets`, `asset_tag_bindings` | Sprint 15 Phase B: assets + tag bindings with `binding_kind` (`epc`/`tid`/`device`) and `binding_value`; partial-unique index on active bindings; RLS |
+| 019 | `019_external_locations.py` | `external_locations` | Sprint 15 Phase C: external_locations hypertable for TMS-pushed positions; feeds the `asset_current_location` view union |
+| 020 | `020_inventory.py` | `products`, `lots`, `stock_items`, `stock_movements`, `tag_data_mappings`, view `stock_levels` | Sprint 15b: inventory domain layer; `stock_movements` hypertable; `tag_data_mappings` (per-tenant/scope mappings of `tag_data` keys → semantic fields) |
+| 021 | `021_inventory_hardening.py` | `stock_items`, `stock_movements` | Sprint 15b Phase D hardening: post-audit constraint and index follow-ups |
+| 022 | `022_phase_abc_hardening.py` | Sprint 15 tables | Sprint 15 Phase A–C audit mitigations |
+| 023 | `023_tenant_db_pool_key.py` | `tenants` | Sprint 13b: `db_pool_key` column for the multi-tier `PoolRegistry` |
+| 024 | `024_asset_current_location.py` | view `asset_current_location` | Sprint 15: `asset_current_location` SQL view (latest position per active binding); recursive `assets.parent_asset_id` path support |
+| 025 | `025_device_tokens.py` | `devices` | Sprint 16 (A6 Phase 1): per-device rotatable tokens — `token_hash`, `token_prefix`, `token_rotated_at` |
+| 026 | `026_geofence_tile_provider_cert.py` | `zones`, `tenants`, `devices` | Sprint 17a: geofence storage (`polygon_geojson`, bbox columns), `tenants.tile_provider`, `devices.cert_thumbprint` |
+| 027 | `027_subject_current_zone.py` | `subject_current_zone` | Sprint 17a §5.2: durable dwell-tracker state; one row per `(tenant_id, subject_kind, subject_id)`; survives worker restarts |
+| 028 | `028_stock_item_parent.py` | `stock_items` | Sprint 15b: `parent_stock_item_id` self-FK + partial index `ix_stock_items_parent` for SSCC → SGTIN case/pallet containment |
+| 029 | `029_zones_virtual_kind.py` | `zones` | Sprint 17a follow-up: virtual zone kind |
+| 030 | `030_subject_scoped_telemetry.py` | `telemetry_readings`, `telemetry_readings_legacy_device` (renamed from `device_telemetry`), `device_telemetry` (now a view), `telemetry_models`, `telemetry_quarantine` | Sprint 18: subject-scoped telemetry hypertable keyed on `(tenant_id, subject_kind, subject_id, metric_name, timestamp)`; rename + back-fill of `device_telemetry`; back-compat view; `subject_kind` added to `telemetry_models` (with CHECK enforcing `device_type` only for `device` kind) and `telemetry_quarantine` |
+| 031 | `031_telemetry_subject_kinds_and_caggs.py` | `tenants`, `cagg_telemetry_1m`, `cagg_telemetry_1h` | Sprint 19: `tenants.telemetry_subject_kinds JSONB DEFAULT '["device"]'` opt-in column; two TimescaleDB continuous aggregates (1m / 1h) over `telemetry_readings` keyed on `(tenant_id, subject_kind, subject_id, metric_name, bucket)` with `avg`/`min`/`max`/`count`; cagg DDL runs in `op.get_context().autocommit_block()` because `add_continuous_aggregate_policy` cannot run in a transaction |
+| 032 | `032_drop_legacy_device_telemetry.py` | `device_telemetry` (view), `telemetry_readings_legacy_device` (hypertable), `tenant_isolation_device_telemetry` (RLS), `ix_device_telemetry_lookup` (index) | Sprint 21: closes the Sprint 18 deprecation window per [ADR-015 §6](adr/015-telemetry-rules-and-deprecation.md). Drops the back-compat view, the legacy hypertable, the legacy RLS policy, and the Sprint 14 lookup index. Downgrade re-creates empty shells — **not data-reversible**; rollback is restore-from-backup. Pre-flight: `pg_stat_user_tables.idx_scan = 0` for one full retention window, `grep -rn 'device_telemetry' src/` clean, no Grafana / external SQL clients pointing at the view. |
 
 ---
 
@@ -756,16 +891,20 @@ USING (tenant_id = current_setting('app.current_tenant_id')::uuid)
 | `analytics_results` | `tenant_isolation_analytics_results` | 009 |
 | `audit_logs` | `tenant_isolation_audit_logs` | 012 |
 | `dead_letter_events` | `tenant_isolation_dead_letter_events` | 013 |
-| `device_telemetry` | `tenant_isolation_device_telemetry` | *016 (planned)* |
-| `telemetry_quarantine` | `tenant_isolation_telemetry_quarantine` | *016 (planned)* |
-| `assets` | `tenant_isolation_assets` | *017 (planned)* |
-| `asset_tag_bindings` | `tenant_isolation_asset_tag_bindings` | *017 (planned)* |
-| `sites` | `tenant_isolation_sites` | *017 (planned)* |
-| `zones` | `tenant_isolation_zones` | *017 (planned)* |
-| `products` | `tenant_isolation_products` | *020 (planned)* |
-| `lots` | `tenant_isolation_lots` | *020 (planned)* |
-| `stock_items` | `tenant_isolation_stock_items` | *020 (planned)* |
-| `stock_movements` | `tenant_isolation_stock_movements` | *020 (planned)* |
+| `device_telemetry` | `tenant_isolation_device_telemetry` | 016 (renamed to `telemetry_readings_legacy_device` in 030; **dropped in 032**) |
+| `telemetry_readings` | `tenant_isolation_telemetry_readings` | 030 |
+| `telemetry_quarantine` | `tenant_isolation_telemetry_quarantine` | 016 |
+| `assets` | `tenant_isolation_assets` | 017 |
+| `asset_tag_bindings` | `tenant_isolation_asset_tag_bindings` | 017 |
+| `sites` | `tenant_isolation_sites` | 017 |
+| `zones` | `tenant_isolation_zones` | 017 |
+| `products` | `tenant_isolation_products` | 020 |
+| `lots` | `tenant_isolation_lots` | 020 |
+| `stock_items` | `tenant_isolation_stock_items` | 020 |
+| `stock_movements` | `tenant_isolation_stock_movements` | 020 |
+| `tag_data_mappings` | `tenant_isolation_tag_data_mappings` | 020 |
+| `external_locations` | `tenant_isolation_external_locations` | 019 |
+| `subject_current_zone` | `subject_current_zone_tenant_isolation` | 027 |
 
 ---
 
@@ -786,12 +925,12 @@ Authentication: Bearer API key (`Authorization: Bearer tp_{slug}_{hex}`) or back
 ```
 tenants/{tenant_id}/devices/{device_id}/tag-reads   → TagReadCreate
 tenants/{tenant_id}/devices/{device_id}/status       → DeviceStatusUpdate
-tenants/{tenant_id}/devices/{device_id}/telemetry    → TelemetryReading       (planned, Sprint 14)
-tenants/{tenant_id}/devices/{device_id}/location     → LocationUpdate         (planned, Sprint 14)
-tenants/{tenant_id}/devices/{device_id}/events       → DeviceEvent            (planned, Sprint 14)
+tenants/{tenant_id}/devices/{device_id}/telemetry    → TelemetryReading      
+tenants/{tenant_id}/devices/{device_id}/location     → LocationUpdate        
+tenants/{tenant_id}/devices/{device_id}/events       → DeviceEvent           
 ```
 
-Full wire contract: [design/edge-device-contract.md](design/edge-device-contract.md) (planned, Sprint 16).
+Full wire contract: [design/edge-device-contract.md](design/edge-device-contract.md).
 
 ---
 
@@ -804,8 +943,8 @@ Full wire contract: [design/edge-device-contract.md](design/edge-device-contract
 | `alert.triggered` | Rules engine | Alert delivery, integration layer |
 | `device.registered` | Device service | Integration layer |
 | `device.decommissioned` | Device service | Integration layer |
-| `device.token_rotated` | Device service | Audit log, integration layer | *(planned, Sprint 16)* |
-| `telemetry.received` | Ingestion service | Rules engine, analytics modules, integration layer | *(planned, Sprint 14)* |
-| `telemetry.out_of_range` | Telemetry validator | Rules engine, integration layer | *(planned, Sprint 14)* |
-| `subject.zone_changed` | Ingestion service | Rules engine, integration layer; payload carries `subject_kind` (`asset` \| `stock_item`) | *(planned, Sprint 15 for asset; Sprint 15b for stock_item; geofence kind Sprint 17a)* |
-| `stock.movement_recorded` | Inventory ingestion branch | Analytics, integration layer | *(planned, Sprint 15b)* |
+| `device.token_rotated` | Device service | Audit log, integration layer |
+| `telemetry.received` | Ingestion service | Rules engine, analytics modules, integration layer |
+| `telemetry.out_of_range` | Telemetry validator | Rules engine, integration layer |
+| `subject.zone_changed` | Ingestion service | Rules engine, integration layer; payload carries `subject_kind` (`asset` \| `stock_item`) |
+| `stock.movement_recorded` | Inventory ingestion branch | Analytics, integration layer |

@@ -62,6 +62,22 @@ def verify_api_key(raw_key: str, stored_hash: str) -> bool:
     return hashlib.sha256(raw_key.encode()).hexdigest() == stored_hash
 
 
+def generate_device_token(tenant_slug: str) -> tuple[str, str, str]:
+    """Generate a per-device Bearer token, its prefix, and its hash.
+
+    Mirrors :func:`generate_api_key` but uses a ``tpd_`` (tag-pulse-device)
+    prefix so token leak triage can distinguish user keys from device tokens
+    at a glance. Per ADR-011 Phase 1.
+
+    Returns: (raw_token, prefix, sha256_hash)
+    """
+    random_part = secrets.token_hex(16)
+    raw_token = f"tpd_{tenant_slug}_{random_part}"
+    prefix = raw_token[:10]
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    return raw_token, prefix, token_hash
+
+
 def create_jwt(user: UserModel, tenant: TenantModel) -> str:
     """Create a JWT access token for a user."""
     now = datetime.now(UTC)
@@ -120,8 +136,15 @@ async def get_current_user(
             UserModel.status == "active",
         )
         result = await session.execute(stmt)
-        user = result.scalar_one_or_none()
-        if user is None or not verify_api_key(raw_token, user.api_key_hash or ""):
+        # Multiple users in the same tenant share the same 10-char prefix
+        # (`tp_{slug}_` is identical for them). Verify the full hash against
+        # each candidate and pick the matching one.
+        user: UserModel | None = None
+        for candidate in result.scalars().all():
+            if verify_api_key(raw_token, candidate.api_key_hash or ""):
+                user = candidate
+                break
+        if user is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
         # Look up tenant
         tenant = await session.get(TenantModel, user.tenant_id)

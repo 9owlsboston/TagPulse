@@ -106,16 +106,36 @@ Single database engine for both time-series and relational data:
 
 | Table | Type | Purpose |
 |-------|------|---------|
-| `tag_reads` | Hypertable | Time-series tag read events (auto-partitioned, compressed) |
-| `devices` | Regular | Device registry and configuration |
+| `tag_reads` | Hypertable | Time-series tag read events (auto-partitioned, compressed); EPC/TID/user-memory + location columns |
+| `telemetry_readings` | Hypertable | Subject-scoped sensor metric stream keyed on `(tenant_id, subject_kind, subject_id, metric_name, timestamp)` (Sprint 18). Replaces the original `device_telemetry` hypertable, which was renamed to `telemetry_readings_legacy_device` and re-exposed as a back-compat view. See [design/subject-scoped-telemetry.md](design/subject-scoped-telemetry.md), ADR-013/014/015. |
+| `telemetry_quarantine` | Regular | Rejected readings (capped 7 d retention); Sprint 18 added nullable `subject_kind` / `subject_id` |
+| `stock_movements` | Hypertable | Append-only inventory ledger |
+| `external_locations` | Hypertable | Positions pushed by TMS / mobile-carrier adapters |
+| `alerts` | Hypertable | Alert history |
+| `audit_logs` | Regular | Configuration change trail |
+| `dead_letter_events` | Regular | Failed deliveries / parse errors |
+| `tenants` / `users` | Regular | Identity + tracking_modes / tile_provider / db_pool_key |
+| `devices` | Regular | Registry, configuration, mobility, token rotation, mTLS thumbprint |
+| `assets` / `asset_tag_bindings` | Regular | Asset-tracking domain layer |
+| `products` / `lots` / `stock_items` | Regular | Inventory-tracking domain layer (stock_items has parent_stock_item_id self-FK) |
+| `sites` / `zones` | Regular | Shared substrate; `zones.polygon_geojson` + bbox columns drive geofencing |
+| `subject_current_zone` | Regular | Durable dwell-tracker state (multi-worker safe) |
+| `tag_data_mappings` | Regular | Per-tenant `tag_data` key → semantic field mapping |
 | `rules` | Regular | User-defined rule definitions |
-| `alerts` | Hypertable | Alert history (time-series) |
-| `integrations` | Regular | Webhook/export target configuration |
+| `integrations` / `integration_deliveries` | Regular | Webhook/export targets + delivery log |
+| `analytics_results` | Regular | Plugin module output |
+| `tenant_usage_detail` / `tenant_quotas` | Regular | Multi-tenant metering |
 
-Full schema reference: [data-models.md](data-models.md). See also [ADR-003](adr/003-timescaledb-storage.md).
+All tenant-scoped tables enforce isolation via `tenant_id` FK + Postgres RLS policies. Full schema reference: [data-models.md](data-models.md). See also [ADR-003](adr/003-timescaledb-storage.md).
 
 ### Admin UI
-React 19 + TypeScript + Vite SPA in a separate repo ([TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI)). Served via nginx container on port 3000, proxies API calls to the backend via Docker network alias `api`. Includes dashboard, device management, telemetry charts, data explorer, rule wizard, integration config, and usage/billing views. See [ADR-007](adr/007-admin-ui-technology.md) and [design/admin-ui.md](design/admin-ui.md).
+React 19 + TypeScript + Vite SPA in a separate repo ([TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI)). Served via nginx container on port 3000, proxies API calls to the backend via Docker network alias `api`. Includes dashboard, device management, telemetry charts, data explorer, rule wizard, integration config, usage/billing views, asset / site / zone management, geofence map (react-leaflet), inventory (products / lots / stock items), tag-data field mappings, audit log viewer, and tenant settings (tracking-modes toggle). See [ADR-007](adr/007-admin-ui-technology.md) and [design/admin-ui.md](design/admin-ui.md).
+
+### Geofencing & Map
+Polygon-zone evaluation runs in-process on every `tag_read.created` and `external_locations` insert: bbox prefilter → Shapely point-in-polygon. Per-zone enter/exit drives the unified `subject.zone_changed` event (`subject_kind` ∈ `asset` \| `stock_item` \| `device`). Dwell tracking persists state in `subject_current_zone` so `zone.dwell_exceeded` rules survive worker restarts. Map UI uses `MapConfigResolver` to honor `tenants.tile_provider`. PostGIS migration is gated on OTel-alert thresholds per [design/geofencing-and-map.md](design/geofencing-and-map.md).
+
+### Device Identity
+Three-phase roadmap per [ADR-011](adr/011-device-identity-roadmap.md): **Phase 1 — rotatable per-device tokens** (shipped, Sprint 16: `devices.token_hash` / `token_prefix` / `token_rotated_at`); **Phase 2 — mTLS** (in progress, Sprint 17b: `devices.cert_thumbprint`, broker rollout in Sprint 17c per [ADR-012](adr/012-mtls-for-mqtt.md)); **Phase 3 — hardware-backed keys** (backlog).
 
 ## Data Flow
 
@@ -156,6 +176,8 @@ React 19 + TypeScript + Vite SPA in a separate repo ([TagPulse-UI](https://githu
 | Multi-tenancy strategy | [ADR-008](adr/008-multi-tenancy-strategy.md) (proposed) |
 | Containerization & local dev | [ADR-009](adr/009-containerization-local-dev.md) (proposed) |
 | Internal event bus | [ADR-010](adr/010-internal-event-bus.md) (proposed) |
+| Device identity roadmap | [ADR-011](adr/011-device-identity-roadmap.md) |
+| mTLS for MQTT | [ADR-012](adr/012-mtls-for-mqtt.md) |
 
 ## External Dependencies
 
@@ -171,11 +193,15 @@ React 19 + TypeScript + Vite SPA in a separate repo ([TagPulse-UI](https://githu
 src/tagpulse/
   api/            # FastAPI routes (thin handlers → service layer)
   ingestion/      # MQTT subscriber + HTTP push endpoint
+  services/       # Business logic (devices, assets, inventory, geofencing, audit, …)
   models/         # SQLAlchemy models + Pydantic schemas (see docs/data-models.md)
   repositories/   # Storage protocol + implementations (see design/storage-strategy.md)
   events/         # EventBus protocol + implementations (see ADR-010)
   rules/          # Rule engine, conditions, alert routing
   analytics/      # Plugin analytics modules
-  integrations/   # Webhooks, SSE, scheduled exports
-  core/           # Config, dependencies, shared utilities
+  integrations/   # Webhooks, SSE, scheduled exports, TMS adapters
+  geo/            # Polygon evaluation, bbox prefilter, MapConfigResolver
+  rfid/           # EPC / TID / user-memory decoders, tag_data mapping
+  workers/        # Background workers (dwell tracker, drain loops)
+  core/           # Config, dependencies, auth, audit, shared utilities
 ```

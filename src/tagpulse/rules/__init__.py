@@ -111,6 +111,42 @@ class RulesService:
         result = await self._session.execute(stmt)
         return [_rule_to_response(row) for row in result.scalars()]
 
+    async def get_active_rules_by_condition_type(
+        self, tenant_id: uuid.UUID, condition_type: str
+    ) -> list[RuleResponse]:
+        """Get enabled rules of a specific condition_type for a tenant.
+
+        Used by the inventory rule worker (Phase E) to evaluate
+        ``stock.below_threshold`` / ``stock.expiring_within`` rules and by
+        the zone-changed evaluator branch for ``stock.unexpected_in_zone``.
+        """
+        stmt = select(RuleModel).where(
+            RuleModel.tenant_id == tenant_id,
+            RuleModel.enabled.is_(True),
+            RuleModel.condition_type == condition_type,
+        )
+        result = await self._session.execute(stmt)
+        return [_rule_to_response(row) for row in result.scalars()]
+
+    async def get_active_rules_by_condition_types_all_tenants(
+        self, condition_types: list[str]
+    ) -> list[RuleResponse]:
+        """Cross-tenant scan used by background workers.
+
+        Returns enabled rules across all tenants whose ``condition_type`` is
+        in ``condition_types``. The worker handles per-tenant fan-out and
+        always passes the rule's own ``tenant_id`` when creating alerts —
+        no tenant data crosses boundaries.
+        """
+        if not condition_types:
+            return []
+        stmt = select(RuleModel).where(
+            RuleModel.enabled.is_(True),
+            RuleModel.condition_type.in_(condition_types),
+        )
+        result = await self._session.execute(stmt)
+        return [_rule_to_response(row) for row in result.scalars()]
+
     # -- Alerts --
 
     async def create_alert(

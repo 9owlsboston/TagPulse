@@ -1,0 +1,25 @@
+{{- if .Values.monitoring.serviceMonitor.enabled -}}
+# Sprint 22 B4 / E1 — Prometheus Operator scrape config for api + worker.
+# When the cluster doesn't run Prometheus Operator, set
+# monitoring.serviceMonitor.enabled=false and rely on the
+# prometheus.io/* pod annotations instead.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "tagpulse.fullname" . }}
+  labels:
+    {{- include "tagpulse.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "tagpulse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+{{- end }}

@@ -53,10 +53,17 @@ class AuditLogger:
         tenant_id: uuid.UUID,
         *,
         resource_type: str | None = None,
+        actions: list[str] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """Query audit logs for a tenant."""
+        """Query audit logs for a tenant.
+
+        ``actions`` (when provided) filters to entries whose ``action`` is in
+        the list — used by the UI "device security events" preset to surface
+        ``device.token_rotated`` / ``device.cert_attached`` / ``device.approved``
+        / ``device.rejected`` together (Sprint 16, design §7).
+        """
         stmt = (
             select(AuditLogModel)
             .where(AuditLogModel.tenant_id == tenant_id)
@@ -64,6 +71,8 @@ class AuditLogger:
         )
         if resource_type is not None:
             stmt = stmt.where(AuditLogModel.resource_type == resource_type)
+        if actions:
+            stmt = stmt.where(AuditLogModel.action.in_(actions))
         stmt = stmt.limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [

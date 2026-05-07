@@ -16,6 +16,7 @@ class FakeTagReadRepository:
 
     def __init__(self) -> None:
         self.reads: list[TagReadResponse] = []
+        self.rejections: list[tuple[UUID, TagReadCreate, str]] = []
 
     async def insert(self, tenant_id: UUID, read: TagReadCreate) -> TagReadResponse:
         response = TagReadResponse(
@@ -30,10 +31,15 @@ class FakeTagReadRepository:
         self.reads.append(response)
         return response
 
-    async def insert_batch(self, tenant_id: UUID, reads: list[TagReadCreate]) -> int:
-        for read in reads:
-            await self.insert(tenant_id, read)
-        return len(reads)
+    async def insert_batch(
+        self, tenant_id: UUID, reads: list[TagReadCreate]
+    ) -> list[TagReadResponse]:
+        return [await self.insert(tenant_id, read) for read in reads]
+
+    async def record_rejection(
+        self, tenant_id: UUID, read: TagReadCreate, reason: str
+    ) -> None:
+        self.rejections.append((tenant_id, read, reason))
 
     async def query(
         self,
@@ -104,6 +110,7 @@ class TestIngestionService:
             )
             for i in range(5)
         ]
-        count = await service.ingest_batch(uuid4(), reads)
+        count, rejected = await service.ingest_batch(uuid4(), reads)
         assert count == 5
+        assert rejected == 0
         assert len(fake_repo.reads) == 5

@@ -37,10 +37,10 @@ class FakeTagReadRepo:
         self.reads.append(resp)
         return resp
 
-    async def insert_batch(self, tenant_id: UUID, reads: list[TagReadCreate]) -> int:
-        for r in reads:
-            await self.insert(tenant_id, r)
-        return len(reads)
+    async def insert_batch(
+        self, tenant_id: UUID, reads: list[TagReadCreate]
+    ) -> list[TagReadResponse]:
+        return [await self.insert(tenant_id, r) for r in reads]
 
     async def query(
         self,
