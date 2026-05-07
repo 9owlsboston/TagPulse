@@ -32,13 +32,39 @@
         }
       }
     },
+    "/health/live": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Liveness Alias",
+        "description": "Liveness probe (k8s convention alias for ``/health``).",
+        "operationId": "liveness_alias_health_live_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Liveness Alias Health Live Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health/ready": {
       "get": {
         "tags": [
           "health"
         ],
         "summary": "Readiness",
-        "description": "Readiness probe \u2014 checks DB and critical components.",
+        "description": "Readiness probe \u2014 checks DB, MQTT, and migration version.",
         "operationId": "readiness_health_ready_get",
         "responses": {
           "200": {
@@ -1211,6 +1237,93 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DeviceHealthSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rule-templates": {
+      "get": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "List Rule Templates",
+        "description": "List built-in rule templates the UI can offer as starting points.\n\nThe ``requires_subject_kind`` field is a discoverability hint \u2014 the\nbackend does not gate access. The UI is expected to filter the list\nagainst the tenant's configured ``telemetry_subject_kinds`` and\navailable ``telemetry_models`` rows.",
+        "operationId": "list_rule_templates_rule_templates_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Rule Templates Rule Templates Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/rule-templates/{template_key}": {
+      "get": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Get Rule Template",
+        "operationId": "get_rule_template_rule_templates__template_key__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "template_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Template Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Rule Template Rule Templates  Template Key  Get"
                 }
               }
             }
@@ -2417,6 +2530,308 @@
         }
       }
     },
+    "/telemetry/readings": {
+      "get": {
+        "tags": [
+          "telemetry"
+        ],
+        "summary": "List Telemetry Readings",
+        "description": "Subject-scoped telemetry query (Sprint 19).\n\nReturns rows from the new ``telemetry_readings`` hypertable. The\nlegacy device-only ``GET /telemetry`` endpoint stays as-is for the\nSprint 14 contract; this endpoint is the multi-subject successor.",
+        "operationId": "list_telemetry_readings_telemetry_readings_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subject_kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "device",
+                "asset",
+                "lot",
+                "stock_item",
+                "zone"
+              ],
+              "type": "string",
+              "title": "Subject Kind"
+            }
+          },
+          {
+            "name": "subject_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Subject Id"
+            }
+          },
+          {
+            "name": "metric_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Metric Name"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TelemetryReadingResponse"
+                  },
+                  "title": "Response List Telemetry Readings Telemetry Readings Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/telemetry/aggregates": {
+      "get": {
+        "tags": [
+          "telemetry"
+        ],
+        "summary": "List Telemetry Aggregates",
+        "description": "Time-bucketed avg/min/max/count for a single subject + metric.",
+        "operationId": "list_telemetry_aggregates_telemetry_aggregates_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subject_kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "device",
+                "asset",
+                "lot",
+                "stock_item",
+                "zone"
+              ],
+              "type": "string",
+              "title": "Subject Kind"
+            }
+          },
+          {
+            "name": "subject_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Subject Id"
+            }
+          },
+          {
+            "name": "metric_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Metric Name"
+            }
+          },
+          {
+            "name": "bucket_seconds",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 86400,
+              "minimum": 1,
+              "description": "Bucket width in seconds. 60 / 3600 hit the continuous aggregates; other values are computed live via time_bucket() over the raw hypertable.",
+              "title": "Bucket Seconds"
+            },
+            "description": "Bucket width in seconds. 60 / 3600 hit the continuous aggregates; other values are computed live via time_bucket() over the raw hypertable."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "title": "Start"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "title": "End"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TelemetryAggregateBucket"
+                  },
+                  "title": "Response List Telemetry Aggregates Telemetry Aggregates Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/telemetry/readings/ingest": {
+      "post": {
+        "tags": [
+          "telemetry"
+        ],
+        "summary": "Ingest Telemetry Readings",
+        "description": "Direct subject-scoped telemetry write (admin/editor only).\n\nFor external systems publishing pre-resolved subject readings\n(e.g. a TMS pushing per-asset GPS speed). Bypasses the tag-borne\nfan-out path. Source defaults to ``\"external\"`` per the schema.\nEach persisted row is published as ``Topic.TELEMETRY_RECORDED`` so\nthe Sprint 20 ``telemetry.threshold`` rule path fires here too.",
+        "operationId": "ingest_telemetry_readings_telemetry_readings_ingest_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TelemetryReadingsBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TelemetryReadingResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Ingest Telemetry Readings Telemetry Readings Ingest Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
     "/telemetry-models": {
       "get": {
         "tags": [
@@ -2499,14 +2914,75 @@
         ]
       }
     },
+    "/telemetry-models/{subject_kind}/{key}": {
+      "get": {
+        "tags": [
+          "telemetry-models"
+        ],
+        "summary": "Get Telemetry Model By Subject",
+        "description": "Sprint 19 subject-scoped telemetry-model lookup.\n\nFor ``subject_kind='device'`` ``key`` is the device_type;\nfor non-device kinds the only model permitted per tenant is\naddressed with any non-empty ``key`` (typically the same string as\n``subject_kind`` so URLs remain self-describing).",
+        "operationId": "get_telemetry_model_by_subject_telemetry_models__subject_kind___key__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subject_kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Subject Kind"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryModelResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/telemetry-models/{device_type}": {
       "get": {
         "tags": [
           "telemetry-models"
         ],
-        "summary": "Get Telemetry Model",
-        "description": "Get telemetry model definition for a device type.",
-        "operationId": "get_telemetry_model_telemetry_models__device_type__get",
+        "summary": "Get Telemetry Model Legacy",
+        "description": "Removed in Sprint 21 (ADR-015 \u00a76).\n\nThe Sprint 19 301 redirect to ``/telemetry-models/device/{device_type}``\nhas been removed after one full retention cycle. Callers must address\nthe subject-scoped path directly. Returns 410 Gone with a Location-style\nhint so any forgotten clients still get a clear migration message.",
+        "operationId": "get_telemetry_model_legacy_telemetry_models__device_type__get",
+        "deprecated": true,
         "security": [
           {
             "APIKeyHeader": []
@@ -2531,9 +3007,7 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TelemetryModelResponse"
-                }
+                "schema": {}
               }
             }
           },
@@ -5689,6 +6163,56 @@
       }
     },
     "/lots/{lot_id}": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Get Lot",
+        "description": "Fetch a single lot. Sprint 19: embeds ``latest_telemetry`` when\nthe tenant has opted into ``subject_kind='lot'``.",
+        "operationId": "get_lot_lots__lot_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "lot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Lot Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LotResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "inventory"
@@ -7247,6 +7771,20 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "latest_telemetry": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/LatestTelemetryEntry"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Telemetry"
           }
         },
         "type": "object",
@@ -8688,6 +9226,53 @@
         "title": "IntegrationUpdate",
         "description": "Partial update for an integration."
       },
+      "LatestTelemetryEntry": {
+        "properties": {
+          "metric_name": {
+            "type": "string",
+            "title": "Metric Name"
+          },
+          "metric_value": {
+            "type": "number",
+            "title": "Metric Value"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "device",
+              "tag",
+              "external",
+              "derived"
+            ],
+            "title": "Source"
+          }
+        },
+        "type": "object",
+        "required": [
+          "metric_name",
+          "metric_value",
+          "timestamp",
+          "source"
+        ],
+        "title": "LatestTelemetryEntry",
+        "description": "Most-recent reading for a single metric on a subject.\n\nEmbedded on ``GET /assets/{id}`` and ``GET /lots/{id}`` (capped at\nthe 5 most-recently-written metrics per subject) so callers do not\nhave to issue a follow-up ``/telemetry/readings?...&limit=1`` for\neach metric they want to display."
+      },
       "Location": {
         "properties": {
           "latitude": {
@@ -8933,6 +9518,20 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "latest_telemetry": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/LatestTelemetryEntry"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Telemetry"
           }
         },
         "type": "object",
@@ -9537,7 +10136,7 @@
           },
           "condition_type": {
             "type": "string",
-            "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone|zone\\.entered|zone\\.exited|zone\\.dwell_exceeded)$",
+            "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone|zone\\.entered|zone\\.exited|zone\\.dwell_exceeded|telemetry\\.threshold)$",
             "title": "Condition Type"
           },
           "condition_config": {
@@ -9704,7 +10303,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone|zone\\.entered|zone\\.exited|zone\\.dwell_exceeded)$"
+                "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone|zone\\.entered|zone\\.exited|zone\\.dwell_exceeded|telemetry\\.threshold)$"
               },
               {
                 "type": "null"
@@ -10731,6 +11330,64 @@
         "title": "TagReadResponse",
         "description": "Tag read event returned from the API."
       },
+      "TelemetryAggregateBucket": {
+        "properties": {
+          "subject_kind": {
+            "type": "string",
+            "enum": [
+              "device",
+              "asset",
+              "lot",
+              "stock_item",
+              "zone"
+            ],
+            "title": "Subject Kind"
+          },
+          "subject_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Subject Id"
+          },
+          "metric_name": {
+            "type": "string",
+            "title": "Metric Name"
+          },
+          "bucket": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Bucket"
+          },
+          "avg_value": {
+            "type": "number",
+            "title": "Avg Value"
+          },
+          "min_value": {
+            "type": "number",
+            "title": "Min Value"
+          },
+          "max_value": {
+            "type": "number",
+            "title": "Max Value"
+          },
+          "sample_count": {
+            "type": "integer",
+            "title": "Sample Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "subject_kind",
+          "subject_id",
+          "metric_name",
+          "bucket",
+          "avg_value",
+          "min_value",
+          "max_value",
+          "sample_count"
+        ],
+        "title": "TelemetryAggregateBucket",
+        "description": "One bucket from ``/telemetry/aggregates``.\n\nReturned in chronological order. Backed by ``cagg_telemetry_1m`` or\n``cagg_telemetry_1h`` depending on the requested ``bucket_seconds``;\nfalls back to a live ``time_bucket`` over ``telemetry_readings`` for\narbitrary intervals."
+      },
       "TelemetryBatch": {
         "properties": {
           "device_id": {
@@ -10757,10 +11414,29 @@
       },
       "TelemetryModelCreate": {
         "properties": {
-          "device_type": {
+          "subject_kind": {
             "type": "string",
-            "maxLength": 50,
-            "minLength": 1,
+            "enum": [
+              "device",
+              "asset",
+              "lot",
+              "stock_item",
+              "zone"
+            ],
+            "title": "Subject Kind",
+            "default": "device"
+          },
+          "device_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Device Type"
           },
           "metrics": {
@@ -10774,11 +11450,10 @@
         },
         "type": "object",
         "required": [
-          "device_type",
           "metrics"
         ],
         "title": "TelemetryModelCreate",
-        "description": "Define the telemetry schema for a device type."
+        "description": "Define the telemetry schema for a subject (Sprint 14 \u2192 Sprint 18).\n\n``device_type`` is required when ``subject_kind='device'`` (the\noriginal Sprint 14 case) and must be omitted otherwise. The DB\nenforces the same rule via ``ck_telemetry_models_device_type_required``."
       },
       "TelemetryModelResponse": {
         "properties": {
@@ -10787,8 +11462,27 @@
             "format": "uuid",
             "title": "Id"
           },
-          "device_type": {
+          "subject_kind": {
             "type": "string",
+            "enum": [
+              "device",
+              "asset",
+              "lot",
+              "stock_item",
+              "zone"
+            ],
+            "title": "Subject Kind",
+            "default": "device"
+          },
+          "device_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Device Type"
           },
           "metrics": {
@@ -10812,7 +11506,6 @@
         "type": "object",
         "required": [
           "id",
-          "device_type",
           "metrics",
           "created_at",
           "updated_at"
@@ -10860,6 +11553,36 @@
           "reason": {
             "type": "string",
             "title": "Reason"
+          },
+          "subject_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "device",
+                  "asset",
+                  "lot",
+                  "stock_item",
+                  "zone"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Kind"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
           }
         },
         "type": "object",
@@ -10873,7 +11596,7 @@
           "reason"
         ],
         "title": "TelemetryQuarantineResponse",
-        "description": "A quarantined telemetry reading awaiting model fix-up or review."
+        "description": "A quarantined telemetry reading awaiting model fix-up or review.\n\nSprint 18 added optional ``subject_kind`` / ``subject_id`` fields:\nlegacy back-filled rows leave them ``None``; multi-subject ingest\n(Sprint 19) populates them so reviewers can see *what* the failed\nreading was meant to describe."
       },
       "TelemetryReading": {
         "properties": {
@@ -10925,6 +11648,214 @@
         ],
         "title": "TelemetryReading",
         "description": "A single telemetry reading inside a batched payload."
+      },
+      "TelemetryReadingIngest": {
+        "properties": {
+          "subject_kind": {
+            "type": "string",
+            "enum": [
+              "device",
+              "asset",
+              "lot",
+              "stock_item",
+              "zone"
+            ],
+            "title": "Subject Kind"
+          },
+          "subject_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Subject Id"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          },
+          "metric_name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Metric Name"
+          },
+          "metric_value": {
+            "type": "number",
+            "title": "Metric Value"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "device",
+              "tag",
+              "external",
+              "derived"
+            ],
+            "title": "Source",
+            "default": "external"
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "subject_kind",
+          "subject_id",
+          "timestamp",
+          "metric_name",
+          "metric_value"
+        ],
+        "title": "TelemetryReadingIngest",
+        "description": "A single subject-scoped telemetry reading (HTTP / MQTT ingest).\n\nSame shape as :class:`TelemetryReading` plus the resolved subject\nfields the caller wants attribution against. ``device_id`` is the\noptional reporting device for cross-reference (e.g. the gateway\nthat uplinked an external observation)."
+      },
+      "TelemetryReadingResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "subject_kind": {
+            "type": "string",
+            "enum": [
+              "device",
+              "asset",
+              "lot",
+              "stock_item",
+              "zone"
+            ],
+            "title": "Subject Kind"
+          },
+          "subject_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Subject Id"
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          },
+          "metric_name": {
+            "type": "string",
+            "title": "Metric Name"
+          },
+          "metric_value": {
+            "type": "number",
+            "title": "Metric Value"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "device",
+              "tag",
+              "external",
+              "derived"
+            ],
+            "title": "Source"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "subject_kind",
+          "subject_id",
+          "device_id",
+          "timestamp",
+          "metric_name",
+          "metric_value",
+          "unit",
+          "source"
+        ],
+        "title": "TelemetryReadingResponse",
+        "description": "A persisted ``telemetry_readings`` row (Sprint 18).\n\nThe subject-scoped successor to :class:`TelemetryResponse`. Carries\nthe resolved subject (kind + id), the reporting device when known,\nand the source vocabulary defined in\n:doc:`docs/design/rfid-tag-data-model` \u00a7D4."
+      },
+      "TelemetryReadingsBatch": {
+        "properties": {
+          "readings": {
+            "items": {
+              "$ref": "#/components/schemas/TelemetryReadingIngest"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Readings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "readings"
+        ],
+        "title": "TelemetryReadingsBatch",
+        "description": "Batched subject-scoped telemetry payload (HTTP / MQTT)."
       },
       "TelemetryResponse": {
         "properties": {
@@ -11015,6 +11946,34 @@
             },
             "type": "array",
             "title": "Tracking Modes"
+          },
+          "telemetry_subject_kinds": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "device",
+                "asset",
+                "lot",
+                "stock_item",
+                "zone"
+              ]
+            },
+            "type": "array",
+            "title": "Telemetry Subject Kinds"
+          },
+          "rate_limit_overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate Limit Overrides"
           }
         },
         "type": "object",
@@ -11031,25 +11990,66 @@
       "TenantConfigUpdate": {
         "properties": {
           "tracking_modes": {
-            "items": {
-              "type": "string",
-              "enum": [
-                "asset",
-                "inventory"
-              ]
-            },
-            "type": "array",
-            "maxItems": 2,
-            "minItems": 1,
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "asset",
+                    "inventory"
+                  ]
+                },
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Tracking Modes"
+          },
+          "telemetry_subject_kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "device",
+                    "asset",
+                    "lot",
+                    "stock_item",
+                    "zone"
+                  ]
+                },
+                "type": "array",
+                "maxItems": 5,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Telemetry Subject Kinds"
+          },
+          "rate_limit_overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate Limit Overrides"
           }
         },
         "type": "object",
-        "required": [
-          "tracking_modes"
-        ],
         "title": "TenantConfigUpdate",
-        "description": "Admin-only payload for toggling tenant feature flags."
+        "description": "Admin-only payload for toggling tenant feature flags.\n\nAll fields are optional; PATCH semantics \u2014 only fields explicitly\nprovided are written. Sprint 19 added ``telemetry_subject_kinds``;\nSprint 22 added ``rate_limit_overrides`` (per-tenant ceilings \u2014\nkeys \u2208 ``{ingest, read, write, admin}``, values are\nrequests-per-minute; pass ``{}`` to clear all overrides)."
       },
       "TileProviderUpdate": {
         "properties": {
