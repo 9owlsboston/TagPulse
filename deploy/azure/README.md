@@ -40,35 +40,60 @@ azd auth login
 
 ## First deploy (`azd up`)
 
-From the repo root:
+TagPulse supports multiple Azure environments side-by-side (`dev`,
+`staging`, `prod`). Each maps to:
+
+| File | Purpose | Committed? |
+|---|---|---|
+| `deploy/azure/.env.<env>.example` | Variable contract + safe defaults for that env | ✅ |
+| `deploy/azure/.env.<env>` | Real values (sub id + 3 secrets) | ❌ gitignored |
+| azd env `tagpulse-<env>` | azd's per-env state (managed by azd, in `.azure/`) | ❌ gitignored |
+
+The `TAGPULSE_ENVIRONMENT` value flows through Bicep → ACA → app `Settings.environment`,
+so `dev` keeps the strict-mode validators relaxed while `staging` / `production` enforce
+them (no dev-secret fallbacks, no CORS `*`, `strict_migration_check` forced True).
+
+### One-time bootstrap (per environment)
 
 ```sh
-# 1. Create the azd environment (one-time)
-azd env new tagpulse-prod
-
-# 2. Populate values from a local .env file
-cp deploy/azure/.env.example deploy/azure/.env
-$EDITOR deploy/azure/.env          # fill in subscription + 3 secrets
-scripts/azd-env-load.sh deploy/azure/.env
-
-# 3. Provision + build + push + migrate + deploy
-azd up
+# Generates 3 strong secrets, prompts for sub id + region,
+# writes deploy/azure/.env.<env> (mode 600), creates azd env tagpulse-<env>.
+scripts/azd-bootstrap.sh dev          # or staging | prod
 ```
 
-The `.env` file is gitignored. Generate fresh secrets with:
+### Deploy
 
 ```sh
-openssl rand -hex 32     # AZURE_JWT_SECRET
-openssl rand -base64 32  # AZURE_POSTGRES_ADMIN_PASSWORD
-openssl rand -base64 24  # AZURE_MQTT_PASSWORD
+scripts/azd-env-load.sh dev           # push .env.dev → azd env (also selects it)
+azd up                                # provision + build + push + migrate + deploy
 ```
 
-Alternatively, set them inline (no .env file) — useful for CI:
+### Switching between environments
+
+```sh
+azd env select tagpulse-staging       # azd-side switch
+scripts/azd-env-load.sh staging       # re-sync values (idempotent)
+azd deploy                            # deploy app code only (no infra change)
+```
+
+### Rotating a secret in place
+
+```sh
+$EDITOR deploy/azure/.env.prod        # change AZURE_JWT_SECRET, etc.
+scripts/azd-env-load.sh prod          # push the new value
+azd provision                         # re-runs Bicep so KV is reseeded
+# Then bounce the apps so they re-fetch the secret:
+az containerapp revision restart --name tagpulse-api --resource-group tagpulse-prod-rg
+az containerapp revision restart --name tagpulse-worker --resource-group tagpulse-prod-rg
+```
+
+### CI / inline form (no .env file)
 
 ```sh
 azd env new tagpulse-prod
 azd env set AZURE_LOCATION southcentralus
 azd env set AZURE_SUBSCRIPTION_ID <sub-id>
+azd env set TAGPULSE_ENVIRONMENT production
 azd env set AZURE_POSTGRES_ADMIN_PASSWORD "$(openssl rand -base64 32)"
 azd env set AZURE_JWT_SECRET "$(openssl rand -hex 32)"
 azd env set AZURE_MQTT_PASSWORD "$(openssl rand -base64 24)"

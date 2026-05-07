@@ -32,6 +32,10 @@ param postgresAdminUsername string
 @description('Key Vault secret URI for the Postgres admin password.')
 param postgresAdminPasswordSecretUri string
 
+@description('App-level environment string.')
+@allowed(['dev','staging','production'])
+param appEnvironment string = 'production'
+
 @description('Common tags.')
 param tags object = {}
 
@@ -82,7 +86,7 @@ resource job 'Microsoft.App/jobs@2024-10-02-preview' = {
           command: [ 'alembic' ]
           args: [ 'upgrade', 'head' ]
           env: [
-            { name: 'ENVIRONMENT', value: 'production' }
+            { name: 'ENVIRONMENT', value: appEnvironment }
             { name: 'POSTGRES_HOST', value: postgresFqdn }
             { name: 'POSTGRES_DB', value: postgresDatabaseName }
             { name: 'POSTGRES_USER', value: postgresAdminUsername }
