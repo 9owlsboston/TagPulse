@@ -51,6 +51,7 @@ For each new environment (`dev` / `staging` / `prod`), run **once**:
   - [ ] Build phase pushes `tagpulse-{api,worker,migrations}:azd-deploy-…` to ACR
   - [ ] Postdeploy hook reports `Migrations execution: …  Succeeded`
   - [ ] Final output shows `SERVICE_API_URI = https://tagpulse-api.<random>.<region>.azurecontainerapps.io`
+  - [ ] _Self-healing note:_ the `preprovision` hook auto-recovers any soft-deleted Key Vault matching this env's prefix, so re-running `azd up` after a teardown does **not** require purging or renaming. See [`scripts/azd-kv-recover.sh`](../../scripts/azd-kv-recover.sh).
 - [ ] **MQTT broker bootstrap** (one-time after first `azd up` only)
   - [ ] `scripts/azd-bootstrap-mqtt.sh <env>` exits 0 (uploads `mosquitto.conf` + `mosquitto.passwd` to the `mosquitto-config` Azure Files share, restarts the ACI)
   - [ ] `az container logs --name tagpulse-mqtt --resource-group <rg>` shows `mosquitto version 2.x.x running`
@@ -115,7 +116,9 @@ Before flipping DNS / opening to real users, confirm:
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `azd up` fails at provision: `Authorization failed` | Missing role on subscription | Get Owner or Contributor + UAA, retry |
+| `azd up` fails: `VaultAlreadyExists … recently deleted but not purged` | Previous teardown left a soft-deleted KV; the `preprovision` hook couldn't recover it | Run `scripts/azd-kv-recover.sh <env>` manually. If it reports a permission error, grant `Key Vault Contributor` at subscription scope (see error message), then retry `azd up`. **No need to tear down working resources.** |
 | Provision succeeds but ACA fails to start: `ImagePullBackOff` | UAMI missing `AcrPull` on ACR | `az role assignment create --assignee <uami-principal> --role AcrPull --scope <acr-id>` |
+| Mosquitto ACI fails: `CannotAccessStorageAccount … 403` (during first `azd up`) | ACI mounted Azure Files before storage-key propagation finished | Re-run `azd provision` — the second pass succeeds with no other changes |
 | `/health/ready` returns `migrations.match=false` | Migrations job didn't run, or ran older image | Re-run job: `az containerapp job start --name tagpulse-migrations -g <rg>` |
 | `/health/ready` shows `checks.mqtt=="error"` | Mosquitto bootstrap not done; password mismatch | Re-do Phase 2 MQTT bootstrap; confirm `AZURE_MQTT_PASSWORD` matches the file uploaded to Azure Files |
 | App refuses to start: `jwt_secret missing` and `environment != "dev"` | Strict-mode validator (Phase A1) tripped | Confirm `AZURE_JWT_SECRET` was set; re-run `azd-env-load.sh` then `azd provision` |

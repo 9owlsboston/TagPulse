@@ -14,6 +14,24 @@
 
 set -euo pipefail
 
+# Wrap azd to drop the "your version of azd is out of date" upgrade nag
+# that gets re-emitted on every invocation. Show it once at the end if
+# detected, instead of spamming stderr per env-var.
+AZD_OUTDATED=0
+azd() {
+  local out
+  if ! out=$(command azd "$@" 2>&1); then
+    local rc=$?
+    printf '%s\n' "$out" >&2
+    return $rc
+  fi
+  if printf '%s' "$out" | grep -q 'out of date'; then
+    AZD_OUTDATED=1
+    out=$(printf '%s' "$out" | grep -vE 'out of date|aka\.ms/install-azd|aka\.ms/azd/upgrade|To update to the latest|^If the install script|^curl -fsSL|^$')
+  fi
+  [[ -n "$out" ]] && printf '%s\n' "$out"
+}
+
 ARG="${1:-}"
 if [[ -z "$ARG" ]]; then
   echo "Usage: $0 <env>   # e.g. dev | staging | prod" >&2
@@ -99,3 +117,6 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 done < "$ENV_FILE"
 
 echo "Loaded $count value(s) from $ENV_FILE"
+if [[ "$AZD_OUTDATED" == "1" ]]; then
+  echo "note: azd is out of date — upgrade with: curl -fsSL https://aka.ms/install-azd.sh | bash" >&2
+fi

@@ -42,6 +42,12 @@ param staticWebAppLocation string = 'centralus'
 @allowed(['dev','staging','production'])
 param appEnvironment string = 'production'
 
+@description('Optional short suffix appended to the Key Vault name to dodge soft-delete name reservations from a prior teardown. Set automatically by scripts/azd-kv-recover.sh when a purge-protected collision is detected.')
+param keyVaultNameSuffix string = ''
+
+@description('Use public placeholder images instead of ACR-hosted ones. Required on first provision (before azd deploy has pushed any images). The preprovision hook auto-toggles this based on whether the migrations image exists in ACR.')
+param useImagePlaceholders bool = false
+
 @description('Common tags.')
 param tags object = {
   workload: 'tagpulse'
@@ -69,6 +75,8 @@ module workload 'workload.bicep' = {
     mqttPassword: mqttPassword
     staticWebAppLocation: staticWebAppLocation
     appEnvironment: appEnvironment
+    keyVaultNameSuffix: keyVaultNameSuffix
+    useImagePlaceholders: useImagePlaceholders
     tags: tags
   }
 }
