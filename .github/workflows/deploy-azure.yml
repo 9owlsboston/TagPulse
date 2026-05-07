@@ -159,3 +159,17 @@ jobs:
           done
           echo "Smoke test failed after 2 minutes"
           exit 1
+
+      # Sprint 23 Phase C2 -- network reachability smoke. The script no-ops
+      # unless both AZURE_ENABLE_VNET and AZURE_DISABLE_PUBLIC_NETWORK_ACCESS
+      # are 'true', so this step is safe to leave on for non-VNet envs.
+      - name: Network smoke (VNet + private endpoints)
+        if: ${{ vars.AZURE_ENABLE_VNET == 'true' }}
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_KEYVAULT_NAME: ${{ vars.AZURE_KEYVAULT_NAME }}
+          AZURE_POSTGRES_FQDN: ${{ vars.AZURE_POSTGRES_FQDN }}
+          AZURE_API_APP_NAME: tagpulse-api
+          AZURE_ENABLE_VNET: ${{ vars.AZURE_ENABLE_VNET }}
+          AZURE_DISABLE_PUBLIC_NETWORK_ACCESS: ${{ vars.AZURE_DISABLE_PUBLIC_NETWORK_ACCESS }}
+        run: ./scripts/azd-network-check.sh
