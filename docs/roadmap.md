@@ -416,6 +416,7 @@
   - **front-door + storage-static-site** — static SWA for [TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI) + Front Door for TLS/WAF in front of Container Apps.
 - [planned] **C2 — `azd up` integration.** `deploy/azure/azure.yaml` + service hooks; `azd up` from a clean Azure subscription provisions everything, runs the migrations job, deploys all three images.
 - [planned] **C3 — OTel → App Insights wiring.** `OTEL_EXPORTER_OTLP_ENDPOINT` env var sourced from App Insights connection string; existing Sprint 11 OTel SDK does the rest.
+- [planned] **C4 — `deploy-azure.yml` GHA workflow.** Continuous deployment for ACA. Trigger: push of a `v*` tag or manual `workflow_dispatch` (no auto-deploy on `main` push). Steps: OIDC federated login to Azure (no long-lived secrets) → `az containerapp job start` for `tagpulse-migrations` and wait for completion → `az containerapp update --image ghcr.io/9owlsboston/tagpulse-api:<tag>` → same for worker. Reuses images published by `build-and-push.yml` (B3) — no rebuild, just promotion. Environment-protected via GitHub `production` environment so a manual approval gate sits before any prod rollout. Rollback = re-run with the previous tag.
 
 ### Phase D — Portable data layer (the "easy migration between clouds" deliverable)
 
