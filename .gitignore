@@ -38,3 +38,10 @@ coverage.xml
 
 # ruff
 .ruff_cache/
+
+# VS Code — allow-list shared workspace files only
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
