@@ -1,18 +1,23 @@
 # Sprint 22 C4 — Continuous deployment to Azure Container Apps.
 #
-# Trigger: push of a `v*` tag (release) or manual workflow_dispatch.
+# Trigger:
+#   - push of a `v*` tag                  → deploys to `production` GitHub Environment
+#   - workflow_dispatch (env input)       → dev | staging | production
+#
 # Reuses the images already published by build-and-push.yml — no rebuild.
 #
-# Steps:
-#   1. OIDC federate to Azure (no long-lived secrets).
-#   2. Run the tagpulse-migrations Container Apps Job and wait for completion.
-#   3. Update tagpulse-api and tagpulse-worker container apps to the new image tag.
+# Per-environment GitHub Environments must exist (Settings → Environments):
+#   - dev / staging / production, each with these *variables* set
+#     (no secrets needed; OIDC federated identity replaces them):
+#       AZURE_CLIENT_ID         App registration with a federated credential
+#                               whose subject is
+#                               repo:9owlsboston/TagPulse:environment:<env>
+#       AZURE_TENANT_ID         Entra tenant
+#       AZURE_SUBSCRIPTION_ID   Target subscription
+#       AZURE_RESOURCE_GROUP    e.g. tagpulse-{dev|staging|prod}-rg
+#       AZURE_ACR_NAME          ACR resource name (no .azurecr.io suffix)
 #
 # Rollback: re-run with the previous tag. Each revision is immutable.
-#
-# Required GitHub repo variables (Settings → Environments → production):
-#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
-#   AZURE_RESOURCE_GROUP, AZURE_ACR_NAME
 
 name: deploy-azure
 
@@ -21,6 +26,12 @@ on:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Target GitHub Environment'
+        required: true
+        type: choice
+        default: production
+        options: [dev, staging, production]
       image_tag:
         description: 'Image tag to deploy (defaults to ref tag, falls back to commit SHA)'
         required: false
@@ -31,13 +42,16 @@ permissions:
   id-token: write
 
 concurrency:
-  group: deploy-azure
+  group: deploy-azure-${{ inputs.environment || 'production' }}
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: production  # gates approval before any prod change
+    # Tag pushes always go to production; manual dispatch picks the env.
+    # Each Environment scopes its own AZURE_* variables and (for production)
+    # gates manual approval.
+    environment: ${{ inputs.environment || 'production' }}
     steps:
       - uses: actions/checkout@v4
 
