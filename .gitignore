@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# azd — per-environment state (contains real secret values in .azure/<env>/.env)
+.azure/
+
 # Python
 __pycache__/
 *.py[cod]

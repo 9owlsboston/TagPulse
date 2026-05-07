@@ -43,13 +43,35 @@ azd auth login
 From the repo root:
 
 ```sh
+# 1. Create the azd environment (one-time)
+azd env new tagpulse-prod
+
+# 2. Populate values from a local .env file
+cp deploy/azure/.env.example deploy/azure/.env
+$EDITOR deploy/azure/.env          # fill in subscription + 3 secrets
+scripts/azd-env-load.sh deploy/azure/.env
+
+# 3. Provision + build + push + migrate + deploy
+azd up
+```
+
+The `.env` file is gitignored. Generate fresh secrets with:
+
+```sh
+openssl rand -hex 32     # AZURE_JWT_SECRET
+openssl rand -base64 32  # AZURE_POSTGRES_ADMIN_PASSWORD
+openssl rand -base64 24  # AZURE_MQTT_PASSWORD
+```
+
+Alternatively, set them inline (no .env file) — useful for CI:
+
+```sh
 azd env new tagpulse-prod
 azd env set AZURE_LOCATION southcentralus
 azd env set AZURE_SUBSCRIPTION_ID <sub-id>
 azd env set AZURE_POSTGRES_ADMIN_PASSWORD "$(openssl rand -base64 32)"
 azd env set AZURE_JWT_SECRET "$(openssl rand -hex 32)"
 azd env set AZURE_MQTT_PASSWORD "$(openssl rand -base64 24)"
-
 azd up
 ```
 
