@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.*.example
 
 # azd — per-environment state (contains real secret values in .azure/<env>/.env)
 .azure/
@@ -48,3 +49,6 @@ coverage.xml
 !.vscode/extensions.json
 !.vscode/tasks.json
 !.vscode/launch.json
+
+# Bicep build artifacts
+deploy/azure/bicep/main.json

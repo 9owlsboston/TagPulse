@@ -1,22 +1,41 @@
 #!/usr/bin/env bash
-# scripts/azd-env-load.sh
+# scripts/azd-env-load.sh <env>
 #
-# Load a local .env file into the active azd environment via `azd env set`.
+# Push every non-empty value from deploy/azure/.env.<env> into the
+# matching azd environment (tagpulse-<env>). If the azd env doesn't
+# exist yet, the script offers to create it.
+#
 # Usage:
-#     azd env new tagpulse-prod        # one-time
-#     scripts/azd-env-load.sh deploy/azure/.env
-#     azd up
+#     scripts/azd-env-load.sh dev
+#     scripts/azd-env-load.sh staging
+#     scripts/azd-env-load.sh prod
 #
-# Lines that are blank, start with '#', or have an empty value are skipped.
-# Quotes around values are stripped. No expansion / interpolation is done.
+# Compatibility: also accepts a direct file path.
 
 set -euo pipefail
 
-ENV_FILE="${1:-deploy/azure/.env}"
+ARG="${1:-}"
+if [[ -z "$ARG" ]]; then
+  echo "Usage: $0 <env>   # e.g. dev | staging | prod" >&2
+  echo "       $0 <path>  # path to a .env file" >&2
+  exit 1
+fi
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "error: $ENV_FILE not found" >&2
-  echo "       cp deploy/azure/.env.example $ENV_FILE  # then edit" >&2
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [[ -f "$ARG" ]]; then
+  ENV_FILE="$ARG"
+elif [[ -f "$REPO_ROOT/deploy/azure/.env.${ARG}" ]]; then
+  ENV_FILE="$REPO_ROOT/deploy/azure/.env.${ARG}"
+else
+  cat >&2 <<EOF
+error: no .env file found for '$ARG'
+       tried: $REPO_ROOT/deploy/azure/.env.${ARG}
+              $ARG (as path)
+
+Bootstrap a new environment with:
+    scripts/azd-bootstrap.sh $ARG
+EOF
   exit 1
 fi
 
@@ -25,21 +44,38 @@ if ! command -v azd >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! azd env list 2>/dev/null | grep -q '(true)'; then
-  echo "error: no active azd environment — run 'azd env new <name>' first" >&2
+# Switch to the matching azd env if AZURE_ENV_NAME is in the file
+TARGET_AZD_ENV=$(grep -E '^AZURE_ENV_NAME=' "$ENV_FILE" | head -1 | cut -d= -f2 | tr -d '"' || true)
+if [[ -n "$TARGET_AZD_ENV" ]]; then
+  if azd env list 2>/dev/null | awk '{print $1}' | grep -qx "$TARGET_AZD_ENV"; then
+    azd env select "$TARGET_AZD_ENV" >/dev/null
+    echo "azd env: $TARGET_AZD_ENV (selected)"
+  else
+    read -r -p "azd env '$TARGET_AZD_ENV' doesn't exist — create it now? [Y/n] " yn
+    yn="${yn:-Y}"
+    if [[ "$yn" =~ ^[Yy]$ ]]; then
+      LOC=$(grep -E '^AZURE_LOCATION=' "$ENV_FILE" | head -1 | cut -d= -f2 | tr -d '"' || true)
+      SUB=$(grep -E '^AZURE_SUBSCRIPTION_ID=' "$ENV_FILE" | head -1 | cut -d= -f2 | tr -d '"' || true)
+      azd env new "$TARGET_AZD_ENV" \
+        ${LOC:+--location "$LOC"} \
+        ${SUB:+--subscription "$SUB"}
+    else
+      exit 1
+    fi
+  fi
+elif ! azd env list 2>/dev/null | grep -q '(true)'; then
+  echo "error: no AZURE_ENV_NAME in $ENV_FILE and no active azd env" >&2
+  echo "       run 'azd env new <name>' first" >&2
   exit 1
 fi
 
 count=0
 while IFS= read -r line || [[ -n "$line" ]]; do
-  # Strip leading/trailing whitespace
   line="${line#"${line%%[![:space:]]*}"}"
   line="${line%"${line##*[![:space:]]}"}"
 
-  # Skip blanks + comments
   [[ -z "$line" || "$line" == \#* ]] && continue
 
-  # Must look like KEY=VALUE
   if [[ "$line" != *=* ]]; then
     echo "warn: skipping malformed line: $line" >&2
     continue
@@ -48,21 +84,18 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   key="${line%%=*}"
   value="${line#*=}"
 
-  # Skip empty values (postprovision-populated keys live in the example)
   [[ -z "$value" ]] && continue
 
-  # Strip surrounding quotes
   if [[ "$value" =~ ^\".*\"$ ]] || [[ "$value" =~ ^\'.*\'$ ]]; then
     value="${value:1:${#value}-2}"
   fi
 
   azd env set "$key" "$value" >/dev/null
   count=$((count + 1))
-  # Mask secret-shaped values in stdout
   case "$key" in
     *PASSWORD*|*SECRET*|*TOKEN*|*KEY*) echo "  set $key=***" ;;
     *) echo "  set $key=$value" ;;
   esac
 done < "$ENV_FILE"
 
-echo "Loaded $count value(s) into azd env: $(azd env list | awk '/\(true\)/{print $1}')"
+echo "Loaded $count value(s) from $ENV_FILE"

@@ -63,6 +63,10 @@ param mqttUsername string
 @description('App Insights connection string for OTel.')
 param appInsightsConnectionString string
 
+@description('App-level environment string (read by Settings.environment): dev | staging | production.')
+@allowed(['dev','staging','production'])
+param appEnvironment string = 'production'
+
 @description('Common tags.')
 param tags object = {}
 
@@ -127,7 +131,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             memory: memory
           }
           env: [
-            { name: 'ENVIRONMENT', value: 'production' }
+            { name: 'ENVIRONMENT', value: appEnvironment }
             { name: 'WORKERS_INLINE', value: workersInline ? 'true' : 'false' }
             { name: 'JWT_SECRET', secretRef: 'jwt-secret' }
             { name: 'POSTGRES_HOST', value: postgresFqdn }

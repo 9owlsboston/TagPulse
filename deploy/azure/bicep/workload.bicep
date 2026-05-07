@@ -37,6 +37,10 @@ param mqttPassword string
 @description('Static Web App location (must be one of the SWA-supported regions).')
 param staticWebAppLocation string = 'centralus'
 
+@description('App-level environment string (read by Settings.environment): dev | staging | production.')
+@allowed(['dev','staging','production'])
+param appEnvironment string = 'production'
+
 // Naming
 var acrName = toLower('${namePrefix}acr${uniqueSuffix}')
 var keyVaultName = toLower('${namePrefix}-kv-${take(uniqueSuffix, 8)}')
@@ -147,6 +151,7 @@ module apiApp 'modules/container-app.bicep' = {
     mqttBrokerUrl: mqtt.outputs.mqttUrl
     mqttUsername: mqttUsername
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    appEnvironment: appEnvironment
     tags: tags
   }
 }
@@ -172,6 +177,7 @@ module workerApp 'modules/container-app.bicep' = {
     mqttBrokerUrl: mqtt.outputs.mqttUrl
     mqttUsername: mqttUsername
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    appEnvironment: appEnvironment
     tags: tags
   }
 }
@@ -188,6 +194,7 @@ module migrationsJob 'modules/migrations-job.bicep' = {
     postgresDatabaseName: postgres.outputs.databaseName
     postgresAdminUsername: postgres.outputs.adminUsername
     postgresAdminPasswordSecretUri: kv.outputs.pgAdminPasswordUri
+    appEnvironment: appEnvironment
     tags: tags
   }
 }

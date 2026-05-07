@@ -38,10 +38,15 @@ param mqttPassword string
 @description('Static Web App location (SWA available regions only).')
 param staticWebAppLocation string = 'centralus'
 
+@description('App-level environment string (read by Settings.environment): dev | staging | production.')
+@allowed(['dev','staging','production'])
+param appEnvironment string = 'production'
+
 @description('Common tags.')
 param tags object = {
   workload: 'tagpulse'
   managedBy: 'bicep'
+  environment: appEnvironment
 }
 
 resource rg 'Microsoft.Resources/resourceGroups@2024-07-01' = {
@@ -63,6 +68,7 @@ module workload 'workload.bicep' = {
     mqttUsername: mqttUsername
     mqttPassword: mqttPassword
     staticWebAppLocation: staticWebAppLocation
+    appEnvironment: appEnvironment
     tags: tags
   }
 }
