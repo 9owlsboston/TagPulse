@@ -33,7 +33,7 @@ K = TypeVar("K", bound=Hashable)
 V = TypeVar("V")
 
 
-class TTLCache(Generic[K, V]):
+class TTLCache(Generic[K, V]):  # noqa: UP046  # PEP 695 syntax requires Py3.12 runtime; supported minimum is 3.11
     """FIFO-evicting cache with per-instance TTL.
 
     Semantics:
