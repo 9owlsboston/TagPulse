@@ -47,6 +47,22 @@ param keyVaultNameSuffix string = ''
 @description('Use public placeholder images on first provision (before azd deploy has pushed app images to ACR).')
 param useImagePlaceholders bool = false
 
+@description('Sprint 23 Phase B — enable VNet integration on the Container Apps environment + provision the per-env VNet, NSGs, and the `pe` subnet for private endpoints. Default false preserves Sprint 22 (no VNet) behaviour.')
+param enableVnetIntegration bool = false
+
+@description('Sprint 23 Phase B -- disable public network access on KV / Postgres and bump ACR to Premium with a private endpoint. ONLY safe when enableVnetIntegration=true (otherwise no clients can reach those services). Default false. Both flags default off so the Sprint 22 deploy path still works for envs without the corporate `Deny`-mode policy.')
+param disablePublicNetworkAccess bool = false
+
+// Sprint 23 Phase B safety guard. `disablePublicNetworkAccess=true` with
+// `enableVnetIntegration=false` would close the public KV/Postgres firewall
+// AND skip provisioning the private endpoints that replace them -- bricking
+// the env. We coerce the effective value to false in that case and surface
+// the override via a deployment output so it is visible in `az deployment
+// sub show`. A loud Bicep `assert` would be cleaner, but the assert keyword
+// is still experimental as of bicep 0.43.x; coercion + output is the
+// portable workaround.
+var disablePublicNetworkAccessEffective = enableVnetIntegration && disablePublicNetworkAccess
+
 // Public placeholder images used when ACR has no images yet. azd deploy
 // later replaces these via `az containerapp update --image ...`.
 var appPlaceholderImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
@@ -56,7 +72,6 @@ var jobPlaceholderImage = 'mcr.microsoft.com/k8se/quickstart-jobs:latest'
 var acrName = toLower('${namePrefix}acr${uniqueSuffix}')
 var keyVaultName = empty(keyVaultNameSuffix) ? toLower('${namePrefix}-kv-${take(uniqueSuffix, 8)}') : toLower('${namePrefix}-kv-${take(uniqueSuffix, 8)}-${keyVaultNameSuffix}')
 var postgresName = toLower('${namePrefix}-pg-${take(uniqueSuffix, 8)}')
-var mqttStorageName = toLower('${namePrefix}mqtt${take(uniqueSuffix, 8)}')
 var mqttContainerGroupName = '${namePrefix}-mqtt'
 var mqttDnsLabel = toLower('${namePrefix}-mqtt-${take(uniqueSuffix, 8)}')
 var workspaceName = '${namePrefix}-logs'
@@ -77,10 +92,22 @@ module monitoring 'modules/monitoring.bicep' = {
   }
 }
 
+// Sprint 23 Phase B -- per-env VNet + subnets + NSGs. Off by default; only
+// provisioned when enableVnetIntegration=true so the Sprint 22 deploy path
+// (no VNet) keeps working unchanged for envs without the corporate policy.
+module network 'modules/network.bicep' = if (enableVnetIntegration) {
+  params: {
+    namePrefix: namePrefix
+    location: location
+    tags: tags
+  }
+}
+
 module acr 'modules/acr.bicep' = {
   params: {
     acrName: acrName
     location: location
+    enablePrivateEndpoint: disablePublicNetworkAccessEffective
     tags: tags
   }
 }
@@ -97,6 +124,7 @@ module kv 'modules/keyvault.bicep' = {
     // Purge protection is irreversible and pins the KV name for 7 days after
     // teardown. Enable for staging/production only; dev iterates frequently.
     enablePurgeProtection: appEnvironment != 'dev'
+    disablePublicNetworkAccess: disablePublicNetworkAccessEffective
     tags: tags
   }
 }
@@ -117,6 +145,7 @@ module postgres 'modules/postgres.bicep' = {
     location: location
     adminUsername: postgresAdminUsername
     adminPassword: postgresAdminPassword
+    disablePublicNetworkAccess: disablePublicNetworkAccessEffective
     tags: tags
   }
 }
@@ -124,11 +153,14 @@ module postgres 'modules/postgres.bicep' = {
 module mqtt 'modules/mqtt.bicep' = {
   params: {
     containerGroupName: mqttContainerGroupName
-    storageAccountName: mqttStorageName
     dnsLabelPrefix: mqttDnsLabel
     location: location
     mqttUsername: mqttUsername
     mqttPassword: mqttPassword
+    acrLoginServer: acr.outputs.loginServer
+    imageTag: imageTag
+    userAssignedIdentityId: identity.outputs.id
+    useImagePlaceholders: useImagePlaceholders
     tags: tags
   }
 }
@@ -140,6 +172,7 @@ module acaEnv 'modules/container-apps-env.bicep' = {
     logAnalyticsCustomerId: monitoring.outputs.workspaceCustomerId
     logAnalyticsSharedKey: monitoring.outputs.workspaceSharedKey
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    infrastructureSubnetId: enableVnetIntegration ? network!.outputs.acaSubnetId : ''
     tags: tags
   }
 }
@@ -222,13 +255,55 @@ module ui 'modules/static-web-app.bicep' = {
   }
 }
 
+// Sprint 23 Phase B -- private endpoints for KV / Postgres / ACR. Only
+// provisioned when both flags are on. Each PE creates a Private DNS Zone
+// linked to the VNet so workloads inside the env resolve the public FQDN to
+// the 10.10.x.x PE address with no client-side change.
+module kvPrivateEndpoint 'modules/private-endpoint.bicep' = if (disablePublicNetworkAccessEffective) {
+  params: {
+    peName: '${namePrefix}-kv-pe'
+    location: location
+    targetResourceId: kv.outputs.id
+    groupId: 'vault'
+    dnsZoneName: 'privatelink.vaultcore.azure.net'
+    subnetId: network!.outputs.peSubnetId
+    vnetId: network!.outputs.id
+    tags: tags
+  }
+}
+
+module postgresPrivateEndpoint 'modules/private-endpoint.bicep' = if (disablePublicNetworkAccessEffective) {
+  params: {
+    peName: '${namePrefix}-pg-pe'
+    location: location
+    targetResourceId: postgres.outputs.id
+    groupId: 'postgresqlServer'
+    dnsZoneName: 'privatelink.postgres.database.azure.com'
+    subnetId: network!.outputs.peSubnetId
+    vnetId: network!.outputs.id
+    tags: tags
+  }
+}
+
+module acrPrivateEndpoint 'modules/private-endpoint.bicep' = if (disablePublicNetworkAccessEffective) {
+  params: {
+    peName: '${namePrefix}-acr-pe'
+    location: location
+    targetResourceId: acr.outputs.id
+    groupId: 'registry'
+    dnsZoneName: 'privatelink.azurecr.io'
+    subnetId: network!.outputs.peSubnetId
+    vnetId: network!.outputs.id
+    tags: tags
+  }
+}
+
 output acrLoginServer string = acr.outputs.loginServer
 output acrName string = acr.outputs.name
 output keyVaultName string = kv.outputs.name
 output postgresFqdn string = postgres.outputs.fqdn
 output postgresDatabaseName string = postgres.outputs.databaseName
 output mqttFqdn string = mqtt.outputs.fqdn
-output mqttStorageAccountName string = mqtt.outputs.storageAccountName
 output containerAppsEnvName string = acaEnv.outputs.name
 output apiAppName string = apiApp.outputs.name
 output apiFqdn string = apiApp.outputs.fqdn
@@ -236,6 +311,10 @@ output workerAppName string = workerApp.outputs.name
 output migrationsJobName string = migrationsJob.outputs.name
 output staticWebAppName string = ui.outputs.name
 output staticWebAppHostname string = ui.outputs.defaultHostname
+// Sprint 23 Phase B -- surfaces the effective value (after the safety
+// coercion above). Useful for verifying the cutover took effect and for
+// debugging the silent-override case where DPNA was set without VNet.
+output disablePublicNetworkAccessEffective bool = disablePublicNetworkAccessEffective
 output appInsightsConnectionString string = monitoring.outputs.appInsightsConnectionString
 output userAssignedIdentityId string = identity.outputs.id
 output userAssignedIdentityClientId string = identity.outputs.clientId

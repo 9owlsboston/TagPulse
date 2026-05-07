@@ -1,12 +1,18 @@
-// Mosquitto MQTT broker on Azure Container Instances — v1 single-node, no HA.
-// ~$15/mo. Replace with EMQX Cloud or AKS-hosted EMQX for production HA (deferred).
-// Persistent volume for retained messages via Azure Files.
+// Mosquitto MQTT broker on Azure Container Instances — Sprint 23 Phase A.
+//
+// Sprint 22 mounted the broker config + data from Azure Files. The corporate
+// `Modify`-mode policy on `Microsoft.Storage` flips `allowSharedKeyAccess`
+// to `false` and ACI cannot mount Azure Files with a managed identity, so
+// the broker failed with `CannotAccessStorageAccount … 403`.
+//
+// Sprint 23 fix: bake the conf + entrypoint into a custom image
+// (docker/mosquitto.Dockerfile) pushed to ACR as `tagpulse-mqtt` by
+// scripts/azd-mqtt-build.sh, and pull it from ACR via the existing UAMI.
+// No storage account, no Files share, no volume mounts. Persistence is now
+// container-local (ADR-017 §Phase A trade-off).
 
 @description('ACI container group name.')
 param containerGroupName string
-
-@description('Storage account name backing the persistent Files share. Must be globally unique, 3–24 lowercase alphanumeric.')
-param storageAccountName string
 
 @description('Azure region.')
 param location string
@@ -24,56 +30,47 @@ param tags object = {}
 @description('DNS label prefix for ACI public FQDN. Will be {prefix}.{region}.azurecontainer.io.')
 param dnsLabelPrefix string
 
-resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
-  name: storageAccountName
-  location: location
-  tags: tags
-  sku: {
-    name: 'Standard_LRS'
-  }
-  kind: 'StorageV2'
-  properties: {
-    minimumTlsVersion: 'TLS1_2'
-    allowBlobPublicAccess: false
-    publicNetworkAccess: 'Enabled'
-  }
-}
+@description('ACR login server (e.g. tpdevacrxxx.azurecr.io). Used both as the image registry and the imageRegistryCredentials.server for managed-identity ACR pull.')
+param acrLoginServer string
 
-resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' existing = {
-  parent: storage
-  name: 'default'
-}
+@description('Image tag (matches the api/worker/migrations tag for the deploy).')
+param imageTag string
 
-resource share 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
-  parent: fileService
-  name: 'mosquitto-data'
-  properties: {
-    accessTier: 'Hot'
-    shareQuota: 5
-  }
-}
+@description('Resource ID of the User-Assigned Managed Identity used to pull from ACR. Must already have the AcrPull role on the ACR (granted in identity.bicep).')
+param userAssignedIdentityId string
 
-resource configShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
-  parent: fileService
-  name: 'mosquitto-config'
-  properties: {
-    accessTier: 'Hot'
-    shareQuota: 1
-  }
-}
+@description('When true, use a public placeholder image instead of the ACR-hosted custom image. Required on first provision (before scripts/azd-mqtt-build.sh has pushed the image). Auto-toggled by scripts/azd-image-check.sh.')
+param useImagePlaceholders bool = false
 
-// NOTE: ACI cannot inject files into a volume on first boot. The mosquitto-config share
-// must be seeded once (post-deployment) with mosquitto.conf and a password file generated
-// via `mosquitto_passwd`. See deploy/azure/README.md → "Bootstrap MQTT broker".
+// Public placeholder for ACI's first-provision use. Public images don't need
+// imageRegistryCredentials (and ACI rejects the block when present with a
+// public image), so we omit it conditionally below.
+var aciPlaceholderImage = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
+var brokerImage = useImagePlaceholders ? aciPlaceholderImage : '${acrLoginServer}/tagpulse-mqtt:${imageTag}'
 
 resource aci 'Microsoft.ContainerInstance/containerGroups@2023-05-01' = {
   name: containerGroupName
   location: location
   tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${userAssignedIdentityId}': {}
+    }
+  }
   properties: {
     osType: 'Linux'
     restartPolicy: 'Always'
     sku: 'Standard'
+    // Pull from the private ACR using the UAMI. Only set when we're actually
+    // pulling from ACR — public placeholders don't need (and reject)
+    // imageRegistryCredentials.
+    imageRegistryCredentials: useImagePlaceholders ? [] : [
+      {
+        server: acrLoginServer
+        identity: userAssignedIdentityId
+      }
+    ]
     ipAddress: {
       type: 'Public'
       dnsNameLabel: dnsLabelPrefix
@@ -82,20 +79,15 @@ resource aci 'Microsoft.ContainerInstance/containerGroups@2023-05-01' = {
           protocol: 'TCP'
           port: 1883
         }
-        {
-          protocol: 'TCP'
-          port: 8883
-        }
       ]
     }
     containers: [
       {
         name: 'mosquitto'
         properties: {
-          image: 'eclipse-mosquitto:2'
+          image: brokerImage
           ports: [
             { protocol: 'TCP', port: 1883 }
-            { protocol: 'TCP', port: 8883 }
           ]
           resources: {
             requests: {
@@ -113,34 +105,6 @@ resource aci 'Microsoft.ContainerInstance/containerGroups@2023-05-01' = {
               secureValue: mqttPassword
             }
           ]
-          volumeMounts: [
-            {
-              name: 'data'
-              mountPath: '/mosquitto/data'
-            }
-            {
-              name: 'config'
-              mountPath: '/mosquitto/config'
-            }
-          ]
-        }
-      }
-    ]
-    volumes: [
-      {
-        name: 'data'
-        azureFile: {
-          shareName: share.name
-          storageAccountName: storage.name
-          storageAccountKey: storage.listKeys().keys[0].value
-        }
-      }
-      {
-        name: 'config'
-        azureFile: {
-          shareName: configShare.name
-          storageAccountName: storage.name
-          storageAccountKey: storage.listKeys().keys[0].value
         }
       }
     ]
@@ -149,4 +113,3 @@ resource aci 'Microsoft.ContainerInstance/containerGroups@2023-05-01' = {
 
 output fqdn string = aci.properties.ipAddress.fqdn
 output mqttUrl string = 'mqtt://${aci.properties.ipAddress.fqdn}:1883'
-output storageAccountName string = storage.name
