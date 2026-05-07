@@ -21,6 +21,10 @@ param staticWebAppLocation = 'centralus'
 param appEnvironment = readEnvironmentVariable('TAGPULSE_ENVIRONMENT', 'production')
 param keyVaultNameSuffix = readEnvironmentVariable('AZURE_KV_NAME_SUFFIX', '')
 param useImagePlaceholders = bool(readEnvironmentVariable('AZURE_USE_IMAGE_PLACEHOLDERS', 'false'))
+// Sprint 23 Phase B -- both off by default. Set both to true once you've run
+// scripts/azd-network-check.sh and reviewed docs/runbooks/sprint-23-network-cutover.md.
+param enableVnetIntegration = bool(readEnvironmentVariable('AZURE_ENABLE_VNET', 'false'))
+param disablePublicNetworkAccess = bool(readEnvironmentVariable('AZURE_DISABLE_PUBLIC_NETWORK_ACCESS', 'false'))
 
 param tags = {
   workload: 'tagpulse'

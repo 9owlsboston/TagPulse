@@ -44,6 +44,9 @@ param postgresVersion string = '16'
 @description('Common tags.')
 param tags object = {}
 
+@description('When true, sets network.publicNetworkAccess=Disabled and SKIPS the AllowAllAzureIPs firewall rule. Sprint 23 Phase B — only safe when a private endpoint is wired in. Default false preserves Sprint 22 behaviour.')
+param disablePublicNetworkAccess bool = false
+
 resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
   name: serverName
   location: location
@@ -68,7 +71,7 @@ resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
       mode: 'Disabled'
     }
     network: {
-      publicNetworkAccess: 'Enabled'
+      publicNetworkAccess: disablePublicNetworkAccess ? 'Disabled' : 'Enabled'
     }
     authConfig: {
       passwordAuth: 'Enabled'
@@ -77,8 +80,10 @@ resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
   }
 }
 
-// Allow Azure services (ACA, ACI) — replace with private endpoint in hardening sprint.
-resource fwAllowAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2024-08-01' = {
+// Allow Azure services (ACA, ACI). Sprint 23 Phase B replaces this with a
+// private endpoint; when disablePublicNetworkAccess=true we skip this rule
+// because the firewall is unreachable anyway and the API would reject it.
+resource fwAllowAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2024-08-01' = if (!disablePublicNetworkAccess) {
   parent: pg
   name: 'AllowAllAzureIPs'
   properties: {
@@ -126,3 +131,4 @@ output serverName string = pg.name
 output fqdn string = pg.properties.fullyQualifiedDomainName
 output databaseName string = db.name
 output adminUsername string = adminUsername
+output id string = pg.id

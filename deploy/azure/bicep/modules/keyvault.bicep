@@ -21,6 +21,9 @@ param tags object = {}
 @description('When true, enables purge protection (irrevocable 7-day soft-delete window). Required for production; leave false in dev so teardowns do not lock the KV name for a week.')
 param enablePurgeProtection bool = true
 
+@description('When true, sets publicNetworkAccess=Disabled and networkAcls.defaultAction=Deny. Sprint 23 Phase B — use only when a private endpoint is wired in (deploy/azure/bicep/modules/private-endpoint.bicep). Default false preserves Sprint 22 behaviour for envs not on the corporate `Deny`-mode policy.')
+param disablePublicNetworkAccess bool = false
+
 resource kv 'Microsoft.KeyVault/vaults@2024-04-01-preview' = {
   name: keyVaultName
   location: location
@@ -35,7 +38,14 @@ resource kv 'Microsoft.KeyVault/vaults@2024-04-01-preview' = {
     enableSoftDelete: true
     softDeleteRetentionInDays: 7
     enablePurgeProtection: enablePurgeProtection ? true : null
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: disablePublicNetworkAccess ? 'Disabled' : 'Enabled'
+    networkAcls: disablePublicNetworkAccess ? {
+      bypass: 'AzureServices'
+      defaultAction: 'Deny'
+    } : {
+      bypass: 'AzureServices'
+      defaultAction: 'Allow'
+    }
   }
 }
 

@@ -127,6 +127,11 @@ else
       Microsoft.Storage
       Microsoft.ManagedIdentity
     )
+    # Sprint 23 Phase C3 -- when AZURE_ENABLE_VNET=true the deploy needs the
+    # Network RP for VNet/subnet/NSG/private-endpoint/private-DNS-zone resources.
+    if [[ "${AZURE_ENABLE_VNET:-false}" == "true" ]]; then
+      REQUIRED_RPS+=(Microsoft.Network)
+    fi
     # Azure normalises some namespaces to lowercase (e.g. 'microsoft.insights'),
     # so we compare case-insensitively.
     REGISTERED=$(az provider list --query "[?registrationState=='Registered'].namespace" -o tsv 2>/dev/null | tr '[:upper:]' '[:lower:]')

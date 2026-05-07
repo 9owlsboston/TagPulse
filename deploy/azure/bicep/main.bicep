@@ -48,6 +48,12 @@ param keyVaultNameSuffix string = ''
 @description('Use public placeholder images instead of ACR-hosted ones. Required on first provision (before azd deploy has pushed any images). The preprovision hook auto-toggles this based on whether the migrations image exists in ACR.')
 param useImagePlaceholders bool = false
 
+@description('Sprint 23 Phase B — enable VNet integration on the ACA env + provision per-env VNet/subnets/NSGs. Default false. Set via env var AZURE_ENABLE_VNET in main.bicepparam.')
+param enableVnetIntegration bool = false
+
+@description('Sprint 23 Phase B — disable public access on KV/Postgres + ACR Premium with PE. Requires enableVnetIntegration=true. Default false. Set via env var AZURE_DISABLE_PUBLIC_NETWORK_ACCESS in main.bicepparam.')
+param disablePublicNetworkAccess bool = false
+
 @description('Common tags.')
 param tags object = {
   workload: 'tagpulse'
@@ -77,6 +83,8 @@ module workload 'workload.bicep' = {
     appEnvironment: appEnvironment
     keyVaultNameSuffix: keyVaultNameSuffix
     useImagePlaceholders: useImagePlaceholders
+    enableVnetIntegration: enableVnetIntegration
+    disablePublicNetworkAccess: disablePublicNetworkAccess
     tags: tags
   }
 }
@@ -87,7 +95,6 @@ output acrName string = workload.outputs.acrName
 output keyVaultName string = workload.outputs.keyVaultName
 output postgresFqdn string = workload.outputs.postgresFqdn
 output mqttFqdn string = workload.outputs.mqttFqdn
-output mqttStorageAccountName string = workload.outputs.mqttStorageAccountName
 output containerAppsEnvName string = workload.outputs.containerAppsEnvName
 output apiAppName string = workload.outputs.apiAppName
 output apiFqdn string = workload.outputs.apiFqdn
@@ -96,3 +103,9 @@ output migrationsJobName string = workload.outputs.migrationsJobName
 output staticWebAppName string = workload.outputs.staticWebAppName
 output staticWebAppHostname string = workload.outputs.staticWebAppHostname
 output appInsightsConnectionString string = workload.outputs.appInsightsConnectionString
+// Sprint 23 Phase B -- surfaces whether the safety-coerced flag landed as
+// `true` or fell back to `false` (set DPNA without VNet -> bricked env).
+// Operators verify post-cutover via:
+//   az deployment sub show --name $AZURE_ENV_NAME \
+//     --query 'properties.outputs.disablePublicNetworkAccessEffective.value'
+output disablePublicNetworkAccessEffective bool = workload.outputs.disablePublicNetworkAccessEffective

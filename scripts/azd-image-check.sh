@@ -51,14 +51,23 @@ if [[ -z "$ACR_NAME" ]]; then
   exit 0
 fi
 
-# Check whether tagpulse-migrations:$TAG exists. The migrations image is the
-# canary because it's the smallest and built last; if it's there, the others
-# are too (azd deploy pushes them in lockstep).
-if az acr repository show-tags --name "$ACR_NAME" --repository tagpulse-migrations \
-     --query "contains(@, '$TAG')" -o tsv 2>/dev/null | grep -qi true; then
-  echo "[image-check] tagpulse-migrations:$TAG exists in $ACR_NAME"
+# Probe all four repos. Sprint 23 added tagpulse-mqtt to the set; the ACI
+# Bicep now consumes it from ACR (no more eclipse-mosquitto:2 public image).
+# Placeholders flip OFF only when ALL repos are populated at $TAG — a partial
+# state would leave one container app on a placeholder forever.
+ALL_PRESENT=true
+for repo in tagpulse-api tagpulse-worker tagpulse-migrations tagpulse-mqtt; do
+  if az acr repository show-tags --name "$ACR_NAME" --repository "$repo" \
+       --query "contains(@, '$TAG')" -o tsv 2>/dev/null | grep -qi true; then
+    echo "[image-check] $repo:$TAG present in $ACR_NAME"
+  else
+    echo "[image-check] $repo:$TAG missing from $ACR_NAME — using placeholders"
+    ALL_PRESENT=false
+  fi
+done
+
+if $ALL_PRESENT; then
   set_placeholder false
 else
-  echo "[image-check] tagpulse-migrations:$TAG missing from $ACR_NAME — using placeholders"
   set_placeholder true
 fi

@@ -52,9 +52,8 @@ For each new environment (`dev` / `staging` / `prod`), run **once**:
   - [ ] Postdeploy hook reports `Migrations execution: …  Succeeded`
   - [ ] Final output shows `SERVICE_API_URI = https://tagpulse-api.<random>.<region>.azurecontainerapps.io`
   - [ ] _Self-healing note:_ the `preprovision` hook auto-recovers any soft-deleted Key Vault matching this env's prefix, so re-running `azd up` after a teardown does **not** require purging or renaming. See [`scripts/azd-kv-recover.sh`](../../scripts/azd-kv-recover.sh).
-- [ ] **MQTT broker bootstrap** (one-time after first `azd up` only)
-  - [ ] `scripts/azd-bootstrap-mqtt.sh <env>` exits 0 (uploads `mosquitto.conf` + `mosquitto.passwd` to the `mosquitto-config` Azure Files share, restarts the ACI)
-  - [ ] `az container logs --name tagpulse-mqtt --resource-group <rg>` shows `mosquitto version 2.x.x running`
+  - [ ] _Sprint 23 note:_ the broker config + password are now baked into the [`tagpulse-mqtt`](../../docker/mosquitto.Dockerfile) image (built into ACR by [`scripts/azd-mqtt-build.sh`](../../scripts/azd-mqtt-build.sh)). **No post-`azd up` MQTT bootstrap step is required.** First `azd up` runs the broker on a placeholder image; second `azd up` (after the build has populated `tagpulse-mqtt:<tag>` in ACR) provisions the ACI on the real image.
+  - [ ] _Subscription with corporate `allowSharedKeyAccess` policy?_ Sprint 23 Phase A is mandatory — Sprint 22's Azure Files volume mount cannot satisfy a `Modify`-mode policy and the broker will fail with `CannotAccessStorageAccount`.
 
 ---
 
@@ -118,9 +117,9 @@ Before flipping DNS / opening to real users, confirm:
 | `azd up` fails at provision: `Authorization failed` | Missing role on subscription | Get Owner or Contributor + UAA, retry |
 | `azd up` fails: `VaultAlreadyExists … recently deleted but not purged` | Previous teardown left a soft-deleted KV; the `preprovision` hook couldn't recover it | Run `scripts/azd-kv-recover.sh <env>` manually. If it reports a permission error, grant `Key Vault Contributor` at subscription scope (see error message), then retry `azd up`. **No need to tear down working resources.** |
 | Provision succeeds but ACA fails to start: `ImagePullBackOff` | UAMI missing `AcrPull` on ACR | `az role assignment create --assignee <uami-principal> --role AcrPull --scope <acr-id>` |
-| Mosquitto ACI fails: `CannotAccessStorageAccount … 403` (during first `azd up`) | ACI mounted Azure Files before storage-key propagation finished | Re-run `azd provision` — the second pass succeeds with no other changes |
+| Mosquitto ACI fails to start: `mosquitto-entrypoint: MOSQUITTO_USERNAME and MOSQUITTO_PASSWORD must be set` | KV `mqtt-broker-password` secret never populated, or UAMI missing `Key Vault Secrets User` on KV | Confirm `AZURE_MQTT_PASSWORD` is in `deploy/azure/.env.<env>`; run `scripts/azd-env-load.sh <env>`; rerun `azd provision` so KV reseeds. |
 | `/health/ready` returns `migrations.match=false` | Migrations job didn't run, or ran older image | Re-run job: `az containerapp job start --name tagpulse-migrations -g <rg>` |
-| `/health/ready` shows `checks.mqtt=="error"` | Mosquitto bootstrap not done; password mismatch | Re-do Phase 2 MQTT bootstrap; confirm `AZURE_MQTT_PASSWORD` matches the file uploaded to Azure Files |
+| `/health/ready` shows `checks.mqtt=="error"` | Broker still on placeholder image (`aci-helloworld`) — first `azd up` provisions the ACI before `tagpulse-mqtt` is in ACR | Run `azd up` a second time. The preprovision hook builds + pushes the image, image-check flips placeholders off, the ACI re-provisions on the real broker. |
 | App refuses to start: `jwt_secret missing` and `environment != "dev"` | Strict-mode validator (Phase A1) tripped | Confirm `AZURE_JWT_SECRET` was set; re-run `azd-env-load.sh` then `azd provision` |
 | App refuses to start: `CORS allow_origins contains "*"` | Strict-mode validator (Phase A2) tripped | Set `CORS_ALLOW_ORIGINS=https://app.example.com` and redeploy |
 | GHA deploy fails with `AADSTS70021: No matching federated identity record found` | Federated-credential subject mismatch | Confirm the credential's subject is exactly `repo:9owlsboston/TagPulse:environment:<env>` (case-sensitive) |
