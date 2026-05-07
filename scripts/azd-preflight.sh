@@ -7,11 +7,25 @@
 # on any blocking failure; warnings ("WARN") are informational only.
 #
 # Usage:
-#   scripts/azd-preflight.sh
+#   scripts/azd-preflight.sh [--no-register]
 #
-# No arguments. Reads the active subscription from `az account show`.
+# Reads the active subscription from `az account show`. By default,
+# missing resource providers are auto-registered (async kickoff + poll
+# up to ~5 min). Pass --no-register to only report them as failures.
 
 set -u
+
+AUTO_REGISTER=1
+for arg in "$@"; do
+  case "$arg" in
+    --no-register) AUTO_REGISTER=0 ;;
+    -h|--help)
+      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *) echo "Unknown arg: $arg" >&2; exit 2 ;;
+  esac
+done
 # We don't use -e: we want to keep checking after a failure and report
 # every problem at the end.
 
@@ -113,14 +127,59 @@ else
       Microsoft.Storage
       Microsoft.ManagedIdentity
     )
-    REGISTERED=$(az provider list --query "[?registrationState=='Registered'].namespace" -o tsv 2>/dev/null)
+    # Azure normalises some namespaces to lowercase (e.g. 'microsoft.insights'),
+    # so we compare case-insensitively.
+    REGISTERED=$(az provider list --query "[?registrationState=='Registered'].namespace" -o tsv 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    MISSING_RPS=()
     for rp in "${REQUIRED_RPS[@]}"; do
-      if grep -Fxq "$rp" <<<"$REGISTERED"; then
+      if grep -Fxq "${rp,,}" <<<"$REGISTERED"; then
         ok "$rp registered"
       else
-        fail "$rp NOT registered (run: az provider register --namespace $rp)"
+        MISSING_RPS+=("$rp")
       fi
     done
+
+    if (( ${#MISSING_RPS[@]} > 0 )); then
+      if (( AUTO_REGISTER == 0 )); then
+        for rp in "${MISSING_RPS[@]}"; do
+          fail "$rp NOT registered (run: az provider register --namespace $rp)"
+        done
+      else
+        echo "  Auto-registering ${#MISSING_RPS[@]} provider(s) (async, up to ~5 min)..."
+        for rp in "${MISSING_RPS[@]}"; do
+          if az provider register --namespace "$rp" >/dev/null 2>&1; then
+            printf '    -> kicked off %s\n' "$rp"
+          else
+            fail "$rp registration kickoff failed (try manually: az provider register --namespace $rp)"
+          fi
+        done
+        # Poll: 60 attempts * 5s = 5 min cap
+        for attempt in $(seq 1 60); do
+          STILL_MISSING=()
+          # Lowercase both sides for case-insensitive lookup (see above).
+          STATES=$(az provider list \
+            --query "[].{n:namespace,s:registrationState}" \
+            -o tsv 2>/dev/null | tr '[:upper:]' '[:lower:]')
+          for rp in "${MISSING_RPS[@]}"; do
+            state=$(awk -v n="${rp,,}" '$1==n {print $2; exit}' <<<"$STATES")
+            [[ "$state" != "registered" ]] && STILL_MISSING+=("$rp")
+          done
+          if (( ${#STILL_MISSING[@]} == 0 )); then
+            for rp in "${MISSING_RPS[@]}"; do ok "$rp registered (auto)"; done
+            break
+          fi
+          if (( attempt == 60 )); then
+            for rp in "${STILL_MISSING[@]}"; do
+              fail "$rp still not Registered after 5 min (check: az provider show -n $rp --query registrationState)"
+            done
+            break
+          fi
+          printf '    waiting... %d still pending (attempt %d/60)\r' "${#STILL_MISSING[@]}" "$attempt"
+          sleep 5
+        done
+        echo
+      fi
+    fi
 
     # ---------- RBAC on subscription ----------
     section "RBAC on subscription"

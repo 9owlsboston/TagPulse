@@ -131,16 +131,29 @@ URL  https://tagpulse-api.<random>.southcentralus.azurecontainerapps.io
 
 ## Bootstrap MQTT broker (one-time)
 
-ACI cannot inject files into the Mosquitto config volume on first boot. Seed the
-config + password file once:
+ACI cannot inject files into the Mosquitto config volume on first boot. The
+[`scripts/azd-bootstrap-mqtt.sh`](../../scripts/azd-bootstrap-mqtt.sh) helper
+seeds it for you — derives the resource group + storage account from the
+selected azd env, reads `AZURE_MQTT_PASSWORD` from `.env.<env>`, generates the
+hashed password file via the `eclipse-mosquitto:2` Docker image, uploads
+`mosquitto.conf` + `mosquitto.passwd` to the `mosquitto-config` Azure Files
+share, and restarts the ACI:
 
 ```sh
-RG=tagpulse-rg
-SA=$(az deployment sub show --name tagpulse-prod \
-  --query 'properties.outputs.mqttStorageAccountName.value' -o tsv)
+scripts/azd-bootstrap-mqtt.sh dev    # or omit arg to use the currently-selected azd env
+```
+
+Re-run the same command after rotating `AZURE_MQTT_PASSWORD` to refresh the
+password file in place (idempotent).
+
+<details>
+<summary>Manual fallback (if the script can't run)</summary>
+
+```sh
+RG=tagpulse-dev-rg
+SA=$(azd env get-value mqttStorageAccountName)
 KEY=$(az storage account keys list -g "$RG" -n "$SA" --query '[0].value' -o tsv)
 
-# Generate password file using mosquitto_passwd from the eclipse-mosquitto image
 docker run --rm -v "$(pwd)":/work eclipse-mosquitto:2 \
   mosquitto_passwd -b -c /work/mosquitto.passwd tagpulse "$AZURE_MQTT_PASSWORD"
 
@@ -159,6 +172,8 @@ az storage file upload --account-name "$SA" --account-key "$KEY" \
 
 az container restart --name tagpulse-mqtt --resource-group "$RG"
 ```
+
+</details>
 
 ## Smoke test
 
