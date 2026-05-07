@@ -81,6 +81,16 @@ class Settings(BaseSettings):
     # working. Set to ``False`` explicitly to override. --
     strict_migration_check: bool = False
 
+    # -- Sprint 22 B1: worker process split. When ``True`` (default,
+    # dev/test/single-container compatibility) the FastAPI ``lifespan``
+    # also boots the inventory + dwell + alert-delivery + analytics +
+    # webhook + MQTT-subscriber components. Production cloud deployments
+    # set this to ``False`` on the API container and run a separate
+    # worker container (same image, ``WORKERS_INLINE=true``) so HTTP and
+    # background workers scale independently. ``event_bus`` and
+    # ``usage_meter`` are always created — HTTP routes depend on them. --
+    workers_inline: bool = True
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @model_validator(mode="after")

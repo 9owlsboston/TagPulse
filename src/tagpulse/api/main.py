@@ -98,83 +98,103 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await usage_meter.start()
     app.state.usage_meter = usage_meter
 
-    # Rule evaluator — subscribes to tag read events
-    evaluator = RuleEvaluator(
-        session_factory=async_session_factory,
-        event_bus=event_bus,
-        usage_meter=usage_meter,
-    )
-    await event_bus.subscribe(Topic.TAG_READ_CREATED, evaluator.on_tag_read)
-    await event_bus.subscribe(
-        Topic.SUBJECT_ZONE_CHANGED, evaluator.on_subject_zone_changed
-    )
-    # Sprint 20: subject-scoped telemetry threshold rules.
-    await event_bus.subscribe(
-        Topic.TELEMETRY_RECORDED, evaluator.on_telemetry_recorded
-    )
+    # Sprint 22 B1: worker components run in this process only when
+    # ``workers_inline`` is True. In cloud deployments the API container
+    # sets ``WORKERS_INLINE=false`` and a sibling worker container
+    # (same image, default ``WORKERS_INLINE=true``) hosts these. The
+    # event_bus + usage_meter above are unconditional because HTTP
+    # routes / SSE / dependencies read them from ``app.state``.
+    inventory_worker: InventoryRuleWorker | None = None
+    dwell_worker: DwellWorker | None = None
+    dwell_tracker: DwellTracker | None = None
+    alert_delivery: AlertDeliveryService | None = None
+    analytics_modules: list[AnalyticsModule] = []
+    webhook_dispatcher: WebhookDispatcher | None = None
+    mqtt_task: asyncio.Task[None] | None = None
 
-    # Inventory rule worker — periodic scans for stock.below_threshold and
-    # stock.expiring_within rules + daily stock_items_active metering snapshot.
-    inventory_worker = InventoryRuleWorker(
-        session_factory=async_session_factory,
-        event_bus=event_bus,
-        usage_meter=usage_meter,
-    )
-    await inventory_worker.start()
-    app.state.inventory_worker = inventory_worker
+    if settings.workers_inline:
+        # Rule evaluator — subscribes to tag read events
+        evaluator = RuleEvaluator(
+            session_factory=async_session_factory,
+            event_bus=event_bus,
+            usage_meter=usage_meter,
+        )
+        await event_bus.subscribe(Topic.TAG_READ_CREATED, evaluator.on_tag_read)
+        await event_bus.subscribe(
+            Topic.SUBJECT_ZONE_CHANGED, evaluator.on_subject_zone_changed
+        )
+        # Sprint 20: subject-scoped telemetry threshold rules.
+        await event_bus.subscribe(
+            Topic.TELEMETRY_RECORDED, evaluator.on_telemetry_recorded
+        )
 
-    # Sprint 17a: dwell tracker + worker for zone.dwell_exceeded rules.
-    # Tracker is write-through to subject_current_zone (migration 027) so
-    # dwell state survives restart and is shared across workers.
-    dwell_tracker = DwellTracker(session_factory=async_session_factory)
-    await dwell_tracker.hydrate()
-    await event_bus.subscribe(
-        Topic.SUBJECT_ZONE_CHANGED, dwell_tracker.on_subject_zone_changed
-    )
-    dwell_worker = DwellWorker(
-        session_factory=async_session_factory,
-        event_bus=event_bus,
-        usage_meter=usage_meter,
-        tracker=dwell_tracker,
-        interval_s=float(settings.dwell_worker_interval_s),
-    )
-    await dwell_worker.start()
-    app.state.dwell_tracker = dwell_tracker
-    app.state.dwell_worker = dwell_worker
+        # Inventory rule worker — periodic scans for stock.below_threshold and
+        # stock.expiring_within rules + daily stock_items_active metering snapshot.
+        inventory_worker = InventoryRuleWorker(
+            session_factory=async_session_factory,
+            event_bus=event_bus,
+            usage_meter=usage_meter,
+        )
+        await inventory_worker.start()
+        app.state.inventory_worker = inventory_worker
 
-    # Alert delivery — subscribes to alert triggered events
-    alert_delivery = AlertDeliveryService()
-    await alert_delivery.start()
-    await event_bus.subscribe(
-        Topic.ALERT_TRIGGERED, alert_delivery.on_alert_triggered
-    )
-    app.state.alert_delivery = alert_delivery
+        # Sprint 17a: dwell tracker + worker for zone.dwell_exceeded rules.
+        # Tracker is write-through to subject_current_zone (migration 027) so
+        # dwell state survives restart and is shared across workers.
+        dwell_tracker = DwellTracker(session_factory=async_session_factory)
+        await dwell_tracker.hydrate()
+        await event_bus.subscribe(
+            Topic.SUBJECT_ZONE_CHANGED, dwell_tracker.on_subject_zone_changed
+        )
+        dwell_worker = DwellWorker(
+            session_factory=async_session_factory,
+            event_bus=event_bus,
+            usage_meter=usage_meter,
+            tracker=dwell_tracker,
+            interval_s=float(settings.dwell_worker_interval_s),
+        )
+        await dwell_worker.start()
+        app.state.dwell_tracker = dwell_tracker
+        app.state.dwell_worker = dwell_worker
 
-    # Analytics modules
-    analytics_modules: list[AnalyticsModule] = [
-        ReadFrequencyModule(session_factory=async_session_factory),
-    ]
-    for module in analytics_modules:
-        await module.start()
-        for topic in module.subscribed_topics:
-            await event_bus.subscribe(topic, module.on_event)
-    app.state.analytics_modules = analytics_modules
+        # Alert delivery — subscribes to alert triggered events
+        alert_delivery = AlertDeliveryService()
+        await alert_delivery.start()
+        await event_bus.subscribe(
+            Topic.ALERT_TRIGGERED, alert_delivery.on_alert_triggered
+        )
+        app.state.alert_delivery = alert_delivery
 
-    # Webhook dispatcher — subscribes to all events for webhook delivery
-    webhook_dispatcher = WebhookDispatcher(
-        session_factory=async_session_factory, usage_meter=usage_meter
-    )
-    await webhook_dispatcher.start()
-    for topic in Topic:
-        await event_bus.subscribe(topic, webhook_dispatcher.on_event)
-    app.state.webhook_dispatcher = webhook_dispatcher
+        # Analytics modules
+        analytics_modules = [
+            ReadFrequencyModule(session_factory=async_session_factory),
+        ]
+        for module in analytics_modules:
+            await module.start()
+            for topic in module.subscribed_topics:
+                await event_bus.subscribe(topic, module.on_event)
+        app.state.analytics_modules = analytics_modules
+
+        # Webhook dispatcher — subscribes to all events for webhook delivery
+        webhook_dispatcher = WebhookDispatcher(
+            session_factory=async_session_factory, usage_meter=usage_meter
+        )
+        await webhook_dispatcher.start()
+        for topic in Topic:
+            await event_bus.subscribe(topic, webhook_dispatcher.on_event)
+        app.state.webhook_dispatcher = webhook_dispatcher
+    else:
+        logger.info(
+            "workers_inline=False; this process serves HTTP only. "
+            "Run a sibling container with WORKERS_INLINE=true to host "
+            "MQTT subscriber + inventory/dwell/alert/analytics/webhook workers."
+        )
 
     # Start EventBus AFTER all subscribers are registered
     await event_bus.start()
 
-    # MQTT subscriber background task
-    mqtt_task: asyncio.Task[None] | None = None
-    if settings.mqtt_broker_host:
+    # MQTT subscriber background task (worker process only)
+    if settings.workers_inline and settings.mqtt_broker_host:
         mqtt_task = asyncio.create_task(
             _run_mqtt_subscriber(event_bus, usage_meter)
         )
@@ -187,13 +207,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         mqtt_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await mqtt_task
-    await dwell_worker.stop()
-    await inventory_worker.stop()
+    if dwell_worker is not None:
+        await dwell_worker.stop()
+    if inventory_worker is not None:
+        await inventory_worker.stop()
     await usage_meter.stop()
     for module in analytics_modules:
         await module.stop()
-    await webhook_dispatcher.stop()
-    await alert_delivery.stop()
+    if webhook_dispatcher is not None:
+        await webhook_dispatcher.stop()
+    if alert_delivery is not None:
+        await alert_delivery.stop()
     await event_bus.drain(timeout=10.0)
 
 

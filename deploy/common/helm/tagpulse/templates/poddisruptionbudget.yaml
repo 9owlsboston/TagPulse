@@ -1,0 +1,31 @@
+{{- if .Values.podDisruptionBudget.api.enabled -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "tagpulse.fullname" . }}-api
+  labels:
+    {{- include "tagpulse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.api.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "tagpulse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+{{- end }}
+{{- if .Values.podDisruptionBudget.worker.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "tagpulse.fullname" . }}-worker
+  labels:
+    {{- include "tagpulse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.worker.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "tagpulse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+{{- end }}
