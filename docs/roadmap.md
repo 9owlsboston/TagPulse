@@ -406,17 +406,10 @@
 
 ### Phase C — Azure deployment (first provider)
 
-- [planned] **C1 — `deploy/azure/bicep/` modules.** Subscription-scope `main.bicep` orchestrating:
-  - **postgres** — Azure Database for PostgreSQL Flexible Server, TimescaleDB extension via `azure.extensions`, Entra ID admin, private endpoint into VNet, geo-redundant backup, `pgvector` enabled (future-proofs AI Phase 1 backlog).
-  - **container-apps** — three apps (api, worker, ui) + one job (migrations); managed identity for Postgres + Key Vault; KEDA scaling on HTTP for api, static `1` worker for v1 (MQTT-queue-depth scaler deferred).
-  - **keyvault** — JWT secret, Postgres admin password (until passwordless), MQTT broker creds; managed identity → `Key Vault Secrets User`.
-  - **acr** — container registry; Container Apps pulls via managed identity.
-  - **log-analytics + app-insights** — destination for the existing Sprint 11 OTel exporter; Container Apps native integration.
-  - **mqtt** — parameterized: (a) ACI-hosted Mosquitto for v1 (~$15/mo, single-node, no HA), or (b) external EMQX Cloud subscription wired in via `keyvault` (managed, ~$50+/mo, HA). Pick at deploy time; module signature identical.
-  - **front-door + storage-static-site** — static SWA for [TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI) + Front Door for TLS/WAF in front of Container Apps.
-- [planned] **C2 — `azd up` integration.** `deploy/azure/azure.yaml` + service hooks; `azd up` from a clean Azure subscription provisions everything, runs the migrations job, deploys all three images.
-- [planned] **C3 — OTel → App Insights wiring.** `OTEL_EXPORTER_OTLP_ENDPOINT` env var sourced from App Insights connection string; existing Sprint 11 OTel SDK does the rest.
-- [planned] **C4 — `deploy-azure.yml` GHA workflow.** Continuous deployment for ACA. Trigger: push of a `v*` tag or manual `workflow_dispatch` (no auto-deploy on `main` push). Steps: OIDC federated login to Azure (no long-lived secrets) → `az containerapp job start` for `tagpulse-migrations` and wait for completion → `az containerapp update --image ghcr.io/9owlsboston/tagpulse-api:<tag>` → same for worker. Reuses images published by `build-and-push.yml` (B3) — no rebuild, just promotion. Environment-protected via GitHub `production` environment so a manual approval gate sits before any prod rollout. Rollback = re-run with the previous tag.
+- [done] **C1 — `deploy/azure/bicep/` modules.** Subscription-scope [main.bicep](../deploy/azure/bicep/main.bicep) + [main.bicepparam](../deploy/azure/bicep/main.bicepparam) → resource group → [workload.bicep](../deploy/azure/bicep/workload.bicep) composing 10 modules: [acr](../deploy/azure/bicep/modules/acr.bicep) (Basic, no admin, no anon pull), [keyvault](../deploy/azure/bicep/modules/keyvault.bicep) (RBAC mode, seeds 3 secrets), [monitoring](../deploy/azure/bicep/modules/monitoring.bicep) (Log Analytics + workspace-based App Insights), [postgres](../deploy/azure/bicep/modules/postgres.bicep) (Flexible Server `Standard_B1ms` Burstable + TimescaleDB extension allow-list + `shared_preload_libraries`), [mqtt](../deploy/azure/bicep/modules/mqtt.bicep) (single-node Mosquitto on ACI with Azure Files-backed config + data shares), [container-apps-env](../deploy/azure/bicep/modules/container-apps-env.bicep), [identity](../deploy/azure/bicep/modules/identity.bicep) (UAMI + AcrPull + KV Secrets User), [container-app](../deploy/azure/bicep/modules/container-app.bicep) (parameterized api vs worker), [migrations-job](../deploy/azure/bicep/modules/migrations-job.bicep) (`Microsoft.App/jobs` manual-trigger), [static-web-app](../deploy/azure/bicep/modules/static-web-app.bicep) (Free tier, restricted region list). Hardening backlog (private endpoint for Postgres, Front Door + WAF, EMQX HA, passwordless Postgres, geo-redundant backup) deferred by design — see [deploy/azure/README.md](../deploy/azure/README.md).
+- [done] **C2 — `azd up` integration.** [azure.yaml](../azure.yaml) wires three services (api/worker/migrations) to the matching Dockerfile targets pushing to ACR. **postprovision** captures `AZURE_ACR_LOGIN_SERVER` + `AZURE_IMAGE_TAG` from deployment outputs. **postdeploy** runs the migrations Container Apps Job and polls completion (10s × 60 = 10 min cap; `Failed`/`Degraded` exits 1) before api/worker revisions roll.
+- [done] **C3 — OTel → App Insights wiring.** New `[azure]` extra in [pyproject.toml](../pyproject.toml) pins `azure-monitor-opentelemetry`; the [Dockerfile](../Dockerfile) build stage installs `pip install ".[azure]"`. [src/tagpulse/core/telemetry.py](../src/tagpulse/core/telemetry.py) soft-imports `configure_azure_monitor` and uses it when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, taking precedence over the OTLP path. The Container Apps Bicep wires the connection string + `OTEL_SERVICE_NAME` + `OTEL_RESOURCE_ATTRIBUTES`.
+- [done] **C4 — `deploy-azure.yml` GHA workflow.** [.github/workflows/deploy-azure.yml](../.github/workflows/deploy-azure.yml). Trigger: `v*` tag push or `workflow_dispatch` (no auto-deploy on `main`). OIDC federation only (no PATs); `production` GitHub environment gates manual approval. Verifies all three images exist in ACR at the target tag → runs migrations job to completion → `az containerapp update` api + worker → smoke `https://${api-fqdn}/health/ready`. Rollback = re-run with the previous tag. Companion change: [build-and-push.yml](../.github/workflows/build-and-push.yml) now dual-pushes to GHCR (dev) + ACR (prod) when `vars.AZURE_ACR_NAME` is set.
 
 ### Phase D — Portable data layer (the "easy migration between clouds" deliverable)
 
@@ -428,7 +421,7 @@
 ### Phase E — Observability & operations
 
 - [planned] **E1 — Prometheus scrape wiring.** `ServiceMonitor` template in the Helm chart (B4); for Container Apps, the Azure Monitor managed Prometheus add-on with a scrape config targeting the api + worker `/metrics` endpoints. `ops/prometheus/alerts.yml` ported into Helm values + Azure Managed Grafana dashboard JSON checked into `deploy/azure/grafana/`.
-- [planned] **E2 — First-deploy runbook `docs/runbooks/azure-first-deploy.md`.** Prerequisites (subscription, az CLI, azd, GitHub PAT for ACR), `azd up` walkthrough, smoke test using `scripts/smoke_setup.py --full` against the deployed instance, troubleshooting top-10. Skeleton mirrors at `docs/runbooks/aws-first-deploy.md` + `gcp-first-deploy.md` (TODO-only — gated on Sprint 23+).
+- [done] **E2 — First-deploy runbook [`docs/runbooks/azure-first-deploy.md`](runbooks/azure-first-deploy.md).** Six-phase checklist: prerequisites (CLI versions, RP registration, RBAC), per-env `.env.<env>` bootstrap, first `azd up` + MQTT broker file-share seeding, smoke tests (`/health/live`, `/health/ready` field-by-field, `smoke_setup.py --full`, App Insights traces, worker logs), per-environment CI/CD wiring (GitHub Environment + federated credential + role assignments + 5 Environment variables), and production cutover gates (backups, KV soft-delete, alerts, hardening-backlog review). Plus a top-10 common-failures table and a decommission recipe. Discoverable from [README.md](../README.md#deployment), [deploy/azure/README.md](../deploy/azure/README.md), and [docs/runbooks/README.md](runbooks/README.md). Skeleton mirrors at `docs/runbooks/aws-first-deploy.md` + `gcp-first-deploy.md` remain TODO-only — gated on Sprint 23+.
 - [planned] **E3 — CI gating on migration round-trip.** Promote the existing `TAGPULSE_INTEGRATION_DB_URL` round-trip test (Sprint 19) into the GitHub Actions matrix with a TimescaleDB service container so `make migration-check` blocks merge to `main`. Closes the Sprint 19 carry-over flagged in the cloud-readiness review.
 
 ### Phase F — Other-cloud skeletons (no implementation, just structure)
@@ -458,6 +451,62 @@
 - Passwordless Postgres via Entra ID (Phase C1 wires the secret today; flip to passwordless once first deployment is stable).
 - KEDA scaling of `tagpulse-worker` on MQTT queue depth (static `replicas=1` for v1).
 - `slowapi` / Redis-backed distributed rate limiter (A4 ships in-process; revisit when first multi-replica API tier hits rate-limit drift).
+
+---
+
+## Sprint 23 — Network Hardening (KV private endpoint + VNet-integrated ACA)
+
+> Design: ADR-017 (this sprint), [docs/runbooks/azure-first-deploy.md](runbooks/azure-first-deploy.md) (impacted), [deploy/azure/README.md](../deploy/azure/README.md) (hardening backlog → promoted)
+> Goal: comply with the corporate "no public network access on Key Vault / Storage" policy that the platform team is enforcing tenant-wide. First deployment in Sprint 22-C exposed two problems: (1) the storage policy is `Modify`-mode and silently reverted `allowSharedKeyAccess=true`, breaking the Mosquitto Azure Files mount; (2) the KV policies are currently `Audit`-only but flagged for promotion to `Deny`. Sprint 23 lands the proper VNet + private-endpoint topology so neither service depends on public network access, *and* removes the Mosquitto Files dependency entirely.
+
+### Phase A — Same-day mitigation (no VNet required)
+
+> Ships within 24h to keep the Azure deploy unblocked while Phase B is built.
+
+- [planned] **A1 — Custom Mosquitto image with config baked in.** New `docker/mosquitto.Dockerfile` (`FROM eclipse-mosquitto:2`) that COPYs `mosquitto.conf` and runs a small entrypoint that materializes `mosquitto.passwd` from `MOSQUITTO_USERNAME` / `MOSQUITTO_PASSWORD` env vars at boot. Add `mqtt` as a fourth service in [azure.yaml](../azure.yaml) so `azd deploy mqtt` builds + pushes to ACR. ACR repo: `tagpulse-mqtt`.
+- [planned] **A2 — Drop Azure Files dependency from `mqtt.bicep`.** Remove the storage account, both Files shares, the `volumes` block, and both `volumeMounts`. ACI now pulls the custom image from ACR via UAMI. KV `mqtt-password` secret continues to feed the ACI as a `secureValue` env var (no API change for api/worker clients). Removes [scripts/azd-bootstrap-mqtt.sh](../scripts/azd-bootstrap-mqtt.sh) from Phase 2 of the first-deploy runbook.
+- [planned] **A3 — Trade-off documented.** ADR-017 §Phase A captures the loss of broker retained-message persistence across restarts (devices republish on reconnect — acceptable for v1; obviated by Sprint 24 EMQX cutover anyway).
+- [planned] **A4 — Update [docs/runbooks/azure-first-deploy.md](runbooks/azure-first-deploy.md)** Phase 2: drop the MQTT bootstrap step; add a "if `allowSharedKeyAccess` policy is enforced in your subscription, Sprint 23 Phase A is mandatory" callout.
+
+### Phase B — VNet + private endpoints (the policy-recommended path)
+
+- [planned] **B1 — `network.bicep` module.** New `deploy/azure/bicep/modules/network.bicep`: VNet `tpdev-vnet` (10.10.0.0/16), three subnets — `aca-infra` (10.10.0.0/23, delegated to `Microsoft.App/environments`, NSG with default-deny + ACA service-tag allow), `pe` (10.10.2.0/27, no delegation, for private endpoints), `mgmt` (10.10.3.0/27, reserved for future Bastion). Service endpoints not used (we go full private-endpoint).
+- [planned] **B2 — VNet-integrated Container Apps environment.** Update [container-apps-env.bicep](../deploy/azure/bicep/modules/container-apps-env.bicep) to set `vnetConfiguration.infrastructureSubnetId` + `internal=false` (still public ingress for the api, just with controlled egress). **Breaking change:** ACA env is immutable on this property → Sprint 22 deployments must be torn down and recreated. Migration runbook in B6.
+- [planned] **B3 — Key Vault private endpoint.** New `deploy/azure/bicep/modules/private-endpoint-kv.bicep`. Toggle KV `publicNetworkAccess=Disabled` + `networkAcls.defaultAction=Deny` (controlled via `disableKeyVaultPublicAccess` bool param, default `true`). Add Private DNS Zone `privatelink.vaultcore.azure.net` linked to the VNet; A-record auto-created via the `privateDnsZoneGroups` block on the PE.
+- [planned] **B4 — Postgres private endpoint** (was already on the hardening backlog — promoted). Same shape as B3; zone `privatelink.postgres.database.azure.com`. Removes the `0.0.0.0` firewall rule from [postgres.bicep](../deploy/azure/bicep/modules/postgres.bicep).
+- [planned] **B5 — ACR private endpoint.** Optional but cheap to ship now. Zone `privatelink.azurecr.io`. ACR keeps `publicNetworkAccess=Enabled` for laptop `docker push` during local testing; add `networkRuleSet` allow-list for the GitHub Actions runner egress range when `deploy-azure.yml` runs.
+- [planned] **B6 — Migration runbook `docs/runbooks/sprint-23-network-cutover.md`.** Order of operations for an existing Sprint 22 environment: (1) `azd env set DISABLE_KEY_VAULT_PUBLIC_ACCESS true` and other Phase-B feature flags; (2) `azd down --purge --force` (ACA env recreate is destructive); (3) `azd provision` (Phase B Bicep applies); (4) re-seed KV secrets via `scripts/azd-bootstrap.sh` (already does this); (5) `azd deploy`; (6) verify `/health/ready` from the api's public ingress (still works) and that `az keyvault secret show` from your laptop fails with `Forbidden` (proves the firewall is on).
+- [planned] **B7 — Bastion-or-jumpbox decision (small).** For laptop access to KV/PG when public access is disabled. Choices documented in ADR-017: (a) Azure Bastion in the `mgmt` subnet (~$140/mo, always-on), (b) ad-hoc dev container app with a public ingress + `az` CLI for break-glass, (c) deploy-time-only public access toggle via the Phase-B bool params. Recommendation: **(c) for dev, (a) for production**.
+
+### Phase C — Tooling & CI updates
+
+- [planned] **C1 — `scripts/azd-network-check.sh`.** New preflight script that confirms the VNet + 4 private endpoints + 3 private DNS zones exist and resolve to the expected `10.10.x.x` addresses from inside the ACA env (uses `az containerapp exec` to nslookup). Wired as a `postdeploy` hook in [azure.yaml](../azure.yaml).
+- [planned] **C2 — `deploy-azure.yml` GHA networking.** Add a smoke step that runs `nslookup` against KV's private FQDN from inside the ACA env and asserts the result is in the `10.10.x.x` range — fails the deploy if a misconfiguration leaves clients hitting the public IP.
+- [planned] **C3 — Update [scripts/azd-preflight.sh](../scripts/azd-preflight.sh)** to verify `Microsoft.Network` resource provider is registered.
+
+### Phase D — Documentation
+
+- [planned] **D1 — ADR-017 — Network hardening: VNet integration + private endpoints.** Records the Phase A vs Phase B split, the cost of the immutable ACA env recreate, the Bastion vs ad-hoc-toggle choice for dev access, and the explicit non-goal: "Phase B does not migrate the api ingress to private/internal — public ingress is intentional for v1; Front Door + WAF stays on the post-Sprint-23 hardening backlog."
+- [planned] **D2 — Update [deploy/azure/README.md](../deploy/azure/README.md)** "Hardening backlog" section: KV private endpoint + Postgres private endpoint move from "deferred" to "shipped in Sprint 23"; add EMQX HA, Front Door + WAF, passwordless Postgres, geo-redundant backup as the new top of the deferred list.
+- [planned] **D3 — Update [docs/runbooks/azd-survival-guide.md](runbooks/azd-survival-guide.md)** "Common gotchas" with the `allowSharedKeyAccess` policy tell-tale and the `KeyVault: Forbidden from container app` symptom + DNS resolution check.
+- [planned] **D4 — `CHANGELOG.md` Sprint 23 section.**
+
+### Acceptance criteria
+
+- `azd up` from a clean Azure subscription with the corporate policy in `Deny` mode succeeds end-to-end (no manual policy exemptions required).
+- `az keyvault secret show` from outside the VNet returns `Forbidden`; the api can still read the same secret at startup (proves private endpoint + DNS work).
+- `nslookup tpdev-kv-*.vault.azure.net` from inside an ACA replica returns a `10.10.x.x` address.
+- `scripts/azd-network-check.sh` exits 0 against a freshly provisioned env.
+- No regression in the Sprint 22 first-deploy runbook for environments that opt out of Phase B (`disableKeyVaultPublicAccess=false`) — both modes coexist behind the flag.
+- Mosquitto ACI boots without any Azure Files mount, with config + password sourced from the custom image + KV.
+
+### Deferred to Sprint 24+
+
+- Front Door + WAF in front of the api ingress.
+- Internal-only ACA ingress (api goes fully private; consumed via Front Door or VPN).
+- EMQX Cloud production cutover (replaces the single-node Mosquitto ACI entirely; obviates the Phase A custom image).
+- Passwordless Postgres via Entra ID.
+- Production-grade Bastion + jumpbox standard for `staging` + `production` envs.
 
 ---
 
