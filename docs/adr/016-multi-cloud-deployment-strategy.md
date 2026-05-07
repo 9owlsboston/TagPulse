@@ -1,6 +1,6 @@
 # ADR-016: Multi-Cloud Deployment Strategy
 
-- Status: Proposed (Sprint 22, May 2026)
+- Status: Accepted (Sprint 22 Phase A–C, May 2026)
 - Supersedes: none
 - Related: [ADR-008](008-multi-tenancy-strategy.md) (tenant routing + sovereign-tenant promotion shape), [ADR-009](009-containerization-local-dev.md) (container baseline), [ADR-002](002-mqtt-device-connectivity.md) (broker target), [ADR-012](012-mtls-for-mqtt.md) (broker auth roadmap), [docs/roadmap.md Sprint 22](../roadmap.md)
 
@@ -219,3 +219,23 @@ because `environment` defaults to `dev`.
 - **Skipping the Helm chart** (Bicep-only for v1) — rejected. The
   chart is the only thing AWS/GCP can adopt without re-deriving the
   workload shape from Bicep.
+- **GHCR as the only image registry** — rejected during Phase C
+  implementation. The original B3 design pushed only to GHCR and let
+  ACA pull cross-registry via service principal. Switched to **dual
+  push (GHCR + ACR)** because (a) GHCR cross-region pulls into Azure
+  add 30–60s to ACA cold starts and (b) ACR Basic at ~$5/mo is
+  cheaper than the GHCR private storage charge for our image volume.
+  GHCR remains the dev-pull target; ACR is the production pull source
+  referenced by the Bicep modules. See
+  [.github/workflows/build-and-push.yml](../../.github/workflows/build-and-push.yml).
+
+## Phase C implementation notes (Sprint 22)
+
+The decision shape above held; concrete realization deltas:
+
+- Bicep modules live under [deploy/azure/bicep/modules/](../../deploy/azure/bicep/modules/) — one per resource family. Orchestrator is [workload.bicep](../../deploy/azure/bicep/workload.bicep), entrypoint is [main.bicep](../../deploy/azure/bicep/main.bicep) (subscription-scope, creates RG + workload).
+- **Identity model**: single user-assigned managed identity (UAMI) granted `AcrPull` on ACR + `Key Vault Secrets User` on KV. Both api/worker container apps and the migrations job assume the same UAMI. Avoids the chicken-and-egg of system identity AcrPull grants.
+- **Postgres**: Flexible Server `Standard_B1ms` Burstable, public access + `AllowAllAzureIPs` firewall for v1. TimescaleDB enabled via `azure.extensions` allow-list + `shared_preload_libraries = timescaledb`. Private endpoint deferred to hardening backlog (see [deploy/azure/README.md](../../deploy/azure/README.md)).
+- **MQTT**: single-node Mosquitto on ACI with Azure Files-backed config + data shares. Broker config + password file must be seeded once post-deployment (`az storage file upload`); ACI cannot inject volume contents on first boot.
+- **OTel**: app code (`src/tagpulse/core/telemetry.py`) soft-imports `azure.monitor.opentelemetry.configure_azure_monitor` when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, taking precedence over the OTLP exporter path. Installed via `pip install ".[azure]"` in the Dockerfile build stage; non-Azure deployments are unaffected.
+- **CD**: `azd up` for first deploy + ad-hoc; [.github/workflows/deploy-azure.yml](../../.github/workflows/deploy-azure.yml) on `v*` tag push for subsequent rollouts. Both run the migrations job to completion before updating api/worker revisions. OIDC federation only — no PATs.

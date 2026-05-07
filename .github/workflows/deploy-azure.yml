@@ -1,0 +1,147 @@
+# Sprint 22 C4 — Continuous deployment to Azure Container Apps.
+#
+# Trigger: push of a `v*` tag (release) or manual workflow_dispatch.
+# Reuses the images already published by build-and-push.yml — no rebuild.
+#
+# Steps:
+#   1. OIDC federate to Azure (no long-lived secrets).
+#   2. Run the tagpulse-migrations Container Apps Job and wait for completion.
+#   3. Update tagpulse-api and tagpulse-worker container apps to the new image tag.
+#
+# Rollback: re-run with the previous tag. Each revision is immutable.
+#
+# Required GitHub repo variables (Settings → Environments → production):
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+#   AZURE_RESOURCE_GROUP, AZURE_ACR_NAME
+
+name: deploy-azure
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (defaults to ref tag, falls back to commit SHA)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-azure
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production  # gates approval before any prod change
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            echo "tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Image tag: $(cat "$GITHUB_OUTPUT" | tail -1)"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify all three images exist in ACR
+        env:
+          ACR: ${{ vars.AZURE_ACR_NAME }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -e
+          for component in api worker migrations; do
+            echo "Checking ${ACR}.azurecr.io/tagpulse-${component}:${TAG}"
+            az acr repository show-tags \
+              --name "$ACR" \
+              --repository "tagpulse-${component}" \
+              --query "[?@=='${TAG}'] | [0]" -o tsv | grep -q "${TAG}" \
+              || { echo "Missing tag ${TAG} for tagpulse-${component}"; exit 1; }
+          done
+          echo "All three images present at tag ${TAG}"
+
+      - name: Run migrations job
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          ACR: ${{ vars.AZURE_ACR_NAME }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -e
+          JOB=tagpulse-migrations
+          # Update job image to the target tag before running
+          az containerapp job update \
+            --name "$JOB" --resource-group "$RG" \
+            --image "${ACR}.azurecr.io/tagpulse-migrations:${TAG}" >/dev/null
+          EXEC=$(az containerapp job start --name "$JOB" --resource-group "$RG" --query 'name' -o tsv)
+          echo "Migrations execution: $EXEC"
+          for i in $(seq 1 60); do
+            STATUS=$(az containerapp job execution show \
+              --name "$JOB" --resource-group "$RG" --job-execution-name "$EXEC" \
+              --query 'properties.status' -o tsv 2>/dev/null || echo Running)
+            case "$STATUS" in
+              Succeeded) echo "Migrations succeeded"; exit 0 ;;
+              Failed|Degraded) echo "Migrations failed: $STATUS"; exit 1 ;;
+              *) echo "  status=$STATUS (sleep 10)"; sleep 10 ;;
+            esac
+          done
+          echo "Migrations job timed out after 10 minutes"
+          exit 1
+
+      - name: Roll out api
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          ACR: ${{ vars.AZURE_ACR_NAME }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -e
+          az containerapp update \
+            --name tagpulse-api \
+            --resource-group "$RG" \
+            --image "${ACR}.azurecr.io/tagpulse-api:${TAG}"
+
+      - name: Roll out worker
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          ACR: ${{ vars.AZURE_ACR_NAME }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -e
+          az containerapp update \
+            --name tagpulse-worker \
+            --resource-group "$RG" \
+            --image "${ACR}.azurecr.io/tagpulse-worker:${TAG}"
+
+      - name: Smoke test /health/ready
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -e
+          FQDN=$(az containerapp show \
+            --name tagpulse-api --resource-group "$RG" \
+            --query 'properties.configuration.ingress.fqdn' -o tsv)
+          echo "Hitting https://${FQDN}/health/ready"
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 10 "https://${FQDN}/health/ready" >/tmp/health.json; then
+              cat /tmp/health.json
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Smoke test failed after 2 minutes"
+          exit 1
