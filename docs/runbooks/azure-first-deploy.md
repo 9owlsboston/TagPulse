@@ -51,9 +51,8 @@ For each new environment (`dev` / `staging` / `prod`), run **once**:
   - [ ] Build phase pushes `tagpulse-{api,worker,migrations}:azd-deploy-…` to ACR
   - [ ] Postdeploy hook reports `Migrations execution: …  Succeeded`
   - [ ] Final output shows `SERVICE_API_URI = https://tagpulse-api.<random>.<region>.azurecontainerapps.io`
-- [ ] **MQTT broker bootstrap** (one-time after first `azd up` only — see [deploy/azure/README.md § Bootstrap MQTT broker](../../deploy/azure/README.md#bootstrap-mqtt-broker-one-time))
-  - [ ] `mosquitto.conf` + `mosquitto.passwd` uploaded to the `mosquitto-config` Azure Files share
-  - [ ] `az container restart --name tagpulse-mqtt --resource-group <rg>` returned 0
+- [ ] **MQTT broker bootstrap** (one-time after first `azd up` only)
+  - [ ] `scripts/azd-bootstrap-mqtt.sh <env>` exits 0 (uploads `mosquitto.conf` + `mosquitto.passwd` to the `mosquitto-config` Azure Files share, restarts the ACI)
   - [ ] `az container logs --name tagpulse-mqtt --resource-group <rg>` shows `mosquitto version 2.x.x running`
 
 ---
