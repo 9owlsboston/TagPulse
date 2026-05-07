@@ -1,0 +1,106 @@
+# azure.yaml — Azure Developer CLI (azd) configuration.
+#
+# Run from the repo root:
+#   azd env new tagpulse-prod
+#   azd env set AZURE_LOCATION southcentralus
+#   azd env set AZURE_SUBSCRIPTION_ID <sub-id>
+#   azd up
+#
+# `azd up` will:
+#   1. Provision infra via deploy/azure/bicep/main.bicep
+#   2. Build + push the three images to ACR (api, worker, migrations)
+#   3. Run the migrations job to completion (postdeploy hook)
+#   4. Update the api + worker container apps to the new image tag
+#
+# For CI/CD, the .github/workflows/deploy-azure.yml workflow uses these same hooks.
+
+name: tagpulse
+metadata:
+  template: tagpulse@sprint-22-c
+
+infra:
+  provider: bicep
+  path: deploy/azure/bicep
+  module: main
+  parameters:
+    # azd injects these from the env (azd env set ...) at deploy time.
+    postgresAdminPassword: ${AZURE_POSTGRES_ADMIN_PASSWORD}
+    jwtSecret: ${AZURE_JWT_SECRET}
+    mqttPassword: ${AZURE_MQTT_PASSWORD}
+
+services:
+  api:
+    project: .
+    language: python
+    host: containerapp
+    docker:
+      path: Dockerfile
+      target: api
+      remoteBuild: false
+      registry: ${AZURE_ACR_LOGIN_SERVER}
+      image: tagpulse-api
+      tag: ${AZURE_IMAGE_TAG}
+
+  worker:
+    project: .
+    language: python
+    host: containerapp
+    docker:
+      path: Dockerfile
+      target: worker
+      remoteBuild: false
+      registry: ${AZURE_ACR_LOGIN_SERVER}
+      image: tagpulse-worker
+      tag: ${AZURE_IMAGE_TAG}
+
+  migrations:
+    project: .
+    language: python
+    host: containerapp
+    docker:
+      path: Dockerfile
+      target: migrations
+      remoteBuild: false
+      registry: ${AZURE_ACR_LOGIN_SERVER}
+      image: tagpulse-migrations
+      tag: ${AZURE_IMAGE_TAG}
+
+hooks:
+  # After provisioning: capture ACR login server + image tag into env vars so
+  # subsequent service deploys reference the right registry.
+  postprovision:
+    shell: sh
+    run: |
+      set -e
+      ACR_LOGIN_SERVER=$(azd env get-value AZURE_ACR_LOGIN_SERVER || true)
+      if [ -z "$ACR_LOGIN_SERVER" ]; then
+        ACR_NAME=$(az deployment sub show --name $AZURE_ENV_NAME --query 'properties.outputs.acrName.value' -o tsv)
+        ACR_LOGIN_SERVER="${ACR_NAME}.azurecr.io"
+        azd env set AZURE_ACR_LOGIN_SERVER "$ACR_LOGIN_SERVER"
+      fi
+      if [ -z "$(azd env get-value AZURE_IMAGE_TAG || true)" ]; then
+        azd env set AZURE_IMAGE_TAG "$(git rev-parse --short HEAD 2>/dev/null || echo latest)"
+      fi
+      echo "ACR=$ACR_LOGIN_SERVER  TAG=$(azd env get-value AZURE_IMAGE_TAG)"
+
+  # After all services are deployed (images pushed): run the migrations job to
+  # completion before users hit the new api revision.
+  postdeploy:
+    shell: sh
+    run: |
+      set -e
+      RG=$(azd env get-value AZURE_RESOURCE_GROUP)
+      JOB=$(az deployment sub show --name $AZURE_ENV_NAME --query 'properties.outputs.migrationsJobName.value' -o tsv)
+      echo "Starting migrations job $JOB in $RG"
+      EXEC=$(az containerapp job start --name "$JOB" --resource-group "$RG" --query 'name' -o tsv)
+      echo "Execution: $EXEC — waiting for completion (timeout 10m)"
+      for i in $(seq 1 60); do
+        STATUS=$(az containerapp job execution show --name "$JOB" --resource-group "$RG" --job-execution-name "$EXEC" --query 'properties.status' -o tsv 2>/dev/null || echo Running)
+        case "$STATUS" in
+          Succeeded) echo "Migrations succeeded"; exit 0 ;;
+          Failed|Degraded) echo "Migrations failed: $STATUS"; exit 1 ;;
+          *) sleep 10 ;;
+        esac
+      done
+      echo "Migrations job timed out"
+      exit 1

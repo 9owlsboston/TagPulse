@@ -1,14 +1,19 @@
-# Sprint 22 B3 — multi-image build + push to GHCR.
+# Sprint 22 B3 — multi-image build + push to GHCR (dev) and ACR (production).
 #
 # Builds three images in parallel (api, worker, migrations) from the
-# matching Dockerfile targets (Sprint 22 B1) and pushes to
-# ghcr.io/9owlsboston/tagpulse-{component}. Tags:
-#   - {git-sha}      always (immutable, used by Helm/Bicep deploys)
+# matching Dockerfile targets (Sprint 22 B1) and pushes to:
+#   - ghcr.io/9owlsboston/tagpulse-{component}    (always; dev convenience)
+#   - ${ACR_NAME}.azurecr.io/tagpulse-{component} (only on push to main / v* tags;
+#                                                  production source-of-truth, ACA pulls from here)
+# Tags applied to both:
+#   - {git-sha}      always (immutable, used by Bicep deploys)
 #   - latest         only on push to main
 #   - pr-{number}    on pull_request (no push, build-only)
+#   - v*             on tag push (release tag)
 #
-# Provenance attestation via actions/attest-build-provenance keeps the
-# supply chain story intact for Sprint 23+ SBOM work.
+# ACR auth is OIDC federation — no PATs in GitHub secrets. The federated
+# credential on the AAD app must be bound to: repo:9owlsboston/TagPulse:ref:refs/heads/main
+# and repo:9owlsboston/TagPulse:ref:refs/tags/v* (one credential per pattern).
 
 name: build-and-push
 
@@ -47,11 +52,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Azure (OIDC)
+        if: github.event_name != 'pull_request' && vars.AZURE_ACR_NAME != ''
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR
+        if: github.event_name != 'pull_request' && vars.AZURE_ACR_NAME != ''
+        run: az acr login --name ${{ vars.AZURE_ACR_NAME }}
+
       - name: Compute image metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/9owlsboston/tagpulse-${{ matrix.component }}
+          images: |
+            ghcr.io/9owlsboston/tagpulse-${{ matrix.component }}
+            ${{ vars.AZURE_ACR_NAME != '' && format('{0}.azurecr.io/tagpulse-{1}', vars.AZURE_ACR_NAME, matrix.component) || '' }}
           tags: |
             type=sha,format=long
             type=ref,event=pr,prefix=pr-
@@ -71,7 +90,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
 
-      - name: Attest build provenance
+      - name: Attest build provenance (GHCR)
         if: github.event_name != 'pull_request'
         uses: actions/attest-build-provenance@v1
         with:
