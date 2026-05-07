@@ -29,7 +29,27 @@ def setup_telemetry(app: FastAPI) -> None:
     # Traces
     tracer_provider = TracerProvider(resource=resource)
     otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-    if otlp_endpoint:
+    appinsights_conn = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    if appinsights_conn:
+        # Azure Monitor distro auto-configures traces + metrics + logs to App Insights.
+        # When set, takes precedence over OTLP — Container Apps deployments use this path
+        # (Sprint 22 Phase C C3). Soft-imported so non-Azure deployments don't need the dep.
+        try:
+            from azure.monitor.opentelemetry import (  # type: ignore[import-not-found,unused-ignore]
+                configure_azure_monitor,
+            )
+
+            configure_azure_monitor(
+                connection_string=appinsights_conn,
+                resource=resource,
+            )
+            logger.info("Azure Monitor OpenTelemetry distro configured")
+        except ImportError:
+            logger.warning(
+                "APPLICATIONINSIGHTS_CONNECTION_STRING set but "
+                "azure-monitor-opentelemetry not installed — install the [azure] extra"
+            )
+    elif otlp_endpoint:
         try:
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # type: ignore[import-not-found]
                 OTLPSpanExporter,
