@@ -4,6 +4,11 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Hotfix — Azure MQTT broker reachability (`/health/ready` 503)
+
+- **Emit `MQTT_BROKER_HOST` + `MQTT_BROKER_PORT` from Bicep** ([deploy/azure/bicep/modules/container-app.bicep](deploy/azure/bicep/modules/container-app.bicep)). Pydantic `Settings` reads `MQTT_BROKER_HOST` / `MQTT_BROKER_PORT`, **not** `MQTT_BROKER_URL`; the Bicep contract was URL-only, so on Azure both the `/health/ready` TCP probe and the worker subscriber fell back to the Settings defaults (`localhost:1883`) and the readiness check stayed 503 with `mqtt: down (Connection refused)` even though the broker container was reachable from the Container Apps subnet. The module now derives `brokerHost` / `brokerPort` by stripping `mqtt://` / `mqtts://` from `mqttBrokerUrl` and injects both env vars into the api + worker container env (alongside the existing `MQTT_BROKER_URL` for forward-compat).
+- **Mosquitto entrypoint chowns the generated password file** ([docker/mosquitto-entrypoint.sh](docker/mosquitto-entrypoint.sh)). When the entrypoint runs as root and writes `/mosquitto/config/mosquitto.passwd` via `mosquitto_passwd -b -c`, the file is owned by root and the unprivileged `mosquitto` user (uid 1883) cannot read it — broker exits with `Error: Unable to open password file ... Permission denied`. The script now `chown mosquitto:mosquitto` + `chmod 0640` the file after generation so the broker can start under its own uid.
+
 ### Hotfix — Azure PG Flex compatibility for TimescaleDB
 
 - **Pin `postgresVersion` to `15`** ([deploy/azure/bicep/modules/postgres.bicep](deploy/azure/bicep/modules/postgres.bicep)). Azure Database for PostgreSQL Flexible Server **does not** ship the TimescaleDB extension on PG16 yet; `CREATE EXTENSION timescaledb` on PG16 silently drops the connection mid-statement. The Bicep default was `'16'`, so a fresh provision produced an unusable database. Pinning to PG15 (which is fully supported) is the only reliable path until Microsoft adds PG16 support.
