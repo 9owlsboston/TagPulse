@@ -15,11 +15,10 @@ import sys
 import time
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID, uuid4
 
 import httpx
 
-API_URL = "http://localhost:8000"
+API_URL = os.environ.get("TAGPULSE_API_URL", "http://localhost:8000").rstrip("/")
 
 # Optional bearer API key (admin/editor) — populated from --api-key or
 # TAGPULSE_API_KEY env. Required for POST/PATCH endpoints since Sprint 12
@@ -47,6 +46,7 @@ def _next_tag(device_id: str) -> str:
     tag = TAG_POOL[idx % len(TAG_POOL)]
     _TAG_CURSOR[device_id] = idx + 1
     return tag
+
 
 # --with-gps: per-device random-walk state, anchored to a San Francisco city
 # block (Bay Area). Two motion modes — see --motion in main():
@@ -96,9 +96,7 @@ def _gps_step(device_id: str) -> dict[str, float]:
         state["heading"] = (state["heading"] + random.uniform(-3.0, 3.0)) % 360.0
         # ~4% chance of a sharp turn at an "intersection".
         if random.random() < 0.04:
-            state["heading"] = (
-                state["heading"] + random.choice([-90.0, 90.0])
-            ) % 360.0
+            state["heading"] = (state["heading"] + random.choice([-90.0, 90.0])) % 360.0
     else:  # "random"
         state["heading"] = (state["heading"] + random.uniform(-15.0, 15.0)) % 360.0
     rad = math.radians(state["heading"])
@@ -243,12 +241,14 @@ def send_telemetry(
         }
     ]
     if random.random() < 0.5:
-        readings.append({
-            "timestamp": datetime.now(UTC).isoformat(),
-            "metric_name": "battery_pct",
-            "metric_value": round(random.uniform(10.0, 100.0), 0),
-            "unit": "pct",
-        })
+        readings.append(
+            {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "metric_name": "battery_pct",
+                "metric_value": round(random.uniform(10.0, 100.0), 0),
+                "unit": "pct",
+            }
+        )
     resp = client.post(
         f"{API_URL}/telemetry",
         headers=_headers(tenant_id),
@@ -266,9 +266,7 @@ _COLD_CHAIN_LOT_CODE = "SIM-LOT-COLDCHAIN"
 _COLD_CHAIN_EPC = "URN:EPC:ID:SGTIN:0000000.000001.SIM-COLD-001"
 
 
-def _ensure_cold_chain_lot(
-    client: httpx.Client, tenant_id: str
-) -> tuple[str | None, str | None]:
+def _ensure_cold_chain_lot(client: httpx.Client, tenant_id: str) -> tuple[str | None, str | None]:
     """Idempotently create the demo product, lot, stock_item, and binding.
 
     Returns ``(lot_id, stock_item_id)`` for the demo lot, or ``(None, None)``
@@ -279,9 +277,7 @@ def _ensure_cold_chain_lot(
 
     # Find or create product.
     product_id: str | None = None
-    resp = client.get(
-        f"{API_URL}/products?sku={_COLD_CHAIN_PRODUCT_SKU}", headers=headers
-    )
+    resp = client.get(f"{API_URL}/products?sku={_COLD_CHAIN_PRODUCT_SKU}", headers=headers)
     if resp.status_code == 200 and resp.json():
         product_id = resp.json()[0]["id"]
     else:
@@ -402,7 +398,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="TagPulse device simulator")
     parser.add_argument("--tenant-id", required=True, help="Tenant UUID")
     parser.add_argument("--devices", type=int, default=3, help="Number of simulated devices")
-    parser.add_argument("--interval", type=float, default=2.0, help="Seconds between reads per device")
+    parser.add_argument(
+        "--interval", type=float, default=2.0, help="Seconds between reads per device"
+    )
     parser.add_argument("--duration", type=int, default=0, help="Run for N seconds (0 = forever)")
     parser.add_argument("--seed-only", action="store_true", help="Create devices and exit")
     parser.add_argument(
@@ -476,7 +474,7 @@ def main() -> None:
         print(f"Cannot connect to API at {API_URL}. Is the backend running?")
         sys.exit(1)
 
-    print(f"\n=== TagPulse Device Simulator ===")
+    print("\n=== TagPulse Device Simulator ===")
     print(f"Tenant: {args.tenant_id}")
     print(f"Devices: {args.devices}")
     print(f"Interval: {args.interval}s\n")
@@ -500,13 +498,10 @@ def main() -> None:
     cold_chain_cycle = 0
     if args.cold_chain:
         print("Provisioning cold-chain demo lot...")
-        cold_chain_lot_id, cold_chain_stock_id = _ensure_cold_chain_lot(
-            client, args.tenant_id
-        )
+        cold_chain_lot_id, cold_chain_stock_id = _ensure_cold_chain_lot(client, args.tenant_id)
         if cold_chain_lot_id:
             print(
-                f"  Cold-chain lot ready: lot={cold_chain_lot_id} "
-                f"stock_item={cold_chain_stock_id}"
+                f"  Cold-chain lot ready: lot={cold_chain_lot_id} stock_item={cold_chain_stock_id}"
             )
             cold_chain_next_push = time.monotonic()
         else:
@@ -526,9 +521,7 @@ def main() -> None:
                 # 10% chance a device skips this cycle (simulates busy/offline)
                 if random.random() < 0.10:
                     continue
-                ok = send_tag_read(
-                    client, args.tenant_id, device["id"], with_gps=args.with_gps
-                )
+                ok = send_tag_read(client, args.tenant_id, device["id"], with_gps=args.with_gps)
                 if ok:
                     total_reads += 1
                 else:
@@ -551,9 +544,7 @@ def main() -> None:
                     cycle=cold_chain_cycle,
                 )
                 cold_chain_cycle += 1
-                cold_chain_next_push = (
-                    time.monotonic() + args.cold_chain_period
-                )
+                cold_chain_next_push = time.monotonic() + args.cold_chain_period
             # Jitter: ±30% of the base interval
             jitter = args.interval * random.uniform(0.7, 1.3)
             time.sleep(jitter)
@@ -563,7 +554,9 @@ def main() -> None:
         pass
 
     elapsed = time.monotonic() - start
-    print(f"\n\nDone: {total_reads} sent, {dropped} dropped in {elapsed:.0f}s ({total_reads / max(elapsed, 1):.1f} reads/sec)")
+    print(
+        f"\n\nDone: {total_reads} sent, {dropped} dropped in {elapsed:.0f}s ({total_reads / max(elapsed, 1):.1f} reads/sec)"
+    )
 
 
 if __name__ == "__main__":

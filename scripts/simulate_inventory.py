@@ -33,7 +33,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-API_URL = "http://localhost:8000"
+API_URL = os.environ.get("TAGPULSE_API_URL", "http://localhost:8000").rstrip("/")
 
 # Optional bearer API key (admin/editor) — populated from --api-key or
 # TAGPULSE_API_KEY env. Required for product/lot/device writes since Sprint 12.
@@ -45,6 +45,7 @@ def _headers(tenant_id: str) -> dict[str, str]:
     if _API_KEY:
         h["Authorization"] = f"Bearer {_API_KEY}"
     return h
+
 
 # A tiny synthetic catalog. GTIN-14s are computed below from
 # (company_prefix, item_ref) using the standard mod-10 check digit.
@@ -95,9 +96,7 @@ def _sgtin96_hex(company_prefix: str, item_ref: str, serial: int) -> str:
     return f"{bits:024x}"
 
 
-def _seed_catalog(
-    client: httpx.Client, tenant_id: str
-) -> list[dict[str, str]]:
+def _seed_catalog(client: httpx.Client, tenant_id: str) -> list[dict[str, str]]:
     """Create products + one lot per product + a tag_data_mapping."""
     headers = _headers(tenant_id)
     catalog: list[dict[str, str]] = []
@@ -134,13 +133,9 @@ def _seed_catalog(
             print(f"  Created product: {sku} ({product['id']})")
 
         # Lot.
-        lots_r = client.get(
-            f"{API_URL}/products/{product['id']}/lots", headers=headers
-        )
+        lots_r = client.get(f"{API_URL}/products/{product['id']}/lots", headers=headers)
         lots = lots_r.json() if lots_r.status_code == 200 else []
-        existing_lot = next(
-            (lot for lot in lots if lot["lot_code"] == "LOT-A"), None
-        )
+        existing_lot = next((lot for lot in lots if lot["lot_code"] == "LOT-A"), None)
         if existing_lot is None:
             lr = client.post(
                 f"{API_URL}/products/{product['id']}/lots",
@@ -190,13 +185,9 @@ def _seed_catalog(
     return catalog
 
 
-def _seed_devices(
-    client: httpx.Client, tenant_id: str, count: int
-) -> list[dict[str, str]]:
+def _seed_devices(client: httpx.Client, tenant_id: str, count: int) -> list[dict[str, str]]:
     headers = _headers(tenant_id)
-    resp = client.get(
-        f"{API_URL}/device-registry", headers=headers, params={"limit": 1000}
-    )
+    resp = client.get(f"{API_URL}/device-registry", headers=headers, params={"limit": 1000})
     existing = {d["name"]: d["id"] for d in resp.json()} if resp.status_code == 200 else {}
     devices: list[dict[str, str]] = []
     for i in range(count):
@@ -246,9 +237,7 @@ def _send_inventory_read(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="TagPulse inventory simulator"
-    )
+    parser = argparse.ArgumentParser(description="TagPulse inventory simulator")
     parser.add_argument("--tenant-id", required=True)
     parser.add_argument("--devices", type=int, default=2)
     parser.add_argument("--interval", type=float, default=1.5)
@@ -309,16 +298,13 @@ def main() -> None:
             for device in devices:
                 item = random.choice(catalog)
                 serial = (serial + 1) & ((1 << 38) - 1)
-                code = _send_inventory_read(
-                    client, args.tenant_id, device["id"], item, serial
-                )
+                code = _send_inventory_read(client, args.tenant_id, device["id"], item, serial)
                 if code == 201:
                     sent += 1
                 else:
                     failed += 1
                 print(
-                    f"  {device['name']} {item['sku']}: {sent} sent, "
-                    f"{failed} failed",
+                    f"  {device['name']} {item['sku']}: {sent} sent, {failed} failed",
                     end="\r",
                 )
             time.sleep(args.interval * random.uniform(0.7, 1.3))

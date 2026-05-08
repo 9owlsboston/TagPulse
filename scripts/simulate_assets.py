@@ -23,6 +23,7 @@ What it does:
        enrichment pipeline emits ``subject.zone_changed`` events whenever
        reader_id maps to a different zone.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,7 +36,7 @@ from typing import Any
 
 import httpx
 
-API_URL = "http://localhost:8000"
+API_URL = os.environ.get("TAGPULSE_API_URL", "http://localhost:8000").rstrip("/")
 
 # Optional bearer API key (admin/editor) — populated from --api-key or
 # TAGPULSE_API_KEY env. Required for asset/binding writes since Sprint 12.
@@ -53,9 +54,7 @@ def _ok(resp: httpx.Response) -> bool:
     return 200 <= resp.status_code < 300
 
 
-def fetch_devices(
-    client: httpx.Client, tenant_id: str, count: int
-) -> list[dict[str, Any]]:
+def fetch_devices(client: httpx.Client, tenant_id: str, count: int) -> list[dict[str, Any]]:
     resp = client.get(
         f"{API_URL}/device-registry",
         headers=_headers(tenant_id),
@@ -71,9 +70,7 @@ def fetch_devices(
     return devices[:count]
 
 
-def ensure_assets(
-    client: httpx.Client, tenant_id: str, count: int
-) -> list[dict[str, Any]]:
+def ensure_assets(client: httpx.Client, tenant_id: str, count: int) -> list[dict[str, Any]]:
     headers = _headers(tenant_id)
     resp = client.get(f"{API_URL}/assets", headers=headers, params={"limit": 1000})
     resp.raise_for_status()
@@ -113,9 +110,7 @@ def ensure_bindings(
     for asset in assets:
         asset_id = asset["id"]
         # Check existing bindings first.
-        resp = client.get(
-            f"{API_URL}/assets/{asset_id}/bindings", headers=headers
-        )
+        resp = client.get(f"{API_URL}/assets/{asset_id}/bindings", headers=headers)
         if _ok(resp):
             active = [b for b in resp.json() if b.get("unbound_at") is None]
             if active:
@@ -131,9 +126,7 @@ def ensure_bindings(
             out[asset_id] = epc
             print(f"  Bound {asset['name']} → {epc}")
         else:
-            print(
-                f"  Failed to bind {asset['name']}: {resp.status_code} {resp.text}"
-            )
+            print(f"  Failed to bind {asset['name']}: {resp.status_code} {resp.text}")
     return out
 
 
@@ -163,9 +156,7 @@ def emit_tag_reads(
             "signal_strength": round(random.uniform(-75, -35), 1),
             "identity": {"epc": epc},
         }
-        resp = client.post(
-            f"{API_URL}/ingest/tag-read", headers=headers, json=body
-        )
+        resp = client.post(f"{API_URL}/ingest/tag-read", headers=headers, json=body)
         if not _ok(resp):
             print(f"  Ingest failed: {resp.status_code} {resp.text}")
         sent += 1
