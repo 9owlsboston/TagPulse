@@ -4,6 +4,10 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Hotfix — Azure deploy DATABASE_URL incompatible with asyncpg
+
+- **Bicep `DATABASE_URL` switched from `?sslmode=require` to `?ssl=require`** ([deploy/azure/bicep/modules/container-app.bicep](deploy/azure/bicep/modules/container-app.bicep), [deploy/azure/bicep/modules/migrations-job.bicep](deploy/azure/bicep/modules/migrations-job.bicep)). Migrations job + api + worker all use `postgresql+asyncpg://...`; asyncpg's `connect()` does not accept the libpq query parameter `sslmode`, so the migrations job crashed with `TypeError: connect() got an unexpected keyword argument 'sslmode'` and the api revision never became ready (the readiness probe stayed 503 because the schema was never applied). Symptom: `curl https://${apiFqdn}/health/live` hangs because both revisions of `tpdev-api` are `ActivationFailed` with 0/1 replicas ready. Diagnosis path: Container Apps env Log Analytics → `ContainerAppConsoleLogs_CL | where ContainerName_s == 'migrations'` → traceback shows the offending kwarg. Fix is a one-character change (`sslmode` → `ssl`); both forms mean "TLS required" but only the latter is asyncpg-native. ARM template `deploy/azure/bicep/main.json` regenerated.
+
 ### Sprint 24 — Frontend cloud deployment (backend prerequisites + skeletons)
 
 > [ADR-018](docs/adr/018-frontend-cloud-deployment.md), [docs/design/frontend-deployment.md](docs/design/frontend-deployment.md), [docs/roadmap.md § Sprint 24](docs/roadmap.md). Phases A/C/D land here; Phase B (the actual SPA shipping path) ships in [9owlsboston/TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI).
