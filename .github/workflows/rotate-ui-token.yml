@@ -73,10 +73,6 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@v4
 
-      - name: Install azd
-        if: steps.gate.outputs.run == 'true'
-        uses: Azure/setup-azd@v2
-
       - name: Sign in to Azure (OIDC)
         if: steps.gate.outputs.run == 'true'
         uses: azure/login@v2
@@ -85,26 +81,15 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Sign azd into Azure (no-prompt)
+      - name: Resolve SWA name from RG
         if: steps.gate.outputs.run == 'true'
-        run: |
-          azd auth login \
-            --client-id "${{ vars.AZURE_CLIENT_ID }}" \
-            --tenant-id "${{ vars.AZURE_TENANT_ID }}" \
-            --federated-credential-provider github
-
-      - name: Re-hydrate azd env from existing deployment
-        if: steps.gate.outputs.run == 'true'
+        id: swa
         run: |
           set -euo pipefail
-          # The cron runner is a fresh VM, so 'azd env' state from prior runs
-          # doesn't survive. Recreate the env name + populate the two values
-          # that azd-ui-token-rotate.sh needs from the live RG.
-          ENV_NAME="${{ matrix.env }}"
-          azd env new "tagpulse-${ENV_NAME}" --no-prompt || true
-          azd env select "tagpulse-${ENV_NAME}"
-          azd env set AZURE_RESOURCE_GROUP "${{ vars.AZURE_RESOURCE_GROUP }}"
-          # SWA name lookup by tag (azd writes 'azd-service-name=ui' in C1).
+          # The cron runner has no persisted azd state; look up the SWA by
+          # the C1 'azd-service-name=ui' tag instead. The rotation script
+          # accepts AZURE_STATIC_WEB_APPS_NAME + AZURE_RESOURCE_GROUP from
+          # the environment when set, bypassing azd entirely.
           SWA_NAME=$(az staticwebapp list \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --query "[?tags.\"azd-service-name\"=='ui'].name | [0]" \
@@ -113,7 +98,7 @@ jobs:
             echo "::error::No Static Web App tagged azd-service-name=ui in ${{ vars.AZURE_RESOURCE_GROUP }}"
             exit 1
           fi
-          azd env set AZURE_STATIC_WEB_APPS_NAME "$SWA_NAME"
+          echo "swa_name=$SWA_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate gh CLI for cross-repo secret write
         if: steps.gate.outputs.run == 'true'
@@ -129,6 +114,8 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         env:
           GH_TOKEN: ${{ secrets.UI_REPO_SECRETS_PAT }}
+          AZURE_STATIC_WEB_APPS_NAME: ${{ steps.swa.outputs.swa_name }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
         run: |
           set -euo pipefail
           ARGS=("${{ matrix.env }}")
