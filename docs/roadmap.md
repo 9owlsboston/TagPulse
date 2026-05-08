@@ -601,6 +601,82 @@ Every task is tagged `[backend]` (this repo, `9owlsboston/TagPulse`) or `[ui]` (
 
 ---
 
+## Sprint 25 — Frontend Resilience & Observability (planned)
+
+> Companion repo: [9owlsboston/TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI) — Phase B + Phase D land there
+> Goal: close the silent-failure gaps that Sprint 24 left behind. Today the SPA always loads (it's just static files served by the SWA edge), so a broken backend, a wrong `VITE_API_BASE_URL`, or a missing CORS entry only surfaces when the user clicks Login and stares at a hung spinner. Sprint 25 adds (a) startup health gating on the client, (b) a CI gate that refuses to deploy a SPA against an unhealthy api, (c) a post-deploy SPA-vs-api verification, (d) CSP report-only telemetry so we can finally lock the policy down without breaking the app, and (e) browser telemetry to App Insights so we can actually see frontend errors and timings instead of relying on user reports. Plus the lowest-cost items from the Sprint 24+ deferred list: automated SWA token rotation cadence and a working portable-cloud upload recipe.
+>
+> Out of scope (deferred to Sprint 26+): real AWS / GCP UI implementations, custom domain wiring (`app.tagpulse.io`), Front Door + WAF, SWA Standard tier upgrade, E2E (Playwright) in CI.
+
+### Ownership at a glance
+
+Tasks are tagged `[backend]` (this repo, `9owlsboston/TagPulse`) or `[ui]` (sibling repo, `9owlsboston/TagPulse-UI`). Phases group by ownership for clean parallel work; no task crosses repo boundaries.
+
+| Phase | Repo | Task count | What lands |
+|---|---|---|---|
+| A — Backend health & CSP support | `[backend]` TagPulse | 4 | `/health/live` lightweight probe, `cors.preflight_max_age`, `/security/csp-report` endpoint, runbook update |
+| B — UI resilience & CI gating | `[ui]` TagPulse-UI | 5 | Startup health gate, error boundary upgrade, deploy-time api preflight, post-deploy SPA-vs-api smoke, CSP report-only header |
+| C — Browser telemetry | `[ui]` TagPulse-UI | 2 | App Insights browser SDK wired, frontend error & route-change tracking |
+| D — Operational | `[backend]` TagPulse | 2 | SWA token auto-rotation workflow, runbook |
+| E — Multi-cloud follow-up | `[backend]` TagPulse | 1 | `deploy/portable/ui/` working `aws s3 sync` + Cloudflare Pages recipe (still skeleton-grade, but executable) |
+
+**Order of operations:** A and B/C can ship in parallel after **A1** (`/health/live` already exists per Sprint 22 A6 — just confirm contract) and **A3** (CSP report endpoint) land. D and E are independent and can ship any time. Phase B depends on Phase A2 (preflight cache header) only for the deploy-time gate optimization; basic functionality works without it.
+
+### Phase A — Backend health & CSP support (this repo, `[backend]`)
+
+- [shipped] **A1** `[backend]` **Pin the `/health/live` contract for SPA polling.** `/health/live` was previously an undocumented copy of `/health` returning `{"status":"ok"}`. Sprint 25 promotes it to the SPA's startup-gate contract: `{"status":"alive","version":"<git-sha>","build_time":"<iso8601>"}`. `Cache-Control: no-store` is set on the response so the SWA edge / browser never memoize a stale "alive". `version` and `build_time` are baked into the image at build time via `BUILD_VERSION` / `BUILD_TIME` Docker build-args ([Dockerfile](../Dockerfile), [.github/workflows/build-and-push.yml](../.github/workflows/build-and-push.yml)); local `docker build` without `--build-arg` keeps the dev sentinels (`dev` / `unknown`). The legacy `/health` keeps returning `{"status":"ok"}` for k8s probes that pre-date `/live`. ([src/tagpulse/api/routes/health.py](../src/tagpulse/api/routes/health.py), [tests/unit/test_sprint25_phase_a.py](../tests/unit/test_sprint25_phase_a.py))
+- [shipped] **A2** `[backend]` **CORS preflight max-age on `/health/*` and `/auth/login`.** New `Settings.cors_preflight_max_age_seconds` (default 0; the strict-mode validator forces 600 in non-dev when left at 0, and explicit non-zero env-var values survive untouched). Wired into the global `CORSMiddleware`'s `max_age=` parameter — applies to every endpoint, not just the high-frequency ones, because Starlette's middleware is global; functionally a superset of the spec. ([src/tagpulse/core/config.py](../src/tagpulse/core/config.py), [src/tagpulse/api/main.py](../src/tagpulse/api/main.py))
+- [shipped] **A3** `[backend]` **`POST /security/csp-report` endpoint.** Receives both browser report shapes — `application/csp-report` (Chromium/Safari legacy `{"csp-report": {...}}`) and `application/reports+json` (Reporting API arrays of `{type, body}` envelopes). Emits a structured WARN log with `(blocked_uri, document_uri, violated_directive, source_file, line_number, column_number, user_agent)`. Increments the Prometheus counter `tagpulse_csp_violations_total{directive=...}`. Per-IP sliding-window rate limit at 10 reports / 60s (in-process; same trade-off as Sprint 22 A4). Open without auth (browsers don't send credentials on report POSTs). Bypassed in the Sprint 22 A4 tenant-keyed limiter ([src/tagpulse/core/rate_limit.py](../src/tagpulse/core/rate_limit.py)). Returns `204 No Content` on success, `429` when the per-IP cap is exceeded, and `204` (logged + dropped) on malformed JSON so a misbehaving extension can't 500 the api. ([src/tagpulse/api/routes/security.py](../src/tagpulse/api/routes/security.py))
+- [shipped] **A4** `[backend]` **Updated [docs/runbooks/azure-first-deploy.md](runbooks/azure-first-deploy.md) Phase 3.** `/health/live` smoke now asserts the new contract shape + `Cache-Control: no-store` header. New **§3b — SPA-vs-api consistency smoke** catches the most insidious post-deploy failure (SPA built against a stale `VITE_API_BASE_URL`); pulls `index.html` from the SWA, asserts `/health/ready` against the embedded api URL, and verifies the SWA hostname is in the api's CORS allow-list. New **§3c — CSP violation triage** documents the report shape, the Log Analytics KQL for top violations, and the priority order (`script-src` / `connect-src` are policy actually breaking the SPA; `img-src` / `font-src` are typically extension noise).
+
+### Phase B — UI resilience & CI gating (TagPulse-UI repo, `[ui]`)
+
+> All Phase B items are implemented in `9owlsboston/TagPulse-UI`. Tracked here for sprint-completion accounting.
+
+- [planned] **B1** `[ui]` **Startup health gate in `<App />`.** On mount (and on every route change after >60s idle), `GET ${VITE_API_BASE_URL}/health/live`. On non-200 or network error, render a full-page `<ApiUnreachable />` banner ("TagPulse is temporarily unavailable. Retrying…") with an exponential-backoff retry (1s → 2s → 4s → cap at 30s) and a manual "Retry now" button. Replaces the current "login spinner forever" UX. Skip the gate when the previous probe was <60s ago and successful. Tested with a mock server that returns 503 + a network error.
+- [planned] **B2** `[ui]` **Error boundary upgrade.** The current root error boundary (Sprint 13) catches render errors but discards the stack trace. Upgrade to capture `(error.message, error.stack, componentStack)` and forward to the App Insights browser SDK (Phase C1). Render an "Something went wrong" card with a "Copy error details" button (clipboard) and a `[Reload]` action. Distinct from B1 (which handles api-down); B2 handles SPA-up-but-rendering-broken.
+- [planned] **B3** `[ui]` **Deploy-time api preflight in `deploy-azure.yml`.** New step before `Azure/static-web-apps-deploy@v1`: `curl -fsS --max-time 10 ${VITE_API_BASE_URL}/health/ready` against the api the SPA was just built against. Fails the deploy if the api is unhealthy — operator sees the failure on the PR / push, doesn't ship a SPA the api can't serve. Skipped on `pull_request` events (preview deploys against `dev` api, which may be in-flux during a backend PR).
+- [planned] **B4** `[ui]` **Post-deploy SPA-vs-api smoke step.** Extend the existing smoke test in [.github/workflows/deploy-azure.yml](https://github.com/9owlsboston/TagPulse-UI/blob/main/.github/workflows/deploy-azure.yml) to: (1) fetch the deployed SPA, (2) extract the asset hash + `VITE_API_BASE_URL` from the served `index.html`/main JS, (3) curl that origin's `/health/ready` and assert HTTP 200 + the SWA hostname appears in `config.cors.allow_origins`. Catches the most insidious post-deploy failure: SPA built against a *stale* `VITE_API_BASE_URL` (e.g. backend env was recreated and api FQDN changed but the GH Environment variable wasn't updated).
+- [planned] **B5** `[ui]` **CSP `Content-Security-Policy-Report-Only` header in `staticwebapp.config.json`.** Add a parallel report-only policy that's stricter than today's permissive enforced one (no `unsafe-inline`, no `data:` for fonts, exact-origin allow-list). `report-uri` points at the new `${VITE_API_BASE_URL}/security/csp-report` endpoint (Phase A3). Both headers ship together: enforced policy keeps the app working; report-only policy silently captures violations. After ~4 weeks of stable traffic + zero unexpected violations, swap report-only → enforced (Sprint 26+).
+
+### Phase C — Browser telemetry (TagPulse-UI repo, `[ui]`)
+
+- [planned] **C1** `[ui]` **App Insights browser SDK wired.** Pull the connection string from `VITE_APP_INSIGHTS_CONNECTION_STRING` (new build-time variable, set by `scripts/ui-cicd-setup.sh` from the backend's `appInsightsConnectionString` Bicep output — already shipped to azd env). Use [`@microsoft/applicationinsights-web`](https://www.npmjs.com/package/@microsoft/applicationinsights-web) (NOT the snippet loader — bundled is more reliable for SPAs). Initialize once in `main.tsx` before `<App />` mounts. Disable in dev (empty connection string → no-op). Strip query strings from page-view URLs to avoid bleeding tag IDs / lot codes into telemetry. **Privacy note:** explicitly disable cookie usage + IP collection (`disableCookiesUsage: true`, `isStorageUseDisabled: true`) — this gives us anonymous diagnostic telemetry only, no PII.
+- [planned] **C2** `[ui]` **Frontend error & route-change tracking.** Wire B2's error boundary to call `appInsights.trackException()`. Wire React Router v7 navigation events to `appInsights.trackPageView()` with the route pattern (e.g. `/devices/:id`, not the resolved id) so the App Insights `pages` tab groups correctly. Wire api errors from `client.ts` + `configureGenerated.ts` to `trackDependency()` with `success: false, resultCode: <http-status>`. Adds a 4-row "Frontend health" workbook to `deploy/azure/bicep/modules/monitoring.bicep` (top page-view counts, top exceptions, p95 SPA navigation timing, top failing api dependencies).
+
+### Phase D — Operational (this repo, `[backend]`)
+
+- [planned] **D1** `[backend]` **`scripts/azd-ui-token-rotate.sh <env>`.** Idempotent. Runs `az staticwebapp secrets reset-api-key`, then `gh secret set AZURE_STATIC_WEB_APPS_API_TOKEN --env <env> --repo 9owlsboston/TagPulse-UI`. Prints the new token's last-4-chars for audit but never the full token. Default cadence: 90 days (matches the JWT secret rotation runbook from Sprint 22). Emits a structured audit log entry visible in the existing Sprint 16 audit log.
+- [planned] **D2** `[backend]` **GHA workflow `.github/workflows/rotate-ui-token.yml`.** Scheduled (`cron: '0 9 1 */3 *'` — 9:00 UTC on the 1st of every 3rd month) plus `workflow_dispatch`. Runs D1 against `dev`, `staging`, and `production` in turn. Failure on any env opens an issue tagged `ops` + `security`. Skipped if the previous rotation was <60 days ago (idempotency safety against manual rotations).
+
+### Phase E — Multi-cloud follow-up (this repo, `[backend]`, structure-only per ADR-016 precedent)
+
+- [planned] **E1** `[backend]` **`deploy/portable/ui/` working recipe.** Promote the Sprint 24 D3 stub README to an actual executable recipe with two concrete provider blocks: (a) `aws s3 sync ./dist s3://${bucket} --delete && aws cloudfront create-invalidation --distribution-id ${dist} --paths '/*'` (assumes pre-existing bucket + distribution — provisioning still TODO Sprint 26+), (b) Cloudflare Pages via `wrangler pages deploy ./dist --project-name=tagpulse-ui` (no infra at all — Cloudflare Pages provisions on first deploy). Adds a "DR drill" appendix to the Sprint 23+ deferred D-3 cross-cloud DR runbook (when D-3 lands): one paragraph per provider for the upload step. Real Bicep/Terraform for the AWS path is still deferred (gated on a real customer asking for AWS hosting).
+
+### Acceptance criteria
+
+- A SPA load against an api whose `/health/live` returns 503 shows the `<ApiUnreachable />` banner within 2s instead of hanging the login form.
+- A SPA load against an api with the wrong CORS allow-list shows the same banner (any failure mode → same UX), and the App Insights `failures` blade shows the dependency call with `resultCode: 0` (browser-blocked).
+- `deploy-azure.yml` against an unhealthy api fails at the preflight step *before* uploading the bundle. Log line cites the exact `/health/ready` payload.
+- Post-deploy smoke catches a `VITE_API_BASE_URL` mismatch by failing the workflow when the SPA-derived api URL doesn't 200 on `/health/ready`.
+- After 1 week of production traffic, the App Insights workbook shows non-zero page-view counts and at least one captured exception (proves wiring works end-to-end).
+- The CSP `report-only` policy generates `<10` violations/day in production after 1 week of traffic excluding known-good `data:` fonts. (If ≥10/day, we know exactly what to allow before the Sprint 26+ enforced-CSP cutover.)
+- `scripts/azd-ui-token-rotate.sh dev` rotates the token, the next `git push` to UI `main` deploys successfully (proves the new token was wired), and the audit log captures the event.
+- `make check` clean (ruff + mypy + pytest); new unit suites `tests/unit/test_sprint25_phase_a.py` (health contract, CORS max-age, CSP-report endpoint) green.
+- No regression in Sprint 24 deploy path — `scripts/ui-bootstrap.sh dev` + `git push origin main` from the UI repo continues to ship a SPA end-to-end.
+
+### Deferred to Sprint 26+
+
+- CSP enforced lock-down (gated on Phase B5's report-only telemetry showing zero unexpected violations for ≥4 weeks).
+- Real AWS / GCP UI provisioning Bicep/Terraform (E1 ships executable upload recipes only; provisioning is still TODO).
+- Custom domain wiring (`app.tagpulse.io`) — gated on registering the domain.
+- SWA Standard tier upgrade — gated on Free-tier caps biting.
+- Front Door + WAF in front of both SWA and api — paired with the Sprint 23+ deferred api-side FD work.
+- E2E test in CI (Playwright against the deployed SWA) — gated on first design refresh worth protecting.
+- Real User Monitoring (RUM) beyond the basic App Insights browser SDK — gated on first product-team request for funnel analytics.
+
+---
+
 ## Backlog (not scheduled)
 - Cloud-to-device commands (reader configuration push via MQTT) (G8)
 - Bulk device operations / jobs (G9)
