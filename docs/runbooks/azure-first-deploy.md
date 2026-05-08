@@ -10,6 +10,84 @@ resource group, Container Registry, Key Vault, and CD identity.
 
 ---
 
+## Deployment paths — what triggers what
+
+There are **three distinct flows** that put code on Azure. They share the
+same images but have different triggers and run different scripts. Knowing
+which flow you're on tells you which artifacts get rebuilt and which hooks
+fire.
+
+### 1. Continuous integration — every push to `main`
+
+```
+git push origin main
+        │
+        ▼
+.github/workflows/build-and-push.yml
+   matrix: [api, worker, migrations]
+   • docker build --target <component>
+   • docker push ghcr.io/9owlsboston/tagpulse-<c>:<sha>
+   • docker push <acr>.azurecr.io/tagpulse-<c>:<sha>   (if AZURE_ACR_NAME var is set)
+        │
+        ▼
+   Images sit in ACR. Nothing on Azure changes yet.
+```
+
+### 2. Production deploy — `v*` tag push or manual dispatch
+
+```
+git tag v1.2.3 && git push --tags          (or: Actions UI → "Run workflow")
+        │
+        ▼
+.github/workflows/deploy-azure.yml
+   • OIDC login to Azure (no PATs)
+   • production environment → manual approval gate
+   • verify api/worker/migrations images exist in ACR @ tag
+   • az containerapp job start <env>-migrations
+   • az containerapp update --image …
+   • smoke: GET https://<api>/health/ready
+        │
+        ▼
+   API + worker rolled to new revision on Container Apps.
+   ⚠ DOES NOT call `azd`. The local hooks (pg-ensure,
+   network-check) are NEVER invoked here.
+```
+
+### 3. Operator deploy — `azd up` / `azd deploy` from your laptop
+
+```
+azd up   |   azd deploy
+        │
+        ▼
+azd lifecycle (phases 4 + 7 are the local hooks)
+   1. preprovision hook
+   2. terraform/bicep deploy   (provision)
+   3. postprovision hook
+        └─ exports envs (postgresFqdn, keyVaultName, …)
+   4. predeploy hook
+        └─ scripts/azd-pg-ensure-running.sh
+   5. docker build + push (api/worker/migrations) to ACR
+   6. az containerapp update
+   7. postdeploy hook
+        ├─ run migrations job + poll
+        └─ scripts/azd-network-check.sh
+```
+
+### Summary
+
+| Flow | Triggered by | Builds images? | Updates Azure? | Runs `azd` hooks? |
+|------|------|------|------|------|
+| 1. build-and-push | push to `main` | yes | no | no |
+| 2. deploy-azure | `v*` tag / manual | no (reuses ACR) | yes | no |
+| 3. local `azd up` / `azd deploy` | operator | yes (local) | yes | **yes** |
+
+Scripts under `scripts/azd-*.sh` only run in Flow 3 — they live on the
+operator's workstation and are read from the working tree at hook time.
+A merge to `main` makes them available to anyone who pulls; it does not
+deploy them anywhere.
+
+---
+
 ## Phase 0 — Prerequisites (one-time, per workstation)
 
 > **Shortcut:** run [`scripts/azd-preflight.sh`](../../scripts/azd-preflight.sh)
