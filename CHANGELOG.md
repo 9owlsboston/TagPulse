@@ -4,6 +4,40 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Sprint 24 — Frontend cloud deployment (backend prerequisites + skeletons)
+
+> [ADR-018](docs/adr/018-frontend-cloud-deployment.md), [docs/design/frontend-deployment.md](docs/design/frontend-deployment.md), [docs/roadmap.md § Sprint 24](docs/roadmap.md). Phases A/C/D land here; Phase B (the actual SPA shipping path) ships in [9owlsboston/TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI).
+
+#### Phase A — Backend prerequisites
+
+- **`scripts/azd-ui-token.sh`** ([scripts/azd-ui-token.sh](scripts/azd-ui-token.sh)). Read-only helper that prints the Static Web App `apiKey` for env `<env>` to stdout via `az staticwebapp secrets list`. Refuses to print to a TTY without `--print` to keep the deployment token out of bash history / scrollback. Reads `AZURE_STATIC_WEB_APPS_NAME` + `AZURE_RESOURCE_GROUP` from `azd env get-value` using the same stdout-error-trap `get()` helper as the other azd scripts. A1.
+- **`/health/ready` surfaces `cors.allow_origins`** ([src/tagpulse/api/routes/health.py](src/tagpulse/api/routes/health.py)). New `cors.allow_origins` array under the existing `config` snapshot; closes the most likely "SPA loads but every API call is blocked by CORS" failure mode by letting operators verify the SWA hostname is wired into the deployed api revision without shelling into the container. A2.
+- **`static-web-app.bicep` audit pinned** ([tests/unit/test_sprint24_phase_a.py](tests/unit/test_sprint24_phase_a.py)). Test asserts no `apiKey`/`listSecrets` output and pins the exact output set (`defaultHostname`/`id`/`name`) so a future contributor can't accidentally land the SWA deployment token in `azd env get-values` or git-status traces. A3.
+- **First-deploy runbook Phase 3a** ([docs/runbooks/azure-first-deploy.md](docs/runbooks/azure-first-deploy.md)). New step between the smoke tests and CI/CD wiring: copy `staticWebAppHostname` Bicep output into `CORS_ORIGINS` in `deploy/azure/.env.<env>`, then `azd-env-load.sh <env> && azd provision` to push the new origin list into the api revision. Order matters — without this, the SPA loads but every fetch is rejected by the strict-mode CORS validator. A4.
+
+#### Phase C — Operator documentation
+
+- **`docs/runbooks/ui-first-deploy.md`** ([docs/runbooks/ui-first-deploy.md](docs/runbooks/ui-first-deploy.md)). Six-phase checklist mirroring [azure-first-deploy.md](docs/runbooks/azure-first-deploy.md): prereqs → per-env bootstrap (UI repo) → first manual deploy → smoke tests → CI/CD wiring → production cutover gates. Top-N common-failures table, decommission recipe, cross-references to the SWA Bicep + token helper. C1.
+- **README cross-links** ([README.md](README.md), [deploy/azure/README.md](deploy/azure/README.md), [docs/runbooks/README.md](docs/runbooks/README.md)). Both deployment-section READMEs now link to the UI runbook alongside the backend runbook; runbooks index updated with the new entry plus the previously-undocumented `azd-survival-guide.md` and `sprint-23-network-cutover.md` rows. C2, C3.
+
+#### Phase D — Multi-cloud UI skeletons
+
+- **`deploy/aws/ui/`** ([deploy/aws/ui/README.md](deploy/aws/ui/README.md), [deploy/aws/ui/main.tf](deploy/aws/ui/main.tf)). README with provider-mapping table (Azure SWA → S3 + CloudFront + ACM + Route 53), two-pass upload recipe (1-year immutable for hashed assets, no-cache for `index.html`), CORS-coupling note. `main.tf` is a `# TODO Sprint 25+` stub. D1.
+- **`deploy/gcp/ui/`** ([deploy/gcp/ui/README.md](deploy/gcp/ui/README.md), [deploy/gcp/ui/main.tf](deploy/gcp/ui/main.tf)). Same shape (Cloud Storage + Cloud LB + managed SSL + Cloud DNS). D2.
+- **`deploy/portable/ui/README.md`** ([deploy/portable/ui/README.md](deploy/portable/ui/README.md)). Provider-agnostic notes: the `dist/` bundle is identical across providers; only the upload command and the CORS allow-list differ. Cross-cloud DR appendix (one-line recipe per provider). D3.
+
+#### Tests
+
+- **`tests/unit/test_sprint24_phase_a.py`** ([tests/unit/test_sprint24_phase_a.py](tests/unit/test_sprint24_phase_a.py)). 11 static checks covering A1 (script exists + executable + TTY-guard + `--help`), A2 (`_config_snapshot` + parsing parity with the CORS middleware), A3 (no `apiKey` output + pinned output set), A4 (runbook documents `staticWebAppHostname` + `CORS_ORIGINS` + `azd-env-load.sh` + `azd provision`).
+
+### `azd up` postdeploy hook robustness
+
+- **Drop `az deployment sub show --name $AZURE_ENV_NAME` lookups** ([azure.yaml](azure.yaml)). Newer `azd` versions create the subscription deployment with a name distinct from `$AZURE_ENV_NAME`, so the per-output `az deployment sub show` calls in the `postdeploy` hook (and the ACR fallback in `postprovision`) failed with `DeploymentNotFound` after a successful image push. Hook now reads `migrationsJobName`, `keyVaultName`, `postgresFqdn`, `apiAppName`, `acrName` directly from `azd env get-value` (azd auto-promotes those Bicep outputs to env values during provision), via the existing stdout-error-trap `get()` helper. Same `azd up` deploy that previously tripped over the missing deployment now runs migrations + the network smoke end-to-end.
+
+### Bicep `azd-service-name` tags on Container Apps + jobs
+
+- **`workload.bicep` tags `apiApp`/`workerApp`/`migrationsJob`** ([deploy/azure/bicep/workload.bicep](deploy/azure/bicep/workload.bicep)). Each module call now passes `tags: union(tags, { 'azd-service-name': '<api|worker|migrations>' })`. `azd deploy` resolves which Container App to update by scanning Azure for resources tagged with the matching service name from `azure.yaml`; without this, `azd deploy` fails with `unable to find a resource tagged with 'azd-service-name: api'` after a successful `provision`. The common `tags` object is preserved (not overwritten) via `union()`.
+
 ### CI/CD onboarding scripts
 
 - **`scripts/azd-cicd-setup.sh <env>`** + **`scripts/azd-cicd-verify.sh <env>`** ([scripts/azd-cicd-setup.sh](scripts/azd-cicd-setup.sh), [scripts/azd-cicd-verify.sh](scripts/azd-cicd-verify.sh)). Idempotent automation for Phase 4 of [docs/runbooks/azure-first-deploy.md](docs/runbooks/azure-first-deploy.md): creates the GitHub Environment, the Entra app + service principal, the federated credential (subject `repo:9owlsboston/TagPulse:environment:<env>`), the Contributor + AcrPush role assignments, and the 5 Environment-scoped variables (`AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID` / `AZURE_RESOURCE_GROUP` / `AZURE_ACR_NAME`). Verify script does a read-only drift check (exits non-zero on first failure). Replaces the manual `az ad app …` snippet that was previously copy-pasted from [deploy/azure/README.md](deploy/azure/README.md). Runbook Phase 4 updated to point at the scripts as the recommended path.

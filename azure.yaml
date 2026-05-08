@@ -86,31 +86,65 @@ hooks:
       ./scripts/azd-image-check.sh
 
   # After provisioning: capture ACR login server + image tag into env vars so
-  # subsequent service deploys reference the right registry.
+  # subsequent service deploys reference the right registry. azd auto-promotes
+  # the `AZURE_CONTAINER_REGISTRY_ENDPOINT` Bicep output (it's the canonical
+  # name azd's docker package step looks for); this hook backfills the same
+  # value into our legacy `AZURE_ACR_LOGIN_SERVER` for any code/scripts that
+  # still reference it, plus seeds AZURE_IMAGE_TAG.
   postprovision:
     shell: sh
     run: |
       set -e
-      ACR_LOGIN_SERVER=$(azd env get-value AZURE_ACR_LOGIN_SERVER || true)
+      # azd env get-value writes "ERROR: key not found ..." to STDOUT (not
+      # stderr) and exits non-zero when the key is missing. Use a helper so
+      # callers can rely on `-z` checks instead of capturing error text.
+      get() {
+        local v
+        if v=$(azd env get-value "$1" 2>/dev/null); then
+          printf '%s' "$v" | tr -d '\r'
+        fi
+      }
+      ACR_LOGIN_SERVER=$(get AZURE_CONTAINER_REGISTRY_ENDPOINT)
       if [ -z "$ACR_LOGIN_SERVER" ]; then
-        ACR_NAME=$(az deployment sub show --name $AZURE_ENV_NAME --query 'properties.outputs.acrName.value' -o tsv)
-        ACR_LOGIN_SERVER="${ACR_NAME}.azurecr.io"
-        azd env set AZURE_ACR_LOGIN_SERVER "$ACR_LOGIN_SERVER"
+        ACR_LOGIN_SERVER=$(get AZURE_ACR_LOGIN_SERVER)
       fi
-      if [ -z "$(azd env get-value AZURE_IMAGE_TAG || true)" ]; then
+      if [ -z "$ACR_LOGIN_SERVER" ]; then
+        ACR_NAME=$(get acrName)
+        if [ -n "$ACR_NAME" ]; then
+          ACR_LOGIN_SERVER="${ACR_NAME}.azurecr.io"
+        fi
+      fi
+      azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "$ACR_LOGIN_SERVER"
+      azd env set AZURE_ACR_LOGIN_SERVER "$ACR_LOGIN_SERVER"
+      if [ -z "$(get AZURE_IMAGE_TAG)" ]; then
         azd env set AZURE_IMAGE_TAG "$(git rev-parse --short HEAD 2>/dev/null || echo latest)"
       fi
-      echo "ACR=$ACR_LOGIN_SERVER  TAG=$(azd env get-value AZURE_IMAGE_TAG)"
+      echo "ACR=$ACR_LOGIN_SERVER  TAG=$(get AZURE_IMAGE_TAG)"
 
   # After all services are deployed (images pushed): run the migrations job to
   # completion before users hit the new api revision. Then run the Sprint 23
   # network reachability smoke (no-op unless the VNet flags are on).
+  #
+  # Reads resource names from azd env values (auto-promoted from Bicep
+  # outputs) instead of `az deployment sub show --name $AZURE_ENV_NAME`,
+  # which broke in newer azd: the sub-deployment name is no longer always
+  # equal to $AZURE_ENV_NAME and the lookup fails with DeploymentNotFound.
   postdeploy:
     shell: sh
     run: |
       set -e
-      RG=$(azd env get-value AZURE_RESOURCE_GROUP)
-      JOB=$(az deployment sub show --name $AZURE_ENV_NAME --query 'properties.outputs.migrationsJobName.value' -o tsv)
+      get() {
+        local v
+        if v=$(azd env get-value "$1" 2>/dev/null); then
+          printf '%s' "$v" | tr -d '\r'
+        fi
+      }
+      RG=$(get AZURE_RESOURCE_GROUP)
+      JOB=$(get migrationsJobName)
+      if [ -z "$RG" ] || [ -z "$JOB" ]; then
+        echo "postdeploy: missing AZURE_RESOURCE_GROUP or migrationsJobName in azd env" >&2
+        exit 1
+      fi
       echo "Starting migrations job $JOB in $RG"
       EXEC=$(az containerapp job start --name "$JOB" --resource-group "$RG" --query 'name' -o tsv)
       echo "Execution: $EXEC -- waiting for completion (timeout 10m)"
@@ -130,9 +164,9 @@ hooks:
       # Sprint 23 Phase C1 -- network reachability smoke test. The script
       # itself no-ops unless both AZURE_ENABLE_VNET and
       # AZURE_DISABLE_PUBLIC_NETWORK_ACCESS resolve to 'true'.
-      AZURE_KEYVAULT_NAME=$(az deployment sub show --name $AZURE_ENV_NAME --query 'properties.outputs.keyVaultName.value' -o tsv) \
-      AZURE_POSTGRES_FQDN=$(az deployment sub show --name $AZURE_ENV_NAME --query 'properties.outputs.postgresFqdn.value' -o tsv) \
-      AZURE_API_APP_NAME=$(az deployment sub show --name $AZURE_ENV_NAME --query 'properties.outputs.apiAppName.value' -o tsv) \
-      AZURE_ENABLE_VNET=$(azd env get-value AZURE_ENABLE_VNET 2>/dev/null || echo false) \
-      AZURE_DISABLE_PUBLIC_NETWORK_ACCESS=$(azd env get-value AZURE_DISABLE_PUBLIC_NETWORK_ACCESS 2>/dev/null || echo false) \
+      AZURE_KEYVAULT_NAME=$(get keyVaultName) \
+      AZURE_POSTGRES_FQDN=$(get postgresFqdn) \
+      AZURE_API_APP_NAME=$(get apiAppName) \
+      AZURE_ENABLE_VNET=$(get AZURE_ENABLE_VNET) \
+      AZURE_DISABLE_PUBLIC_NETWORK_ACCESS=$(get AZURE_DISABLE_PUBLIC_NETWORK_ACCESS) \
         ./scripts/azd-network-check.sh

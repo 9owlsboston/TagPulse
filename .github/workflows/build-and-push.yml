@@ -90,8 +90,12 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
 
+      # GitHub's attestation API is not available on user-owned private repos
+      # (https://docs.github.com/rest/repos/attestations#create-an-attestation),
+      # so we skip provenance unless the repository is public. Re-enabled
+      # automatically if/when the repo is flipped to public.
       - name: Attest build provenance (GHCR)
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && !github.event.repository.private
         uses: actions/attest-build-provenance@v1
         with:
           subject-name: ghcr.io/9owlsboston/tagpulse-${{ matrix.component }}

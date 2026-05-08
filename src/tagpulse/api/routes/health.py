@@ -78,16 +78,18 @@ async def detail(request: Request) -> JSONResponse:
     if usage_meter:
         meter_status = "up" if usage_meter._task and not usage_meter._task.done() else "down"
 
-    return JSONResponse({
-        "status": "healthy" if all_up else "degraded",
-        "checks": checks,
-        "config": _config_snapshot(),
-        "event_bus": {
-            "queue_sizes": queue_sizes,
-            "running": event_bus._running if event_bus else False,
-        },
-        "usage_meter": {"status": meter_status},
-    })
+    return JSONResponse(
+        {
+            "status": "healthy" if all_up else "degraded",
+            "checks": checks,
+            "config": _config_snapshot(),
+            "event_bus": {
+                "queue_sizes": queue_sizes,
+                "running": event_bus._running if event_bus else False,
+            },
+            "usage_meter": {"status": meter_status},
+        }
+    )
 
 
 def _config_snapshot() -> dict[str, Any]:
@@ -104,6 +106,13 @@ def _config_snapshot() -> dict[str, Any]:
         "geofence_evaluation_enabled": settings.geofence_evaluation_enabled,
         "rate_limit_enabled": settings.rate_limit_enabled,
         "strict_migration_check": settings.strict_migration_check,
+        # Sprint 24 A2: surface CORS allow-list so operators can verify the
+        # SWA hostname is wired into the deployed api revision without
+        # shelling into the container. The most common post-deploy failure
+        # mode is "SPA loads but every fetch is blocked by CORS".
+        "cors": {
+            "allow_origins": [o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+        },
     }
 
 
@@ -115,9 +124,7 @@ async def _run_checks(request: Request) -> dict[str, dict[str, object]]:
     checks["database"] = await _check_database()
 
     # MQTT check
-    checks["mqtt"] = await _check_mqtt(
-        settings.mqtt_broker_host, settings.mqtt_broker_port
-    )
+    checks["mqtt"] = await _check_mqtt(settings.mqtt_broker_host, settings.mqtt_broker_port)
 
     # EventBus check
     event_bus = getattr(request.app.state, "event_bus", None)
@@ -138,6 +145,7 @@ async def _check_database() -> dict[str, object]:
     try:
         async with async_session_factory() as session:
             from sqlalchemy import text
+
             await session.execute(text("SELECT 1"))
         latency_ms = round((time.monotonic() - start) * 1000, 1)
         return {"status": "up", "latency_ms": latency_ms}
@@ -149,9 +157,7 @@ async def _check_mqtt(host: str, port: int) -> dict[str, object]:
     """Check MQTT broker connectivity via TCP connect."""
     start = time.monotonic()
     try:
-        _, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=3.0
-        )
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=3.0)
         writer.close()
         await writer.wait_closed()
         latency_ms = round((time.monotonic() - start) * 1000, 1)

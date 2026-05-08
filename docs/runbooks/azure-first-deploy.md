@@ -67,11 +67,39 @@ For each new environment (`dev` / `staging` / `prod`), run **once**:
   - [ ] `checks.mqtt == "ok"` (worker has connected)
   - [ ] `config.environment` matches `TAGPULSE_ENVIRONMENT` from your `.env.<env>`
   - [ ] `config.strict_migration_check == true` for staging/prod
+  - [ ] `config.cors.allow_origins` contains the SWA hostname (see CORS step below; will be empty until Sprint 24 wiring lands)
 - [ ] `TAGPULSE_API_URL=$(azd env get-value SERVICE_API_URI) python scripts/smoke_setup.py --full` exits 0
 - [ ] App Insights receiving traces:
   - [ ] Open the App Insights resource → **Transaction search** → confirm `GET /health/ready` spans appear within 2 minutes of the smoke test
 - [ ] Worker is processing:
   - [ ] `az containerapp logs show --name tagpulse-worker --resource-group <rg> --follow` shows `MQTT subscriber connected` and no exception spam
+
+### 3a — Add the SWA hostname to CORS (Sprint 24 A4)
+
+Sprint 22 C-1 provisions the Static Web App but leaves `CORS_ALLOW_ORIGINS`
+in `.env.<env>` set to whatever you bootstrapped with — typically just
+the api FQDN itself plus `http://localhost:5173`. The deployed SPA will
+load fine but every fetch from `https://<swa-host>` will be blocked by
+the strict-mode CORS validator (see [Sprint 22 A2](../../src/tagpulse/core/config.py)).
+
+Order matters: do this *before* deploying the UI bundle, otherwise the
+first browser session sees a wall of CORS errors.
+
+```bash
+SWA_HOST=$(azd env get-value staticWebAppHostname)
+API_HOST=$(azd env get-value SERVICE_API_URI | sed 's|^https\?://||')
+
+# Append, don't overwrite — keep localhost for dev iteration.
+CURRENT=$(grep -E '^CORS_ORIGINS=' deploy/azure/.env.<env> | cut -d= -f2-)
+sed -i.bak "s|^CORS_ORIGINS=.*|CORS_ORIGINS=${CURRENT},https://${SWA_HOST}|" \
+    deploy/azure/.env.<env>
+
+scripts/azd-env-load.sh <env>
+azd provision     # pushes the new origin list into the api revision
+```
+
+Verify: `curl "$(azd env get-value SERVICE_API_URI)/health/ready" | jq '.config.cors.allow_origins'`
+should now include `https://<swa-host>`.
 
 ---
 

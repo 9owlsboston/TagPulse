@@ -19,3 +19,4 @@
 | 015 | [Telemetry rules & Sprint 18 deprecation sunset](015-telemetry-rules-and-deprecation.md) | accepted | 2026-05-05 |
 | 016 | [Multi-cloud deployment strategy](016-multi-cloud-deployment-strategy.md) | proposed | 2026-05-06 |
 | 017 | [Network hardening — VNet integration + private endpoints](017-network-hardening.md) | proposed | 2026-05-07 |
+| 018 | [Frontend cloud deployment — separate SWA-hosted SPA, infra-here / app-there](018-frontend-cloud-deployment.md) | proposed | 2026-05-07 |

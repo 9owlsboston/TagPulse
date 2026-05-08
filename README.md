@@ -30,6 +30,7 @@ See [docs/architecture.md](docs/architecture.md) for the full system overview.
 ## Deployment
 
 - **Azure (first-class target).** Step-by-step checklist: [docs/runbooks/azure-first-deploy.md](docs/runbooks/azure-first-deploy.md). Module/SKU reference: [deploy/azure/README.md](deploy/azure/README.md). Design rationale: [ADR-016](docs/adr/016-multi-cloud-deployment-strategy.md).
+- **Frontend (Azure Static Web App).** SPA shipping path: [docs/runbooks/ui-first-deploy.md](docs/runbooks/ui-first-deploy.md). UI repo: [9owlsboston/TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI). Design rationale: [ADR-018](docs/adr/018-frontend-cloud-deployment.md).
 - **Provider-agnostic Helm chart** (k8s portability target): [deploy/common/helm/tagpulse/README.md](deploy/common/helm/tagpulse/README.md).
 - **Operator runbooks** (token rotation, deploy, etc.): [docs/runbooks/](docs/runbooks/README.md).
 
