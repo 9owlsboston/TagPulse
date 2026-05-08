@@ -70,6 +70,15 @@ param appEnvironment string = 'production'
 @description('Common tags.')
 param tags object = {}
 
+// Settings.mqtt_broker_host / Settings.mqtt_broker_port read MQTT_BROKER_HOST
+// and MQTT_BROKER_PORT (not MQTT_BROKER_URL) — split the broker URL so the
+// /health/ready TCP probe and the worker subscriber can reach the broker.
+// Without this the Pydantic settings fall back to "localhost:1883" and the
+// readiness probe stays 503 forever.
+var brokerNoScheme = replace(replace(mqttBrokerUrl, 'mqtt://', ''), 'mqtts://', '')
+var brokerHost = split(brokerNoScheme, ':')[0]
+var brokerPort = contains(brokerNoScheme, ':') ? split(brokerNoScheme, ':')[1] : '1883'
+
 resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
   name: appName
   location: location
@@ -142,6 +151,8 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             // `TypeError: connect() got an unexpected keyword argument 'sslmode'`).
             { name: 'DATABASE_URL', value: 'postgresql+asyncpg://${postgresAdminUsername}:$(POSTGRES_PASSWORD)@${postgresFqdn}:5432/${postgresDatabaseName}?ssl=require' }
             { name: 'MQTT_BROKER_URL', value: mqttBrokerUrl }
+            { name: 'MQTT_BROKER_HOST', value: brokerHost }
+            { name: 'MQTT_BROKER_PORT', value: brokerPort }
             { name: 'MQTT_USERNAME', value: mqttUsername }
             { name: 'MQTT_PASSWORD', secretRef: 'mqtt-password' }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }

@@ -34,6 +34,16 @@ COPY migrations/ migrations/
 COPY alembic.ini .
 
 LABEL org.opencontainers.image.source="https://github.com/9owlsboston/TagPulse"
+
+# Sprint 25 A1 — bake the build identity into the image so /health/live can
+# surface ``version`` + ``build_time`` to the SPA without a runtime lookup.
+# build-and-push.yml passes BUILD_VERSION=${{github.sha}} and a UTC ISO-8601
+# BUILD_TIME; local ``docker build`` without --build-arg keeps the dev defaults.
+ARG BUILD_VERSION=dev
+ARG BUILD_TIME=unknown
+ENV BUILD_VERSION=${BUILD_VERSION} \
+    BUILD_TIME=${BUILD_TIME}
+
 USER appuser
 
 

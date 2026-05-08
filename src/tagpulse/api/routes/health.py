@@ -32,14 +32,33 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health")
 async def liveness() -> dict[str, str]:
-    """Liveness probe — fast, no dependency checks."""
+    """Liveness probe — fast, no dependency checks.
+
+    Kept for backward compatibility (Sprint 22 A6 + earlier callers). The
+    SPA contract is the richer ``/health/live`` shape.
+    """
     return {"status": "ok"}
 
 
 @router.get("/health/live")
-async def liveness_alias() -> dict[str, str]:
-    """Liveness probe (k8s convention alias for ``/health``)."""
-    return {"status": "ok"}
+async def liveness_alias() -> JSONResponse:
+    """Liveness probe — Sprint 25 A1 SPA contract.
+
+    Returns ``{"status": "alive", "version": "<sha>", "build_time": "<iso8601>"}``
+    in <50ms with no DB / MQTT / migration touches. ``Cache-Control: no-store``
+    is set explicitly so the SWA edge / browser back-cache never memoize the
+    body — a stale "alive" response would defeat the SPA's startup gate when
+    the api goes down. Build identity comes from ``Settings.build_version`` and
+    ``Settings.build_time`` (Dockerfile-baked at image build time).
+    """
+    return JSONResponse(
+        {
+            "status": "alive",
+            "version": settings.build_version,
+            "build_time": settings.build_time,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/health/ready")

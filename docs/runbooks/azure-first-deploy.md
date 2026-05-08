@@ -61,7 +61,12 @@ For each new environment (`dev` / `staging` / `prod`), run **once**:
 
 > The api URL is `https://$(azd env get-value apiFqdn)`. Export it once for the rest of the phase: `API=https://$(azd env get-value apiFqdn)`.
 
-- [ ] `curl "$API/health/live"` → `{"status":"alive"}`
+- [ ] `curl "$API/health/live"` →
+      ```
+      {"status":"alive","version":"<git-sha>","build_time":"<iso8601>"}
+      ```
+      Sprint 25 A1: `version` + `build_time` come from the Dockerfile build args (`BUILD_VERSION`, `BUILD_TIME`); a value of `dev`/`unknown` means the deployed image was built outside the GHA pipeline.
+- [ ] `curl -I "$API/health/live" | grep -i cache-control` → `Cache-Control: no-store` (Sprint 25 A1; lets the SPA's startup gate poll without the SWA edge memoizing).
 - [ ] `curl "$API/health/ready" | jq` →
   - [ ] `status: "ready"`
   - [ ] `checks.db == "ok"`
@@ -102,6 +107,68 @@ azd provision     # pushes the new origin list into the api revision
 
 Verify: `curl "https://$(azd env get-value apiFqdn)/health/ready" | jq '.config.cors.allow_origins'`
 should now include `https://<swa-host>`.
+
+### 3b — SPA-vs-api consistency smoke (Sprint 25 A4)
+
+After the SWA deploys (UI repo, Sprint 24) and CORS is wired (3a), confirm
+the SPA was built against the right api. The most insidious post-deploy
+failure mode is a SPA shipped against a *stale* `VITE_API_BASE_URL` — e.g.
+the backend env was recreated and the api FQDN changed but the GH
+Environment variable in the UI repo wasn't refreshed.
+
+```bash
+SWA="https://$(azd env get-value staticWebAppHostname)"
+API="https://$(azd env get-value apiFqdn)"
+
+# 1. SPA loads + advertises the api it was built against.
+curl -fsS "$SWA/" -o /tmp/index.html
+# Hash of the main asset changes on every UI deploy; useful for cache-bust audit.
+grep -oE '/assets/main-[^"]+\.js' /tmp/index.html | head -1
+
+# 2. The api the SPA points at is healthy.
+curl -fsS "$API/health/ready" | jq '.status, .checks.database.status, .checks.mqtt.status'
+# Expect: "healthy" / "up" / "up".
+
+# 3. The SPA hostname is in the api's CORS allow-list (round-trip 3a).
+curl -fsS "$API/health/ready" | jq -e ".config.cors.allow_origins | index(\"$SWA\") != null"
+```
+
+If step 3 fails, you shipped CORS without the SWA host or you're staring at
+the wrong `apiFqdn` — re-run 3a against the *correct* azd environment.
+
+### 3c — CSP violation triage (Sprint 25 A4)
+
+Once the UI ships the report-only CSP header (Sprint 25 B5, follow-up to
+backend A3), the SPA quietly POSTs `application/csp-report` /
+`application/reports+json` envelopes to `${API}/security/csp-report` whenever
+a browser blocks a resource the policy doesn't allow. The endpoint:
+
+- emits a structured WARN log with `(blocked_uri, document_uri,
+  violated_directive, source_file, line_number, column_number, user_agent)`,
+- increments the Prometheus counter
+  `tagpulse_csp_violations_total{directive="<name>"}`,
+- is per-IP rate-limited at 10 reports/minute (DoS protection against a
+  noisy browser extension).
+
+Routine triage (weekly during the report-only burn-in window):
+
+```kql
+// Log Analytics
+ContainerAppConsoleLogs_CL
+| where ContainerAppName_s == "tpdev-api"
+| where Log_s contains "csp.violation"
+| extend body = parse_json(Log_s)
+| summarize count() by tostring(body.violated_directive), tostring(body.blocked_uri)
+| order by count_ desc
+| take 50
+```
+
+Treat any `directive == 'script-src'` or `'connect-src'` violation as
+high-priority — that's the policy actually blocking SPA functionality.
+`img-src`/`font-src`/`style-src` violations are usually third-party
+extensions or mis-cached SPA assets and can be batched. Document any
+expected origin and add it to `staticwebapp.config.json` (UI repo) before
+flipping report-only → enforced (Sprint 26+).
 
 ---
 

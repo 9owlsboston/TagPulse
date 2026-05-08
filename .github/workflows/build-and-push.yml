@@ -77,6 +77,12 @@ jobs:
             type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # Sprint 25 A1 — capture build_time once per job; reused as a Dockerfile
+      # build-arg so /health/live can surface it at runtime.
+      - name: Compute build_time
+        id: build_meta
+        run: echo "build_time=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         id: push
         uses: docker/build-push-action@v6
@@ -87,6 +93,12 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Sprint 25 A1 — bake build identity into the image so /health/live
+          # surfaces version + build_time to the SPA. BUILD_TIME is set in the
+          # preceding step because GHA `env:` doesn't run shell expansions.
+          build-args: |
+            BUILD_VERSION=${{ github.sha }}
+            BUILD_TIME=${{ steps.build_meta.outputs.build_time }}
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
 

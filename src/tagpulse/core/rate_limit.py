@@ -77,9 +77,7 @@ class RateLimiter:
             return settings.rate_limit_write_per_min
         return settings.rate_limit_read_per_min
 
-    async def _resolve_limit(
-        self, tenant_id: UUID, route_class: RouteClass
-    ) -> int:
+    async def _resolve_limit(self, tenant_id: UUID, route_class: RouteClass) -> int:
         """Return effective per-minute limit for this (tenant, class)."""
         cached = self._overrides.get(tenant_id)
         now = time.monotonic()
@@ -101,15 +99,11 @@ class RateLimiter:
 
         try:
             async with async_session_factory() as session:
-                stmt = select(TenantModel.rate_limit_overrides).where(
-                    TenantModel.id == tenant_id
-                )
+                stmt = select(TenantModel.rate_limit_overrides).where(TenantModel.id == tenant_id)
                 result = await session.execute(stmt)
                 row = result.scalar_one_or_none()
         except Exception:
-            logger.exception(
-                "rate_limit override lookup failed for tenant %s", tenant_id
-            )
+            logger.exception("rate_limit override lookup failed for tenant %s", tenant_id)
             return {}
         if not isinstance(row, dict):
             return {}
@@ -120,9 +114,7 @@ class RateLimiter:
                 out[key] = value
         return out
 
-    async def check(
-        self, tenant_id: UUID, route_class: RouteClass
-    ) -> tuple[bool, int]:
+    async def check(self, tenant_id: UUID, route_class: RouteClass) -> tuple[bool, int]:
         """Try to consume a token. Returns (allowed, effective_limit)."""
         limit = await self._resolve_limit(tenant_id, route_class)
         refill_per_sec = limit / 60.0
@@ -131,9 +123,7 @@ class RateLimiter:
             key = (tenant_id, route_class)
             bucket = self._buckets.get(key)
             if bucket is None:
-                bucket = _Bucket(
-                    tokens=float(limit), last_refill=now, capacity=limit
-                )
+                bucket = _Bucket(tokens=float(limit), last_refill=now, capacity=limit)
                 self._buckets[key] = bucket
             elif bucket.capacity != limit:
                 # Limit changed via override flip — keep current tokens
@@ -162,9 +152,7 @@ def classify_route(method: str, path: str) -> RouteClass:
     if path.startswith("/admin"):
         return "admin"
     if method == "POST" and (
-        path.startswith("/tag-reads")
-        or path.startswith("/telemetry")
-        or path.startswith("/ingest")
+        path.startswith("/tag-reads") or path.startswith("/telemetry") or path.startswith("/ingest")
     ):
         return "ingest"
     if method in {"GET", "HEAD"}:
@@ -176,7 +164,15 @@ def classify_route(method: str, path: str) -> RouteClass:
 
 # Paths that bypass rate limiting entirely. Health/metrics need to stay
 # probable from cluster-internal probes that don't carry X-Tenant-ID.
-_BYPASS_PREFIXES = ("/health", "/metrics", "/auth/login", "/docs", "/openapi", "/redoc")
+_BYPASS_PREFIXES = (
+    "/health",
+    "/metrics",
+    "/security/csp-report",
+    "/auth/login",
+    "/docs",
+    "/openapi",
+    "/redoc",
+)
 
 
 async def rate_limit_middleware(
@@ -206,10 +202,7 @@ async def rate_limit_middleware(
         return JSONResponse(
             status_code=429,
             content={
-                "detail": (
-                    f"Rate limit exceeded for {route_class} "
-                    f"(limit={limit}/min)."
-                ),
+                "detail": (f"Rate limit exceeded for {route_class} (limit={limit}/min)."),
                 "route_class": route_class,
                 "limit_per_min": limit,
             },
