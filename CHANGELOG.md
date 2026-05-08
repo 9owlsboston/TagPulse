@@ -4,6 +4,10 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Docs — Edge primer staleness audit
+
+- **[docs/refs/edge-hardware-and-rfid-primer.md](docs/refs/edge-hardware-and-rfid-primer.md) — refresh "Still to land" list.** The primer claimed Sprint 14 telemetry/location wiring + `epc`/`tid`/`tag_data` fields, Sprint 16 token-revoke handling + conformance harness, and Sprint 17b client-side mTLS were all outstanding — every one of those landed in its named sprint. Replaced with a "Shipped since" block (with file links) and a tighter "Still open" list capturing the genuine remaining gaps: no `MqttTransport.update_token()` hot-swap, conformance harness doesn't yet exercise telemetry/location/token-revoke, and Sprint 17c broker-side mTLS rollout is still planned.
+
 ### Ops — `azd-job.sh` env-wipe fix + smoke_setup connection robustness + tools-job AZURE_CLIENT_ID
 
 - **`scripts/azd-job.sh` — preserve env on container PATCH** ([scripts/azd-job.sh](scripts/azd-job.sh)). The wrapper sends an ARM PATCH to `properties.template.containers[0]` to override the container's `command` + `args` at start time. ARM PATCH replaces the container object wholesale (matched by `name`), so the previous body — which only set `name`/`image`/`command`/`args` — silently wiped every Bicep-declared env var on the tools-job (`DATABASE_URL`, `TAGPULSE_SMOKE_DB_URL`, `TAGPULSE_API_URL`, `TAGPULSE_SMOKE_KEY_VAULT_NAME`, the lot). Symptom: `scripts/azd-job.sh dev smoke_setup.py …` hit `[Errno 111] Connect call failed ('127.0.0.1', 5432)` because `TAGPULSE_SMOKE_DB_URL` wasn't there to override the local-dev default. PATCH body now round-trips the existing `env` + `resources` arrays via `jq`.
