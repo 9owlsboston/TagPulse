@@ -207,6 +207,56 @@ The job's image is the api image — when [`Dockerfile`](../../Dockerfile)'s
 script above is available at `/app/scripts/<name>.py`. Adding a new
 live-safe script is a one-line PR after honoring the env-var contract.
 
+### 3d — Seed the demo tenant + verify Tenant ID login (Sprint 26 D1)
+
+Closes the Sprint 25 follow-up gap that left the deployed SPA's **Tenant ID**
+login flow with no working tenant out of the box. Run this **once** after the
+first `azd up` of any new env; idempotent on re-run.
+
+```bash
+# 1. Seed Test Corp (tenant_id 11111111-1111-1111-1111-111111111111),
+#    create admin/editor/viewer roles, push a few subject-telemetry rows,
+#    and rotate a fresh admin key into Key Vault.
+scripts/azd-job.sh dev smoke_setup.py -- \
+  --full --with-roles --with-subject-telemetry --regenerate-key
+
+# 2. Pull the freshly-rotated admin key from KV (the job's --key-vault-name
+#    default means the plaintext never hit Log Analytics).
+KV=$(azd env get-value keyVaultName)
+export TAGPULSE_API_KEY=$(az keyvault secret show \
+  --vault-name "$KV" --name tagpulse-test-corp-admin-key \
+  --query value -o tsv)
+
+# 3. Verify the api sees the tenant.
+API=$(azd env get-value apiFqdn)
+curl -fsS "https://$API/tenant/config" \
+  -H "X-Tenant-Id: 11111111-1111-1111-1111-111111111111" \
+  -H "Authorization: Bearer $TAGPULSE_API_KEY" \
+  | jq -r '.name'
+# Expected: "Test Corp"
+
+# 4. Verify the SPA's Tenant ID login flow works.
+#    Open https://$(azd env get-value uiFqdn) → Login → "Tenant ID" tab →
+#    paste 11111111-1111-1111-1111-111111111111 + the admin key from step 2.
+#    Should land on the dashboard with the seeded subject-telemetry visible.
+```
+
+If step 3 returns `404` or step 4 lands on "tenant not found", re-check the
+`smoke_setup.py` execution status:
+
+```bash
+JOB=$(azd env get-value toolsJobName)
+RG=$(azd env get-value AZURE_RESOURCE_GROUP)
+az containerapp job execution list -n "$JOB" -g "$RG" \
+  --query '[0].{status:properties.status, start:properties.startTime, end:properties.endTime}' -o table
+```
+
+Common failures: `Forbidden` writing to KV (the workload UAMI didn't pick up
+the Sprint 26 B1 ride-along Key Vault Secrets Officer assignment — re-run
+`azd provision`); `connection refused` to Postgres (the env's tools-job is
+provisioned in the wrong VNet — confirm `properties.template.containers[0].env`
+on the job has the same `POSTGRES_FQDN` as `tpdev-migrations`).
+
 ---
 
 ## Phase 4 — Wire up CI/CD (one-time, per environment)
