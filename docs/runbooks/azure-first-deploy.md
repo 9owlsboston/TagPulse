@@ -309,11 +309,28 @@ scripts/azd-job.sh dev smoke_setup.py -- \
 #    On envs where Sprint 23-B network hardening has set
 #    publicNetworkAccess=Disabled on the KV (you'll see "ForbiddenByConnection
 #    / Public network access is disabled" from `az keyvault secret show`),
-#    add `--allow-my-ip` to flip publicNetworkAccess→Enabled with
-#    defaultAction=Deny + your current IP allowlisted. Run again with
-#    `--revoke-my-ip` when done.
-scripts/azd-grant-operator-kv.sh dev               # public-network-Enabled KV
-scripts/azd-grant-operator-kv.sh dev --allow-my-ip # public-network-Disabled KV
+#    you have two options:
+#
+#      (a) PREFERRED — fetch the secret via the in-VNet tools-job, which
+#          bypasses the KV firewall entirely (the workload UAMI already has
+#          'Key Vault Secrets User'). This is the only durable option for
+#          operators behind corporate proxies / Azure Cloud Shell / WSL2
+#          where the egress IP rotates between sessions:
+#
+#              export TAGPULSE_API_KEY=$(scripts/azd-kv-get.sh dev tagpulse-test-corp-admin-key)
+#
+#          Then skip step 3 below and jump straight to step 4.
+#
+#      (b) IP-allowlist — flip publicNetworkAccess→Enabled with
+#          defaultAction=Deny + your current IP allowlisted. Only works
+#          if your laptop has a STABLE public IP (i.e. residential /
+#          static-IP corporate). Requires Key Vault Contributor on the
+#          vault. Revoke when done with `--revoke-my-ip`.
+#
+#              scripts/azd-grant-operator-kv.sh dev --allow-my-ip
+#              # …then step 3 below works…
+#              scripts/azd-grant-operator-kv.sh dev --revoke-my-ip
+scripts/azd-grant-operator-kv.sh dev               # RBAC only (public-network-Enabled KV)
 
 # 3. Pull the freshly-rotated admin key from KV (the job's --key-vault-name
 #    default means the plaintext never hit Log Analytics).
@@ -408,7 +425,7 @@ Before flipping DNS / opening to real users, confirm:
 | Provision succeeds but ACA fails to start: `ImagePullBackOff` | UAMI missing `AcrPull` on ACR | `az role assignment create --assignee <uami-principal> --role AcrPull --scope <acr-id>` |
 | Mosquitto ACI fails to start: `mosquitto-entrypoint: MOSQUITTO_USERNAME and MOSQUITTO_PASSWORD must be set` | KV `mqtt-broker-password` secret never populated, or UAMI missing `Key Vault Secrets User` on KV | Confirm `AZURE_MQTT_PASSWORD` is in `deploy/azure/.env.<env>`; run `scripts/azd-env-load.sh <env>`; rerun `azd provision` so KV reseeds. |
 | Operator `az keyvault secret show` fails: `(Forbidden) ForbiddenByRbac` | Bicep doesn't pin a human principal at provision time, so signed-in operators have no role on the KV | Run `scripts/azd-grant-operator-kv.sh <env>` (assigns `Key Vault Secrets User` to the signed-in identity, idempotent). |
-| Operator `az keyvault secret show` fails: `(Forbidden) ForbiddenByConnection / Public network access is disabled` | Sprint 23-B network hardening sets `publicNetworkAccess=Disabled` on the KV; only private-endpoint traffic gets through | Run `scripts/azd-grant-operator-kv.sh <env> --allow-my-ip` to flip `publicNetworkAccess=Enabled` with `defaultAction=Deny` + your current public IP allowlisted. Wait ~30s. Run with `--revoke-my-ip` when done. Requires `Key Vault Contributor` on the vault to call `az keyvault update`. |
+| Operator `az keyvault secret show` fails: `(Forbidden) ForbiddenByConnection / Public network access is disabled` | Sprint 23-B network hardening sets `publicNetworkAccess=Disabled` on the KV; only private-endpoint traffic gets through | **Preferred** (works behind corporate proxies / Cloud Shell / WSL2 with rotating SNAT): `export FOO=$(scripts/azd-kv-get.sh <env> <secret-name>)` — fetches the secret via the in-VNet tools-job, no KV firewall change. **Fallback** (laptop with stable public IP, requires `Key Vault Contributor` on the vault): `scripts/azd-grant-operator-kv.sh <env> --allow-my-ip` → retry → `--revoke-my-ip`. |
 | `/health/ready` returns `migrations.match=false` | Migrations job didn't run, or ran older image | Re-run job: `az containerapp job start --name tagpulse-migrations -g <rg>` |
 | `/health/ready` shows `checks.mqtt=="error"` | Broker still on placeholder image (`aci-helloworld`) — first `azd up` provisions the ACI before `tagpulse-mqtt` is in ACR | Run `azd up` a second time. The preprovision hook builds + pushes the image, image-check flips placeholders off, the ACI re-provisions on the real broker. |
 | App refuses to start: `jwt_secret missing` and `environment != "dev"` | Strict-mode validator (Phase A1) tripped | Confirm `AZURE_JWT_SECRET` was set; re-run `azd-env-load.sh` then `azd provision` |
