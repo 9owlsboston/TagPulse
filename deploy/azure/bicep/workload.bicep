@@ -260,7 +260,7 @@ module ui 'modules/static-web-app.bicep' = {
     // The SWA app-setting was cosmetic anyway: the UI repo's deploy workflow
     // bakes VITE_API_BASE_URL at build time from `vars.VITE_API_BASE_URL`
     // (set by scripts/ui-cicd-setup.sh), not from this SWA app-setting.
-    tags: tags
+    tags: union(tags, { 'azd-service-name': 'ui' })
   }
 }
 
