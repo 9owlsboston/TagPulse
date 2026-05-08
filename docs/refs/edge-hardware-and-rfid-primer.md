@@ -72,13 +72,17 @@ The edge agent **already exists** as the Python package at [`clients/pi/`](../..
 | `tagpulse_edge.transport.MqttTransport` | paho-mqtt wrapper with full-jitter exponential backoff and LWT |
 | `tagpulse_edge.config.EdgeConfig` | All knobs in one dataclass; loadable from JSON |
 
-Still to land in upcoming sprints:
+Shipped since the original primer was written:
 
-- **Sprint 14** — wire `submit_telemetry` / `submit_location` end-to-end through `MqttTransport`; add `epc` / `tid` / `tag_data` fields to `submit_tag_read`.
-- **Sprint 16** — handle 401 on token rotation by reloading the token without restart; ship the conformance harness ([edge-device-contract.md §3.10](../design/edge-device-contract.md)).
-- **Sprint 17b** — mTLS support in the transport.
+- **Sprint 14** — `submit_telemetry` / `submit_location` are wired end-to-end through `MqttTransport`, and `submit_tag_read` carries `epc` / `epc_hex` / `tid` / `tag_data` ([`tagpulse_edge.events.RawTagRead`](../../clients/pi/tagpulse_edge/events.py), [`tagpulse_edge.agent.EdgeAgent`](../../clients/pi/tagpulse_edge/agent.py)).
+- **Sprint 16** — broker-side 401 / forced-disconnect surfaces as `TokenRevokedError` via the `on_token_revoked` callback ([`tagpulse_edge.transport.MqttTransport`](../../clients/pi/tagpulse_edge/transport.py)); a conformance harness scaffold lives at [`tests/conformance/`](../../tests/conformance/) covering dedup §3.3, clock §3.5, heartbeat/LWT §3.6, and offline buffer §3.7.
+- **Sprint 17b** — client-side mTLS is in the transport (`use_tls` + `tls_ca_path` / `tls_cert_path` / `tls_key_path` → `paho.tls_set(..., cert_reqs=ssl.CERT_REQUIRED)`); backend stores `devices.cert_thumbprint` and accepts `POST /device-registry/{id}/cert`.
 
-In other words, the reference *agent* is shipping; the reference *full pipeline against the new Sprint-14 columns and Sprint-16 contract* is the in-flight work.
+Still open (tracked elsewhere — see [docs/roadmap.md](../roadmap.md)):
+
+- **Hot-swap on token rotation** — the transport detects revocation and notifies the embedder, but there's no `MqttTransport.update_token()` to swap credentials in place; embedders currently rebuild the transport. Filed against the post-Sprint-16 backlog.
+- **Conformance coverage gaps** — telemetry/location publish paths and the token-revoke callback are not yet exercised by [`tests/conformance/`](../../tests/conformance/).
+- **Sprint 17c — broker-side mTLS rollout** — Mosquitto `cafile`/`certfile`/`keyfile`, `mosquitto-go-auth` HTTP backend → `/internal/mqtt-auth`, and the `tenants.require_mtls` opt-in flag. Client-side scaffolding is ready; broker enforcement is its own sprint.
 
 ### 1.3 Tag memory banks (Gen2)
 
