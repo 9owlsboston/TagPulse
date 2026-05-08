@@ -110,6 +110,7 @@ output apiAppName string = workload.outputs.apiAppName
 output apiFqdn string = workload.outputs.apiFqdn
 output workerAppName string = workload.outputs.workerAppName
 output migrationsJobName string = workload.outputs.migrationsJobName
+output toolsJobName string = workload.outputs.toolsJobName
 output staticWebAppName string = workload.outputs.staticWebAppName
 output staticWebAppHostname string = workload.outputs.staticWebAppHostname
 output appInsightsConnectionString string = workload.outputs.appInsightsConnectionString
