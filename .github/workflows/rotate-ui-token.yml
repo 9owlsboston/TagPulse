@@ -1,0 +1,154 @@
+# Sprint 25 D2 — Scheduled rotation of the Static Web App deployment token.
+#
+# Calls scripts/azd-ui-token-rotate.sh against dev → staging → production in
+# turn. Default cadence: 09:00 UTC on the 1st of every 3rd month (matches the
+# Sprint 22 JWT-secret rotation runbook). The rotation script's built-in
+# 60-day idempotency gate is the safety net against manual rotations racing
+# the cron.
+#
+# OIDC federation: each GitHub Environment (dev/staging/production) already
+# carries the AZURE_CLIENT_ID + AZURE_TENANT_ID + AZURE_SUBSCRIPTION_ID
+# variables wired by scripts/azd-cicd-setup.sh. The federated credential
+# subject this workflow runs under is
+#     repo:9owlsboston/TagPulse:environment:<env>
+# so no extra setup is required to land this file.
+#
+# Cross-repo secret write: the rotation script needs `gh -R 9owlsboston/TagPulse-UI
+# secret set --env <env>`. The workflow uses a fine-scoped PAT
+# (UI_REPO_SECRETS_PAT) stored as a *repository* secret here; rotate it
+# alongside the SWA tokens (the script's audit log surfaces last-4-chars).
+# Scope: `repo` access to the UI repo only — anything broader is a
+# blast-radius bug.
+
+name: rotate-ui-token
+
+on:
+  schedule:
+    # Quarterly: 09:00 UTC on the 1st of Jan / Apr / Jul / Oct.
+    - cron: '0 9 1 1,4,7,10 *'
+  workflow_dispatch:
+    inputs:
+      environments:
+        description: 'Comma-separated env list (default: dev). staging/production envs do not exist yet on TagPulse-UI — re-add to the matrix when they land.'
+        required: false
+        type: string
+        default: 'dev'
+      force:
+        description: 'Bypass the 60-day idempotency gate'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write  # for the failure-issue fallback
+
+concurrency:
+  group: rotate-ui-token
+  cancel-in-progress: false
+
+jobs:
+  rotate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Only `dev` exists on TagPulse-UI today (Settings → Environments).
+        # Re-add staging + production here once those environments are
+        # created on the UI repo and a SWA has been provisioned for them.
+        env: [dev]
+    environment: ${{ matrix.env }}
+    steps:
+      - name: Skip env if not in input list
+        id: gate
+        run: |
+          set -euo pipefail
+          REQUESTED="${{ inputs.environments || 'dev' }}"
+          if [[ ",${REQUESTED}," == *",${{ matrix.env }},"* ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping ${{ matrix.env }} (not in REQUESTED='${REQUESTED}')"
+          fi
+
+      - name: Checkout
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Sign in to Azure (OIDC)
+        if: steps.gate.outputs.run == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve SWA name from RG
+        if: steps.gate.outputs.run == 'true'
+        id: swa
+        run: |
+          set -euo pipefail
+          # The cron runner has no persisted azd state; look up the SWA by
+          # the C1 'azd-service-name=ui' tag instead. The rotation script
+          # accepts AZURE_STATIC_WEB_APPS_NAME + AZURE_RESOURCE_GROUP from
+          # the environment when set, bypassing azd entirely.
+          SWA_NAME=$(az staticwebapp list \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --query "[?tags.\"azd-service-name\"=='ui'].name | [0]" \
+            -o tsv)
+          if [[ -z "$SWA_NAME" ]]; then
+            echo "::error::No Static Web App tagged azd-service-name=ui in ${{ vars.AZURE_RESOURCE_GROUP }}"
+            exit 1
+          fi
+          echo "swa_name=$SWA_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate gh CLI for cross-repo secret write
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UI_REPO_SECRETS_PAT }}
+        run: |
+          # The UI_REPO_SECRETS_PAT is a fine-scoped PAT (repo scope on the
+          # UI repo only). Rotate it alongside the SWA tokens — the audit
+          # log captures last-4-chars on every run.
+          gh auth status
+
+      - name: Rotate token
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UI_REPO_SECRETS_PAT }}
+          AZURE_STATIC_WEB_APPS_NAME: ${{ steps.swa.outputs.swa_name }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -euo pipefail
+          ARGS=("${{ matrix.env }}")
+          if [[ "${{ inputs.force }}" == "true" ]]; then
+            ARGS+=(--force)
+          fi
+          scripts/azd-ui-token-rotate.sh "${ARGS[@]}"
+
+      - name: Open issue on failure
+        if: failure() && steps.gate.outputs.run == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const env = '${{ matrix.env }}';
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `rotate-ui-token failed for env=${env}`,
+              body: [
+                `The scheduled SWA-token rotation for **${env}** failed.`,
+                ``,
+                `Run: ${runUrl}`,
+                ``,
+                `Likely causes:`,
+                `- \`UI_REPO_SECRETS_PAT\` expired (rotate it; scope = repo on \`9owlsboston/TagPulse-UI\`).`,
+                `- \`AZURE_RESOURCE_GROUP\` variable on the \`${env}\` Environment is wrong or the SWA was renamed.`,
+                `- The OIDC federated credential is no longer trusted (re-run \`scripts/azd-cicd-setup.sh ${env}\`).`,
+                ``,
+                `Manual recovery: \`scripts/azd-ui-token-rotate.sh ${env} --force\` from a workstation that's signed in to the right tenant.`,
+              ].join('\n'),
+              labels: ['ops', 'security'],
+            });
