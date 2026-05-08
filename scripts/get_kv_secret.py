@@ -31,8 +31,13 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "--name",
-        required=True,
-        help="Secret name (e.g. tagpulse-test-corp-admin-key).",
+        help="Secret name (e.g. tagpulse-test-corp-admin-key). Required unless --list.",
+    )
+    ap.add_argument(
+        "--list",
+        action="store_true",
+        dest="list_names",
+        help="List all secret names in the vault and exit (does not print values).",
     )
     ap.add_argument(
         "--vault",
@@ -47,6 +52,10 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    if not args.list_names and not args.name:
+        print("error: --name is required unless --list is passed", file=sys.stderr)
+        return 2
+
     if not args.vault:
         print(
             "error: --vault not set and TAGPULSE_SMOKE_KEY_VAULT_NAME not in env",
@@ -60,11 +69,24 @@ def main() -> int:
         from azure.identity import DefaultAzureCredential
         from azure.keyvault.secrets import SecretClient
     except ImportError as exc:
-        print(f"error: missing azure SDK ({exc}); install with `pip install '.[azure]'`", file=sys.stderr)
+        print(
+            f"error: missing azure SDK ({exc}); install with `pip install '.[azure]'`",
+            file=sys.stderr,
+        )
         return 2
 
     vault_url = f"https://{args.vault}.vault.azure.net"
     client = SecretClient(vault_url=vault_url, credential=DefaultAzureCredential())
+
+    if args.list_names:
+        # Same sentinel pattern so scripts/azd-kv-get.sh --list can extract
+        # the names cleanly out of the streamed Log Analytics tail.
+        print("===KV_SECRET_LIST_BEGIN===")
+        for prop in client.list_properties_of_secrets():
+            print(prop.name)
+        print("===KV_SECRET_LIST_END===")
+        return 0
+
     secret = client.get_secret(args.name, version=args.version)
 
     # Sentinel-bracketed output so scripts/azd-kv-get.sh can grep just the value
