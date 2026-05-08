@@ -172,6 +172,43 @@ flipping report-only → enforced (Sprint 26+).
 
 ---
 
+## Phase 3c — Operational scripts (Sprint 26)
+
+Anything in [`scripts/`](../../scripts/) that talks to a deployed environment
+is **designed to run from one of two places**:
+
+| Caller | When | Auth |
+|---|---|---|
+| Operator's laptop | Local dev against `make run`, or one-off cloud queries when public Postgres firewalling allows | `az login` + `TAGPULSE_API_URL` + `TAGPULSE_API_KEY` exported |
+| **Tools-job in Container Apps** ([`scripts/azd-job.sh`](../../scripts/azd-job.sh), Sprint 26 C1) | Anything that needs in-VNet Postgres access, or that runs against staging/prod | Job's user-assigned managed identity; the wrapper resolves env vars from `azd env get-values` |
+
+### Env-var contract every "live-safe" script must satisfy
+
+| Var | Required? | What it points at |
+|---|---|---|
+| `TAGPULSE_API_URL` | yes | `https://$(azd env get-value apiFqdn)` (or `http://localhost:8000` for laptop dev) |
+| `TAGPULSE_API_KEY` | yes (after first run) | Admin API key for the target tenant. First-run smoke seeds it; subsequent runs reuse it. |
+| `DATABASE_URL` *or* `TAGPULSE_SMOKE_DB_URL` | yes for scripts that do raw SQL (`smoke_setup.py`) | Direct Postgres URL. The tools-job receives this via the same secret as `tpdev-migrations`. |
+| `TAGPULSE_SMOKE_KEY_VAULT_NAME` | optional | When set, `smoke_setup.py` pushes plaintext keys to KV instead of stdout (Sprint 26 D3). The tools-job sets this by default. |
+
+### Live-safe vs local-only
+
+| Script | Live-safe? | Notes |
+|---|---|---|
+| `smoke_setup.py` | ✅ yes | Idempotent. Re-runs require `$TAGPULSE_API_KEY` already exported (or `--regenerate-key`). With `--key-vault-name` no plaintext leaves the job. |
+| `simulate_devices.py` | ✅ yes (low volume) | Useful for end-to-end smoke after `azd up`. Throttle with `--interval`; **do not** run against `staging`/`prod` without `--duration` set. |
+| `simulate_assets.py`, `simulate_inventory.py` | ✅ yes (one-shot) | Idempotent fixture provisioning. Safe to re-run. |
+| `benchmark_pg_metrics.py` | ✅ yes (read-only) | Connects directly to Postgres; in-VNet path via the tools-job is the only way against private clusters. |
+| `load_test.py` | ❌ **local only** | Saturates `localhost:8000` by default; running it via the tools-job would hit the api's *own* egress and could trigger autoscale + cost. |
+| `start-sprint.sh`, `azd-*.sh` | ❌ **local only** | Operator-side workflow tooling. Never invoke via the job. |
+
+The job's image is the api image — when [`Dockerfile`](../../Dockerfile)'s
+`base` stage runs `COPY scripts/ scripts/` (Sprint 26 A1), every live-safe
+script above is available at `/app/scripts/<name>.py`. Adding a new
+live-safe script is a one-line PR after honoring the env-var contract.
+
+---
+
 ## Phase 4 — Wire up CI/CD (one-time, per environment)
 
 > **Shortcut:** run [`scripts/azd-cicd-setup.sh <env>`](../../scripts/azd-cicd-setup.sh)
