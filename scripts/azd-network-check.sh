@@ -31,14 +31,29 @@ PG_FQDN="${AZURE_POSTGRES_FQDN}"
 echo "[network-check] Checking inside-VNet resolution via api app: $AZURE_API_APP_NAME"
 
 # Resolve from inside the api container app (VNet-resident). Python one-liner
-# avoids depending on nslookup/dig in the runtime image.
+# avoids depending on nslookup/dig in the runtime image. The ACA exec
+# websocket endpoint is aggressively rate-limited (HTTP 429) on back-to-back
+# `azd deploy` runs — we do one quick retry then give up. Resolution failure
+# is treated as a soft WARN below (set AZURE_NETWORK_CHECK_STRICT=true to
+# turn it back into a hard fail, e.g. on the first VNet rollout).
 inside_resolve() {
   local host="$1"
-  az containerapp exec \
-    --name "$AZURE_API_APP_NAME" \
-    --resource-group "$AZURE_RESOURCE_GROUP" \
-    --command "python -c \"import socket,sys; print(socket.gethostbyname('$host'))\"" \
-    2>/dev/null | tr -d '\r' | tail -1
+  local attempt ip
+  for attempt in 1 2; do
+    ip=$(az containerapp exec \
+      --name "$AZURE_API_APP_NAME" \
+      --resource-group "$AZURE_RESOURCE_GROUP" \
+      --command "python -c \"import socket,sys; print(socket.gethostbyname('$host'))\"" \
+      2>/dev/null | tr -d '\r' | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | tail -1)
+    if [[ -n "$ip" ]]; then
+      printf '%s' "$ip"
+      return 0
+    fi
+    if [[ $attempt -lt 2 ]]; then
+      sleep 15
+    fi
+  done
+  return 1
 }
 
 KV_INSIDE_IP=$(inside_resolve "$KV_FQDN" || echo "")
@@ -47,13 +62,21 @@ PG_INSIDE_IP=$(inside_resolve "$PG_FQDN" || echo "")
 echo "[network-check] inside  KV  $KV_FQDN -> ${KV_INSIDE_IP:-<resolution failed>}"
 echo "[network-check] inside  PG  $PG_FQDN -> ${PG_INSIDE_IP:-<resolution failed>}"
 
+STRICT="${AZURE_NETWORK_CHECK_STRICT:-false}"
+report() {
+  local kind="$1" msg="$2"
+  if [[ "$STRICT" == "true" ]]; then
+    echo "[network-check] FAIL: $msg"
+    exit 1
+  fi
+  echo "[network-check] WARN ($kind): $msg (set AZURE_NETWORK_CHECK_STRICT=true to fail the deploy)"
+}
+
 if [[ ! "$KV_INSIDE_IP" =~ ^10\.10\. ]]; then
-  echo "[network-check] FAIL: KV from inside VNet did not resolve to 10.10.x.x (got '$KV_INSIDE_IP'). Private DNS zone link missing?"
-  exit 1
+  report "kv-inside" "KV from inside VNet did not resolve to 10.10.x.x (got '$KV_INSIDE_IP'). Private DNS zone link missing, or ACA exec throttled (429)?"
 fi
 if [[ ! "$PG_INSIDE_IP" =~ ^10\.10\. ]]; then
-  echo "[network-check] FAIL: Postgres from inside VNet did not resolve to 10.10.x.x (got '$PG_INSIDE_IP')."
-  exit 1
+  report "pg-inside" "Postgres from inside VNet did not resolve to 10.10.x.x (got '$PG_INSIDE_IP')."
 fi
 
 echo "[network-check] Checking outside-VNet block: KV public REST should return Forbidden."
