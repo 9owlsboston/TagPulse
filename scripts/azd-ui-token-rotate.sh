@@ -74,29 +74,45 @@ if [[ -z "$ENV_NAME" ]]; then
   exit 1
 fi
 
-for cmd in az azd gh jq; do
+for cmd in az gh jq; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "error: $cmd CLI not found on PATH" >&2
     exit 1
   fi
 done
 
-# ---------- read azd env -----------------------------------------------------
-get() {
-  local v
-  if v=$(azd -e "tagpulse-${ENV_NAME}" env get-value "$1" 2>/dev/null); then
-    printf '%s' "$v" | tr -d '\r'
-  fi
-}
+# ---------- resolve SWA + resource group -------------------------------------
+# Two paths:
+#   1) interactive workstation: read from `azd env get-value` (mirrors
+#      scripts/azd-ui-token.sh).
+#   2) GHA cron (D2): the runner has no persisted azd env state, so the
+#      caller may export AZURE_STATIC_WEB_APPS_NAME + AZURE_RESOURCE_GROUP
+#      directly. The env-var path takes precedence and skips the azd
+#      preflight entirely.
+SWA_NAME="${AZURE_STATIC_WEB_APPS_NAME:-}"
+RG_NAME="${AZURE_RESOURCE_GROUP:-}"
 
-SWA_NAME="$(get AZURE_STATIC_WEB_APPS_NAME)"
-RG_NAME="$(get AZURE_RESOURCE_GROUP)"
+if [[ -z "$SWA_NAME" || -z "$RG_NAME" ]]; then
+  if ! command -v azd >/dev/null 2>&1; then
+    echo "error: azd CLI not found and AZURE_STATIC_WEB_APPS_NAME / AZURE_RESOURCE_GROUP not set in env" >&2
+    exit 1
+  fi
+  get() {
+    local v
+    if v=$(azd -e "tagpulse-${ENV_NAME}" env get-value "$1" 2>/dev/null); then
+      printf '%s' "$v" | tr -d '\r'
+    fi
+  }
+  [[ -z "$SWA_NAME" ]] && SWA_NAME="$(get AZURE_STATIC_WEB_APPS_NAME)"
+  [[ -z "$RG_NAME" ]] && RG_NAME="$(get AZURE_RESOURCE_GROUP)"
+fi
 
 if [[ -z "$SWA_NAME" || -z "$RG_NAME" ]]; then
   cat >&2 <<EOF
-error: azd env tagpulse-${ENV_NAME} is missing AZURE_STATIC_WEB_APPS_NAME
-       or AZURE_RESOURCE_GROUP. Run 'azd provision' against ${ENV_NAME}
-       at least once before rotating.
+error: cannot resolve SWA + resource group for env=${ENV_NAME}.
+       Either run 'azd provision' against ${ENV_NAME} at least once, or
+       export AZURE_STATIC_WEB_APPS_NAME and AZURE_RESOURCE_GROUP before
+       invoking this script.
 EOF
   exit 1
 fi
