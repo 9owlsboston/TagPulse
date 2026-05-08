@@ -4,6 +4,13 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Ops — Operator KV-access helper (`scripts/azd-grant-operator-kv.sh`)
+
+- **New [scripts/azd-grant-operator-kv.sh](scripts/azd-grant-operator-kv.sh).** Closes the operator-self-service gap that bit the first `tpdev` smoke run: after `smoke_setup.py --regenerate-key` pushed the rotated admin/editor/viewer API keys to KV, retrieving them from a laptop with `az keyvault secret show` failed twice — once on RBAC (`ForbiddenByRbac`), then again on network ACL (`ForbiddenByConnection / Public network access is disabled`). The api/worker UAMIs and the `tpdev-tools` UAMI receive their KV roles at provision time via [identity.bicep](deploy/azure/bicep/modules/identity.bicep), but Bicep deliberately doesn't pin a human principal so the same template works for any operator. The script handles both gaps in one call:
+  - **RBAC mode (default)** — assigns "Key Vault Secrets User" (read-only) to the signed-in identity at the deployment KV scope. Idempotent; skips if the assignment already exists. Use `--role "Key Vault Secrets Officer"` for write access, `--principal <oid>` to grant a different principal (e.g. a CI service principal).
+  - **Network-ACL mode (`--allow-my-ip` / `--revoke-my-ip`)** — flips `publicNetworkAccess` from `Disabled` (Sprint 23-B hardening default) to `Enabled` with `defaultAction=Deny` + the operator's current public IP added to `ipRules`. Net effect: private-endpoint traffic AND your one IP reach the data plane; everything else stays blocked. The corresponding `--revoke-my-ip` flips it back to fully private. Pairs with `--allow-my-ip` running RBAC in the same invocation so a fresh operator gets both in one shot.
+- **Documented in [docs/runbooks/azure-first-deploy.md §3d](docs/runbooks/azure-first-deploy.md).** Step 2 of the seed-demo-tenant flow now points at the script with both branches called out (open-network vs Sprint 23-B-hardened envs).
+
 ### Docs — Edge primer staleness audit
 
 - **[docs/refs/edge-hardware-and-rfid-primer.md](docs/refs/edge-hardware-and-rfid-primer.md) — refresh "Still to land" list.** The primer claimed Sprint 14 telemetry/location wiring + `epc`/`tid`/`tag_data` fields, Sprint 16 token-revoke handling + conformance harness, and Sprint 17b client-side mTLS were all outstanding — every one of those landed in its named sprint. Replaced with a "Shipped since" block (with file links) and a tighter "Still open" list capturing the genuine remaining gaps: no `MqttTransport.update_token()` hot-swap, conformance harness doesn't yet exercise telemetry/location/token-revoke, and Sprint 17c broker-side mTLS rollout is still planned.

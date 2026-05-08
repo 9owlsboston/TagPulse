@@ -298,14 +298,31 @@ first `azd up` of any new env; idempotent on re-run.
 scripts/azd-job.sh dev smoke_setup.py -- \
   --full --with-roles --with-subject-telemetry --regenerate-key
 
-# 2. Pull the freshly-rotated admin key from KV (the job's --key-vault-name
+# 2. Grant yourself read access to the deployment KV (one-time per operator
+#    per env). The api/worker UAMIs and the tools-job UAMI get their KV roles
+#    at provision time, but Bicep deliberately doesn't pin a human principal
+#    so the same template works for any operator. Idempotent — no-op if the
+#    role assignment already exists. Default role is "Key Vault Secrets User"
+#    (read-only); pass `--role "Key Vault Secrets Officer"` if you also need
+#    to write/rotate from your laptop.
+#
+#    On envs where Sprint 23-B network hardening has set
+#    publicNetworkAccess=Disabled on the KV (you'll see "ForbiddenByConnection
+#    / Public network access is disabled" from `az keyvault secret show`),
+#    add `--allow-my-ip` to flip publicNetworkAccess→Enabled with
+#    defaultAction=Deny + your current IP allowlisted. Run again with
+#    `--revoke-my-ip` when done.
+scripts/azd-grant-operator-kv.sh dev               # public-network-Enabled KV
+scripts/azd-grant-operator-kv.sh dev --allow-my-ip # public-network-Disabled KV
+
+# 3. Pull the freshly-rotated admin key from KV (the job's --key-vault-name
 #    default means the plaintext never hit Log Analytics).
 KV=$(azd env get-value keyVaultName)
 export TAGPULSE_API_KEY=$(az keyvault secret show \
   --vault-name "$KV" --name tagpulse-test-corp-admin-key \
   --query value -o tsv)
 
-# 3. Verify the api sees the tenant.
+# 4. Verify the api sees the tenant.
 API=$(azd env get-value apiFqdn)
 curl -fsS "https://$API/tenant/config" \
   -H "X-Tenant-Id: 11111111-1111-1111-1111-111111111111" \
@@ -313,7 +330,7 @@ curl -fsS "https://$API/tenant/config" \
   | jq -r '.name'
 # Expected: "Test Corp"
 
-# 4. Verify the SPA's Tenant ID login flow works.
+# 5. Verify the SPA's Tenant ID login flow works.
 #    Open https://$(azd env get-value staticWebAppHostname) → Login → "Tenant ID" tab →
 #    paste 11111111-1111-1111-1111-111111111111 + the admin key from step 2.
 #    Should land on the dashboard with the seeded subject-telemetry visible.
