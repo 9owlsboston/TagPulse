@@ -138,7 +138,9 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'POSTGRES_DB', value: postgresDatabaseName }
             { name: 'POSTGRES_USER', value: postgresAdminUsername }
             { name: 'POSTGRES_PASSWORD', secretRef: 'postgres-password' }
-            { name: 'DATABASE_URL', value: 'postgresql+asyncpg://${postgresAdminUsername}:$(POSTGRES_PASSWORD)@${postgresFqdn}:5432/${postgresDatabaseName}?sslmode=require' }
+            // asyncpg uses `ssl=require`, not libpq's `sslmode=require` (the latter raises
+            // `TypeError: connect() got an unexpected keyword argument 'sslmode'`).
+            { name: 'DATABASE_URL', value: 'postgresql+asyncpg://${postgresAdminUsername}:$(POSTGRES_PASSWORD)@${postgresFqdn}:5432/${postgresDatabaseName}?ssl=require' }
             { name: 'MQTT_BROKER_URL', value: mqttBrokerUrl }
             { name: 'MQTT_USERNAME', value: mqttUsername }
             { name: 'MQTT_PASSWORD', secretRef: 'mqtt-password' }
