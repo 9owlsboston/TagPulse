@@ -138,10 +138,23 @@ if [[ $ALLOW_MY_IP -eq 1 ]]; then
     MY_IP="$IP_OVERRIDE"
     echo "==> Using --ip override: $MY_IP"
   else
-    MY_IP="$(curl -fsS https://api.ipify.org || true)"
+    # Probe KV to learn what IP Azure ACTUALLY sees. api.ipify.org reports
+    # the laptop's source IP, which differs from Azure's view when traffic
+    # egresses via Cloud Shell, an Azure VM, or a corporate proxy in Azure.
+    # The KV firewall only allowlists what Azure sees.
+    echo "==> Probing KV to discover the source IP Azure sees..."
+    PROBE_ERR="$(az keyvault secret list --vault-name "$KV_NAME" --maxresults 1 -o none 2>&1 || true)"
+    MY_IP="$(echo "$PROBE_ERR" | grep -oE 'Client address: [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $3}')"
+    if [[ -z "$MY_IP" ]]; then
+      # Vault is reachable already (no ForbiddenByFirewall) — fall back to ipify.
+      MY_IP="$(curl -fsS https://api.ipify.org || true)"
+      [[ -n "$MY_IP" ]] && echo "    KV probe didn't reveal an IP (already reachable?); using api.ipify.org: $MY_IP"
+    else
+      echo "    Azure sees: $MY_IP"
+    fi
   fi
   if [[ -z "$MY_IP" ]]; then
-    echo "error: could not detect public IP via api.ipify.org (pass --ip <addr> explicitly)" >&2
+    echo "error: could not determine source IP. Pass --ip <addr> explicitly." >&2
     exit 1
   fi
   echo "==> Allow my IP ($MY_IP) on KV firewall"
