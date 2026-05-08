@@ -27,6 +27,7 @@ from tagpulse.api.routes.metrics import router as metrics_router
 from tagpulse.api.routes.provisioning import router as provisioning_router
 from tagpulse.api.routes.query import router as query_router
 from tagpulse.api.routes.rules import router as rules_router
+from tagpulse.api.routes.security import router as security_router
 from tagpulse.api.routes.sites_zones import router as sites_zones_router
 from tagpulse.api.routes.telemetry import router as telemetry_router
 from tagpulse.api.routes.telemetry_models import router as telemetry_models_router
@@ -75,10 +76,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Sprint 22 A3: warn loudly when geofence evaluation is off in a
     # non-dev environment. Operators can still flip the flag at runtime;
     # this is just a "did you mean to leave this off?" guardrail.
-    if (
-        settings.environment != "dev"
-        and not settings.geofence_evaluation_enabled
-    ):
+    if settings.environment != "dev" and not settings.geofence_evaluation_enabled:
         logger.warning(
             "geofence_evaluation_enabled is False in environment=%s; "
             "zone.entered/exited/dwell rules will not fire. "
@@ -120,13 +118,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             usage_meter=usage_meter,
         )
         await event_bus.subscribe(Topic.TAG_READ_CREATED, evaluator.on_tag_read)
-        await event_bus.subscribe(
-            Topic.SUBJECT_ZONE_CHANGED, evaluator.on_subject_zone_changed
-        )
+        await event_bus.subscribe(Topic.SUBJECT_ZONE_CHANGED, evaluator.on_subject_zone_changed)
         # Sprint 20: subject-scoped telemetry threshold rules.
-        await event_bus.subscribe(
-            Topic.TELEMETRY_RECORDED, evaluator.on_telemetry_recorded
-        )
+        await event_bus.subscribe(Topic.TELEMETRY_RECORDED, evaluator.on_telemetry_recorded)
 
         # Inventory rule worker — periodic scans for stock.below_threshold and
         # stock.expiring_within rules + daily stock_items_active metering snapshot.
@@ -143,9 +137,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # dwell state survives restart and is shared across workers.
         dwell_tracker = DwellTracker(session_factory=async_session_factory)
         await dwell_tracker.hydrate()
-        await event_bus.subscribe(
-            Topic.SUBJECT_ZONE_CHANGED, dwell_tracker.on_subject_zone_changed
-        )
+        await event_bus.subscribe(Topic.SUBJECT_ZONE_CHANGED, dwell_tracker.on_subject_zone_changed)
         dwell_worker = DwellWorker(
             session_factory=async_session_factory,
             event_bus=event_bus,
@@ -160,9 +152,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Alert delivery — subscribes to alert triggered events
         alert_delivery = AlertDeliveryService()
         await alert_delivery.start()
-        await event_bus.subscribe(
-            Topic.ALERT_TRIGGERED, alert_delivery.on_alert_triggered
-        )
+        await event_bus.subscribe(Topic.ALERT_TRIGGERED, alert_delivery.on_alert_triggered)
         app.state.alert_delivery = alert_delivery
 
         # Analytics modules
@@ -195,9 +185,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # MQTT subscriber background task (worker process only)
     if settings.workers_inline and settings.mqtt_broker_host:
-        mqtt_task = asyncio.create_task(
-            _run_mqtt_subscriber(event_bus, usage_meter)
-        )
+        mqtt_task = asyncio.create_task(_run_mqtt_subscriber(event_bus, usage_meter))
         logger.info("MQTT subscriber task started")
 
     yield
@@ -221,9 +209,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await event_bus.drain(timeout=10.0)
 
 
-async def _run_mqtt_subscriber(
-    event_bus: AsyncEventBus, usage_meter: UsageMeter
-) -> None:
+async def _run_mqtt_subscriber(event_bus: AsyncEventBus, usage_meter: UsageMeter) -> None:
     """Run MQTT subscriber with per-message sessions to avoid stale ORM state."""
     subscriber = MqttSubscriber(
         host=settings.mqtt_broker_host,
@@ -253,13 +239,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_credentials=True,
-    allow_methods=[
-        m.strip() for m in settings.cors_allow_methods.split(",") if m.strip()
-    ],
-    allow_headers=[
-        h.strip() for h in settings.cors_allow_headers.split(",") if h.strip()
-    ],
+    allow_methods=[m.strip() for m in settings.cors_allow_methods.split(",") if m.strip()],
+    allow_headers=[h.strip() for h in settings.cors_allow_headers.split(",") if h.strip()],
     expose_headers=["X-Request-ID"],
+    # Sprint 25 A2: cache OPTIONS preflight responses on the browser to cut
+    # cold-tab first-paint-to-login latency. See Settings.cors_preflight_max_age_seconds.
+    max_age=settings.cors_preflight_max_age_seconds,
 )
 
 # Sprint 22 A4: global per-(tenant, route_class) rate limiter. Bypass list
@@ -344,6 +329,7 @@ async def usage_metering_middleware(
 
 app.include_router(health_router)
 app.include_router(metrics_router)
+app.include_router(security_router)
 app.include_router(auth_router)
 app.include_router(ingestion_router)
 app.include_router(devices_router)

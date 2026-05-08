@@ -43,9 +43,20 @@ class Settings(BaseSettings):
     # the explicit list TagPulse actually uses (was ``["*"]``). --
     cors_origins: str = "http://localhost:5173"
     cors_allow_methods: str = "GET,POST,PATCH,PUT,DELETE,OPTIONS"
-    cors_allow_headers: str = (
-        "Authorization,Content-Type,X-Tenant-ID,X-Request-ID,X-API-Key"
-    )
+    cors_allow_headers: str = "Authorization,Content-Type,X-Tenant-ID,X-Request-ID,X-API-Key"
+    # Sprint 25 A2: CORS preflight max-age. The SPA fires an OPTIONS preflight
+    # before the first call from any new tab; caching it for 600s shaves
+    # 60-80ms off the first-paint-to-login-button time on cold tabs. Default 0
+    # in dev so the Vite proxy doesn't fight us; validator forces 600 in non-
+    # dev when left at 0 (explicit non-zero values survive untouched).
+    cors_preflight_max_age_seconds: int = 0
+
+    # Sprint 25 A1: build identity surfaced on /health/live for SPA polling.
+    # ``build_version`` should be the short git SHA; ``build_time`` an ISO-8601
+    # UTC timestamp. The Dockerfile populates both via build args; dev keeps
+    # the sentinels.
+    build_version: str = "dev"
+    build_time: str = "unknown"
 
     jwt_secret: str = _DEV_JWT_SECRET
     jwt_expiry_seconds: int = 3600
@@ -118,9 +129,11 @@ class Settings(BaseSettings):
                 "comma-separated allow-list)"
             )
         if any(not o for o in origins):
-            problems.append(
-                "cors_origins contains a blank entry; check for stray commas"
-            )
+            problems.append("cors_origins contains a blank entry; check for stray commas")
+        # Sprint 25 A2: in non-dev, default the preflight max-age to 600s if it
+        # was left at 0. Explicit non-zero values (set via env) survive.
+        if self.cors_preflight_max_age_seconds == 0:
+            self.cors_preflight_max_age_seconds = 600
         if problems:
             joined = "\n  - ".join(problems)
             raise ValueError(
