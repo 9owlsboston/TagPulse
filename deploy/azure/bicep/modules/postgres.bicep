@@ -33,13 +33,13 @@ param skuTier string = 'Burstable'
 @minValue(32)
 param storageSizeGb int = 32
 
-@description('Postgres major version.')
+@description('Postgres major version. Pinned to 15 because Azure Database for PostgreSQL Flexible Server removed support for the open-source TimescaleDB extension starting with PG 16 — `CREATE EXTENSION timescaledb` on PG 16 causes the backend to terminate the connection mid-statement (asyncpg surfaces it as ConnectionDoesNotExistError). PG 15 is in active support through Nov 2027.')
 @allowed([
   '14'
   '15'
   '16'
 ])
-param postgresVersion string = '16'
+param postgresVersion string = '15'
 
 @description('Common tags.')
 param tags object = {}
@@ -106,7 +106,15 @@ resource sharedPreloadConfig 'Microsoft.DBforPostgreSQL/flexibleServers/configur
   parent: pg
   name: 'shared_preload_libraries'
   properties: {
-    value: 'timescaledb'
+    // Must include Azure Flexible Server defaults (`pg_cron`, `pg_stat_statements`)
+    // alongside `timescaledb` — this property OVERWRITES the value rather than
+    // appending. Setting it to just `timescaledb` causes Postgres to start without
+    // any of the platform-managed libraries, and `CREATE EXTENSION timescaledb`
+    // then drops the client connection mid-statement (asyncpg surfaces it as
+    // `ConnectionDoesNotExistError: connection was closed in the middle of operation`).
+    // shared_preload_libraries is a static GUC; the Flex server requires a restart
+    // for changes to take effect.
+    value: 'pg_cron,pg_stat_statements,timescaledb'
     source: 'user-override'
   }
   dependsOn: [

@@ -38,33 +38,35 @@ write path introduced in Sprint 18:
    migration in its own transaction by default, so we use
    ``AUTOCOMMIT`` for the cagg DDL via ``op.get_context().autocommit_block``.
 """
+
 from __future__ import annotations
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects.postgresql import JSONB
 
 # revision identifiers, used by Alembic
 revision: str = "031"
-down_revision: Union[str, None] = "030"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "030"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     # ------------------------------------------------------------------
     # 1) tenants.telemetry_subject_kinds
+    #
+    # Use raw SQL with IF NOT EXISTS so this migration is idempotent.
+    # The continuous-aggregate DDL below runs in an ``autocommit_block``
+    # which COMMITs the migration's transaction on entry, meaning a
+    # partial failure inside the cagg block can leave this column
+    # already added without the alembic version row being bumped.
     # ------------------------------------------------------------------
-    op.add_column(
-        "tenants",
-        sa.Column(
-            "telemetry_subject_kinds",
-            JSONB,
-            nullable=False,
-            server_default=sa.text("'[\"device\"]'::jsonb"),
-        ),
+    op.execute(
+        "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS "
+        "telemetry_subject_kinds JSONB NOT NULL "
+        "DEFAULT '[\"device\"]'::jsonb"
     )
 
     # ------------------------------------------------------------------
@@ -83,7 +85,29 @@ def upgrade() -> None:
     # themselves do not need a separate RLS policy as a defence in
     # depth — the policy on the underlying hypertable continues to gate
     # raw-row access.
+    #
     # ------------------------------------------------------------------
+    # Cloud caveat: Azure Database for PostgreSQL Flexible Server ships
+    # only the **Apache-2 edition** of TimescaleDB. Continuous
+    # aggregates are a TSL-licensed feature and the DDL hard-fails with
+    # ``FeatureNotSupportedError: functionality not supported under the
+    # current "apache" license``. We detect the active license at
+    # migration time and skip the cagg/policy DDL when it's ``apache``.
+    # The ``aggregate()`` repository method
+    # ([repositories/timescaledb/telemetry.py](../../src/tagpulse/repositories/timescaledb/telemetry.py))
+    # falls through to a live ``time_bucket()`` over the raw hypertable
+    # when the cagg view is missing, so 60s/3600s queries keep working
+    # (just slower) without the materialized view.
+    # ------------------------------------------------------------------
+    bind = op.get_bind()
+    license_kind = bind.execute(
+        sa.text("SELECT current_setting('timescaledb.license', true)")
+    ).scalar()
+    if license_kind == "apache":
+        # Apache edition (Azure Flex): skip cagg DDL — repo falls back
+        # to live time_bucket() over the raw hypertable.
+        return
+
     with op.get_context().autocommit_block():
         op.execute("ALTER TABLE telemetry_readings DISABLE ROW LEVEL SECURITY")
         op.execute(
@@ -111,7 +135,8 @@ def upgrade() -> None:
                 'cagg_telemetry_1m',
                 start_offset => INTERVAL '2 hours',
                 end_offset   => INTERVAL '1 minute',
-                schedule_interval => INTERVAL '1 minute'
+                schedule_interval => INTERVAL '1 minute',
+                if_not_exists => TRUE
             )
             """
         )
@@ -141,7 +166,8 @@ def upgrade() -> None:
                 'cagg_telemetry_1h',
                 start_offset => INTERVAL '31 days',
                 end_offset   => INTERVAL '1 hour',
-                schedule_interval => INTERVAL '15 minutes'
+                schedule_interval => INTERVAL '15 minutes',
+                if_not_exists => TRUE
             )
             """
         )
@@ -149,16 +175,19 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.get_context().autocommit_block():
-        op.execute(
-            "SELECT remove_continuous_aggregate_policy("
-            "'cagg_telemetry_1h', if_exists => TRUE)"
-        )
-        op.execute("DROP MATERIALIZED VIEW IF EXISTS cagg_telemetry_1h")
-        op.execute(
-            "SELECT remove_continuous_aggregate_policy("
-            "'cagg_telemetry_1m', if_exists => TRUE)"
-        )
-        op.execute("DROP MATERIALIZED VIEW IF EXISTS cagg_telemetry_1m")
+    bind = op.get_bind()
+    license_kind = bind.execute(
+        sa.text("SELECT current_setting('timescaledb.license', true)")
+    ).scalar()
+    if license_kind != "apache":
+        with op.get_context().autocommit_block():
+            op.execute(
+                "SELECT remove_continuous_aggregate_policy('cagg_telemetry_1h', if_exists => TRUE)"
+            )
+            op.execute("DROP MATERIALIZED VIEW IF EXISTS cagg_telemetry_1h")
+            op.execute(
+                "SELECT remove_continuous_aggregate_policy('cagg_telemetry_1m', if_exists => TRUE)"
+            )
+            op.execute("DROP MATERIALIZED VIEW IF EXISTS cagg_telemetry_1m")
 
     op.drop_column("tenants", "telemetry_subject_kinds")

@@ -4,7 +4,8 @@ Revision ID: 001
 Revises: None
 Create Date: 2026-04-25
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
@@ -12,9 +13,9 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 # revision identifiers, used by Alembic
 revision: str = "001"
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -67,9 +68,7 @@ def upgrade() -> None:
     )
 
     # -- Convert tag_reads to TimescaleDB hypertable --
-    op.execute(
-        "SELECT create_hypertable('tag_reads', 'timestamp', if_not_exists => TRUE)"
-    )
+    op.execute("SELECT create_hypertable('tag_reads', 'timestamp', if_not_exists => TRUE)")
 
 
 def downgrade() -> None:
