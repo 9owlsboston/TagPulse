@@ -28,7 +28,7 @@ two repos ship separately.
 - [ ] Backend [Phase 3a CORS step](azure-first-deploy.md#3a--add-the-swa-hostname-to-cors-sprint-24-a4)
       complete — the SWA hostname is in `CORS_ALLOW_ORIGINS` and a fresh
       `azd provision` has rolled the api revision. `curl
-      "$(azd env get-value SERVICE_API_URI)/health/ready" | jq
+      "https://$(azd env get-value apiFqdn)/health/ready" | jq
       '.config.cors.allow_origins'` must include `https://<swa-host>`.
 - [ ] UI repo cloned: `gh repo clone 9owlsboston/TagPulse-UI && cd TagPulse-UI`
 
@@ -41,10 +41,10 @@ SWA deployment token. Run from the **UI repo root**.
 
 - [ ] `scripts/ui-preflight.sh` exits 0 (node/npm/gh/az versions OK)
 - [ ] `scripts/ui-bootstrap.sh <env>` writes `.env.<env>` at mode 0600
-      with `SERVICE_API_URI`, `AZURE_TENANT_ID`,
-      `AZURE_SUBSCRIPTION_ID`, `AZURE_STATIC_WEB_APPS_NAME`,
-      `VITE_API_BASE_URL`, and the deployment token (which the script
-      pulls from this repo's `scripts/azd-ui-token.sh`)
+      with `VITE_API_BASE_URL` (= `https://$(azd env get-value apiFqdn)` from
+      the backend repo), `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
+      `AZURE_STATIC_WEB_APPS_NAME`, and the deployment token (which the
+      script pulls from this repo's `scripts/azd-ui-token.sh`)
 - [ ] `scripts/ui-env-load.sh <env>` sourced into the current shell
 
 The bootstrap helper looks for the backend repo by `$TAGPULSE_REPO`
@@ -72,9 +72,9 @@ the GHA workflow on top of it.
 - [ ] `curl -sf "https://${SWA_HOST}/" | grep -q '<div id="root">'` —
       SPA shell served
 - [ ] Open the URL in a browser; the app loads without console errors
-- [ ] `POST ${SERVICE_API_URI}/auth/login` from the SPA succeeds (open
-      DevTools → Network) — proves CORS + JWT round-trip
-- [ ] `curl "$(azd env get-value SERVICE_API_URI)/health/ready" | jq
+- [ ] `POST https://$(azd env get-value apiFqdn)/auth/login` from the
+      SPA succeeds (open DevTools → Network) — proves CORS + JWT round-trip
+- [ ] `curl "https://$(azd env get-value apiFqdn)/health/ready" | jq
       '.config.cors.allow_origins'` includes the deployed SWA hostname
       (Sprint 24 A2)
 - [ ] App Insights → **Page views** — the SPA emits `pageView` telemetry

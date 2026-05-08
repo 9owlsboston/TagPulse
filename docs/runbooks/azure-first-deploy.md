@@ -50,7 +50,7 @@ For each new environment (`dev` / `staging` / `prod`), run **once**:
   - [ ] Provision phase prints `✓ Done` for resource group + workload module
   - [ ] Build phase pushes `tagpulse-{api,worker,migrations}:azd-deploy-…` to ACR
   - [ ] Postdeploy hook reports `Migrations execution: …  Succeeded`
-  - [ ] Final output shows `SERVICE_API_URI = https://tagpulse-api.<random>.<region>.azurecontainerapps.io`
+  - [ ] Final output shows `apiFqdn = tpdev-api.<random>.<region>.azurecontainerapps.io` (azd auto-promotes this Bicep output into env values; `https://$(azd env get-value apiFqdn)` is the canonical api URL going forward — `SERVICE_API_URI` is printed at deploy time but not persisted by azd for the `containerapp` host)
   - [ ] _Self-healing note:_ the `preprovision` hook auto-recovers any soft-deleted Key Vault matching this env's prefix, so re-running `azd up` after a teardown does **not** require purging or renaming. See [`scripts/azd-kv-recover.sh`](../../scripts/azd-kv-recover.sh).
   - [ ] _Sprint 23 note:_ the broker config + password are now baked into the [`tagpulse-mqtt`](../../docker/mosquitto.Dockerfile) image (built into ACR by [`scripts/azd-mqtt-build.sh`](../../scripts/azd-mqtt-build.sh)). **No post-`azd up` MQTT bootstrap step is required.** First `azd up` runs the broker on a placeholder image; second `azd up` (after the build has populated `tagpulse-mqtt:<tag>` in ACR) provisions the ACI on the real image.
   - [ ] _Subscription with corporate `allowSharedKeyAccess` policy?_ Sprint 23 Phase A is mandatory — Sprint 22's Azure Files volume mount cannot satisfy a `Modify`-mode policy and the broker will fail with `CannotAccessStorageAccount`.
@@ -59,8 +59,10 @@ For each new environment (`dev` / `staging` / `prod`), run **once**:
 
 ## Phase 3 — Post-deploy smoke tests
 
-- [ ] `curl "$(azd env get-value SERVICE_API_URI)/health/live"` → `{"status":"alive"}`
-- [ ] `curl "$(azd env get-value SERVICE_API_URI)/health/ready" | jq` →
+> The api URL is `https://$(azd env get-value apiFqdn)`. Export it once for the rest of the phase: `API=https://$(azd env get-value apiFqdn)`.
+
+- [ ] `curl "$API/health/live"` → `{"status":"alive"}`
+- [ ] `curl "$API/health/ready" | jq` →
   - [ ] `status: "ready"`
   - [ ] `checks.db == "ok"`
   - [ ] `checks.migrations.match == true`
@@ -68,7 +70,7 @@ For each new environment (`dev` / `staging` / `prod`), run **once**:
   - [ ] `config.environment` matches `TAGPULSE_ENVIRONMENT` from your `.env.<env>`
   - [ ] `config.strict_migration_check == true` for staging/prod
   - [ ] `config.cors.allow_origins` contains the SWA hostname (see CORS step below; will be empty until Sprint 24 wiring lands)
-- [ ] `TAGPULSE_API_URL=$(azd env get-value SERVICE_API_URI) python scripts/smoke_setup.py --full` exits 0
+- [ ] `TAGPULSE_API_URL="$API" python scripts/smoke_setup.py --full` exits 0
 - [ ] App Insights receiving traces:
   - [ ] Open the App Insights resource → **Transaction search** → confirm `GET /health/ready` spans appear within 2 minutes of the smoke test
 - [ ] Worker is processing:
@@ -87,7 +89,7 @@ first browser session sees a wall of CORS errors.
 
 ```bash
 SWA_HOST=$(azd env get-value staticWebAppHostname)
-API_HOST=$(azd env get-value SERVICE_API_URI | sed 's|^https\?://||')
+API_HOST=$(azd env get-value apiFqdn)
 
 # Append, don't overwrite — keep localhost for dev iteration.
 CURRENT=$(grep -E '^CORS_ORIGINS=' deploy/azure/.env.<env> | cut -d= -f2-)
@@ -98,7 +100,7 @@ scripts/azd-env-load.sh <env>
 azd provision     # pushes the new origin list into the api revision
 ```
 
-Verify: `curl "$(azd env get-value SERVICE_API_URI)/health/ready" | jq '.config.cors.allow_origins'`
+Verify: `curl "https://$(azd env get-value apiFqdn)/health/ready" | jq '.config.cors.allow_origins'`
 should now include `https://<swa-host>`.
 
 ---

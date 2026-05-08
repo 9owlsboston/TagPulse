@@ -23,7 +23,7 @@ Non-goals (deferred per [ADR-018 §5](../adr/018-frontend-cloud-deployment.md)):
 │     - api/worker/migs    │         │     via deployment token │
 │     - SWA (empty)        │         │                          │
 │     - outputs:           │ ──────▶ │ env file consumed:       │
-│       SERVICE_API_URI    │  CI/CD  │   AZURE_STATIC_WEB_APPS_*│
+│       apiFqdn            │  CI/CD  │   AZURE_STATIC_WEB_APPS_*│
 │       SWA hostname       │  vars   │   VITE_API_BASE_URL      │
 │       SWA api token      │         │                          │
 │                          │ ◀────── │ SWA hostname pasted into │
@@ -61,7 +61,7 @@ Non-goals (deferred per [ADR-018 §5](../adr/018-frontend-cloud-deployment.md)):
 
 | Direction | Value | How produced | How consumed |
 |---|---|---|---|
-| TagPulse → UI | `VITE_API_BASE_URL` | `azd env get-value SERVICE_API_URI` | Build-time env var; baked into bundle |
+| TagPulse → UI | `VITE_API_BASE_URL` | `https://$(azd env get-value apiFqdn)` (Bicep output, auto-promoted to azd env values) | Build-time env var; baked into bundle |
 | TagPulse → UI | `AZURE_STATIC_WEB_APPS_API_TOKEN` | `az staticwebapp secrets list … apiKey` | GHA secret in UI repo's Environment |
 | UI → TagPulse | SWA hostname (`<id>.azurestaticapps.net`) | `azd env get-value AZURE_STATIC_WEB_APPS_HOSTNAME` | Pasted into `CORS_ALLOW_ORIGINS` in this repo's `.env.<env>` |
 
@@ -109,7 +109,7 @@ The Vite `dist/` output is identical across all three. Only the upload step diff
 - `azd up` from this repo lands an SWA whose `appsettings.VITE_API_BASE_URL` matches the deployed api FQDN (already shipped Sprint 22 C-1; re-verify in this sprint).
 - `scripts/ui-bootstrap.sh dev` in TagPulse-UI generates a complete `.env.dev` from a freshly-deployed backend with no manual editing.
 - `scripts/ui-cicd-setup.sh dev` followed by a `git push origin main` in TagPulse-UI lands a real SPA bundle on `https://tpdev-ui.<random>.azurestaticapps.net` within 5 minutes.
-- The deployed SPA can hit `${SERVICE_API_URI}/auth/login` and reach the dashboard (= CORS configured correctly + JWT round-trip works).
+- The deployed SPA can hit `https://${apiFqdn}/auth/login` and reach the dashboard (= CORS configured correctly + JWT round-trip works).
 - `docs/runbooks/ui-first-deploy.md` walks a fresh operator end-to-end without any external context.
 - `deploy/aws/ui/README.md` + `deploy/gcp/ui/README.md` exist with provider-mapping tables and `# TODO` stubs (no implementation).
 - No regression in the Sprint 22 backend deploy path — running `azd up` without ever touching the UI repo continues to work; the SWA just serves its empty placeholder.
