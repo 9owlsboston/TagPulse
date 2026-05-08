@@ -696,7 +696,7 @@ All tasks land in this repo (`9owlsboston/TagPulse`). No UI work.
 | A — Image | 2 | `COPY scripts/` into the base stage; pin `BUILD_VERSION` to surface in `--version`-able scripts |
 | B — Bicep | 2 | New `tools-job.bicep` module + workload wiring; same VNet, secrets, and identity as `tpdev-migrations` |
 | C — Wrapper script | 2 | `scripts/azd-job.sh` (start a job with arbitrary command/args + tail logs); operator runbook |
-| D — First-class tasks | 2 | Smoke-test the seed-tenant path end-to-end; CI smoke that the tools image still imports `scripts/smoke_setup.py` |
+| D — First-class tasks | 3 | Smoke-test the seed-tenant path end-to-end; CI smoke that the tools image still imports `scripts/smoke_setup.py`; Key Vault push so plaintext keys never hit Log Analytics |
 
 **Order of operations:** A1 → B1 → B2 → C1 unblocks the first real run. D1/D2 prove the contract. A2/C2 are documentation polish that can land any time.
 
@@ -734,7 +734,8 @@ All tasks land in this repo (`9owlsboston/TagPulse`). No UI work.
 ### Phase D — First-class tasks + CI smoke (this repo, `[backend]`)
 
 - [planned] **D1** `[backend]` **End-to-end seed-tenant smoke after `azd up`.** New section in [docs/runbooks/azure-first-deploy.md](runbooks/azure-first-deploy.md) Phase 4 (Post-Deploy): after migrations succeed, run `scripts/azd-job.sh <env> smoke_setup.py -- --full --with-roles --with-subject-telemetry --regenerate-key`, then verify with two curls — `GET /tenant/config` against the seeded tenant returns 200 with `name: "Test Corp"`, and the SPA login form's **Tenant ID** tab now succeeds with `11111111-…`. Closes the Sprint 25 follow-up gap that PR #10 (UI) only patched the symptom of.
-- [planned] **D2** `[backend]` **CI smoke that the tools image still works.** New step in `.github/workflows/build-and-push.yml` after the api image build: `docker run --rm --entrypoint python <image> -c "import scripts.smoke_setup, scripts.simulate_devices, scripts.simulate_assets, scripts.simulate_inventory; print('OK')"`. Catches the embarrassing failure mode where someone moves a script under a subdirectory and the Bicep wrapper still tries to invoke it.
+- [planned] **D2** `[backend]` **CI smoke that the tools image still works.** New step in `.github/workflows/build-and-push.yml` after the api image build: `docker run --rm --entrypoint python <image> -c "import scripts.smoke_setup, scripts.simulate_devices, scripts.simulate_assets, scripts.simulate_inventory; print('OK')'"`. Catches the embarrassing failure mode where someone moves a script under a subdirectory and the Bicep wrapper still tries to invoke it.
+- [in-progress] **D3** `[backend]` **`smoke_setup.py --key-vault-name <vault>` pushes plaintext keys to Key Vault instead of stdout.** When the flag is set (or `$TAGPULSE_SMOKE_KEY_VAULT_NAME` is exported), each freshly issued admin/role API key is written to KV as `tagpulse-<tenant-slug>-<role>-key` via `azure-keyvault-secrets` + `DefaultAzureCredential`; the script's stdout shows only the vault + secret name + version (no plaintext, no `export TAGPULSE_API_KEY=…` line). The end-of-run hint becomes `export TAGPULSE_API_KEY=$(az keyvault secret show --vault-name … --name … --query value -o tsv)` so an operator with `Key Vault Secrets User` can still pick the key up. Closes the Sprint 25 leak path where the tools-job's stdout (and therefore Log Analytics, retention 90 days) would carry the plaintext admin key. **Bicep follow-up (lands with B1):** the tools-job's user-assigned managed identity gets `Key Vault Secrets Officer` on the env's vault. Until B1 lands, the flag works from a developer laptop with `az login`. Implementation in [scripts/smoke_setup.py](../scripts/smoke_setup.py); deps added to the `azure` optional-extra in [pyproject.toml](../pyproject.toml).
 
 ### Acceptance criteria
 
@@ -748,7 +749,7 @@ All tasks land in this repo (`9owlsboston/TagPulse`). No UI work.
 ### Risks & mitigations
 
 - **Risk:** the tools job runs the *deployed* image, so local edits to `scripts/smoke_setup.py` don't take effect until the next `azd deploy`. **Mitigation:** wrapper refuses to run with a dirty tree + un-pushed commits unless `--allow-stale` is passed; runbook calls this out in bold.
-- **Risk:** stdout in the job's container includes the freshly-rotated admin API key, which then lives in Log Analytics for the workspace's retention period (90 days). **Mitigation:** documented in the runbook; the operator who ran the rotation is the only one with access to the log workspace anyway. Sprint 27+ could add a `--no-print-key` flag to `smoke_setup.py` and instead push the key into Key Vault directly.
+- **Risk:** stdout in the job's container includes the freshly-rotated admin API key, which then lives in Log Analytics for the workspace's retention period (90 days). **Mitigation:** D3 — pass `--key-vault-name` (the runbook makes this the default for any non-laptop run) so the plaintext goes to KV and stdout only carries vault + secret coordinates. The runbook's tools-job examples all set the flag; the only path that still prints plaintext is intentional local dev.
 - **Risk:** someone runs `scripts/load_test.py` via the wrapper and saturates the api's egress. **Mitigation:** runbook's "what NOT to run" section + Sprint 27+ optional allow-list of script names in the wrapper.
 
 ### Deferred to Sprint 27+
