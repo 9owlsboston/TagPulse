@@ -23,6 +23,7 @@ Usage:
 
 The script is **safe to re-run** — it never deletes data, only upserts.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -50,9 +51,7 @@ DEFAULT_ADMIN_EMAIL = "admin@example.com"
 DEFAULT_ADMIN_NAME = "Admin"
 
 
-async def upsert_tenant(
-    conn: asyncpg.Connection, tenant_id: UUID, slug: str, name: str
-) -> None:
+async def upsert_tenant(conn: asyncpg.Connection, tenant_id: UUID, slug: str, name: str) -> None:
     await conn.execute(
         """
         INSERT INTO tenants (id, name, slug, plan, status, tracking_modes)
@@ -89,8 +88,7 @@ async def upsert_role_user(
         raise ValueError(f"unsupported role: {role!r}")
 
     row = await conn.fetchrow(
-        "SELECT id, api_key_hash FROM users "
-        "WHERE tenant_id = $1 AND email = $2",
+        "SELECT id, api_key_hash FROM users WHERE tenant_id = $1 AND email = $2",
         tenant_id,
         email,
     )
@@ -140,6 +138,47 @@ async def upsert_role_user(
     return None, False
 
 
+def _kv_secret_name(tenant_slug: str, role: str) -> str:
+    """Derive the Key Vault secret name for a given tenant + role.
+
+    Format: ``tagpulse-<tenant-slug>-<role>-key``. KV secret names must
+    match ``[A-Za-z0-9-]{1,127}``; we assume the tenant slug already
+    satisfies that (the API enforces it on tenant creation).
+    """
+    return f"tagpulse-{tenant_slug}-{role}-key"
+
+
+def push_key_to_keyvault(
+    vault_name: str,
+    secret_name: str,
+    api_key: str,
+) -> str:
+    """Push an API key to Azure Key Vault, return the secret's version id.
+
+    Imports are lazy so the script keeps running in pure-local dev where
+    the optional ``azure`` extra isn't installed. Auth is via
+    ``DefaultAzureCredential`` — when run inside the planned tools-job
+    (Sprint 26 B1), that resolves to the job's managed identity, which
+    must have ``Key Vault Secrets Officer`` on the target vault.
+    """
+    try:
+        from azure.identity import DefaultAzureCredential
+        from azure.keyvault.secrets import SecretClient
+    except ImportError as exc:  # pragma: no cover - exercised via CLI
+        raise SystemExit(
+            "azure-identity / azure-keyvault-secrets not installed. "
+            "Reinstall with `pip install -e .[azure]` or use the api "
+            "image (which ships the extra by default)."
+        ) from exc
+
+    vault_url = f"https://{vault_name}.vault.azure.net"
+    client = SecretClient(vault_url=vault_url, credential=DefaultAzureCredential())
+    secret = client.set_secret(secret_name, api_key)
+    # ``secret.id`` looks like ``https://<vault>/secrets/<name>/<version>`` —
+    # operators only ever care about the trailing version segment.
+    return secret.id.rsplit("/", 1)[-1] if secret.id else "unknown"
+
+
 def _api_headers(tenant_id: UUID, api_key: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {api_key}",
@@ -148,9 +187,7 @@ def _api_headers(tenant_id: UUID, api_key: str) -> dict[str, str]:
     }
 
 
-def enable_asset_tracking(
-    client: httpx.Client, tenant_id: UUID, api_key: str
-) -> list[str]:
+def enable_asset_tracking(client: httpx.Client, tenant_id: UUID, api_key: str) -> list[str]:
     headers = _api_headers(tenant_id, api_key)
     cfg = client.get(f"{API_URL}/tenant/config", headers=headers)
     cfg.raise_for_status()
@@ -198,9 +235,7 @@ def enable_subject_telemetry(
     return list(resp.json().get("telemetry_subject_kinds", target))
 
 
-def assert_legacy_telemetry_models_410(
-    client: httpx.Client, tenant_id: UUID, api_key: str
-) -> bool:
+def assert_legacy_telemetry_models_410(client: httpx.Client, tenant_id: UUID, api_key: str) -> bool:
     """Sprint 21 deprecation cutover: the legacy
     ``GET /telemetry-models/{device_type}`` endpoint must return 410 Gone.
     Probes with a synthetic device_type and reports the result.
@@ -256,9 +291,7 @@ def ensure_site_and_zones(
     sites = client.get(f"{API_URL}/sites", headers=headers)
     sites.raise_for_status()
     site_name = "Bay Area HQ"
-    site = next(
-        (s for s in sites.json() if s["name"] == site_name), None
-    )
+    site = next((s for s in sites.json() if s["name"] == site_name), None)
     if site is None:
         resp = client.post(
             f"{API_URL}/sites",
@@ -303,10 +336,7 @@ def ensure_site_and_zones(
             geofence_zone_id = resp.json()["id"]
             print(f"  Created geofence zone: {geo_name} ({geofence_zone_id})")
         else:
-            print(
-                f"  FAILED to create geofence zone: "
-                f"{resp.status_code} {resp.text}"
-            )
+            print(f"  FAILED to create geofence zone: {resp.status_code} {resp.text}")
 
     # -- Reader-bound zone (best-effort, only if a Sim-Reader exists) --
     reader_zone_id: str | None = None
@@ -316,17 +346,12 @@ def ensure_site_and_zones(
         params={"limit": 1000},
     )
     if devices.status_code == 200:
-        sim_readers = [
-            d for d in devices.json() if d.get("name", "").startswith("Sim-Reader-")
-        ]
+        sim_readers = [d for d in devices.json() if d.get("name", "").startswith("Sim-Reader-")]
         if sim_readers:
             rb_name = "Sim-Reader-01 Dock"
             if rb_name in by_name:
                 reader_zone_id = by_name[rb_name]["id"]
-                print(
-                    f"  Reusing reader-bound zone: "
-                    f"{rb_name} ({reader_zone_id})"
-                )
+                print(f"  Reusing reader-bound zone: {rb_name} ({reader_zone_id})")
             else:
                 resp = client.post(
                     f"{API_URL}/zones",
@@ -341,10 +366,7 @@ def ensure_site_and_zones(
                 )
                 if resp.status_code == 201:
                     reader_zone_id = resp.json()["id"]
-                    print(
-                        f"  Created reader-bound zone: "
-                        f"{rb_name} ({reader_zone_id})"
-                    )
+                    print(f"  Created reader-bound zone: {rb_name} ({reader_zone_id})")
 
     return site["id"], geofence_zone_id, reader_zone_id
 
@@ -366,22 +388,16 @@ def ensure_telemetry_model(
         "humidity",
         "battery_pct",
     }
-    existing = client.get(
-        f"{API_URL}/telemetry-models/rfid_reader", headers=headers
-    )
+    existing = client.get(f"{API_URL}/telemetry-models/rfid_reader", headers=headers)
     if existing.status_code == 200:
-        existing_names = {
-            m["name"] for m in existing.json().get("metrics", [])
-        }
+        existing_names = {m["name"] for m in existing.json().get("metrics", [])}
         if existing_names >= desired_metric_names:
             print("  Reusing telemetry model: rfid_reader")
             return True
         # Metrics drift (e.g. older smoke runs missed `temperature_c`).
         # Recreate so sensor-tag readings stop landing in quarantine.
         model_id = existing.json()["id"]
-        client.delete(
-            f"{API_URL}/telemetry-models/{model_id}", headers=headers
-        )
+        client.delete(f"{API_URL}/telemetry-models/{model_id}", headers=headers)
         print(
             "  Recreating telemetry model rfid_reader to add: "
             f"{sorted(desired_metric_names - existing_names)}"
@@ -431,10 +447,7 @@ def ensure_telemetry_model(
     if resp.status_code == 201:
         print("  Created telemetry model: rfid_reader (4 metrics)")
         return True
-    print(
-        f"  FAILED to create telemetry model: "
-        f"{resp.status_code} {resp.text}"
-    )
+    print(f"  FAILED to create telemetry model: {resp.status_code} {resp.text}")
     return False
 
 
@@ -474,8 +487,7 @@ def ensure_rules(
         wanted.append(
             {
                 "name": "Asset entered Bay Area West Block",
-                "description": "Notification when any asset enters the "
-                "smoke-test geofence.",
+                "description": "Notification when any asset enters the smoke-test geofence.",
                 "condition_type": "zone.entered",
                 "condition_config": {
                     "zone_id": geofence_zone_id,
@@ -489,8 +501,7 @@ def ensure_rules(
         wanted.append(
             {
                 "name": "Asset exited Bay Area West Block",
-                "description": "Notification when any asset leaves the "
-                "smoke-test geofence.",
+                "description": "Notification when any asset leaves the smoke-test geofence.",
                 "condition_type": "zone.exited",
                 "condition_config": {
                     "zone_id": geofence_zone_id,
@@ -513,10 +524,7 @@ def ensure_rules(
             print(f"  Created rule: {spec['name']}")
             count += 1
         else:
-            print(
-                f"  FAILED to create rule '{spec['name']}': "
-                f"{resp.status_code} {resp.text}"
-            )
+            print(f"  FAILED to create rule '{spec['name']}': {resp.status_code} {resp.text}")
     return count
 
 
@@ -528,21 +536,14 @@ def _find_binding_holder(
     """Return the asset id that currently holds an active binding for
     ``binding_value`` (across all assets in the tenant), or None if no
     holder is found."""
-    resp = client.get(
-        f"{API_URL}/assets", headers=headers, params={"limit": 1000}
-    )
+    resp = client.get(f"{API_URL}/assets", headers=headers, params={"limit": 1000})
     resp.raise_for_status()
     for asset in resp.json():
-        b_resp = client.get(
-            f"{API_URL}/assets/{asset['id']}/bindings", headers=headers
-        )
+        b_resp = client.get(f"{API_URL}/assets/{asset['id']}/bindings", headers=headers)
         if b_resp.status_code != 200:
             continue
         for b in b_resp.json():
-            if (
-                b.get("unbound_at") is None
-                and b.get("binding_value") == binding_value
-            ):
+            if b.get("unbound_at") is None and b.get("binding_value") == binding_value:
                 return str(asset["id"])
     return None
 
@@ -563,9 +564,7 @@ def ensure_assets_with_bindings(
     headers = _api_headers(tenant_id, api_key)
 
     # Existing assets by name.
-    resp = client.get(
-        f"{API_URL}/assets", headers=headers, params={"limit": 1000}
-    )
+    resp = client.get(f"{API_URL}/assets", headers=headers, params={"limit": 1000})
     resp.raise_for_status()
     existing = {a["name"]: a for a in resp.json()}
 
@@ -587,24 +586,18 @@ def ensure_assets_with_bindings(
                 },
             )
             if create.status_code != 201:
-                print(
-                    f"  FAILED to create {name}: "
-                    f"{create.status_code} {create.text}"
-                )
+                print(f"  FAILED to create {name}: {create.status_code} {create.text}")
                 continue
             asset = create.json()
             print(f"  Created asset: {name} ({asset['id']})")
 
         # Skip binding if already present.
-        existing_bindings = client.get(
-            f"{API_URL}/assets/{asset['id']}/bindings", headers=headers
-        )
+        existing_bindings = client.get(f"{API_URL}/assets/{asset['id']}/bindings", headers=headers)
         existing_bindings.raise_for_status()
         active = [
             b
             for b in existing_bindings.json()
-            if b.get("unbound_at") is None
-            and b.get("binding_value") == binding_value
+            if b.get("unbound_at") is None and b.get("binding_value") == binding_value
         ]
         if active:
             print(f"    Binding already present: {binding_value}")
@@ -625,18 +618,10 @@ def ensure_assets_with_bindings(
             # binding_value is already actively bound to *another* asset
             # (likely from an earlier smoke run with a different asset
             # layout). Find the holder, unbind it, and retry once.
-            print(
-                f"    {binding_value} is bound elsewhere — "
-                "stealing it back"
-            )
-            holder_id = _find_binding_holder(
-                client, headers, binding_value
-            )
+            print(f"    {binding_value} is bound elsewhere — stealing it back")
+            holder_id = _find_binding_holder(client, headers, binding_value)
             if holder_id is None:
-                print(
-                    f"    FAILED: 409 but couldn't locate holder of "
-                    f"{binding_value}"
-                )
+                print(f"    FAILED: 409 but couldn't locate holder of {binding_value}")
                 continue
             unbind = client.delete(
                 f"{API_URL}/assets/{holder_id}/bindings/{binding_value}",
@@ -660,21 +645,15 @@ def ensure_assets_with_bindings(
             if retry.status_code in (200, 201):
                 print(f"    Bound → {binding_value} (after steal)")
             else:
-                print(
-                    f"    FAILED to rebind {binding_value}: "
-                    f"{retry.status_code} {retry.text}"
-                )
+                print(f"    FAILED to rebind {binding_value}: {retry.status_code} {retry.text}")
         else:
-            print(
-                f"    FAILED to bind {binding_value}: "
-                f"{bind.status_code} {bind.text}"
-            )
+            print(f"    FAILED to bind {binding_value}: {bind.status_code} {bind.text}")
         out.append(asset)
     return out
 
 
 async def _run(args: argparse.Namespace) -> int:
-    print(f"=== TagPulse smoke setup ===")
+    print("=== TagPulse smoke setup ===")
     print(f"DB:  {DB_URL.split('@')[-1]}")
     print(f"API: {API_URL}\n")
 
@@ -683,19 +662,12 @@ async def _run(args: argparse.Namespace) -> int:
         conn = await asyncpg.connect(DB_URL)
     except (OSError, asyncpg.PostgresError) as exc:
         print(f"  ERROR: cannot connect: {exc}")
-        print(
-            "  Set TAGPULSE_SMOKE_DB_URL or check that "
-            "`docker compose up -d db` is running."
-        )
+        print("  Set TAGPULSE_SMOKE_DB_URL or check that `docker compose up -d db` is running.")
         return 1
 
     try:
-        print(
-            f"[2/4] Upserting tenant '{args.tenant_slug}' ({args.tenant_id})…"
-        )
-        await upsert_tenant(
-            conn, args.tenant_id, args.tenant_slug, args.tenant_name
-        )
+        print(f"[2/4] Upserting tenant '{args.tenant_slug}' ({args.tenant_id})…")
+        await upsert_tenant(conn, args.tenant_id, args.tenant_slug, args.tenant_name)
 
         print(f"[3/4] Upserting admin user '{args.admin_email}'…")
         raw_key, issued = await upsert_role_user(
@@ -758,10 +730,7 @@ async def _run(args: argparse.Namespace) -> int:
                 "export TAGPULSE_API_KEY first so we can finish provisioning."
             )
             return 2
-        print(
-            f"  Reusing existing key from $TAGPULSE_API_KEY ("
-            f"{existing_key[:10]}…)"
-        )
+        print(f"  Reusing existing key from $TAGPULSE_API_KEY ({existing_key[:10]}…)")
         api_key = existing_key
     else:
         action = "regenerated" if args.regenerate_key else "issued"
@@ -793,9 +762,7 @@ async def _run(args: argparse.Namespace) -> int:
                 kinds=["lot", "stock_item"],
             )
             print(f"    telemetry_subject_kinds: {kinds}")
-            assert_legacy_telemetry_models_410(
-                client, args.tenant_id, api_key
-            )
+            assert_legacy_telemetry_models_410(client, args.tenant_id, api_key)
 
         print(f"  Ensuring {args.assets} assets + bindings…")
         ensure_assets_with_bindings(
@@ -810,9 +777,7 @@ async def _run(args: argparse.Namespace) -> int:
         geofence_zone_id: str | None = None
         if args.with_zones:
             print("  Provisioning sites + zones…")
-            _, geofence_zone_id, _ = ensure_site_and_zones(
-                client, args.tenant_id, api_key
-            )
+            _, geofence_zone_id, _ = ensure_site_and_zones(client, args.tenant_id, api_key)
 
         if args.with_telemetry_model:
             print("  Provisioning telemetry model…")
@@ -828,6 +793,22 @@ async def _run(args: argparse.Namespace) -> int:
             )
     ui_url = os.environ.get("TAGPULSE_UI_URL", "http://localhost:5173")
 
+    # Sprint 26 D3 — when run inside the tools-job (or any environment where
+    # plaintext keys must not hit stdout / Log Analytics), push freshly
+    # issued keys to Key Vault and print only the secret coordinates.
+    kv_pushes: list[tuple[str, str, str]] = []  # (role, secret_name, version)
+    if args.key_vault_name:
+        if raw_key is not None:
+            secret_name = _kv_secret_name(args.tenant_slug, "admin")
+            version = push_key_to_keyvault(args.key_vault_name, secret_name, raw_key)
+            kv_pushes.append(("admin", secret_name, version))
+        for role, _email, role_key in role_users:
+            if role_key is None:
+                continue
+            secret_name = _kv_secret_name(args.tenant_slug, role)
+            version = push_key_to_keyvault(args.key_vault_name, secret_name, role_key)
+            kv_pushes.append((role, secret_name, version))
+
     print()
     print("=" * 60)
     print("Smoke setup complete.")
@@ -836,15 +817,18 @@ async def _run(args: argparse.Namespace) -> int:
     print("UI login credentials:")
     print(f"  URL:      {ui_url}")
     print(f"  Email:    {args.admin_email}")
-    print(f"  Role:     admin")
-    print(f"  API key:  {api_key}")
-    if raw_key is None:
-        print("  (reused from $TAGPULSE_API_KEY)")
+    print("  Role:     admin")
+    if args.key_vault_name and raw_key is not None:
+        admin_secret = _kv_secret_name(args.tenant_slug, "admin")
+        print("  API key:  (redacted — pushed to Key Vault)")
+        print(f"  KV vault: {args.key_vault_name}")
+        print(f"  KV name:  {admin_secret}")
     else:
-        print(
-            "  (NOTE: this is the only time the full key is shown — "
-            "save it now)"
-        )
+        print(f"  API key:  {api_key}")
+        if raw_key is None:
+            print("  (reused from $TAGPULSE_API_KEY)")
+        else:
+            print("  (NOTE: this is the only time the full key is shown — save it now)")
 
     if role_users:
         for role, email, role_key in role_users:
@@ -853,33 +837,42 @@ async def _run(args: argparse.Namespace) -> int:
             print(f"  Role:     {role}")
             if role_key is None:
                 print(
-                    "  API key:  (already issued earlier; "
-                    "re-run with --regenerate-key to rotate)"
+                    "  API key:  (already issued earlier; re-run with --regenerate-key to rotate)"
                 )
+            elif args.key_vault_name:
+                print("  API key:  (redacted — pushed to Key Vault)")
+                print(f"  KV vault: {args.key_vault_name}")
+                print(f"  KV name:  {_kv_secret_name(args.tenant_slug, role)}")
             else:
                 print(f"  API key:  {role_key}")
-                print(
-                    "  (NOTE: this is the only time the full key is shown "
-                    "— save it now)"
-                )
+                print("  (NOTE: this is the only time the full key is shown — save it now)")
     print()
-    print("Shell env for the simulator scripts:")
-    print()
-    print(f"  export TAGPULSE_API_KEY={api_key}")
-    print()
+    if args.key_vault_name and kv_pushes:
+        admin_push = next((p for p in kv_pushes if p[0] == "admin"), kv_pushes[0])
+        print("Retrieve a key from Key Vault (requires `Key Vault Secrets User`):")
+        print()
+        print(
+            f"  export TAGPULSE_API_KEY=$(az keyvault secret show "
+            f"--vault-name {args.key_vault_name} "
+            f"--name {admin_push[1]} --query value -o tsv)"
+        )
+        print()
+        print("Secrets written this run:")
+        for role, name, version in kv_pushes:
+            print(f"  • {role:6s}  {name}  (version {version[:8]}…)")
+        print()
+    else:
+        print("Shell env for the simulator scripts:")
+        print()
+        print(f"  export TAGPULSE_API_KEY={api_key}")
+        print()
     print("Run the data-push loop:")
     print()
     print("  python scripts/simulate_devices.py \\")
     print(f"    --tenant-id {args.tenant_id} \\")
-    print(
-        f"    --devices {args.assets} --tags {args.assets} "
-        f"--interval 2 --with-gps"
-    )
+    print(f"    --devices {args.assets} --tags {args.assets} --interval 2 --with-gps")
     print()
-    print(
-        "  (--tags matches --assets so every read hits a bound tag → "
-        "all markers appear.)"
-    )
+    print("  (--tags matches --assets so every read hits a bound tag → all markers appear.)")
     print()
     print("Then open the Map in the UI and pan to the Bay Area")
     print("(~37.7749, -122.4194). Markers should appear within 5 seconds.")
@@ -893,38 +886,20 @@ async def _run(args: argparse.Namespace) -> int:
     ):
         print("Fixtures provisioned (--full):")
         if args.with_roles:
-            print(
-                "  • Users → admin@, editor@, viewer@example.com "
-                "(one API key each)"
-            )
+            print("  • Users → admin@, editor@, viewer@example.com (one API key each)")
         if args.with_zones:
-            print(
-                "  • Sites & Zones → site 'Bay Area HQ', geofence "
-                "'Bay Area West Block'"
-            )
+            print("  • Sites & Zones → site 'Bay Area HQ', geofence 'Bay Area West Block'")
         if args.with_telemetry_model:
-            print(
-                "  • Telemetry → model 'rfid_reader' "
-                "(temperature, humidity, battery_pct)"
-            )
+            print("  • Telemetry → model 'rfid_reader' (temperature, humidity, battery_pct)")
         if args.with_rules:
-            print(
-                "  • Rules → high-temperature threshold + "
-                "zone.entered/exited notifications"
-            )
+            print("  • Rules → high-temperature threshold + zone.entered/exited notifications")
         if args.with_subject_telemetry:
             print(
                 "  • Tenant → telemetry_subject_kinds includes "
                 "'lot' + 'stock_item' (Sprint 19 opt-in)"
             )
-            print(
-                "  • Sprint 21 cutover verified: "
-                "GET /telemetry-models/{device_type} → 410 Gone"
-            )
-        print(
-            "  • Alerts will populate within ~1 min as wandering "
-            "assets cross the geofence."
-        )
+            print("  • Sprint 21 cutover verified: GET /telemetry-models/{device_type} → 410 Gone")
+        print("  • Alerts will populate within ~1 min as wandering assets cross the geofence.")
         print()
         print(
             "TIP: pair with `simulate_devices.py --cold-chain` to drive "
@@ -1042,6 +1017,19 @@ def main(argv: list[str] | None = None) -> int:
         "--with-roles --with-subject-telemetry. Populates every sidebar "
         "page, creates one user per role, and opts the tenant into "
         "subject-scoped telemetry for lots and stock items.",
+    )
+    parser.add_argument(
+        "--key-vault-name",
+        default=os.environ.get("TAGPULSE_SMOKE_KEY_VAULT_NAME"),
+        help="Sprint 26 D3: Azure Key Vault name (e.g. 'tpdev-kv'). When "
+        "set, freshly issued admin/role API keys are pushed to KV as "
+        "'tagpulse-<tenant-slug>-<role>-key' instead of being printed in "
+        "plaintext. Required when running this script via the tools-job "
+        "so plaintext never lands in Log Analytics. Auth is via "
+        "DefaultAzureCredential — the caller (tools-job's managed "
+        "identity, or your `az login`) must have `Key Vault Secrets "
+        "Officer` on the vault. Defaults to env "
+        "$TAGPULSE_SMOKE_KEY_VAULT_NAME if unset.",
     )
     args = parser.parse_args(argv)
     if args.full:
