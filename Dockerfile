@@ -31,6 +31,7 @@ COPY --from=build /usr/local/bin/uvicorn /usr/local/bin/uvicorn
 COPY --from=build /usr/local/bin/alembic /usr/local/bin/alembic
 COPY src/ src/
 COPY migrations/ migrations/
+COPY scripts/ scripts/
 COPY alembic.ini .
 
 LABEL org.opencontainers.image.source="https://github.com/9owlsboston/TagPulse"
