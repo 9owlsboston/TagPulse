@@ -68,6 +68,7 @@ async def _connect_db() -> asyncpg.Connection:
         )
     return await asyncpg.connect(DB_URL)
 
+
 DEFAULT_TENANT_ID = UUID("11111111-1111-1111-1111-111111111111")
 DEFAULT_TENANT_SLUG = "test-corp"
 DEFAULT_TENANT_NAME = "Test Corp"
