@@ -52,3 +52,6 @@ coverage.xml
 
 # Bicep build artifacts
 deploy/azure/bicep/main.json
+# Sprint 25 D1: token-rotation audit log captures last-4-chars + timestamps.
+# Local-only; the GHA cron in D2 maintains the canonical log via its run logs.
+deploy/azure/.audit/
