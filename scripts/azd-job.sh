@@ -121,6 +121,8 @@ if [[ -z "$JOB_NAME" || -z "$RG" ]]; then
   echo "       Has 'azd up' been run against this env since Sprint 26 B2 landed?" >&2
   exit 2
 fi
+echo "    job:        $JOB_NAME"
+echo "    rg:         $RG"
 LOG_WORKSPACE_ID="$(az containerapp env show \
   --name "$(azd env get-value containerAppsEnvName)" \
   --resource-group "$RG" \
@@ -130,8 +132,6 @@ if [[ -z "$LOG_WORKSPACE_ID" ]]; then
   echo "error: could not resolve Log Analytics workspace id for the env." >&2
   exit 2
 fi
-echo "    job:        $JOB_NAME"
-echo "    rg:         $RG"
 echo "    workspace:  $LOG_WORKSPACE_ID"
 
 # Build the args[] array Azure expects: comma-separated string of values.
@@ -206,7 +206,19 @@ else
   echo "==> Re-tailing latest execution: $EXEC_NAME"
 fi
 
-# Poll execution status (timeout 30 min).
+# Stream logs. We try the Container Apps data-plane endpoint first
+# (`az containerapp job logs show --follow`) — it's instant when it works,
+# but for short-lived jobs (e.g. `get_kv_secret.py`, ~2s wall-clock) the
+# replica is often gone before --follow can attach, returning nothing.
+#
+# Fall back to Log Analytics with a proper retry loop. Ingestion lag is
+# typically 60–120s in this region; we retry every 20s for up to 4 minutes
+# before giving up. Past wrapper versions polled once after sleep 20 and
+# routinely lost output for short jobs — see CHANGELOG / runbook.
+#
+# We also wait for execution status to reach a terminal state before tailing,
+# so partial-output races (job exits mid-query) can't happen.
+echo "==> Polling execution status (timeout 30 min)"
 START_EPOCH=$(date +%s)
 TIMEOUT=$((30 * 60))
 STATUS=""
@@ -224,24 +236,54 @@ while true; do
     echo "error: timeout after ${TIMEOUT}s waiting for execution $EXEC_NAME (last status=$STATUS)" >&2
     exit 3
   fi
-  sleep 10
+  sleep 5
 done
 echo "==> Execution status: $STATUS"
 
-# Tail logs from the execution's container. Log Analytics has ~30s ingestion
-# lag, so wait briefly before the first query.
-echo "==> Streaming logs (Log Analytics; ingestion lag ~30s)"
-sleep 20
-az monitor log-analytics query \
-  --workspace "$LOG_WORKSPACE_ID" \
-  --analytics-query "ContainerAppConsoleLogs_CL
+# Try data-plane log stream first. Suppress preview-extension warnings to keep
+# stdout clean (azd-kv-get.sh greps between sentinels).
+echo "==> Fetching logs (data-plane first, Log Analytics fallback)"
+DATAPLANE_OUT="$(az containerapp job logs show \
+  --name "$JOB_NAME" \
+  --resource-group "$RG" \
+  --container tools \
+  --execution "$EXEC_NAME" \
+  --format text \
+  --tail 300 \
+  --only-show-errors 2>/dev/null || true)"
+
+if [[ -n "$DATAPLANE_OUT" ]]; then
+  # Data-plane format is "<RFC3339-timestamp> <stream> F <message>". Strip
+  # the prefix so callers get the bare log line (azd-kv-get.sh greps
+  # between sentinels and expects the bare value, not a timestamped line).
+  printf '%s\n' "$DATAPLANE_OUT" \
+    | sed -E 's/^[0-9TZ:.+-]+ +(stdout|stderr) +F +//' \
+    | sed 's/^/    /'
+else
+  # Fall back to Log Analytics with retry. Ingestion lag is highly variable.
+  LA_QUERY="ContainerAppConsoleLogs_CL
     | where ContainerJobName_s == '${JOB_NAME}'
     | where ExecutionName_s == '${EXEC_NAME}'
     | order by TimeGenerated asc
-    | project TimeGenerated, Log_s" \
-  -o tsv 2>/dev/null \
-  | sed 's/^/    /' \
-  || echo "    (no logs returned yet — re-run with --update-only in ~30s if empty)"
+    | project Log_s"
+  LA_OUT=""
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    sleep 20
+    LA_OUT="$(az monitor log-analytics query \
+      --workspace "$LOG_WORKSPACE_ID" \
+      --analytics-query "$LA_QUERY" \
+      -o tsv 2>/dev/null | awk -F'\t' '{print $1}' || true)"
+    if [[ -n "$LA_OUT" ]]; then
+      break
+    fi
+    echo "    (no logs yet — attempt $attempt/12, retrying in 20s)"
+  done
+  if [[ -n "$LA_OUT" ]]; then
+    printf '%s\n' "$LA_OUT" | sed 's/^/    /'
+  else
+    echo "    (no logs returned after 4 minutes; re-run with --update-only later)"
+  fi
+fi
 
 case "$STATUS" in
   Succeeded) exit 0 ;;

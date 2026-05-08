@@ -4,6 +4,18 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Ops — `azd-job.sh` log-streaming fix (kills the `azd-kv-get.sh` flake)
+
+- **Symptom.** `scripts/azd-kv-get.sh dev <secret>` (and any `azd-job.sh`-based wrapper) routinely returned `error: could not extract output from job log` for short-lived scripts (`get_kv_secret.py`, ~2s wall-clock). The wrapper waited 20 s then issued exactly **one** Log Analytics query — but Container Apps → Log Analytics ingestion lag is highly variable in centralus (typically 60–120 s, sometimes >2 min), so the query landed before the row was indexed and returned empty. Operators had to re-run with `--update-only` after a manual `sleep 90`. Made `azd-kv-get.sh` effectively unusable for interactive secret retrieval.
+- **Fix — two-tier log fetch in [scripts/azd-job.sh](scripts/azd-job.sh).**
+  1. **Wait for terminal status first** (5 s poll instead of 10 s) so we don't race a still-running container.
+  2. **Try the Container Apps data-plane log endpoint first** — `az containerapp job logs show --execution <name> --container tools --format text --tail 300 --only-show-errors`. This hits the live-logs API on the ACA env and bypasses Log Analytics entirely; ~instant when it works. Strip the `<RFC3339> <stream> F ` prefix the data-plane format adds so callers get bare log lines (matters for `azd-kv-get.sh`, which greps between sentinels and pipes the value to `export FOO=$(…)`).
+  3. **Fall back to Log Analytics with retry** — 12× 20 s poll (4-min cap) when the data-plane returns nothing (e.g. replica already garbage-collected on `--update-only`). Eliminates the single-shot race.
+  - Net: `scripts/azd-kv-get.sh dev --list` and `scripts/azd-kv-get.sh dev <name>` now return clean output in <30 s for the live path, with a graceful fallback for stale executions.
+- **`scripts/azd-kv-get.sh` — strip the wrapper's 4-space indent inside the sentinel block** ([scripts/azd-kv-get.sh](scripts/azd-kv-get.sh)) so `printf '%s\n' "$(echo "$PAYLOAD" | tail -1)"` returns the raw secret value, not `    <value>` with leading whitespace. Header comment updated to reflect the data-plane-first strategy.
+- **End-to-end validated** against `tpdev`: `--list` returns the 6 KV secrets in <20 s; single-secret retrieval (`mqtt-broker-password`, 32-byte value) round-trips cleanly into a shell variable.
+- **Backlog (Sprint 24+).** "Production-grade Bastion + jumpbox standard for staging + production envs" already on the [Sprint 23 deferred list](docs/roadmap.md#deferred-to-sprint-24) covers the structural alternative — laptop direct-to-KV access via a VNet-resident jumpbox — for operators who prefer Azure Portal "Show Secret Value" over the tools-job round-trip.
+
 ### Ops — In-VNet KV secret retrieval (`scripts/azd-kv-get.sh` + `scripts/get_kv_secret.py`)
 
 - **Closes the corporate-proxy / WSL2 / Cloud Shell hole in `azd-grant-operator-kv.sh --allow-my-ip`.** The IP-allowlist path assumes a stable operator egress IP, but operators behind a corporate firewall (or running `az` from Azure Cloud Shell / an Azure VM) get a rotating SNAT IP from a Microsoft-owned pool, so each retry of `az keyvault secret show` fails with a different `ForbiddenByFirewall` client address. Allowlisting the entire pool is impractical and the network team won't hand it out.
