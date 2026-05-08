@@ -4,6 +4,11 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Ops — `azd up` hook fixes (follow-up to PR #14)
+
+- **`scripts/azd-pg-ensure-running.sh` — fix `get_azd` helper** ([scripts/azd-pg-ensure-running.sh](scripts/azd-pg-ensure-running.sh)). The previous shape (`azd env get-value KEY 2>/dev/null | tr -d '\r'`) silently captured `azd`'s "key not found" error text as the value, because `azd env get-value` writes that error to **STDOUT** (not stderr) and the caller only checked emptiness. The pg-ensure script's predeploy hook then tried to query `az postgres flexible-server show -n "$PG_FQDN%%.*"` with the multiline error string and exited 1 on every `azd up`. Helper now gates on the subprocess exit code (matches the working pattern already used in `azure.yaml`'s postprovision hook). Also adds a fallback to the canonical Bicep output name `postgresFqdn` when `AZURE_POSTGRES_FQDN` (an alias only set by `azd-network-check.sh` callers) is unset.
+- **`scripts/azd-network-check.sh` — extract IP from inside-VNet resolution output** ([scripts/azd-network-check.sh](scripts/azd-network-check.sh)). `az containerapp exec` now prefixes its stdout with `INFO: Connecting to the container '<name>'...` (CLI 2.65+); the previous `tail -1` captured that line as the resolved IP, breaking the `^10\.10\.` regex assertion. Replaced with `grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | tail -1` so the check picks the trailing IP regardless of leading CLI chatter.
+
 ### Ops — Postgres auto-stop self-heal
 
 - **New [scripts/azd-pg-ensure-running.sh](scripts/azd-pg-ensure-running.sh).** Idempotent: no-op when the Flexible Server is `Ready`, starts it (and polls up to ~5 min) when `Stopped`. Triggered by a real outage on `tpdev`: Burstable-tier (B1ms) Flex servers auto-stop after 7 days of inactivity, which silently 5xx's the entire backend — the api replica keeps running but every DB call fails (`asyncpg.exceptions.ConnectionDoesNotExistError` → `TimeoutError on asyncpg.connect`), `/health/ready` flips unhealthy, and ACA stops routing ingress traffic. Reads `AZURE_RESOURCE_GROUP` + `AZURE_POSTGRES_FQDN` from `azd env` (or plain env vars), derives the server name from the FQDN's first label.
