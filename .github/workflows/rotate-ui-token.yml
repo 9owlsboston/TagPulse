@@ -29,10 +29,10 @@ on:
   workflow_dispatch:
     inputs:
       environments:
-        description: 'Comma-separated env list (default: all)'
+        description: 'Comma-separated env list (default: dev). staging/production envs do not exist yet on TagPulse-UI — re-add to the matrix when they land.'
         required: false
         type: string
-        default: 'dev,staging,production'
+        default: 'dev'
       force:
         description: 'Bypass the 60-day idempotency gate'
         required: false
@@ -54,14 +54,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        env: [dev, staging, production]
+        # Only `dev` exists on TagPulse-UI today (Settings → Environments).
+        # Re-add staging + production here once those environments are
+        # created on the UI repo and a SWA has been provisioned for them.
+        env: [dev]
     environment: ${{ matrix.env }}
     steps:
       - name: Skip env if not in input list
         id: gate
         run: |
           set -euo pipefail
-          REQUESTED="${{ inputs.environments || 'dev,staging,production' }}"
+          REQUESTED="${{ inputs.environments || 'dev' }}"
           if [[ ",${REQUESTED}," == *",${{ matrix.env }},"* ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
