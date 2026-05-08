@@ -23,7 +23,8 @@
 #      `python scripts/get_kv_secret.py --name <secret-name>` (or --list).
 #   2. Starts a job execution; the container runs in the VNet with the
 #      workload UAMI, which already has 'Key Vault Secrets User' on the KV.
-#   3. Tails Log Analytics until the run finishes.
+#   3. Streams the container's stdout live via the Container Apps data-plane
+#      log endpoint (no Log Analytics ingestion lag).
 #   4. Extracts the value/names between sentinels and prints them on stdout,
 #      so the script is suitable for
 #      `export FOO=$(scripts/azd-kv-get.sh dev tagpulse-test-corp-admin-key)`.
@@ -72,9 +73,12 @@ fi
   }
 
 # Extract the payload between sentinels. awk is more robust than sed here
-# because the streamed log can wrap or interleave timestamps.
+# because the streamed log can wrap or interleave timestamps. The wrapper
+# (azd-job.sh) prefixes every log line with 4 spaces; strip it before we
+# return the value to stdout so callers get the bare secret.
 PAYLOAD="$(awk -v b="$BEGIN_SENTINEL" -v e="$END_SENTINEL" \
-  '$0 ~ b {flag=1; next} $0 ~ e {flag=0} flag' "$LOG_FILE")"
+  '$0 ~ b {flag=1; next} $0 ~ e {flag=0} flag' "$LOG_FILE" \
+  | sed -E 's/^ {4}//')"
 
 if [[ -z "$PAYLOAD" ]]; then
   echo "error: could not extract output from job log; full log below:" >&2
