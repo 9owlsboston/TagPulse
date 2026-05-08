@@ -23,6 +23,14 @@ PASSWD_FILE=/mosquitto/config/mosquitto.passwd
 # start from the env vars (sourced from Key Vault in cloud).
 mosquitto_passwd -b -c "$PASSWD_FILE" "$MOSQUITTO_USERNAME" "$MOSQUITTO_PASSWORD" >/dev/null
 
+# `mosquitto_passwd` writes the file as 0600 owned by the current user
+# (root in this container). The upstream entrypoint then runs the broker
+# as user `mosquitto` (uid 1883), which would otherwise EACCES the read
+# and crash with "password-file: Error: Unable to open pwfile". Hand
+# ownership over and keep the mode tight.
+chown mosquitto:mosquitto "$PASSWD_FILE"
+chmod 0640 "$PASSWD_FILE"
+
 # Hand off to the upstream Mosquitto entrypoint so its signal handling and
 # default arg parsing are preserved.
 exec /docker-entrypoint.sh "$@"
