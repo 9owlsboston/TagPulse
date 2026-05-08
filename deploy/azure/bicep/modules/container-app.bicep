@@ -67,6 +67,9 @@ param appInsightsConnectionString string
 @allowed(['dev','staging','production'])
 param appEnvironment string = 'production'
 
+@description('Comma-separated CORS allow-origins list (read by Settings.cors_origins). Only takes effect when enableIngress=true.')
+param corsOrigins string = 'http://localhost:5173'
+
 @description('Common tags.')
 param tags object = {}
 
@@ -158,6 +161,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
             { name: 'OTEL_SERVICE_NAME', value: appName }
             { name: 'OTEL_RESOURCE_ATTRIBUTES', value: 'service.namespace=tagpulse,deployment.environment=production' }
+            { name: 'CORS_ORIGINS', value: corsOrigins }
           ]
           probes: enableIngress ? [
             {
