@@ -4,6 +4,12 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Ops — Postgres auto-stop self-heal
+
+- **New [scripts/azd-pg-ensure-running.sh](scripts/azd-pg-ensure-running.sh).** Idempotent: no-op when the Flexible Server is `Ready`, starts it (and polls up to ~5 min) when `Stopped`. Triggered by a real outage on `tpdev`: Burstable-tier (B1ms) Flex servers auto-stop after 7 days of inactivity, which silently 5xx's the entire backend — the api replica keeps running but every DB call fails (`asyncpg.exceptions.ConnectionDoesNotExistError` → `TimeoutError on asyncpg.connect`), `/health/ready` flips unhealthy, and ACA stops routing ingress traffic. Reads `AZURE_RESOURCE_GROUP` + `AZURE_POSTGRES_FQDN` from `azd env` (or plain env vars), derives the server name from the FQDN's first label.
+- **Wired as `predeploy` hook in [azure.yaml](azure.yaml).** Ensures `azd deploy` self-heals before pushing new images, so the postdeploy migrations-job poll doesn't hang against a dead DB.
+- **Runbook entry** ([docs/runbooks/azure-first-deploy.md](docs/runbooks/azure-first-deploy.md) common-failures table). Documents the `Stopped`-server failure mode (the symptom is "backend completely down" — easy to misdiagnose as ACA, networking, or app-level) plus the manual recovery: start the server, then `az containerapp revision restart` to drain the stale asyncpg connection pool.
+
 ### Sprint 26 — Audit remediation
 
 - **D3 cherry-picked onto `main`.** The original D3 commit `948d358` ("`smoke_setup.py --key-vault-name` pushes keys to KV") was authored on the abandoned planning branch `sprint-26/ops-tooling-job` and never merged. PR #11's tools-job set `TAGPULSE_SMOKE_KEY_VAULT_NAME` and granted `Key Vault Secrets Officer` to the workload UAMI on the assumption the script honored it; PR #12's runbook step "pull the rotated key from Key Vault" was therefore broken. Cherry-picked the D3 commit (script changes + `[azure]` extra deps in [pyproject.toml](pyproject.toml)) so the tools-job, the role assignment, and the runbook all line up with real code paths. ([scripts/smoke_setup.py](scripts/smoke_setup.py))
