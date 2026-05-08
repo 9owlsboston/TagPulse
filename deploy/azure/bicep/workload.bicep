@@ -262,6 +262,7 @@ module toolsJob 'modules/tools-job.bicep' = {
     location: location
     environmentId: acaEnv.outputs.id
     userAssignedIdentityId: identity.outputs.id
+    userAssignedIdentityClientId: identity.outputs.clientId
     image: useImagePlaceholders ? appPlaceholderImage : '${acr.outputs.loginServer}/tagpulse-api:${imageTag}'
     acrLoginServer: acr.outputs.loginServer
     postgresFqdn: postgres.outputs.fqdn

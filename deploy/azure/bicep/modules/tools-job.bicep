@@ -26,6 +26,9 @@ param environmentId string
 @description('User-assigned managed identity resource ID.')
 param userAssignedIdentityId string
 
+@description('User-assigned managed identity client ID. Surfaced as AZURE_CLIENT_ID so DefaultAzureCredential / ManagedIdentityCredential resolve to the correct UAMI when the script (e.g. smoke_setup --key-vault-name) talks to Azure SDKs that need a token.')
+param userAssignedIdentityClientId string
+
 @description('Container image, e.g. myacr.azurecr.io/tagpulse-api:v1.2.3. Reuses the api image which now ships scripts/ (Sprint 26 A1).')
 param image string
 
@@ -126,6 +129,13 @@ resource job 'Microsoft.App/jobs@2024-10-02-preview' = {
             // Sprint 26 D3 — make KV push the default code path inside the job
             // so plaintext keys never hit stdout / Log Analytics.
             { name: 'TAGPULSE_SMOKE_KEY_VAULT_NAME', value: keyVaultName }
+            // Required for DefaultAzureCredential / ManagedIdentityCredential
+            // to resolve to *this* UAMI when the container has multiple
+            // identities attached (or when ACA's IMDS endpoint is ambiguous
+            // about which UAMI to use). Without this, the Azure SDK fails
+            // with `(invalid_scope) 400, Unable to load the proper Managed
+            // Identity` even though the UAMI is attached.
+            { name: 'AZURE_CLIENT_ID', value: userAssignedIdentityClientId }
           ]
         }
       ]
