@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # scripts/azd-grant-operator-kv.sh <env> [--role <role>] [--principal <objectId>]
 #                                        [--allow-my-ip | --revoke-my-ip]
+#                                        [--ip <addr>]
 #
 # Grant the operator (you, by default) read access to the deployment's
 # Key Vault so secrets pushed by the tools-job (e.g. API keys regenerated
@@ -27,7 +28,11 @@
 #
 # Examples:
 #   scripts/azd-grant-operator-kv.sh dev                       # RBAC only
-#   scripts/azd-grant-operator-kv.sh dev --allow-my-ip         # RBAC + IP allow
+#   scripts/azd-grant-operator-kv.sh dev --allow-my-ip         # RBAC + IP allow (auto-detect via api.ipify.org)
+#   scripts/azd-grant-operator-kv.sh dev --allow-my-ip --ip 20.114.144.49
+#                                                              # use this when behind a corp proxy / Cloud Shell — the IP
+#                                                              # api.ipify.org returns can differ from what Azure sees;
+#                                                              # grab it from the Azure 'ForbiddenByFirewall' error.
 #   scripts/azd-grant-operator-kv.sh dev --revoke-my-ip        # remove the IP allow
 #   scripts/azd-grant-operator-kv.sh dev --role "Key Vault Secrets Officer"
 #   scripts/azd-grant-operator-kv.sh dev --principal 1781b90e-...
@@ -44,10 +49,11 @@ ROLE="Key Vault Secrets User"
 PRINCIPAL=""
 ALLOW_MY_IP=0
 REVOKE_MY_IP=0
+IP_OVERRIDE=""
 
 ENV_NAME="${1:-}"
 if [[ -z "$ENV_NAME" || "$ENV_NAME" == "-h" || "$ENV_NAME" == "--help" ]]; then
-  sed -n '2,38p' "$0"
+  sed -n '2,42p' "$0"
   exit 1
 fi
 shift
@@ -58,6 +64,7 @@ while [[ $# -gt 0 ]]; do
     --principal)    PRINCIPAL="$2"; shift 2 ;;
     --allow-my-ip)  ALLOW_MY_IP=1; shift ;;
     --revoke-my-ip) REVOKE_MY_IP=1; shift ;;
+    --ip)           IP_OVERRIDE="$2"; shift 2 ;;
     *) echo "error: unknown arg '$1'" >&2; exit 1 ;;
   esac
 done
@@ -109,9 +116,13 @@ echo "    principal:  $PRINCIPAL_LABEL"
 
 # --- Network ACL: --revoke-my-ip path -----------------------------------------
 if [[ $REVOKE_MY_IP -eq 1 ]]; then
-  MY_IP="$(curl -fsS https://api.ipify.org || true)"
+  if [[ -n "$IP_OVERRIDE" ]]; then
+    MY_IP="$IP_OVERRIDE"
+  else
+    MY_IP="$(curl -fsS https://api.ipify.org || true)"
+  fi
   if [[ -z "$MY_IP" ]]; then
-    echo "error: could not detect public IP via api.ipify.org" >&2
+    echo "error: could not detect public IP via api.ipify.org (pass --ip <addr> explicitly)" >&2
     exit 1
   fi
   echo "==> Removing $MY_IP from KV ipRules and re-disabling public network access"
@@ -123,9 +134,14 @@ fi
 
 # --- Network ACL: --allow-my-ip path ------------------------------------------
 if [[ $ALLOW_MY_IP -eq 1 ]]; then
-  MY_IP="$(curl -fsS https://api.ipify.org || true)"
+  if [[ -n "$IP_OVERRIDE" ]]; then
+    MY_IP="$IP_OVERRIDE"
+    echo "==> Using --ip override: $MY_IP"
+  else
+    MY_IP="$(curl -fsS https://api.ipify.org || true)"
+  fi
   if [[ -z "$MY_IP" ]]; then
-    echo "error: could not detect public IP via api.ipify.org" >&2
+    echo "error: could not detect public IP via api.ipify.org (pass --ip <addr> explicitly)" >&2
     exit 1
   fi
   echo "==> Allow my IP ($MY_IP) on KV firewall"
