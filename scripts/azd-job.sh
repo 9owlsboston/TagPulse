@@ -155,24 +155,38 @@ if [[ "$UPDATE_ONLY" -eq 0 ]]; then
   # Container-level command/args live on properties.template.containers[0],
   # not on the top-level configuration. `az containerapp job update` doesn't
   # have first-class flags for them yet (preview gap), so patch via JSON.
+  #
+  # ARM PATCH replaces the container[0] object wholesale (matched by `name`),
+  # so we MUST round-trip the existing `env` array — otherwise every Bicep-
+  # declared env var (DATABASE_URL, TAGPULSE_SMOKE_DB_URL, TAGPULSE_API_URL,
+  # TAGPULSE_SMOKE_KEY_VAULT_NAME, …) gets wiped and the script falls back
+  # to `localhost:5432`. Same applies to `resources`.
+  EXISTING_IMAGE=$(az containerapp job show -n "$JOB_NAME" -g "$RG" --query 'properties.template.containers[0].image' -o tsv)
+  EXISTING_ENV=$(az containerapp job show -n "$JOB_NAME" -g "$RG" --query 'properties.template.containers[0].env' -o json)
+  EXISTING_RESOURCES=$(az containerapp job show -n "$JOB_NAME" -g "$RG" --query 'properties.template.containers[0].resources' -o json)
   PATCH=$(mktemp)
   trap 'rm -f "$PATCH"' EXIT
-  cat >"$PATCH" <<EOF
-{
-  "properties": {
-    "template": {
-      "containers": [
-        {
-          "name": "tools",
-          "image": "$(az containerapp job show -n "$JOB_NAME" -g "$RG" --query 'properties.template.containers[0].image' -o tsv)",
-          "command": ["python"],
-          "args": $(echo "$JOIN_ARGS" | jq -Rc 'split(",")')
+  jq -n \
+    --arg image "$EXISTING_IMAGE" \
+    --argjson env "$EXISTING_ENV" \
+    --argjson resources "$EXISTING_RESOURCES" \
+    --argjson args "$(echo "$JOIN_ARGS" | jq -Rc 'split(",")')" \
+    '{
+      properties: {
+        template: {
+          containers: [
+            {
+              name: "tools",
+              image: $image,
+              command: ["python"],
+              args: $args,
+              env: $env,
+              resources: $resources
+            }
+          ]
         }
-      ]
-    }
-  }
-}
-EOF
+      }
+    }' >"$PATCH"
   az rest --method PATCH \
     --url "https://management.azure.com$(az containerapp job show -n "$JOB_NAME" -g "$RG" --query id -o tsv)?api-version=2024-10-02-preview" \
     --body "@$PATCH" \

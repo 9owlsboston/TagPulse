@@ -44,6 +44,30 @@ DB_URL = os.environ.get(
     "postgresql://tagpulse:secret@localhost:5432/tagpulse",
 )
 
+
+async def _connect_db() -> asyncpg.Connection:
+    """Connect to Postgres.
+
+    Inside the tools-job, ``POSTGRES_HOST`` / ``POSTGRES_USER`` /
+    ``POSTGRES_PASSWORD`` / ``POSTGRES_DB`` are wired separately by Bicep
+    (see ``deploy/azure/bicep/modules/tools-job.bicep``). When those are
+    present we use them as kwargs so passwords containing URL-special
+    characters (``:``, ``@``, ``/``) don't break asyncpg's DSN parser.
+    Otherwise fall back to ``TAGPULSE_SMOKE_DB_URL`` for local dev.
+    """
+    host = os.environ.get("POSTGRES_HOST")
+    password = os.environ.get("POSTGRES_PASSWORD")
+    if host and password:
+        return await asyncpg.connect(
+            host=host,
+            port=int(os.environ.get("POSTGRES_PORT", "5432")),
+            user=os.environ.get("POSTGRES_USER", "tagpulse_admin"),
+            password=password,
+            database=os.environ.get("POSTGRES_DB", "tagpulse"),
+            ssl="require",
+        )
+    return await asyncpg.connect(DB_URL)
+
 DEFAULT_TENANT_ID = UUID("11111111-1111-1111-1111-111111111111")
 DEFAULT_TENANT_SLUG = "test-corp"
 DEFAULT_TENANT_NAME = "Test Corp"
@@ -654,12 +678,18 @@ def ensure_assets_with_bindings(
 
 async def _run(args: argparse.Namespace) -> int:
     print("=== TagPulse smoke setup ===")
-    print(f"DB:  {DB_URL.split('@')[-1]}")
+    pg_host = os.environ.get("POSTGRES_HOST")
+    if pg_host:
+        pg_port = os.environ.get("POSTGRES_PORT", "5432")
+        pg_db = os.environ.get("POSTGRES_DB", "tagpulse")
+        print(f"DB:  {pg_host}:{pg_port}/{pg_db}")
+    else:
+        print(f"DB:  {DB_URL.split('@')[-1]}")
     print(f"API: {API_URL}\n")
 
     print("[1/4] Connecting to database…")
     try:
-        conn = await asyncpg.connect(DB_URL)
+        conn = await _connect_db()
     except (OSError, asyncpg.PostgresError) as exc:
         print(f"  ERROR: cannot connect: {exc}")
         print("  Set TAGPULSE_SMOKE_DB_URL or check that `docker compose up -d db` is running.")
