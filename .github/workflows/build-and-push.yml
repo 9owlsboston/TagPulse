@@ -91,6 +91,11 @@ jobs:
           file: ./Dockerfile
           target: ${{ matrix.component }}
           push: ${{ github.event_name != 'pull_request' }}
+          # Sprint 26 D2 — `load: true` keeps a local-daemon copy of the api
+          # image so the next step can `docker run` it for the scripts/ import
+          # smoke without pulling anything back from the registry. Coexists
+          # with `push: true` on non-PR builds.
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Sprint 25 A1 — bake build identity into the image so /health/live
@@ -101,6 +106,17 @@ jobs:
             BUILD_TIME=${{ steps.build_meta.outputs.build_time }}
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      # Sprint 26 D2 — smoke that the api image (which the tools-job reuses)
+      # still has scripts/*.py importable. Catches the failure mode where
+      # someone moves a script under a subdirectory or renames a module
+      # without updating the tools-job runbook. Only runs against the api
+      # image (worker/migrations don't need scripts/).
+      - name: Smoke — tools image imports scripts/
+        if: matrix.component == 'api'
+        run: |
+          docker run --rm --entrypoint python ${{ steps.push.outputs.imageid }} \
+            -c "import scripts.smoke_setup, scripts.simulate_devices, scripts.simulate_assets, scripts.simulate_inventory, scripts.benchmark_pg_metrics; print('tools-image scripts import OK')"
 
       # GitHub's attestation API is not available on user-owned private repos
       # (https://docs.github.com/rest/repos/attestations#create-an-attestation),
