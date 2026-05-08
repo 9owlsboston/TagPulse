@@ -1,0 +1,365 @@
+# Device Developer & Operator Guide
+
+> **Audience:** anyone connecting a real RFID reader (or any sensor gateway) to a
+> deployed TagPulse instance — whether you're (a) the operator pointing a
+> commercial reader at the broker, or (b) a firmware/software developer writing a
+> custom edge agent.
+>
+> **TL;DR** for someone who just wants to send their first read:
+> ```
+> mosquitto_pub -h tpdev-mqtt-mwig6fst.centralus.azurecontainer.io -p 1883 \
+>   -u <device_id> -P <device_token> \
+>   -t 'tenants/<tenant_id>/devices/<device_id>/tag-reads' \
+>   -m '[{"device_id":"<device_id>","tag_id":"E2806894...","timestamp":"2026-05-08T10:15:30Z","signal_strength":-52.0}]'
+> ```
+> Read on for what each of those values is, where to get them, and the rest of
+> the wire contract.
+
+---
+
+## 1. Concepts in one screen
+
+| Term | What it is |
+|---|---|
+| **Tenant** | The company / org. All data is scoped to a `tenant_id` (UUID). One tenant per customer. |
+| **Device** | One physical reader / gateway. Has its own `device_id` (UUID) + Bearer token. Provisioned by the tenant admin. |
+| **Tag read** | One observation of a tag by a reader. The primary event TagPulse ingests. |
+| **Telemetry** | A numeric metric reading (temperature, battery, RSSI…) tied to a *subject* (device, asset, lot, stock_item, zone). |
+| **Location** | A GPS / dead-reckoned position fix. Separate topic so a moving reader can report itself. |
+| **Status / heartbeat** | A 60-second liveness ping carrying connection state, firmware version, and buffer depth. |
+| **Subject** | The thing telemetry is *about*. RFID readers usually attribute to `device`; once the tag→asset binding is known, the backend fans out reads to `asset`/`lot`/`stock_item`. |
+
+**Two transports, one schema.** MQTT is push-by-default and the recommended path
+for real readers. HTTP is the same payload shape and is provided as a fallback
+for batch uploads, restricted networks, or one-shot tooling.
+
+**The contract is enforced.** [`docs/design/edge-device-contract.md`](../design/edge-device-contract.md)
+is the authoritative spec — clock window, dedup window, ENTER/EXIT semantics,
+batching limits, heartbeat cadence. The backend rejects events outside the
+clock window and rate-limits payload size; the rest is a conformance test
+suite ([`tests/conformance/`](../../tests/conformance/)) every blessed reader
+must pass.
+
+---
+
+## 2. Provisioning: getting credentials before you can publish
+
+You need three things:
+
+1. **`tenant_id`** — the UUID of your tenant. Ask your TagPulse admin.
+2. **`device_id`** — registered once via the admin UI **Devices → New Device**
+   *or* via `POST /device-registry`:
+   ```bash
+   curl -X POST https://<api-fqdn>/device-registry \
+     -H "Authorization: Bearer <admin-api-key>" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"dock-bay-12","device_type":"rfid_reader","firmware_version":"0.4.2"}'
+   # → {"id":"<device_id>","token":"tpd_xxx_yyyyyyyy", ...}
+   ```
+3. **`device_token`** — returned **once** at registration. If you lose it, the
+   admin must rotate via `POST /device-registry/{device_id}/rotate-token`
+   (the previous token is immediately invalidated, no grace period).
+
+> **Token shape.** Device tokens look like `tpd_<prefix>_<secret>`. The `tpd_`
+> prefix distinguishes them from user API keys (`tp_…`).
+
+A reader's MQTT credentials are simply `username = device_id`, `password = device_token`.
+On HTTP, send `Authorization: Bearer <device_token>`.
+
+---
+
+## 3. MQTT 90-second primer
+
+If you've never used MQTT: it's a publish/subscribe protocol over TCP (port
+1883 plain, 8883 TLS). A *broker* is a tiny server that holds topic
+subscriptions; clients publish *messages* to *topics*; other clients
+subscribed to those topics receive them. There is no request/response — fire
+and forget, with optional QoS for delivery guarantees.
+
+What that means concretely for TagPulse:
+
+- The TagPulse backend has an MQTT *worker* subscribed to
+  `tenants/+/devices/+/+` (one wildcard for tenant, one for device, one for
+  the message kind). Anything you publish there gets ingested.
+- **You only ever publish.** You don't subscribe to receive commands —
+  cloud-to-device commands are on the roadmap (Sprint 26+) but not live.
+- **Topics are pre-fixed by your tenant + device.** The broker ACL refuses
+  publishes to topics that don't match your `device_id`. You can't
+  accidentally write to another device's stream.
+- **Use QoS 1.** TagPulse's broker accepts QoS 0/1/2; the reference client
+  uses **QoS 1** (at-least-once) which is the right trade-off — the backend
+  is idempotent on `(device_id, tag_id, timestamp)` so duplicates are
+  deduplicated. QoS 2 doubles the round trips for no extra value.
+- **Set a Last Will and Testament (LWT).** Publish-on-disconnect message
+  declared at connect time. TagPulse expects it on the `…/status` topic
+  with `{"connection_state":"offline"}` so the dashboard can reflect a
+  yanked-cable reader within seconds.
+
+### 3.1 Topics
+
+```
+tenants/{tenant_id}/devices/{device_id}/tag-reads      # primary RFID stream
+tenants/{tenant_id}/devices/{device_id}/telemetry      # device-keyed metrics
+tenants/{tenant_id}/devices/{device_id}/location       # GPS fixes
+tenants/{tenant_id}/devices/{device_id}/status         # heartbeat + LWT
+tenants/{tenant_id}/devices/{device_id}/events         # diagnostic events
+
+# Subject-scoped (when the integration has already resolved tag → asset):
+tenants/{tenant_id}/subjects/{subject_kind}/{subject_id}/telemetry
+# subject_kind ∈ {device, asset, lot, stock_item, zone}
+```
+
+### 3.2 Payload shapes (one example each)
+
+`tag-reads` — an array of one or more reads (batch up to 100):
+```json
+[
+  {
+    "device_id": "00000000-0000-0000-0000-000000000002",
+    "tag_id": "E280689400005000A1B2C3D4",
+    "timestamp": "2026-05-08T10:15:30.123Z",
+    "signal_strength": -52.0,
+    "reader_antenna": 1,
+    "tag_data": {"epc_hex": "300833B2DDD9014000000000"}
+  }
+]
+```
+
+`telemetry` (device-keyed, single reading):
+```json
+{
+  "device_id": "00000000-...-0002",
+  "timestamp": "2026-05-08T10:15:30Z",
+  "metric_name": "temperature_c",
+  "metric_value": 22.4,
+  "unit": "°C"
+}
+```
+
+`location` (single GPS fix):
+```json
+{
+  "device_id": "00000000-...-0002",
+  "timestamp": "2026-05-08T10:15:30Z",
+  "latitude": 37.7749,
+  "longitude": -122.4194,
+  "accuracy_m": 4.5,
+  "source": "gps"
+}
+```
+
+`status` (heartbeat — also used as LWT body with `connection_state:"offline"`):
+```json
+{
+  "timestamp": "2026-05-08T10:15:30Z",
+  "connection_state": "online",
+  "firmware_version": "0.4.2",
+  "uptime_s": 12345,
+  "queue_depth": 0,
+  "buffer_bytes": 0
+}
+```
+
+### 3.3 Send your first message
+
+With `mosquitto_pub` (the canonical MQTT CLI; install via `apt install
+mosquitto-clients` or `brew install mosquitto`):
+
+```bash
+TENANT=11111111-1111-1111-1111-111111111111
+DEVICE=00000000-0000-0000-0000-000000000002
+TOKEN='tpd_xxx_yyyyyyyy'
+BROKER=tpdev-mqtt-mwig6fst.centralus.azurecontainer.io
+
+mosquitto_pub -h "$BROKER" -p 1883 \
+  -u "$DEVICE" -P "$TOKEN" \
+  -q 1 \
+  -t "tenants/$TENANT/devices/$DEVICE/tag-reads" \
+  -m '[{"device_id":"'$DEVICE'","tag_id":"E2806894TEST","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","signal_strength":-52.0}]'
+```
+
+Confirm it landed:
+```bash
+curl -s "https://$API_FQDN/tag-reads?limit=5" \
+  -H "Authorization: Bearer <admin-api-key>" | jq '.[] | {tag_id,timestamp,device_id}'
+```
+
+---
+
+## 4. HTTP API quick reference
+
+Same payloads as MQTT, plus a `/batch` endpoint. Useful when:
+
+- the device is behind a corporate proxy that blocks port 1883
+- you're building a one-shot data import tool
+- you're using `curl` to debug
+
+**Auth header:** `Authorization: Bearer <device_token>` (or a tenant-level API key
+for tooling).
+
+| Endpoint | Method | Body | Notes |
+|---|---|---|---|
+| `/tag-reads` | POST | `TagReadCreate` (single object) | 201 + persisted row |
+| `/tag-reads/batch` | POST | `[TagReadCreate, ...]` | 201 + `{ingested, rejected}` count |
+| `/telemetry` | POST | `TelemetryBatch` (single batch) | 201 |
+| `/telemetry/readings/ingest` | POST | `TelemetryReadingIngest` | Subject-scoped; admin/editor scope |
+
+Schemas live in [`src/tagpulse/models/schemas.py`](../../src/tagpulse/models/schemas.py)
+and the live OpenAPI spec is at `https://<api-fqdn>/docs` (interactive Swagger
+UI) or `…/openapi.json`.
+
+Example — single read via HTTP:
+```bash
+curl -X POST "https://$API_FQDN/tag-reads" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_id": "'$DEVICE'",
+    "tag_id": "E2806894TEST",
+    "timestamp": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'",
+    "signal_strength": -52.0
+  }'
+```
+
+---
+
+## 5. Reference Python edge client (`clients/pi`)
+
+If you're writing a custom agent in Python, **start from
+[`clients/pi/`](../../clients/pi/)** rather than rolling your own MQTT loop.
+It already implements the contract (dedup, ENTER/EXIT, batching, offline
+buffer, reconnect with full-jitter backoff, NTP-aware clock checks).
+
+Despite the directory name, it has nothing Pi-specific — runs on any Linux
+or macOS host with Python 3.11+.
+
+```bash
+cd clients/pi
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e .
+
+python -m examples.run_reader \
+  --tenant-id "$TENANT" \
+  --device-id "$DEVICE" \
+  --broker-host "$BROKER" \
+  --token "$TOKEN"
+```
+
+The example uses a fake hardware loop. To wire up a real reader, you call
+`agent.submit_tag_read(RawTagRead(...))` from your reader's read callback —
+the agent handles everything else.
+
+```python
+from datetime import UTC, datetime
+from uuid import UUID
+from tagpulse_edge import EdgeAgent, EdgeConfig, RawTagRead
+
+config = EdgeConfig(
+    tenant_id=UUID(tenant_id),
+    device_id=UUID(device_id),
+    broker_host=broker,
+    broker_port=1883,
+    username=device_id,
+    password=device_token,
+    buffer_path="/var/lib/tagpulse/edge.sqlite",
+    firmware_version="my-reader-1.0.0",
+)
+
+with EdgeAgent(config) as agent:
+    while True:
+        for read in my_reader.read_tags():        # vendor SDK
+            agent.submit_tag_read(RawTagRead(
+                tag_id=read.epc,
+                antenna=read.antenna,
+                signal_strength=read.rssi,
+                observed_at=datetime.now(UTC),
+            ))
+```
+
+The agent's defaults match the contract: 5 s dedup window, 10 s exit
+timeout, 60 s heartbeat, 100 MB / 24 h offline buffer. Every knob is in
+[`tagpulse_edge/config.py`](../../clients/pi/tagpulse_edge/config.py) and
+also overridable via the device's server-side `configuration` JSON.
+
+---
+
+## 6. Azure `dev` cheat-sheet
+
+Concrete endpoints for the deployed development environment as of this
+writing:
+
+| Resource | Value |
+|---|---|
+| API base | `https://tpdev-api.kindflower-bfd1de4e.centralus.azurecontainerapps.io` |
+| OpenAPI / Swagger | `https://tpdev-api.kindflower-bfd1de4e.centralus.azurecontainerapps.io/docs` |
+| MQTT broker (host) | `tpdev-mqtt-mwig6fst.centralus.azurecontainer.io` |
+| MQTT port (plain) | `1883` |
+| MQTT TLS | not yet — Sprint 17c (mTLS) and Sprint 24 (EMQX cutover) |
+| Demo tenant `id` | `11111111-1111-1111-1111-111111111111` (slug `test-corp`, seeded by `scripts/smoke_setup.py`) |
+
+> The MQTT broker is plain TCP for now. **Don't ship production credentials
+> on this dev broker.** Token rotation via the admin UI invalidates the old
+> token immediately, so leaks are recoverable.
+
+For other environments, look up live FQDNs:
+```bash
+az containerapp show -n tpdev-api -g tagpulse-dev-rg \
+  --query 'properties.configuration.ingress.fqdn' -o tsv
+az container show -n tpdev-mqtt -g tagpulse-dev-rg \
+  --query 'ipAddress.fqdn' -o tsv
+```
+
+---
+
+## 7. End-to-end smoke from a laptop
+
+A fast way to validate "my creds work + my data is landing" without any real
+hardware:
+
+```bash
+# 1. seed/refresh the demo tenant + admin key (idempotent)
+export TAGPULSE_API_URL=https://tpdev-api.kindflower-bfd1de4e.centralus.azurecontainerapps.io
+python scripts/smoke_setup.py --full --with-roles --with-subject-telemetry
+# prints: export TAGPULSE_API_KEY=tp_...
+
+# 2. fire a synthetic load via the bundled simulator (HTTP path)
+python scripts/simulate_devices.py \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --devices 3 --interval 2 --tags 10 --with-gps
+
+# 3. confirm reads landed
+curl -s "$TAGPULSE_API_URL/tag-reads?limit=10" \
+  -H "Authorization: Bearer $TAGPULSE_API_KEY" | jq 'length'
+```
+
+If you'd rather exercise the **MQTT** path end-to-end, the conformance
+harness in [`tests/conformance/`](../../tests/conformance/) doubles as a
+reference: each test publishes against a live broker and asserts the row
+shows up in the API.
+
+---
+
+## 8. Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `mosquitto_pub` exits 0 but no row in `/tag-reads` | Wrong topic — typo in tenant or device UUID | Topic must be exactly `tenants/<tenant_uuid>/devices/<device_uuid>/tag-reads`. The broker silently drops publishes that don't match an ACL. |
+| `Connection refused` on port 1883 | Corporate firewall blocks MQTT | Use the HTTP `/tag-reads/batch` endpoint over 443; switch to MQTT once the broker moves to TLS on 8883 (Sprint 24). |
+| 401 Unauthorized on HTTP | Stale or wrong token | Admin runs `POST /device-registry/{device_id}/rotate-token` and re-distributes; old token is invalid immediately. |
+| 400 with `event_too_old` / `event_in_future` | Device clock drifted >24h or >5min | Sync NTP. The contract rejects out-of-window events to keep the hypertable from getting cluttered with bogus timestamps. See [edge-device-contract §3.5](../design/edge-device-contract.md). |
+| Reads land but no asset shows in the UI | Tag→asset binding missing | Either bind via the admin UI or `POST /assets/{id}/bindings`. The simulator's `--with-gps` mode auto-binds `TAG0001…` to its synthetic assets. |
+| Heartbeat says `online` but data stops | Reader's offline buffer is full | Increase `buffer_max_bytes` in the device's `configuration` JSON, or look for a clock-skew loop dropping every event before it's published. |
+
+---
+
+## 9. Where to go next
+
+| You want to… | Read this |
+|---|---|
+| Read the authoritative wire contract | [`docs/design/edge-device-contract.md`](../design/edge-device-contract.md) |
+| Understand RFID hardware choices | [`docs/refs/edge-hardware-and-rfid-primer.md`](../refs/edge-hardware-and-rfid-primer.md) |
+| Understand the EPC / TID tag-data model | [`docs/design/rfid-tag-data-model.md`](../design/rfid-tag-data-model.md) |
+| Set up the dev stack on a laptop | [`docs/quickstart.md`](../quickstart.md) |
+| Operate the deployed cloud stack | [`docs/runbooks/azure-first-deploy.md`](../runbooks/azure-first-deploy.md) |
+| See the rules engine that fires on incoming reads | [`docs/runbooks/subject-scoped-telemetry.md`](../runbooks/subject-scoped-telemetry.md) |
+| File a conformance test for your custom firmware | [`tests/conformance/`](../../tests/conformance/) |
