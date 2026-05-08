@@ -317,7 +317,19 @@ scripts/azd-job.sh dev smoke_setup.py -- \
 #          operators behind corporate proxies / Azure Cloud Shell / WSL2
 #          where the egress IP rotates between sessions:
 #
+#              # List what's in the vault (no value retrieval):
+#              scripts/azd-kv-get.sh dev --list
+#
+#              # Pull a value:
 #              export TAGPULSE_API_KEY=$(scripts/azd-kv-get.sh dev tagpulse-test-corp-admin-key)
+#
+#          Common secret names (Sprint 22-C deployment):
+#            jwt-secret                          # API JWT signing key (Bicep-seeded)
+#            postgres-admin-password             # Postgres admin password (Bicep-seeded)
+#            mqtt-broker-password                # Mosquitto auth password (Bicep-seeded)
+#            tagpulse-<tenant-slug>-admin-key    # smoke_setup --regenerate-key
+#            tagpulse-<tenant-slug>-editor-key   # smoke_setup --with-roles --regenerate-key
+#            tagpulse-<tenant-slug>-viewer-key   # smoke_setup --with-roles --regenerate-key
 #
 #          Then skip step 3 below and jump straight to step 4.
 #
