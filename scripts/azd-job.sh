@@ -99,9 +99,19 @@ fi
 
 # Resolve job name + RG from azd env. The tools-job's name is exposed as
 # the `toolsJobName` output of the workload deployment (Sprint 26 B2).
+#
+# Accept either the shorthand ("dev") or the literal azd env name
+# ("tagpulse-dev"), matching the convention `scripts/azd-bootstrap.sh`
+# established (the bootstrap creates `tagpulse-<env>` from shorthand
+# `<env>`). We try the literal first, then prefix `tagpulse-` if that fails.
 echo "==> Resolving env $ENV_NAME"
-if ! azd env select "$ENV_NAME" >/dev/null 2>&1; then
-  echo "error: azd env '$ENV_NAME' not found. Run 'azd env list'." >&2
+if azd env select "$ENV_NAME" >/dev/null 2>&1; then
+  RESOLVED_ENV="$ENV_NAME"
+elif azd env select "tagpulse-$ENV_NAME" >/dev/null 2>&1; then
+  RESOLVED_ENV="tagpulse-$ENV_NAME"
+  echo "    (resolved shorthand '$ENV_NAME' → azd env '$RESOLVED_ENV')"
+else
+  echo "error: azd env '$ENV_NAME' (or 'tagpulse-$ENV_NAME') not found. Run 'azd env list'." >&2
   exit 2
 fi
 JOB_NAME="$(azd env get-value toolsJobName 2>/dev/null || echo '')"

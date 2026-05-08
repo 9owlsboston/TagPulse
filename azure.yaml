@@ -121,6 +121,17 @@ hooks:
       fi
       echo "ACR=$ACR_LOGIN_SERVER  TAG=$(get AZURE_IMAGE_TAG)"
 
+  # Before deploying services: ensure the Flexible Server is running.
+  # Burstable-tier servers auto-stop after 7 days of inactivity (and dev
+  # servers are frequently stopped manually); when stopped, the migrations
+  # job and the api both fail their DB checks and `azd deploy` hangs the
+  # postdeploy migrations poll. Idempotent no-op when already Ready.
+  predeploy:
+    shell: sh
+    run: |
+      set -e
+      ./scripts/azd-pg-ensure-running.sh
+
   # After all services are deployed (images pushed): run the migrations job to
   # completion before users hit the new api revision. Then run the Sprint 23
   # network reachability smoke (no-op unless the VNet flags are on).
