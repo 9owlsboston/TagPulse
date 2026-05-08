@@ -4,6 +4,11 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Sprint 25 — Hotfix: SWA CORS plumbing
+
+- **`corsOriginsExtra` parameter wired through Bicep** ([deploy/azure/bicep/main.bicep](deploy/azure/bicep/main.bicep), [deploy/azure/bicep/main.bicepparam](deploy/azure/bicep/main.bicepparam), [deploy/azure/bicep/workload.bicep](deploy/azure/bicep/workload.bicep), [deploy/azure/bicep/modules/container-app.bicep](deploy/azure/bicep/modules/container-app.bicep)). Sprint 24 A2 surfaced `Settings.cors_origins` in `/health/ready` but never passed an env var to the api Container App, so every cloud deploy ran with the dev default `http://localhost:5173` and the SPA's fetches got blocked by the browser. `workload.bicep` now feeds `'${corsOriginsExtra},https://${ui.outputs.defaultHostname}'` into the api module so the SWA hostname is auto-appended at provision time. The SWA module's `apiUrl` setting is no longer wired from `apiApp.outputs.fqdn` (would create a module cycle now that the api references the SWA hostname); the UI repo bakes `VITE_API_BASE_URL` at build time from `vars.VITE_API_BASE_URL` so the runtime app-setting was cosmetic anyway. Verified live against `tagpulse-dev-rg`: `/health/ready` reports both origins in `config.cors.allow_origins`.
+- **SWA `azd-service-name=ui` tag** ([deploy/azure/bicep/workload.bicep](deploy/azure/bicep/workload.bicep)). The Phase D rotation cron filters `az staticwebapp list --query "[?tags.\"azd-service-name\"=='ui']"`; without the tag the lookup returned empty and the cron would silently no-op. Adds the standard `azd-service-name` tag the api / worker / migrations modules already use.
+
 ### Sprint 25 — Frontend Resilience & Observability (Phase A — backend health & CSP support)
 
 > [docs/roadmap.md § Sprint 25](docs/roadmap.md). Phase A unblocks the UI repo's remaining slices: B5 (CSP report-only header in `staticwebapp.config.json`) needs A3 to ship first, and B3/B4 (deploy-time + post-deploy smokes) need a healthy api with the new `/health/live` contract.

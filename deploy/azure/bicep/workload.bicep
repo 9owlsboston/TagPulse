@@ -41,6 +41,9 @@ param staticWebAppLocation string = 'centralus'
 @allowed(['dev','staging','production'])
 param appEnvironment string = 'production'
 
+@description('Sprint 25 A2 -- extra CORS allow-origins (comma-separated) for the api. The Static Web App default hostname is auto-appended; only add custom domains or dev origins here.')
+param corsOriginsExtra string = 'http://localhost:5173'
+
 @description('Optional short suffix appended to the Key Vault name to dodge soft-delete name reservations after a prior teardown. Empty = clean name.')
 param keyVaultNameSuffix string = ''
 
@@ -199,6 +202,7 @@ module apiApp 'modules/container-app.bicep' = {
     mqttUsername: mqttUsername
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     appEnvironment: appEnvironment
+    corsOrigins: '${corsOriginsExtra},https://${ui.outputs.defaultHostname}'
     tags: union(tags, { 'azd-service-name': 'api' })
   }
 }
@@ -250,8 +254,13 @@ module ui 'modules/static-web-app.bicep' = {
   params: {
     siteName: swaName
     location: staticWebAppLocation
-    apiUrl: 'https://${apiApp.outputs.fqdn}'
-    tags: tags
+    // Sprint 25 A2 -- intentionally NOT passing apiUrl. The previous wiring
+    // ('https://${apiApp.outputs.fqdn}') created a cycle with the api's
+    // CORS_ORIGINS env var (which now references ui.outputs.defaultHostname).
+    // The SWA app-setting was cosmetic anyway: the UI repo's deploy workflow
+    // bakes VITE_API_BASE_URL at build time from `vars.VITE_API_BASE_URL`
+    // (set by scripts/ui-cicd-setup.sh), not from this SWA app-setting.
+    tags: union(tags, { 'azd-service-name': 'ui' })
   }
 }
 
