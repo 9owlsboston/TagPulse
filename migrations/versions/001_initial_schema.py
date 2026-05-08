@@ -18,6 +18,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # -- TimescaleDB extension --
+    # Azure Postgres Flexible Server requires TIMESCALEDB to be on the
+    # `azure.extensions` allow-list (handled in deploy/azure/bicep/modules/postgres.bicep)
+    # AND for the database itself to run `CREATE EXTENSION` before any
+    # `create_hypertable()` call. Local docker-compose ships the extension
+    # pre-created in its init script, but the cloud DB starts empty.
+    op.execute("CREATE EXTENSION IF NOT EXISTS timescaledb")
+
     # -- Devices table (relational) --
     op.create_table(
         "devices",
