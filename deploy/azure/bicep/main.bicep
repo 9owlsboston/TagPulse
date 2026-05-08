@@ -42,6 +42,9 @@ param staticWebAppLocation string = 'centralus'
 @allowed(['dev','staging','production'])
 param appEnvironment string = 'production'
 
+@description('Sprint 25 A2 -- extra CORS allow-origins (comma-separated) for the api. The Static Web App default hostname is auto-appended; only add custom domains or dev origins here.')
+param corsOriginsExtra string = 'http://localhost:5173'
+
 @description('Optional short suffix appended to the Key Vault name to dodge soft-delete name reservations from a prior teardown. Set automatically by scripts/azd-kv-recover.sh when a purge-protected collision is detected.')
 param keyVaultNameSuffix string = ''
 
@@ -81,6 +84,7 @@ module workload 'workload.bicep' = {
     mqttPassword: mqttPassword
     staticWebAppLocation: staticWebAppLocation
     appEnvironment: appEnvironment
+    corsOriginsExtra: corsOriginsExtra
     keyVaultNameSuffix: keyVaultNameSuffix
     useImagePlaceholders: useImagePlaceholders
     enableVnetIntegration: enableVnetIntegration
