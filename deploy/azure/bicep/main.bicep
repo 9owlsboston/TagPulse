@@ -92,6 +92,12 @@ module workload 'workload.bicep' = {
 output resourceGroupName string = rg.name
 output acrLoginServer string = workload.outputs.acrLoginServer
 output acrName string = workload.outputs.acrName
+// azd looks specifically for an output named `AZURE_CONTAINER_REGISTRY_ENDPOINT`
+// (canonical name) and auto-promotes it to azd env values. This makes the
+// registry available to the docker-package step on subsequent `azd up` runs,
+// eliminating the chicken-and-egg where package runs before provision and
+// `${AZURE_ACR_LOGIN_SERVER}` is empty on first run.
+output AZURE_CONTAINER_REGISTRY_ENDPOINT string = workload.outputs.acrLoginServer
 output keyVaultName string = workload.outputs.keyVaultName
 output postgresFqdn string = workload.outputs.postgresFqdn
 output mqttFqdn string = workload.outputs.mqttFqdn

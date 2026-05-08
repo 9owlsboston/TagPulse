@@ -524,6 +524,83 @@
 
 ---
 
+## Sprint 24 — Frontend Cloud Deployment (parity with Sprint 22 backend deploy)
+
+> Design: [docs/design/frontend-deployment.md](design/frontend-deployment.md), [docs/adr/018-frontend-cloud-deployment.md](adr/018-frontend-cloud-deployment.md)
+> Companion repo: [9owlsboston/TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI) — Phase B lands there
+> Goal: ship the React 19 + Vite SPA to the Azure Static Web App that Sprint 22 C-1 already provisions but never deploys into. Mirror the Sprint 22 deployment ergonomics (per-env `.env.<env>`, `*-bootstrap.sh` / `*-env-load.sh` / `*-cicd-setup.sh` / `*-cicd-verify.sh` / `*-preflight.sh` scripts, OIDC where applicable, `deploy/<provider>/ui/` skeletons for AWS + GCP). Infra stays in this repo; the SPA bundle ships from the UI repo's GHA. No combined deploy — see [ADR-018](adr/018-frontend-cloud-deployment.md) for why.
+
+### Ownership at a glance
+
+Every task is tagged `[backend]` (this repo, `9owlsboston/TagPulse`) or `[ui]` (sibling repo, `9owlsboston/TagPulse-UI`). Phases group by ownership for clean parallel work; no task crosses repo boundaries.
+
+| Phase | Repo | Task count | What lands |
+|---|---|---|---|
+| A — Backend prerequisites | `[backend]` TagPulse | 4 | `scripts/azd-ui-token.sh`, `/health/ready` CORS surface, Bicep audit, runbook update |
+| B — UI shipping path | `[ui]` TagPulse-UI | 10 | `staticwebapp.config.json`, `.env.example`, 5 mirror scripts, 2 GHA workflows, repo-local quickstart |
+| C — Operator documentation | `[backend]` TagPulse | 3 | `docs/runbooks/ui-first-deploy.md`, README cross-links, runbooks index |
+| D — Multi-cloud skeletons | `[backend]` TagPulse | 3 | `deploy/aws/ui/`, `deploy/gcp/ui/`, `deploy/portable/ui/` |
+
+**Order of operations:** A and B can ship in parallel (A1 unblocks B3, but the rest of A and B are independent). C depends on A complete + B at least at the manual-deploy stage (B1–B5). D is independent of A/B/C and can ship any time.
+
+### Phase A — Backend prerequisites (this repo, `[backend]`)
+
+- [shipped] **A1** `[backend]` **`scripts/azd-ui-token.sh`.** Read-only helper that runs `az staticwebapp secrets list` against the env's SWA and prints the deployment `apiKey` to stdout. Used by both the operator (when wiring the UI repo's GitHub Environment by hand) and `scripts/ui-bootstrap.sh` in the UI repo (when generating `.env.<env>` automatically). Refuses to print when stdout is a TTY without `--print` to keep it out of shell history. Idempotent.
+- [shipped] **A2** `[backend]` **Surface CORS origins in `/health/ready`.** Extend the existing `config` snapshot (Sprint 22 A5) to include `cors.allow_origins` (already in `Settings`; just add to the response). Lets operators confirm the SWA hostname is in the allow-list without shelling into the container — closes the most likely "SPA loads but every API call 401s with CORS error" failure mode.
+- [shipped] **A3** `[backend]` **Verify `static-web-app.bicep` does not output `apiKey`.** Already shipped in Sprint 22 C-1; re-audit and pin the test assertion in [tests/unit/test_sprint24_phase_a.py](../tests/unit/test_sprint24_phase_a.py) so a future contributor doesn't accidentally turn the SWA token into a Bicep output (which would land it in `azd env` and `git status` traces).
+- [shipped] **A4** `[backend]` **Update [docs/runbooks/azure-first-deploy.md](runbooks/azure-first-deploy.md) Phase 3.** New step after the `azd up` smoke tests: copy the `staticWebAppHostname` Bicep output into `CORS_ALLOW_ORIGINS=https://${api},https://${swa}` in `deploy/azure/.env.<env>`, then `azd-env-load.sh <env> && azd provision` to push the new origin list into the api revision. Order matters — without this, the SPA loads but every fetch is blocked by the strict-mode CORS validator (Sprint 22 A2).
+
+### Phase B — TagPulse-UI repo (the actual SPA shipping path, `[ui]`)
+
+> All Phase B items are implemented in `9owlsboston/TagPulse-UI`. Tracked here for sprint-completion accounting; the `[ui]` tag is a reminder that no PR for these items lands in this repo.
+
+- [planned] **B1** `[ui]` **`staticwebapp.config.json`.** SPA fallback `/* → /index.html`, plus `globalHeaders` with HSTS (1y, includeSubDomains, preload), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`. Permissive starting CSP (script-src 'self'; connect-src 'self' https://*.azurecontainerapps.io) — lock-down deferred per [ADR-018 §5](adr/018-frontend-cloud-deployment.md).
+- [planned] **B2** `[ui]` **`.env.example` for build-time vars.** At minimum `VITE_API_BASE_URL`. **No secrets** — the SWA deployment token is a CI secret, never a build var.
+- [planned] **B3** `[ui]` **`scripts/ui-bootstrap.sh <env>`.** Reads the four needed values (`SERVICE_API_URI`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_STATIC_WEB_APPS_NAME`) out of the backend repo's `azd env get-values`, plus the deployment token via `scripts/azd-ui-token.sh` (Phase A1 over there), and writes `.env.<env>` at mode 0600. Refuses to overwrite without `--force`. Mirrors `scripts/azd-bootstrap.sh` from this repo.
+- [planned] **B4** `[ui]` **`scripts/ui-env-load.sh <env>`.** `source`-able loader for the current shell. Mirrors `scripts/azd-env-load.sh`.
+- [planned] **B5** `[ui]` **`scripts/ui-preflight.sh`.** Checks `node ≥20`, `npm ≥10`, `gh` signed in to `9owlsboston`, `az` signed in to the tenant from `.env.<env>`. Prints fix commands on failure. Mirrors `scripts/azd-preflight.sh`.
+- [planned] **B6** `[ui]` **`scripts/ui-cicd-setup.sh <env>`.** Idempotent. Creates the GitHub Environment (`dev` / `staging` / `production`), sets four variables (`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_STATIC_WEB_APPS_NAME`, `VITE_API_BASE_URL`), uploads the SWA deployment token as the `AZURE_STATIC_WEB_APPS_API_TOKEN` secret. `--rotate` flag regenerates the token via `az staticwebapp secrets reset-api-key` and re-uploads. Mirrors `scripts/azd-cicd-setup.sh`.
+- [planned] **B7** `[ui]` **`scripts/ui-cicd-verify.sh <env>`.** Confirms the Environment exists with the four expected variables and the secret present. Exit 0 = ready to deploy. Mirrors `scripts/azd-cicd-verify.sh`.
+- [planned] **B8** `[ui]` **`.github/workflows/deploy-azure.yml`.** Triggers: push to `main` (auto → `dev`), `v*` tag (auto → `staging`), `workflow_dispatch` (manual any env, gated by GitHub Environment reviewer rules for `production`). Steps: checkout → `npm ci` → `npm run build` → `Azure/static-web-apps-deploy@v1` with the deployment token + the built `dist/` → curl `https://${swa-hostname}/` and assert HTTP 200 + the asset hash from `dist/index.html` is present in the response. PR previews come for free from the action when `production_branch: main` is set.
+- [planned] **B9** `[ui]` **`.github/workflows/build-and-test.yml`.** PR build + lint + typecheck + vitest. Build-only on PR; no deploy.
+- [planned] **B10** `[ui]` **`docs/azure-deploy.md` in the UI repo.** Quick-start (5 commands). Links back to `tagpulse/docs/runbooks/ui-first-deploy.md` (Phase C-1) as the canonical operator runbook.
+
+### Phase C — Documentation (this repo, `[backend]`)
+
+- [shipped] **C1** `[backend]` **`docs/runbooks/ui-first-deploy.md`.** Six-phase checklist mirroring [docs/runbooks/azure-first-deploy.md](runbooks/azure-first-deploy.md): (Phase 0) prereqs (`node ≥20`, `npm ≥10`, `gh` signed in, `az` signed in to the right tenant, backend `.env.<env>` exists and `azd up` succeeded), (Phase 1) per-env bootstrap (`scripts/ui-bootstrap.sh <env>` from the UI repo), (Phase 2) first manual deploy via `npx @azure/static-web-apps-cli deploy ./dist --deployment-token …` to validate the wiring, (Phase 3) post-deploy smoke tests (`curl https://${swa-host}/` returns 200; SPA loads in browser; `POST /auth/login` round-trips through the deployed api; `/health/ready` shows the SWA hostname in `cors.allow_origins`), (Phase 4) CI/CD wiring (`scripts/ui-cicd-setup.sh <env>` + `scripts/ui-cicd-verify.sh <env>` + first `git push origin main` deploys end-to-end), (Phase 5) production cutover gates (reviewer rules on the `production` Environment, branch restriction to `v*` tags + `main`, alert on deploy failure). Top-N common-failures table mirrors the backend runbook's structure: CORS rejection (api hasn't been re-provisioned with the SWA hostname); SWA token expired (run `--rotate`); `VITE_API_BASE_URL` baked-in mismatch (rebuild after backend env recreate); `staticwebapp.config.json` syntax error (deploy fails silently — the action does not validate JSON); SWA region not in the `static-web-app.bicep` allow-list (Bicep deploy fails before SWA exists). Plus a decommission recipe (`az staticwebapp delete` is enough — no soft-delete reservation like KV).
+- [shipped] **C2** `[backend]` **Update [README.md](../README.md) and [deploy/azure/README.md](../deploy/azure/README.md)** to link to the UI runbook from the deployment section. Both already link to `azure-first-deploy.md`; pair them.
+- [shipped] **C3** `[backend]` **Update [docs/runbooks/README.md](runbooks/README.md)** index.
+
+### Phase D — Multi-cloud skeletons (this repo, `[backend]`, structure-only per ADR-016 precedent)
+
+- [shipped] **D1** `[backend]` **`deploy/aws/ui/` skeleton.** `README.md` listing the AWS mapping (S3 with `index.html`/`error.html` static-website hosting → CloudFront distribution → ACM cert → Route 53 alias) and the deploy mechanism (`aws s3 sync ./dist s3://${bucket} --delete && aws cloudfront create-invalidation --distribution-id ${dist} --paths '/*'`). `main.tf` is a TODO stub; no resources provision. Same shape as the Sprint 22 F1 backend skeleton.
+- [shipped] **D2** `[backend]` **`deploy/gcp/ui/` skeleton.** `README.md` with the GCP mapping (Cloud Storage bucket as static website → Cloud CDN → managed cert → Cloud DNS → Cloud Load Balancing). `main.tf` is a TODO stub. Same shape as Sprint 22 F2.
+- [shipped] **D3** `[backend]` **`deploy/portable/ui/` README.** Provider-agnostic notes: the `dist/` output is identical across providers; only the upload command and the CDN-front differ. Two-paragraph cross-cloud DR appendix to the Sprint 22 D-3 runbook (when D-3 lands) — one line per provider for the upload step.
+
+### Acceptance criteria
+
+- `azd up` from a clean Azure subscription against this repo lands an SWA whose `appsettings.VITE_API_BASE_URL` matches the deployed api FQDN (regression check on Sprint 22 C-1).
+- `scripts/ui-bootstrap.sh dev` in the UI repo generates a complete `.env.dev` from a freshly-deployed backend with no manual editing — no value-by-value prompting, no copy-paste-from-`azd env get-values`.
+- `scripts/ui-cicd-setup.sh dev` + `scripts/ui-cicd-verify.sh dev` exit 0; a subsequent `git push origin main` from the UI repo deploys an SPA bundle to `https://tpdev-ui.<random>.azurestaticapps.net` within 5 minutes.
+- The deployed SPA loads, hits `${SERVICE_API_URI}/auth/login`, gets a JWT, and reaches the dashboard — proves CORS is configured + JWT round-trip works.
+- `/health/ready` reports the SWA hostname in `config.cors.allow_origins`.
+- `docs/runbooks/ui-first-deploy.md` walks a fresh operator end-to-end without any external context.
+- `deploy/aws/ui/README.md` + `deploy/gcp/ui/README.md` exist with provider-mapping tables and `# TODO Sprint 25+` stubs (no implementation, parity with Sprint 22 F1/F2).
+- No regression in the Sprint 22 backend deploy path — `azd up` without ever touching the UI repo continues to work; the SWA just serves its empty placeholder.
+- `make check` clean (ruff + mypy + pytest); new unit suite [tests/unit/test_sprint24_phase_a.py](../tests/unit/test_sprint24_phase_a.py) green.
+
+### Deferred to Sprint 25+
+
+- Real AWS / GCP UI implementations (only skeletons in Sprint 24).
+- Custom domain wiring (`app.tagpulse.io`) — gated on registering the domain.
+- SWA Standard tier upgrade — gated on Free-tier caps biting (100GB/mo bandwidth, 500K invocations/day).
+- Front Door + WAF in front of both SWA and api — paired with the Sprint 23+ deferred api-side FD work, not done piecemeal.
+- CSP lock-down — gated on a stable asset manifest and a few weeks of permissive-CSP traffic to enumerate legitimate origins.
+- E2E test in CI (Playwright against the deployed SWA) — gated on first design refresh worth protecting.
+- Automated SWA token rotation cadence — track on the post-Sprint-24 hardening backlog alongside backend secret rotation.
+
+---
+
 ## Backlog (not scheduled)
 - Cloud-to-device commands (reader configuration push via MQTT) (G8)
 - Bulk device operations / jobs (G9)

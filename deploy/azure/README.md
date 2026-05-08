@@ -6,6 +6,8 @@ sourced from **Azure Key Vault** via a user-assigned managed identity.
 
 > **Doing your first deploy?** Follow the
 > [**Azure first-deploy checklist**](../../docs/runbooks/azure-first-deploy.md)
+>
+> [**UI first-deploy checklist**](../../docs/runbooks/ui-first-deploy.md) — for the React SPA into the Static Web App provisioned by this Bicep set
 > — it walks the prerequisites, bootstrap, `azd up`, smoke tests, CI/CD wiring,
 > and production cutover gates step-by-step. This README is the reference
 > companion (module list, SKUs, hardening backlog).

@@ -39,7 +39,15 @@ if [[ -n "$ENV_NAME" ]]; then
 fi
 
 # Pull values from azd; tolerate missing keys.
-get() { azd env get-value "$1" 2>/dev/null | tr -d '\r' || true; }
+get() {
+  # azd env get-value writes "ERROR: key not found ..." to stdout (not stderr)
+  # and exits non-zero when the key is missing. Suppress both and emit empty
+  # so callers can rely on `-z` / default-value checks.
+  local v
+  if v=$(azd env get-value "$1" 2>/dev/null); then
+    printf '%s' "$v" | tr -d '\r'
+  fi
+}
 NAME_PREFIX=$(get AZURE_NAME_PREFIX)
 LOCATION=$(get AZURE_LOCATION)
 SUB=$(get AZURE_SUBSCRIPTION_ID)

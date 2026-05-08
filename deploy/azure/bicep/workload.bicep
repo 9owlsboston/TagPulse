@@ -199,7 +199,7 @@ module apiApp 'modules/container-app.bicep' = {
     mqttUsername: mqttUsername
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     appEnvironment: appEnvironment
-    tags: tags
+    tags: union(tags, { 'azd-service-name': 'api' })
   }
 }
 
@@ -225,7 +225,7 @@ module workerApp 'modules/container-app.bicep' = {
     mqttUsername: mqttUsername
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     appEnvironment: appEnvironment
-    tags: tags
+    tags: union(tags, { 'azd-service-name': 'worker' })
   }
 }
 
@@ -242,7 +242,7 @@ module migrationsJob 'modules/migrations-job.bicep' = {
     postgresAdminUsername: postgres.outputs.adminUsername
     postgresAdminPasswordSecretUri: kv.outputs.pgAdminPasswordUri
     appEnvironment: appEnvironment
-    tags: tags
+    tags: union(tags, { 'azd-service-name': 'migrations' })
   }
 }
 
