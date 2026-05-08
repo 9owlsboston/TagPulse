@@ -38,7 +38,7 @@ inside_resolve() {
     --name "$AZURE_API_APP_NAME" \
     --resource-group "$AZURE_RESOURCE_GROUP" \
     --command "python -c \"import socket,sys; print(socket.gethostbyname('$host'))\"" \
-    2>/dev/null | tr -d '\r' | tail -1
+    2>/dev/null | tr -d '\r' | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | tail -1
 }
 
 KV_INSIDE_IP=$(inside_resolve "$KV_FQDN" || echo "")

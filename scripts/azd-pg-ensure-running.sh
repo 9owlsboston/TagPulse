@@ -26,15 +26,26 @@
 #   2  start kicked off but server didn't reach Ready within timeout
 set -u
 
-# Pull from azd env when not already exported.
+# Pull from azd env when not already exported. Note: `azd env get-value`
+# writes its "key not found" error to STDOUT (not stderr) and exits non-zero
+# when the key is missing — same gotcha azure.yaml's hooks work around. Gate
+# on the exit code, not on whether the output is empty.
 get_azd() {
   if command -v azd >/dev/null 2>&1; then
-    azd env get-value "$1" 2>/dev/null | tr -d '\r'
+    local v
+    if v=$(azd env get-value "$1" 2>/dev/null); then
+      printf '%s' "$v" | tr -d '\r'
+    fi
   fi
 }
 
 RG="${AZURE_RESOURCE_GROUP:-$(get_azd AZURE_RESOURCE_GROUP)}"
+# Bicep emits the FQDN as the camelCase output `postgresFqdn`. Some scripts
+# also set the SCREAMING_SNAKE alias `AZURE_POSTGRES_FQDN`, so honor both.
 PG_FQDN="${AZURE_POSTGRES_FQDN:-$(get_azd AZURE_POSTGRES_FQDN)}"
+if [[ -z "${PG_FQDN:-}" ]]; then
+  PG_FQDN="$(get_azd postgresFqdn)"
+fi
 
 if [[ -z "${RG:-}" || -z "${PG_FQDN:-}" ]]; then
   echo "[pg-ensure] AZURE_RESOURCE_GROUP and AZURE_POSTGRES_FQDN must be set (or available via azd env)." >&2
