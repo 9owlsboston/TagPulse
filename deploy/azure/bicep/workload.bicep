@@ -84,6 +84,7 @@ var uamiName = '${namePrefix}-identity'
 var apiAppName = '${namePrefix}-api'
 var workerAppName = '${namePrefix}-worker'
 var migrationsJobName = '${namePrefix}-migrations'
+var toolsJobName = '${namePrefix}-tools'
 var swaName = '${namePrefix}-ui'
 
 module monitoring 'modules/monitoring.bicep' = {
@@ -250,6 +251,30 @@ module migrationsJob 'modules/migrations-job.bicep' = {
   }
 }
 
+// Sprint 26 B1 -- ad-hoc operational scripts (smoke_setup, simulate_*,
+// benchmark_pg_metrics) running in-VNet against the deployed Postgres.
+// Reuses the api image (which now ships scripts/ via Sprint 26 A1) so no
+// separate build pipeline is required. Default command is a no-op import
+// smoke; scripts/azd-job.sh overrides command+args at start time.
+module toolsJob 'modules/tools-job.bicep' = {
+  params: {
+    jobName: toolsJobName
+    location: location
+    environmentId: acaEnv.outputs.id
+    userAssignedIdentityId: identity.outputs.id
+    image: useImagePlaceholders ? appPlaceholderImage : '${acr.outputs.loginServer}/tagpulse-api:${imageTag}'
+    acrLoginServer: acr.outputs.loginServer
+    postgresFqdn: postgres.outputs.fqdn
+    postgresDatabaseName: postgres.outputs.databaseName
+    postgresAdminUsername: postgres.outputs.adminUsername
+    postgresAdminPasswordSecretUri: kv.outputs.pgAdminPasswordUri
+    apiFqdn: apiApp.outputs.fqdn
+    keyVaultName: kv.outputs.name
+    appEnvironment: appEnvironment
+    tags: union(tags, { 'azd-service-name': 'tools' })
+  }
+}
+
 module ui 'modules/static-web-app.bicep' = {
   params: {
     siteName: swaName
@@ -318,6 +343,7 @@ output apiAppName string = apiApp.outputs.name
 output apiFqdn string = apiApp.outputs.fqdn
 output workerAppName string = workerApp.outputs.name
 output migrationsJobName string = migrationsJob.outputs.name
+output toolsJobName string = toolsJob.outputs.name
 output staticWebAppName string = ui.outputs.name
 output staticWebAppHostname string = ui.outputs.defaultHostname
 // Sprint 23 Phase B -- surfaces the effective value (after the safety
