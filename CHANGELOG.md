@@ -4,6 +4,10 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Docs — Deployment paths
+
+- **[docs/runbooks/azure-first-deploy.md](docs/runbooks/azure-first-deploy.md) — new "Deployment paths" section.** Documents the three distinct flows that put TagPulse on Azure (CI `build-and-push.yml` on push to `main`, `deploy-azure.yml` on `v*` tag / manual dispatch, and operator `azd up` / `azd deploy`) with a comparison table showing which flow builds images, which updates Azure, and which invokes the `azd` predeploy/postdeploy hooks. Captures the recurring confusion that follow-up PRs touching `scripts/azd-*.sh` (e.g. PR #15) do not auto-deploy — those hooks only run in the local operator flow.
+
 ### Ops — `azd up` hook fixes (follow-up to PR #14)
 
 - **`scripts/azd-pg-ensure-running.sh` — fix `get_azd` helper** ([scripts/azd-pg-ensure-running.sh](scripts/azd-pg-ensure-running.sh)). The previous shape (`azd env get-value KEY 2>/dev/null | tr -d '\r'`) silently captured `azd`'s "key not found" error text as the value, because `azd env get-value` writes that error to **STDOUT** (not stderr) and the caller only checked emptiness. The pg-ensure script's predeploy hook then tried to query `az postgres flexible-server show -n "$PG_FQDN%%.*"` with the multiline error string and exited 1 on every `azd up`. Helper now gates on the subprocess exit code (matches the working pattern already used in `azure.yaml`'s postprovision hook). Also adds a fallback to the canonical Bicep output name `postgresFqdn` when `AZURE_POSTGRES_FQDN` (an alias only set by `azd-network-check.sh` callers) is unset.
