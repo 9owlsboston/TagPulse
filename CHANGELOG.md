@@ -4,6 +4,12 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Sprint 26 — Audit remediation
+
+- **D3 cherry-picked onto `main`.** The original D3 commit `948d358` ("`smoke_setup.py --key-vault-name` pushes keys to KV") was authored on the abandoned planning branch `sprint-26/ops-tooling-job` and never merged. PR #11's tools-job set `TAGPULSE_SMOKE_KEY_VAULT_NAME` and granted `Key Vault Secrets Officer` to the workload UAMI on the assumption the script honored it; PR #12's runbook step "pull the rotated key from Key Vault" was therefore broken. Cherry-picked the D3 commit (script changes + `[azure]` extra deps in [pyproject.toml](pyproject.toml)) so the tools-job, the role assignment, and the runbook all line up with real code paths. ([scripts/smoke_setup.py](scripts/smoke_setup.py))
+- **Runbook fix: `azd env get-value uiFqdn` → `staticWebAppHostname`** ([docs/runbooks/azure-first-deploy.md](docs/runbooks/azure-first-deploy.md) §3d step 4). `uiFqdn` is not an `azd` env output; the SPA hostname is exposed as `staticWebAppHostname` (matches §3a + §3b earlier in the same runbook). The drill would have failed at the manual-verification step.
+- **Roadmap markers: Sprint 26 phases flipped `[planned]` → `[shipped]`.** Heading "(planned)" → "(shipped)"; A1 / A2 / B1 / B2 / C1 / C2 / D3 lines updated. D1 / D2 were already shipped from the previous PR.
+
 ### Sprint 26 — Tools-job validation (D1 + D2)
 
 - **D1 — Post-deploy seed-tenant smoke section** ([docs/runbooks/azure-first-deploy.md](docs/runbooks/azure-first-deploy.md)). New `### 3d — Seed the demo tenant + verify Tenant ID login` subsection between Phase 3c (operational scripts contract) and Phase 4 (CI/CD). Four-step drill: `scripts/azd-job.sh dev smoke_setup.py -- --full --with-roles --with-subject-telemetry --regenerate-key`, pull the freshly rotated admin key from Key Vault (job's `--key-vault-name` default keeps plaintext out of Log Analytics), curl `GET /tenant/config` to confirm the api sees `Test Corp`, then verify the SPA Tenant ID login flow lands on the dashboard. Closes the Sprint 25 follow-up where the deployed SPA had no working tenant out of the box. Includes a fallback diagnostic (`az containerapp job execution list`) for the two known failure modes (KV Secrets Officer not yet propagated, tools-job in the wrong VNet).
