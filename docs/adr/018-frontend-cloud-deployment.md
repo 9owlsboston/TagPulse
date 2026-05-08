@@ -54,7 +54,7 @@ deferred to its own ADR gated on real traffic, not v1 launch.
 - **Deployment (the SPA bundle) ships from TagPulse-UI** via that repo's own GHA workflow. The infra here is the empty container; the app there is what fills it.
 - **Coordination contract** = three values exchanged:
   1. From this repo → UI repo: `AZURE_STATIC_WEB_APPS_API_TOKEN` (rotatable; surfaced via `az staticwebapp secrets list` and stored as a per-environment secret in `9owlsboston/TagPulse-UI`'s GitHub Environment).
-  2. From this repo → UI repo: `VITE_API_BASE_URL` (per env; sourced from `azd env get-value SERVICE_API_URI`).
+  2. From this repo → UI repo: `VITE_API_BASE_URL` (per env; sourced from `https://$(azd env get-value apiFqdn)` — the Bicep output is the authoritative api URL since `SERVICE_API_URI` is not persisted by azd for the `containerapp` host).
   3. From UI repo → this repo: the SWA hostname is added to `CORS_ALLOW_ORIGINS` in the api's `.env.<env>` so cross-origin requests are accepted. Already-shipped strict-mode validator (Sprint 22 A2) rejects `*` in non-dev, so this is mandatory.
 
 ### 2. Multi-cloud parity (skeletons only, mirroring Sprint 22 F1/F2)
@@ -82,7 +82,7 @@ in Sprint 22:
 - `scripts/ui-cicd-setup.sh <env>` → idempotently creates the GitHub Environment, sets the four variables, and uploads the API token as a secret (mirrors `scripts/azd-cicd-setup.sh`).
 - `scripts/ui-cicd-verify.sh <env>` → confirms the Environment exists with the expected variables/secrets (mirrors `scripts/azd-cicd-verify.sh`).
 - `scripts/ui-preflight.sh` → checks node/npm/gh/az versions before first deploy (mirrors `scripts/azd-preflight.sh`).
-- One-line bootstrap for an existing backend env: `eval "$(cd ../TagPulse && azd env get-values | grep -E 'SERVICE_API_URI|AZURE_TENANT_ID|AZURE_SUBSCRIPTION_ID')"` so the UI repo doesn't have to re-discover them.
+- One-line bootstrap for an existing backend env: `eval "$(cd ../TagPulse && azd env get-values | grep -E 'apiFqdn|AZURE_TENANT_ID|AZURE_SUBSCRIPTION_ID')"` so the UI repo doesn't have to re-discover them.
 
 ### 4. Auth model (no change from today)
 
