@@ -187,10 +187,7 @@ class TimescaleTelemetryReadingsRepository:
             stmt = stmt.where(TelemetryQuarantineModel.reason == reason)
         stmt = stmt.limit(limit).offset(offset)
         result = await self._session.execute(stmt)
-        return [
-            TelemetryQuarantineResponse.model_validate(row)
-            for row in result.scalars()
-        ]
+        return [TelemetryQuarantineResponse.model_validate(row) for row in result.scalars()]
 
     # -- Subject-aware surface (Sprint 18+) --
 
@@ -334,6 +331,34 @@ class TimescaleTelemetryReadingsRepository:
             for row in result
         ]
 
+    # Process-wide cache for cagg availability — see _caggs_available().
+    # ``None`` = unknown, will be probed on first aggregate() call.
+    _caggs_available_cache: bool | None = None
+
+    async def _caggs_available(self) -> bool:
+        """Return True if ``cagg_telemetry_1m`` and ``_1h`` exist.
+
+        Continuous aggregates are a TSL-licensed TimescaleDB feature
+        and are unavailable on Azure Database for PostgreSQL Flexible
+        Server (Apache-2 edition only). When migration 031 detects the
+        Apache license it skips the cagg DDL, so the views never get
+        created in cloud deployments. We probe ``pg_class`` once per
+        process and cache the result on the class — the cagg story is
+        a deploy-time decision, not a per-request one.
+        """
+        cls = type(self)
+        if cls._caggs_available_cache is None:
+            row = await self._session.execute(
+                text(
+                    "SELECT count(*) FROM pg_class "
+                    "WHERE relname IN ('cagg_telemetry_1m', 'cagg_telemetry_1h')"
+                )
+            )
+            available = (row.scalar_one() or 0) >= 2
+            cls._caggs_available_cache = available
+            return available
+        return cls._caggs_available_cache
+
     async def aggregate(
         self,
         *,
@@ -350,9 +375,12 @@ class TimescaleTelemetryReadingsRepository:
         Routes to the ``cagg_telemetry_1m`` continuous aggregate when
         ``bucket_seconds == 60``, ``cagg_telemetry_1h`` when
         ``bucket_seconds == 3600``, and falls back to a live
-        ``time_bucket`` over the raw hypertable for other intervals.
+        ``time_bucket`` over the raw hypertable for other intervals
+        (or for any bucket width when the caggs are not provisioned —
+        e.g. on Azure Flex's Apache-2 TimescaleDB edition).
         """
-        if bucket_seconds == 60:
+        caggs_ok = await self._caggs_available()
+        if caggs_ok and bucket_seconds == 60:
             # Read-only continuous aggregate; identifier is fixed.
             stmt = text(
                 """
@@ -374,7 +402,7 @@ class TimescaleTelemetryReadingsRepository:
                 "start": start,
                 "end": end,
             }
-        elif bucket_seconds == 3600:
+        elif caggs_ok and bucket_seconds == 3600:
             stmt = text(
                 """
                 SELECT bucket, avg_value, min_value, max_value, sample_count
