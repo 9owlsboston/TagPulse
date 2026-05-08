@@ -677,7 +677,7 @@ Tasks are tagged `[backend]` (this repo, `9owlsboston/TagPulse`) or `[ui]` (sibl
 
 ---
 
-## Sprint 26 — Operational Tooling Job (planned)
+## Sprint 26 — Operational Tooling Job (shipped)
 
 > Goal: give operators a first-class, in-VNet way to run any `scripts/*.py` (and ad-hoc `python -m …`) against a deployed environment, without poking holes in the private Postgres firewall or shipping a separate "tools" image.
 >
@@ -696,23 +696,23 @@ All tasks land in this repo (`9owlsboston/TagPulse`). No UI work.
 | A — Image | 2 | `COPY scripts/` into the base stage; pin `BUILD_VERSION` to surface in `--version`-able scripts |
 | B — Bicep | 2 | New `tools-job.bicep` module + workload wiring; same VNet, secrets, and identity as `tpdev-migrations` |
 | C — Wrapper script | 2 | `scripts/azd-job.sh` (start a job with arbitrary command/args + tail logs); operator runbook |
-| D — First-class tasks | 2 | Smoke-test the seed-tenant path end-to-end; CI smoke that the tools image still imports `scripts/smoke_setup.py` |
+| D — First-class tasks | 3 | Smoke-test the seed-tenant path end-to-end; CI smoke that the tools image still imports `scripts/smoke_setup.py`; Key Vault push so plaintext keys never hit Log Analytics |
 
 **Order of operations:** A1 → B1 → B2 → C1 unblocks the first real run. D1/D2 prove the contract. A2/C2 are documentation polish that can land any time.
 
 ### Phase A — Image (this repo, `[backend]`)
 
-- [planned] **A1** `[backend]` **`COPY scripts/ scripts/` in `Dockerfile` `base` stage.** Single line, after `COPY migrations/ migrations/`. Adds ~50KB to the image. The api/worker/migrations targets all inherit it; nothing in `scripts/` is invoked at api startup so there's no cold-start cost. Verified with `python -c "import scripts.smoke_setup"` against the built image — `scripts/` ships with no `__init__.py` today, so the smoke is `python /app/scripts/smoke_setup.py --help` exiting 0. ([Dockerfile](../Dockerfile))
-- [planned] **A2** `[backend]` **Document the contract.** Add `## Operational scripts` section to [docs/runbooks/azure-first-deploy.md](runbooks/azure-first-deploy.md) covering: which scripts are designed to run against a live env (smoke_setup, simulate_*, benchmark_pg_metrics), which are local-only (load_test against localhost:8000 by default — caller must override `TAGPULSE_API_URL`), and the env-var contract every "live-safe" script must satisfy (`TAGPULSE_API_URL`, `TAGPULSE_SMOKE_DB_URL` or `DATABASE_URL`).
+- [shipped] **A1** `[backend]` **`COPY scripts/ scripts/` in `Dockerfile` `base` stage.** Single line, after `COPY migrations/ migrations/`. Adds ~50KB to the image. The api/worker/migrations targets all inherit it; nothing in `scripts/` is invoked at api startup so there's no cold-start cost. Verified with `python -c "import scripts.smoke_setup"` against the built image — `scripts/` ships with no `__init__.py` today, so the smoke is `python /app/scripts/smoke_setup.py --help` exiting 0. ([Dockerfile](../Dockerfile))
+- [shipped] **A2** `[backend]` **Document the contract.** Add `## Operational scripts` section to [docs/runbooks/azure-first-deploy.md](runbooks/azure-first-deploy.md) covering: which scripts are designed to run against a live env (smoke_setup, simulate_*, benchmark_pg_metrics), which are local-only (load_test against localhost:8000 by default — caller must override `TAGPULSE_API_URL`), and the env-var contract every "live-safe" script must satisfy (`TAGPULSE_API_URL`, `TAGPULSE_SMOKE_DB_URL` or `DATABASE_URL`).
 
 ### Phase B — Bicep (this repo, `[backend]`)
 
-- [planned] **B1** `[backend]` **New module [`deploy/azure/bicep/modules/tools-job.bicep`](../deploy/azure/bicep/modules/tools-job.bicep).** Container Apps Job (manual trigger, replicaTimeout 1800s, retryLimit 0). Reuses the api image (`image` param wired from the same `SERVICE_API_IMAGE_NAME` azd-output that `migrations-job.bicep` consumes today). Identical secrets/env to `migrations-job.bicep` for `POSTGRES_*` + `DATABASE_URL`, plus `TAGPULSE_API_URL` set to the in-cluster api FQDN (`https://${apiApp.outputs.fqdn}`) so scripts that hit the api don't have to leave the env. **Default command intentionally a no-op** (`python -c "print('tools job ready'); import scripts.smoke_setup"`) — the wrapper script in C1 overrides command+args at start time via `az containerapp job update`.
-- [planned] **B2** `[backend]` **Wire into [`workload.bicep`](../deploy/azure/bicep/workload.bicep) + outputs.** New module call `toolsJob` (depends on `apiApp` for the FQDN, `postgres` for secrets). Output `toolsJobName` so the wrapper script in C1 can resolve it from `azd env get-values` instead of hard-coding. No change to `main.bicep` other than threading the new param-less module through.
+- [shipped] **B1** `[backend]` **New module [`deploy/azure/bicep/modules/tools-job.bicep`](../deploy/azure/bicep/modules/tools-job.bicep).** Container Apps Job (manual trigger, replicaTimeout 1800s, retryLimit 0). Reuses the api image (`image` param wired from the same `SERVICE_API_IMAGE_NAME` azd-output that `migrations-job.bicep` consumes today). Identical secrets/env to `migrations-job.bicep` for `POSTGRES_*` + `DATABASE_URL`, plus `TAGPULSE_API_URL` set to the in-cluster api FQDN (`https://${apiApp.outputs.fqdn}`) so scripts that hit the api don't have to leave the env. **Default command intentionally a no-op** (`python -c "print('tools job ready'); import scripts.smoke_setup"`) — the wrapper script in C1 overrides command+args at start time via `az containerapp job update`.
+- [shipped] **B2** `[backend]` **Wire into [`workload.bicep`](../deploy/azure/bicep/workload.bicep) + outputs.** New module call `toolsJob` (depends on `apiApp` for the FQDN, `postgres` for secrets). Output `toolsJobName` so the wrapper script in C1 can resolve it from `azd env get-values` instead of hard-coding. No change to `main.bicep` other than threading the new param-less module through.
 
 ### Phase C — Wrapper script + runbook (this repo, `[backend]`)
 
-- [planned] **C1** `[backend]` **`scripts/azd-job.sh <env> <script> [-- <script args…>]`.** Resolves `toolsJobName` + RG from `azd env get-values -e <env>`, then:
+- [shipped] **C1** `[backend]` **`scripts/azd-job.sh <env> <script> [-- <script args…>]`.** Resolves `toolsJobName` + RG from `azd env get-values -e <env>`, then:
   1. `az containerapp job update -n <job> -g <rg> --command 'python' --args "scripts/<script>,<args…>"` (Azure's CLI takes args as comma-separated). The `--` boundary lets us forward any flags through unmangled.
   2. `EXEC=$(az containerapp job start -n <job> -g <rg> --query name -o tsv)` — captures the execution name.
   3. Polls `az containerapp job execution show` until `properties.status` is `Succeeded` / `Failed` (timeout 30 min, exit 1 on any other terminal state).
@@ -721,7 +721,7 @@ All tasks land in this repo (`9owlsboston/TagPulse`). No UI work.
 
   Idempotency: `--update-only` skips the job-start and just tails the most recent execution (useful when the operator's terminal disconnected mid-run). Refuses to run when the working tree is dirty + `git push` hasn't happened yet, because the job runs the **deployed** image — local script edits won't take effect until the next deploy. Override with `--allow-stale`.
 
-- [planned] **C2** `[backend]` **New runbook [docs/runbooks/operational-tooling.md](runbooks/operational-tooling.md).** Three worked examples:
+- [shipped] **C2** `[backend]` **New runbook [docs/runbooks/operational-tooling.md](runbooks/operational-tooling.md).** Three worked examples:
   - **Seed the demo tenant** (closes the Sprint 25 dev gap):
     `scripts/azd-job.sh dev smoke_setup.py -- --full --with-roles --with-subject-telemetry --regenerate-key`
   - **Rotate the demo admin's API key** (no schema change, idempotent):
@@ -735,6 +735,7 @@ All tasks land in this repo (`9owlsboston/TagPulse`). No UI work.
 
 - [shipped] **D1** `[backend]` **End-to-end seed-tenant smoke after `azd up`.** New section in [docs/runbooks/azure-first-deploy.md](runbooks/azure-first-deploy.md) Phase 4 (Post-Deploy): after migrations succeed, run `scripts/azd-job.sh <env> smoke_setup.py -- --full --with-roles --with-subject-telemetry --regenerate-key`, then verify with two curls — `GET /tenant/config` against the seeded tenant returns 200 with `name: "Test Corp"`, and the SPA login form's **Tenant ID** tab now succeeds with `11111111-…`. Closes the Sprint 25 follow-up gap that PR #10 (UI) only patched the symptom of.
 - [shipped] **D2** `[backend]` **CI smoke that the tools image still works.** New step in `.github/workflows/build-and-push.yml` after the api image build: `docker run --rm --entrypoint python <image> -c "import scripts.smoke_setup, scripts.simulate_devices, scripts.simulate_assets, scripts.simulate_inventory; print('OK')"`. Catches the embarrassing failure mode where someone moves a script under a subdirectory and the Bicep wrapper still tries to invoke it.
+- [shipped] **D3** `[backend]` **`smoke_setup.py --key-vault-name <vault>` pushes plaintext keys to Key Vault instead of stdout.** When the flag is set (or `$TAGPULSE_SMOKE_KEY_VAULT_NAME` is exported), each freshly issued admin/role API key is written to KV as `tagpulse-<tenant-slug>-<role>-key` via `azure-keyvault-secrets` + `DefaultAzureCredential`; the script's stdout shows only the vault + secret name + version (no plaintext, no `export TAGPULSE_API_KEY=…` line). The end-of-run hint becomes `export TAGPULSE_API_KEY=$(az keyvault secret show --vault-name … --name … --query value -o tsv)` so an operator with `Key Vault Secrets User` can still pick the key up. Closes the Sprint 25 leak path where the tools-job's stdout (and therefore Log Analytics, retention 90 days) would carry the plaintext admin key. The tools-job's UAMI receives `Key Vault Secrets Officer` on the env's vault as a B1 ride-along; until then the flag works from a developer laptop with `az login`. Implementation in [scripts/smoke_setup.py](../scripts/smoke_setup.py); deps added to the `azure` optional-extra in [pyproject.toml](../pyproject.toml).
 
 ### Acceptance criteria
 
@@ -748,7 +749,7 @@ All tasks land in this repo (`9owlsboston/TagPulse`). No UI work.
 ### Risks & mitigations
 
 - **Risk:** the tools job runs the *deployed* image, so local edits to `scripts/smoke_setup.py` don't take effect until the next `azd deploy`. **Mitigation:** wrapper refuses to run with a dirty tree + un-pushed commits unless `--allow-stale` is passed; runbook calls this out in bold.
-- **Risk:** stdout in the job's container includes the freshly-rotated admin API key, which then lives in Log Analytics for the workspace's retention period (90 days). **Mitigation:** documented in the runbook; the operator who ran the rotation is the only one with access to the log workspace anyway. Sprint 27+ could add a `--no-print-key` flag to `smoke_setup.py` and instead push the key into Key Vault directly.
+- **Risk:** stdout in the job's container includes the freshly-rotated admin API key, which then lives in Log Analytics for the workspace's retention period (90 days). **Mitigation:** D3 — pass `--key-vault-name` (the runbook makes this the default for any non-laptop run) so the plaintext goes to KV and stdout only carries vault + secret coordinates. The runbook's tools-job examples all set the flag; the only path that still prints plaintext is intentional local dev.
 - **Risk:** someone runs `scripts/load_test.py` via the wrapper and saturates the api's egress. **Mitigation:** runbook's "what NOT to run" section + Sprint 27+ optional allow-list of script names in the wrapper.
 
 ### Deferred to Sprint 27+
