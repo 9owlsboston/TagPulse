@@ -236,7 +236,7 @@ curl -fsS "https://$API/tenant/config" \
 # Expected: "Test Corp"
 
 # 4. Verify the SPA's Tenant ID login flow works.
-#    Open https://$(azd env get-value uiFqdn) → Login → "Tenant ID" tab →
+#    Open https://$(azd env get-value staticWebAppHostname) → Login → "Tenant ID" tab →
 #    paste 11111111-1111-1111-1111-111111111111 + the admin key from step 2.
 #    Should land on the dashboard with the seeded subject-telemetry visible.
 ```
