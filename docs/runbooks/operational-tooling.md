@@ -89,6 +89,30 @@ scripts/azd-job.sh dev simulate_devices.py -- \
 default behavior is to loop forever, which would happily saturate the api
 until the operator notices.
 
+### 3b. Stage the inventory "Boston DC" scenario in a deployed env
+
+```bash
+scripts/azd-job.sh dev simulate_inventory.py -- \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --duration 240
+```
+
+Idempotently provisions a `Boston DC` site, 4 reader-bound zones
+(Receiving Dock / Cold Storage / Pick Floor / Shipping Dock), 4 distinct
+products with distinct lot codes per product (one near-expiry Milk lot to
+fire `stock.expiring_within`), and a finite pool of stock units with
+stable SGTIN-96 serials. Each unit advances Receiving → Cold Storage →
+(Pick Floor → Shipping) on a randomised timeline, populating
+`stock_movements` and per-zone counts on **Stock Levels**. Re-runs reuse
+existing rows (idempotent by name / SKU / lot_code / serial).
+
+Full scenario walk-through, options, and UI/API verification:
+[docs/quickstart.md §6c — Inventory Tracking Smoke Test](../quickstart.md#6c-inventory-tracking-smoke-test).
+
+Requires **Inventory tracking** enabled on the target tenant (Tracking
+Modes UI, or `PATCH /tenant/config`). `TAGPULSE_API_KEY` is auto-injected
+from Key Vault by the tools job — no `--api-key` flag needed.
+
 ### 4. Re-tail logs after a terminal disconnect
 
 ```bash
