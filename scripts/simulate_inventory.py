@@ -163,8 +163,19 @@ def _ok(resp: httpx.Response) -> bool:
 
 
 def _gtin14(company_prefix: str, item_ref: str) -> str:
-    ref_short = item_ref[-5:]
-    body = "0" + company_prefix + ref_short
+    """Build the GTIN-14 the server will derive from this SGTIN.
+
+    Must match ``tagpulse.rfid.epc.gtin14_from_decoded`` byte-for-byte: the
+    decoded SGTIN's ``item_ref`` field is ``indicator || item_reference``,
+    so GTIN-14 = ``indicator || company_prefix || item_reference || check``.
+    Using a hardcoded indicator='0' here would create a GTIN that no
+    ingest-side lookup can ever match → stock_items never materialize.
+    """
+    if len(item_ref) != 6:
+        raise ValueError(f"item_ref must be 6 digits: {item_ref!r}")
+    indicator = item_ref[0]
+    ref_short = item_ref[1:]
+    body = indicator + company_prefix + ref_short
     if len(body) != 13 or not body.isdigit():
         raise ValueError(f"invalid gtin13 body: {body}")
     odds = sum(int(c) for c in body[-1::-2])
@@ -198,6 +209,35 @@ def _sgtin96_hex(company_prefix: str, item_ref: str, serial: int) -> str:
 # --------------------------------------------------------------------------- #
 # Seeders (idempotent)
 # --------------------------------------------------------------------------- #
+
+
+def _ensure_inventory_mode(client: httpx.Client, tenant_id: str) -> list[str]:
+    """Ensure ``inventory`` is in ``tenants.tracking_modes``.
+
+    Without this, ``IngestionService._enrich_with_inventory`` short-circuits
+    on the ``_tenant_has_inventory_mode`` gate and no stock_items are
+    materialized — Stock Levels stays empty. Idempotent.
+    """
+    headers = _headers(tenant_id)
+    cfg_r = client.get(f"{API_URL}/tenant/config", headers=headers)
+    if not _ok(cfg_r):
+        print(f"  FAIL GET /tenant/config: {cfg_r.status_code} {cfg_r.text}")
+        sys.exit(1)
+    modes = list(cfg_r.json().get("tracking_modes", []))
+    if "inventory" in modes:
+        print(f"  Tracking modes already include 'inventory': {modes}")
+        return modes
+    new_modes = sorted({*modes, "inventory"})
+    r = client.patch(
+        f"{API_URL}/tenant/config",
+        headers=headers,
+        json={"tracking_modes": new_modes},
+    )
+    if not _ok(r):
+        print(f"  FAIL PATCH /tenant/config: {r.status_code} {r.text}")
+        sys.exit(1)
+    print(f"  Enabled inventory tracking: {modes} -> {new_modes}")
+    return new_modes
 
 
 def _seed_site_and_devices(
@@ -314,6 +354,26 @@ def _seed_catalog(client: httpx.Client, tenant_id: str) -> list[CatalogItem]:
             print(f"  Created product: {item.sku}")
         else:
             print(f"  Reusing product: {item.sku}")
+            # Heal stale GTIN from earlier simulator versions: if the stored
+            # GTIN doesn't match what the server will derive from this
+            # product's SGTIN reads, no stock_item will ever be created.
+            if product.get("gtin") != item.gtin:
+                r = client.patch(
+                    f"{API_URL}/products/{product['id']}",
+                    headers=headers,
+                    json={"gtin": item.gtin},
+                )
+                if _ok(r):
+                    print(
+                        f"    Healed GTIN: {product.get('gtin')!r} -> "
+                        f"{item.gtin!r}"
+                    )
+                    product = r.json()
+                else:
+                    print(
+                        f"    WARN GTIN heal failed for {item.sku}: "
+                        f"{r.status_code} {r.text}"
+                    )
         item.product_id = product["id"]
 
         # Lot.
@@ -567,7 +627,10 @@ def main() -> None:
     print("\n=== TagPulse Inventory Simulator (warehouse scenario) ===")
     print(f"Tenant: {args.tenant_id}\n")
 
-    print("Step 1: site + zone-anchor devices")
+    print("Step 0: enable inventory tracking mode")
+    _ensure_inventory_mode(client, args.tenant_id)
+
+    print("\nStep 1: site + zone-anchor devices")
     site_id, devices = _seed_site_and_devices(client, args.tenant_id)
 
     print("\nStep 2: reader-bound zones")
