@@ -89,9 +89,7 @@ async def update_product(
     service: InventoryService = Depends(get_inventory_service),
 ) -> ProductResponse:
     try:
-        product = await service.update_product(
-            user.tenant_id, user.user_id, product_id, body
-        )
+        product = await service.update_product(user.tenant_id, user.user_id, product_id, body)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     if product is None:
@@ -106,9 +104,7 @@ async def delete_product(
     service: InventoryService = Depends(get_inventory_service),
 ) -> None:
     try:
-        deleted = await service.delete_product(
-            user.tenant_id, user.user_id, product_id
-        )
+        deleted = await service.delete_product(user.tenant_id, user.user_id, product_id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     if not deleted:
@@ -118,9 +114,7 @@ async def delete_product(
 # -- Lots (nested under product) --
 
 
-@router.post(
-    "/products/{product_id}/lots", response_model=LotResponse, status_code=201
-)
+@router.post("/products/{product_id}/lots", response_model=LotResponse, status_code=201)
 async def create_lot(
     product_id: UUID,
     body: LotCreate,
@@ -128,9 +122,7 @@ async def create_lot(
     service: InventoryService = Depends(get_inventory_service),
 ) -> LotResponse:
     try:
-        return await service.create_lot(
-            user.tenant_id, user.user_id, product_id, body
-        )
+        return await service.create_lot(user.tenant_id, user.user_id, product_id, body)
     except ProductNotFoundError:
         raise HTTPException(status_code=404, detail="Product not found") from None
     except ValueError as exc:
@@ -198,9 +190,7 @@ async def update_lot(
     service: InventoryService = Depends(get_inventory_service),
 ) -> LotResponse:
     try:
-        lot = await service.update_lot(
-            user.tenant_id, user.user_id, lot_id, body
-        )
+        lot = await service.update_lot(user.tenant_id, user.user_id, lot_id, body)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     if lot is None:
@@ -225,18 +215,14 @@ async def delete_lot(
 # -- Stock items --
 
 
-@router.post(
-    "/stock-items", response_model=StockItemResponse, status_code=201
-)
+@router.post("/stock-items", response_model=StockItemResponse, status_code=201)
 async def create_stock_item(
     body: StockItemCreate,
     user: AuthenticatedUser = require_role("admin", "editor"),
     service: InventoryService = Depends(get_inventory_service),
 ) -> StockItemResponse:
     try:
-        return await service.create_stock_item(
-            user.tenant_id, user.user_id, body
-        )
+        return await service.create_stock_item(user.tenant_id, user.user_id, body)
     except ProductNotFoundError:
         raise HTTPException(status_code=404, detail="Product not found") from None
     except ValueError as exc:
@@ -279,18 +265,14 @@ async def get_stock_item(
     return item
 
 
-@router.patch(
-    "/stock-items/{stock_item_id}", response_model=StockItemResponse
-)
+@router.patch("/stock-items/{stock_item_id}", response_model=StockItemResponse)
 async def update_stock_item(
     stock_item_id: UUID,
     body: StockItemUpdate,
     user: AuthenticatedUser = require_role("admin", "editor"),
     service: InventoryService = Depends(get_inventory_service),
 ) -> StockItemResponse:
-    item = await service.update_stock_item(
-        user.tenant_id, user.user_id, stock_item_id, body
-    )
+    item = await service.update_stock_item(user.tenant_id, user.user_id, stock_item_id, body)
     if item is None:
         raise HTTPException(status_code=404, detail="Stock item not found")
     return item
@@ -323,11 +305,7 @@ async def stock_levels(
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
     service: InventoryService = Depends(get_inventory_service),
 ) -> list[StockLevelRow]:
-    return list(
-        await service.stock_levels(
-            user.tenant_id, product_id=product_id, zone_id=zone_id
-        )
-    )
+    return list(await service.stock_levels(user.tenant_id, product_id=product_id, zone_id=zone_id))
 
 
 @router.get("/stock-movements", response_model=list[StockMovementResponse])
@@ -356,9 +334,7 @@ async def stock_movements(
     )
 
 
-@router.post(
-    "/stock-movements", response_model=StockMovementResponse, status_code=201
-)
+@router.post("/stock-movements", response_model=StockMovementResponse, status_code=201)
 async def create_stock_movement(
     body: StockMovementCreate,
     user: AuthenticatedUser = require_role("admin", "editor"),
@@ -366,9 +342,7 @@ async def create_stock_movement(
 ) -> StockMovementResponse:
     """Create a manual stock adjustment (enter/exit/adjustment)."""
     try:
-        return await service.create_manual_movement(
-            user.tenant_id, user.user_id, body
-        )
+        return await service.create_manual_movement(user.tenant_id, user.user_id, body)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
 
@@ -387,16 +361,12 @@ async def create_tag_data_mapping(
     service: InventoryService = Depends(get_inventory_service),
 ) -> TagDataMappingResponse:
     try:
-        return await service.create_tag_data_mapping(
-            user.tenant_id, user.user_id, body
-        )
+        return await service.create_tag_data_mapping(user.tenant_id, user.user_id, body)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
-@router.get(
-    "/tag-data-mappings", response_model=list[TagDataMappingResponse]
-)
+@router.get("/tag-data-mappings", response_model=list[TagDataMappingResponse])
 async def list_tag_data_mappings(
     scope_kind: str | None = Query(default=None),
     scope_id: UUID | None = Query(default=None),
@@ -416,16 +386,12 @@ async def delete_tag_data_mapping(
     user: AuthenticatedUser = require_role("admin"),
     service: InventoryService = Depends(get_inventory_service),
 ) -> None:
-    deleted = await service.delete_tag_data_mapping(
-        user.tenant_id, user.user_id, mapping_id
-    )
+    deleted = await service.delete_tag_data_mapping(user.tenant_id, user.user_id, mapping_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Mapping not found")
 
 
-@router.patch(
-    "/tag-data-mappings/{mapping_id}", response_model=TagDataMappingResponse
-)
+@router.patch("/tag-data-mappings/{mapping_id}", response_model=TagDataMappingResponse)
 async def update_tag_data_mapping(
     mapping_id: UUID,
     body: TagDataMappingUpdate,

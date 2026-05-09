@@ -158,13 +158,9 @@ class TelemetryModelCreate(BaseModel):
     @model_validator(mode="after")
     def _validate_device_type(self) -> "TelemetryModelCreate":
         if self.subject_kind == "device" and self.device_type is None:
-            raise ValueError(
-                "device_type is required when subject_kind='device'"
-            )
+            raise ValueError("device_type is required when subject_kind='device'")
         if self.subject_kind != "device" and self.device_type is not None:
-            raise ValueError(
-                "device_type must be omitted when subject_kind != 'device'"
-            )
+            raise ValueError("device_type must be omitted when subject_kind != 'device'")
         return self
 
 
@@ -388,7 +384,6 @@ class DeviceEventPayload(BaseModel):
     details: dict[str, Any] | None = None
 
 
-
 # ---------------------------------------------------------------------------
 # Sprint 15 — Sites & Zones
 # ---------------------------------------------------------------------------
@@ -442,9 +437,7 @@ class ZoneCreate(BaseModel):
 
     site_id: UUID
     name: str = Field(min_length=1, max_length=255)
-    kind: Literal["reader_bound", "geofence", "virtual"] = Field(
-        default="reader_bound"
-    )
+    kind: Literal["reader_bound", "geofence", "virtual"] = Field(default="reader_bound")
     fixed_reader_ids: list[UUID] | None = None
     polygon_geojson: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
@@ -452,17 +445,11 @@ class ZoneCreate(BaseModel):
     @model_validator(mode="after")
     def _check_kind_payload(self) -> "ZoneCreate":
         if self.kind == "reader_bound" and not self.fixed_reader_ids:
-            raise ValueError(
-                "reader_bound zones require a non-empty fixed_reader_ids"
-            )
+            raise ValueError("reader_bound zones require a non-empty fixed_reader_ids")
         if self.kind == "geofence" and not self.polygon_geojson:
             raise ValueError("geofence zones require polygon_geojson")
-        if self.kind == "virtual" and (
-            self.fixed_reader_ids or self.polygon_geojson
-        ):
-            raise ValueError(
-                "virtual zones must not have fixed_reader_ids or polygon_geojson"
-            )
+        if self.kind == "virtual" and (self.fixed_reader_ids or self.polygon_geojson):
+            raise ValueError("virtual zones must not have fixed_reader_ids or polygon_geojson")
         return self
 
 
@@ -483,9 +470,7 @@ class ZoneUpdate(BaseModel):
             and self.fixed_reader_ids is not None
             and len(self.fixed_reader_ids) == 0
         ):
-            raise ValueError(
-                "fixed_reader_ids must be omitted or contain at least one reader"
-            )
+            raise ValueError("fixed_reader_ids must be omitted or contain at least one reader")
         return self
 
 
@@ -807,9 +792,7 @@ class StockItemCreate(BaseModel):
 
 
 class StockItemUpdate(BaseModel):
-    state: (
-        Literal["in_stock", "in_transit", "consumed", "expired", "lost"] | None
-    ) = None
+    state: Literal["in_stock", "in_transit", "consumed", "expired", "lost"] | None = None
     lot_id: UUID | None = None
     parent_stock_item_id: UUID | None = None
     metadata: dict[str, Any] | None = None
@@ -881,9 +864,7 @@ class TagDataMappingCreate(BaseModel):
         if self.scope_kind == "tenant" and self.scope_id is not None:
             raise ValueError("scope_id must be null when scope_kind='tenant'")
         if self.scope_kind != "tenant" and self.scope_id is None:
-            raise ValueError(
-                f"scope_id is required when scope_kind='{self.scope_kind}'"
-            )
+            raise ValueError(f"scope_id is required when scope_kind='{self.scope_kind}'")
         return self
 
 

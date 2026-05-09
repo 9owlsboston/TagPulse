@@ -54,9 +54,7 @@ async def get_integration(
     service = IntegrationService(session)
     result = await service.get(user.tenant_id, integration_id)
     if result is None:
-        raise HTTPException(
-            status_code=404, detail="Integration not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Integration not found") from None
     return result
 
 
@@ -71,9 +69,7 @@ async def update_integration(
     service = IntegrationService(session)
     result = await service.update(user.tenant_id, integration_id, body)
     if result is None:
-        raise HTTPException(
-            status_code=404, detail="Integration not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Integration not found") from None
     return result
 
 
@@ -87,9 +83,7 @@ async def delete_integration(
     service = IntegrationService(session)
     deleted = await service.delete_integration(user.tenant_id, integration_id)
     if not deleted:
-        raise HTTPException(
-            status_code=404, detail="Integration not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Integration not found") from None
 
 
 @router.get(
@@ -105,9 +99,7 @@ async def list_deliveries(
 ) -> list[DeliveryResponse]:
     """List delivery history for an integration target."""
     service = IntegrationService(session)
-    return await service.list_deliveries(
-        user.tenant_id, integration_id, limit=limit, offset=offset
-    )
+    return await service.list_deliveries(user.tenant_id, integration_id, limit=limit, offset=offset)
 
 
 class WebhookTestResult(BaseModel):
@@ -137,9 +129,7 @@ async def test_integration(
 
     url = integration.config.get("url") if integration.config else None
     if not url:
-        raise HTTPException(
-            status_code=400, detail="Webhook URL not configured"
-        )
+        raise HTTPException(status_code=400, detail="Webhook URL not configured")
 
     import httpx
 

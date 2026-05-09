@@ -68,9 +68,7 @@ class InventoryService:
         movement_repo: TimescaleStockMovementRepository,
         mapping_repo: TimescaleTagDataMappingRepository,
         audit: AuditLogger,
-        telemetry_readings_repo: (
-            TimescaleTelemetryReadingsRepository | None
-        ) = None,
+        telemetry_readings_repo: (TimescaleTelemetryReadingsRepository | None) = None,
         tenant_repo: TimescaleTenantRepository | None = None,
     ) -> None:
         self._products = product_repo
@@ -98,9 +96,7 @@ class InventoryService:
         )
         return product
 
-    async def get_product(
-        self, tenant_id: UUID, product_id: UUID
-    ) -> ProductResponse | None:
+    async def get_product(self, tenant_id: UUID, product_id: UUID) -> ProductResponse | None:
         return await self._products.get(tenant_id, product_id)
 
     async def list_products(
@@ -135,9 +131,7 @@ class InventoryService:
             )
         return result
 
-    async def delete_product(
-        self, tenant_id: UUID, user_id: UUID | None, product_id: UUID
-    ) -> bool:
+    async def delete_product(self, tenant_id: UUID, user_id: UUID | None, product_id: UUID) -> bool:
         deleted = await self._products.delete(tenant_id, product_id)
         if deleted:
             await self._audit.log(
@@ -226,9 +220,7 @@ class InventoryService:
             return lot
         kinds = SUBJECT_KINDS_CACHE.get(tenant_id)
         if kinds is None:
-            kinds = tuple(
-                await self._tenant_repo.get_telemetry_subject_kinds(tenant_id)
-            )
+            kinds = tuple(await self._tenant_repo.get_telemetry_subject_kinds(tenant_id))
             SUBJECT_KINDS_CACHE.set(tenant_id, kinds)
         if "lot" not in kinds:
             return lot
@@ -263,9 +255,7 @@ class InventoryService:
             )
         return result
 
-    async def delete_lot(
-        self, tenant_id: UUID, user_id: UUID | None, lot_id: UUID
-    ) -> bool:
+    async def delete_lot(self, tenant_id: UUID, user_id: UUID | None, lot_id: UUID) -> bool:
         deleted = await self._lots.delete(tenant_id, lot_id)
         if deleted:
             await self._audit.log(
@@ -355,9 +345,7 @@ class InventoryService:
         *,
         force: bool = False,
     ) -> bool:
-        deleted = await self._stock.delete(
-            tenant_id, stock_item_id, force=force
-        )
+        deleted = await self._stock.delete(tenant_id, stock_item_id, force=force)
         if deleted:
             await self._audit.log(
                 tenant_id=tenant_id,
@@ -375,9 +363,7 @@ class InventoryService:
         product_id: UUID | None = None,
         zone_id: UUID | None = None,
     ) -> Sequence[StockLevelRow]:
-        return await self._stock.stock_levels(
-            tenant_id, product_id=product_id, zone_id=zone_id
-        )
+        return await self._stock.stock_levels(tenant_id, product_id=product_id, zone_id=zone_id)
 
     # -- Stock movements (read-only via API; ingestion writes them) --
 
@@ -494,9 +480,7 @@ class InventoryService:
         scope_kind: str | None = None,
         scope_id: UUID | None = None,
     ) -> Sequence[TagDataMappingResponse]:
-        return await self._mappings.list(
-            tenant_id, scope_kind=scope_kind, scope_id=scope_id
-        )
+        return await self._mappings.list(tenant_id, scope_kind=scope_kind, scope_id=scope_id)
 
     async def delete_tag_data_mapping(
         self, tenant_id: UUID, user_id: UUID | None, mapping_id: UUID
