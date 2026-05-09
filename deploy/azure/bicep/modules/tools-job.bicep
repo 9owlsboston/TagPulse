@@ -53,6 +53,9 @@ param apiFqdn string
 @description('Key Vault name (not URI). Set as $TAGPULSE_SMOKE_KEY_VAULT_NAME so smoke_setup.py --key-vault-name is the default code path inside the job.')
 param keyVaultName string
 
+@description('Key Vault secret URI for the Test Corp admin API key. Scripts that read $TAGPULSE_API_KEY (all simulators) will Just Work without the two-step KV retrieval dance.')
+param apiKeySecretUri string = ''
+
 @description('App-level environment string.')
 @allowed(['dev','staging','production'])
 param appEnvironment string = 'production'
@@ -96,6 +99,14 @@ resource job 'Microsoft.App/jobs@2024-10-02-preview' = {
           identity: userAssignedIdentityId
           keyVaultUrl: postgresAdminPasswordSecretUri
         }
+        // Sprint 27 D1 — API key so simulators don't need a two-step KV retrieval
+        ...(empty(apiKeySecretUri) ? [] : [
+          {
+            name: 'tagpulse-api-key'
+            identity: userAssignedIdentityId
+            keyVaultUrl: apiKeySecretUri
+          }
+        ])
       ]
     }
     template: {
@@ -136,6 +147,10 @@ resource job 'Microsoft.App/jobs@2024-10-02-preview' = {
             // with `(invalid_scope) 400, Unable to load the proper Managed
             // Identity` even though the UAMI is attached.
             { name: 'AZURE_CLIENT_ID', value: userAssignedIdentityClientId }
+            // Sprint 27 D1 — API key for simulators (from KV, not plaintext)
+            ...(empty(apiKeySecretUri) ? [] : [
+              { name: 'TAGPULSE_API_KEY', secretRef: 'tagpulse-api-key' }
+            ])
           ]
         }
       ]

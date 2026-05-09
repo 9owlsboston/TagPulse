@@ -32,6 +32,7 @@ class UserResponse(BaseModel):
     role: str
     status: str
     api_key_prefix: str | None
+    api_key_created_at: datetime | None = None
     created_at: datetime
     last_login: datetime | None
 
