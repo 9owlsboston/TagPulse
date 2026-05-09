@@ -74,6 +74,22 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Discover resource names
+        id: names
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -e
+          API=$(az containerapp list -g "$RG" --query "[?ends_with(name,'-api')].name | [0]" -o tsv)
+          WORKER=$(az containerapp list -g "$RG" --query "[?ends_with(name,'-worker')].name | [0]" -o tsv)
+          MIGRATIONS=$(az containerapp job list -g "$RG" --query "[?ends_with(name,'-migrations')].name | [0]" -o tsv)
+          for v in API WORKER MIGRATIONS; do
+            val="${!v}"
+            [[ -n "$val" ]] || { echo "Could not find ${v,,} resource in $RG"; exit 1; }
+            echo "${v,,}=$val" >> "$GITHUB_OUTPUT"
+            echo "  ${v,,} = $val"
+          done
+
       - name: Verify all three images exist in ACR
         env:
           ACR: ${{ vars.AZURE_ACR_NAME }}
@@ -95,9 +111,9 @@ jobs:
           RG: ${{ vars.AZURE_RESOURCE_GROUP }}
           ACR: ${{ vars.AZURE_ACR_NAME }}
           TAG: ${{ steps.tag.outputs.tag }}
+          JOB: ${{ steps.names.outputs.migrations }}
         run: |
           set -e
-          JOB=tagpulse-migrations
           # Update job image to the target tag before running
           az containerapp job update \
             --name "$JOB" --resource-group "$RG" \
@@ -122,10 +138,11 @@ jobs:
           RG: ${{ vars.AZURE_RESOURCE_GROUP }}
           ACR: ${{ vars.AZURE_ACR_NAME }}
           TAG: ${{ steps.tag.outputs.tag }}
+          APP: ${{ steps.names.outputs.api }}
         run: |
           set -e
           az containerapp update \
-            --name tagpulse-api \
+            --name "$APP" \
             --resource-group "$RG" \
             --image "${ACR}.azurecr.io/tagpulse-api:${TAG}"
 
@@ -134,20 +151,22 @@ jobs:
           RG: ${{ vars.AZURE_RESOURCE_GROUP }}
           ACR: ${{ vars.AZURE_ACR_NAME }}
           TAG: ${{ steps.tag.outputs.tag }}
+          APP: ${{ steps.names.outputs.worker }}
         run: |
           set -e
           az containerapp update \
-            --name tagpulse-worker \
+            --name "$APP" \
             --resource-group "$RG" \
             --image "${ACR}.azurecr.io/tagpulse-worker:${TAG}"
 
       - name: Smoke test /health/ready
         env:
           RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP: ${{ steps.names.outputs.api }}
         run: |
           set -e
           FQDN=$(az containerapp show \
-            --name tagpulse-api --resource-group "$RG" \
+            --name "$APP" --resource-group "$RG" \
             --query 'properties.configuration.ingress.fqdn' -o tsv)
           echo "Hitting https://${FQDN}/health/ready"
           for i in $(seq 1 12); do
@@ -169,7 +188,7 @@ jobs:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_KEYVAULT_NAME: ${{ vars.AZURE_KEYVAULT_NAME }}
           AZURE_POSTGRES_FQDN: ${{ vars.AZURE_POSTGRES_FQDN }}
-          AZURE_API_APP_NAME: tagpulse-api
+          AZURE_API_APP_NAME: ${{ steps.names.outputs.api }}
           AZURE_ENABLE_VNET: ${{ vars.AZURE_ENABLE_VNET }}
           AZURE_DISABLE_PUBLIC_NETWORK_ACCESS: ${{ vars.AZURE_DISABLE_PUBLIC_NETWORK_ACCESS }}
         run: ./scripts/azd-network-check.sh
