@@ -4,6 +4,8 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+- **Inventory simulator revamp — `scripts/simulate_inventory.py`** ([scripts/simulate_inventory.py](scripts/simulate_inventory.py)). Replaced the 3-SKU / shared-`LOT-A` / one-shot-reads scenario with a practical "Boston DC" warehouse: 1 site, 4 reader-bound zones (Receiving Dock / Cold Storage / Pick Floor / Shipping Dock) each with their own anchor reader, 4 distinct products with **distinct lot codes per product** (`VAX-2604-A`, `MILK-0501` near-expiry, `YOG-0428-B`, `CHS-0301-K`), and a finite pool of stock units with **stable SGTIN-96 serials** so re-runs update existing `stock_items` instead of inflating thousands of one-shot rows. Each unit follows a randomised per-unit timeline (Receiving → Cold Storage → Pick Floor → Shipping; ~30% stop in Cold, ~20% reach Pick, ~50% ship out), generating real `subject.zone_changed` events and ENTER/TRANSFER/EXIT rows in `stock_movements`. Reads are sent at the zone-bound reader for the unit's current stage so per-zone counts on **Stock Levels** reflect actual movement. Idempotent: re-running reuses the existing site / zones / devices / products / lots / mapping / stock items. New flags: `--units` (scale pool), `--tick`, `--seed`, `--duration` (replaces old `--devices` / `--interval`). [docs/quickstart.md §6c](docs/quickstart.md) rewritten with the new scenario; new [docs/runbooks/operational-tooling.md §3b](docs/runbooks/operational-tooling.md) example for running it via `scripts/azd-job.sh` against a deployed env (no `--api-key` needed; KV-injected).
+
 ## Sprint 27 — Inventory CRUD Completeness & Operational Polish
 
 ### Backend — Inventory gap-fill (B1–B4)

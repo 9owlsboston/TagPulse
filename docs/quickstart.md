@@ -516,60 +516,94 @@ The fix appears immediately on the asset's **Current Location** card and **Map**
 
 > Requires **Inventory tracking** enabled in the UI: **Tenant Settings → General → Inventory tracking**.
 
-The inventory simulator exercises the full pipeline end-to-end: product catalog → lot with near-term expiry → `tag_data_mapping` for `lot_code` → SGTIN-96 EPCs whose company-prefix + item-ref decode to the catalog's GTIN-14s → stock items materialise automatically as tag reads land. Use this when you want to see **Products**, **Lot Expiry**, **Stock Levels**, and **Stock Movements** populate without wiring real readers.
+The inventory simulator stages a small distribution-center scenario end-to-end so the UI views actually exercise the inventory pipeline (not just `tag_reads`). Use this when you want **Products**, **Lots**, **Lot Expiry Queue**, **Stock Levels**, and **Stock Movements** populated without wiring real readers.
 
-### Prereqs
+### Scenario — "Boston DC"
 
-```bash
-# Seed the readers that will emit the EPC reads
-python scripts/simulate_devices.py \
-  --tenant-id 11111111-1111-1111-1111-111111111111 \
-  --devices 2 --seed-only
+The simulator idempotently provisions:
+
+* **1 site** — `Boston DC`
+* **4 reader-bound zones**, each anchored to its own simulated reader:
+  Receiving Dock → Cold Storage → Pick Floor → Shipping Dock
+* **4 distinct products** with **distinct lot codes per product** (no shared `LOT-A`):
+
+  | SKU | Product | Lot code | Expires in | Default units |
+  |-----|---------|----------|------------|---------------|
+  | `SKU-VAX-X-05ML`   | Vaccine-X 0.5 mL vial | `VAX-2604-A` | 30 d | 10 |
+  | `SKU-MILK-1L`      | Milk 1L               | `MILK-0501`  | **4 d** ← near-expiry | 12 |
+  | `SKU-YOGURT-4PK`   | Yogurt 4-pack         | `YOG-0428-B` | 15 d | 10 |
+  | `SKU-CHEESE-200G`  | Cheese 200g           | `CHS-0301-K` | 90 d | 8 |
+
+* **40 physical units** (sum of `units` above) with **stable SGTIN-96 EPC serials** so re-runs reuse existing `stock_items` instead of inflating to thousands of one-shot rows.
+* **A tenant-scope `tag_data_mapping`** so ingestion decodes `tag_data.lot` into the matching `lot_code`.
+
+Each unit is given a randomised per-unit timeline through the warehouse:
+
+```
+Receiving Dock ──▶ Cold Storage ──▶ Pick Floor ──▶ Shipping Dock
+   (all units)        (all units)       (~70%)         (~50%)
 ```
 
-### Run the inventory simulator
+Reads happen at the **zone-bound reader for that stage**, so the UI's per-zone occupancy on Stock Levels reflects real movement instead of dumping everything into an "unzoned" bucket. Stage transitions emit `subject.zone_changed` events and `stock_movements` ENTER / TRANSFER / EXIT rows.
+
+### Run it (local)
 
 ```bash
 python scripts/simulate_inventory.py \
   --tenant-id 11111111-1111-1111-1111-111111111111 \
-  --devices 2 --interval 1.5 --duration 120
+  --duration 240
 ```
 
-What this does:
+No `--devices` flag — the simulator owns its own readers and zones by name (`DC-Receiving`, `DC-ColdStorage`, `DC-PickFloor`, `DC-Shipping`).
 
-1. Upserts a 3-SKU catalog (`SKU-MILK-1L`, `SKU-EGGS-12`, `SKU-CHEESE-200`) with valid GTIN-14s.
-2. Creates one lot per product with `expires_at` inside the `stock.expiring_within` rule horizon — so the **Lot Expiry** queue lights up immediately and any `stock.expiring_within` rule fires within one run.
-3. Registers a tenant-level `tag_data_mapping` so `lot_code` is parsed out of the tag-data payload at ingest.
-4. Streams SGTIN-96 EPCs against the readers; the ingest service auto-creates `stock_item` rows and emits `subject.zone_changed` as items move.
+### Run it against deployed Azure (`azd-job`)
+
+The simulator is bundled into the api/tools image, so once you've deployed an env you can run the full scenario in-VNet via [`scripts/azd-job.sh`](../scripts/azd-job.sh). The tools job pulls `TAGPULSE_API_KEY` from Key Vault automatically — no `--api-key` needed:
+
+```bash
+scripts/azd-job.sh dev simulate_inventory.py -- \
+  --tenant-id 11111111-1111-1111-1111-111111111111 \
+  --duration 240
+```
+
+Prereqs (one-time per env):
+
+* `azd up` (or the equivalent provision + deploy) has succeeded for the env.
+* The demo tenant has been seeded — typically: `scripts/azd-job.sh dev smoke_setup.py -- --full --with-roles --with-subject-telemetry --regenerate-key`.
+* Tenant Settings → General → **Inventory tracking** is enabled (Tracking Modes UI, or `PATCH /tenant/config`).
+
+The wrapper streams stdout back to your terminal so you'll see the running per-zone status line (`Receiving=…  Cold Storage=…  Pick Floor=…  Shipping=…`). `--duration` is **not optional** when running against deployed envs — leaving it open-ended saturates the api until the operator notices.
 
 ### Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--tenant-id` | (required) | Tenant UUID |
-| `--devices` | 2 | Number of devices to use as ingestion sources (must already exist) |
-| `--interval` | 1.5 | Seconds between reads |
-| `--duration` | 60 | Run for N seconds (0 = forever) |
-| `--seed-only` | false | Create products / lots / mapping and exit (no tag reads) |
-| `--api-key` | `$TAGPULSE_API_KEY` | Admin/editor Bearer key (required for product/lot/device writes) |
+| `--duration` | 240 | Total simulation seconds; movements are spread over this window |
+| `--units` | 40 | Override total stock-unit pool (proportionally scaled across the 4 lots) |
+| `--tick` | 0.5 | Scheduler sleep interval in seconds |
+| `--seed-only` | false | Create site / zones / devices / products / lots / mapping and exit (no reads) |
+| `--seed` | (none) | Random seed for reproducible runs |
+| `--api-key` | `$TAGPULSE_API_KEY` | Admin/editor Bearer key (required for site/zone/product/lot writes; auto-injected from KV inside `azd-job`) |
 
-The script is **idempotent** — re-running reuses existing products, lots, and mapping by SKU / lot_code.
+The script is **idempotent** — re-running reuses the existing site, zones, devices, products, lots, mapping, and stock items.
 
 ### Verify in the UI
 
 | View | What you should see |
 |------|---------------------|
-| **Products** | 3 SKUs with the synthetic GTIN-14s. |
-| **Products → [SKU] → Lots** | One lot per product with an `expires_at` in the near future. |
-| **Lot Expiry** | All three lots in the **30 days** filter (default). |
-| **Stock Levels** | Counts climbing in the zone columns as reads land. |
-| **Stock Movements** | `receive` / `move` rows appearing in real time. |
-| **Admin → Tag Data Mappings** | The seeded `lot_code` mapping. |
+| **Sites & Zones → Boston DC** | 4 reader-bound zones, each with its anchor reader; current occupants update as the run progresses. |
+| **Products** | The 4 SKUs above with distinct GTIN-14s and categories. |
+| **Products → [SKU] → Lots** | One lot per product with the lot code and expiry shown in the table above. |
+| **Lot Expiry Queue** | The Milk lot (`MILK-0501`) lights up in the **7 days** filter; other lots in the **30/90 days** filters. |
+| **Stock Levels** | Per-zone counts shifting from Receiving → Cold Storage → Pick Floor → Shipping across the run. |
+| **Stock Movements** | ENTER / TRANSFER / EXIT rows with from/to zones. |
+| **Admin → Tag Data Mappings** | The seeded `tag_data.lot → lot_code` mapping. |
 
 ### Verify via API
 
 ```bash
-# Lots expiring in next 30 days
+# Lots expiring in next 30 days (Milk should appear)
 curl -H "X-Tenant-ID: 11111111-1111-1111-1111-111111111111" \
   "http://localhost:8000/inventory/lot-expiry?within_days=30"
 
