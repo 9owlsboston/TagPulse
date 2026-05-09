@@ -4,6 +4,46 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+## Sprint 27 — Inventory CRUD Completeness & Operational Polish
+
+### Backend — Inventory gap-fill (B1–B4)
+
+- **B1** `DELETE /lots/{id}` (admin only) — hard-delete with referential integrity check; returns 409 if stock items reference the lot.
+- **B2** `POST /stock-movements` (editor+) — manual stock adjustment endpoint; supports `enter`, `exit`, `adjustment` movement types with required `reason` text; distinct from ingestion-driven movements.
+- **B3** `DELETE /stock-items/{id}` (admin only) — hard-delete consumed/damaged items; returns 409 for `in_stock` unless `?force=true`.
+- **B4** `PATCH /tag-data-mappings/{id}` (admin only) — update `semantic_field`, `tag_data_key`, `transform` fields.
+
+### Backend — Cross-entity polish (C1, C3)
+
+- **C1** `POST /integrations/{id}/test` (admin/editor) — sends a synthetic test payload to the configured webhook URL; returns upstream HTTP status + response time (or connection error).
+- **C3** `api_keys.created_at` column (migration 034) — tracks when the current API key was generated; surfaced in `UserResponse.api_key_created_at`.
+
+### IaC — Operational hardening (D1, D2)
+
+- **D1** Wire `TAGPULSE_API_KEY` into `tools-job.bicep` from KV secret `tagpulse-test-corp-admin-key` — simulators get the key from env without the two-step KV retrieval dance.
+- **D2** Move MQTT username into Key Vault as `mqtt-broker-username` (4th secret in keyvault.bicep); ACI Mosquitto now uses `secureValue` for both username and password; ACA container-app uses KV secret ref when `mqttUsernameSecretUri` is provided (backward-compatible fallback to plain param).
+
+### UI — AntD App wrapper fix (C7)
+
+- **C7** Wrap root component tree with `<App>` from `antd` — fixes silent no-op of `Modal.confirm()`, `message.success()`, `notification.info()` across the entire app. Unblocks: rotate token, revoke API key, deactivate user, clipboard-copy toasts, alert acknowledge confirmations.
+
+### UI — Inventory CRUD (A1–A6)
+
+- **A1** Lot detail edit form (editor+) — modal with lot_code, manufactured_at, expires_at, metadata; confirms on expires_at changes.
+- **A2** Product detail edit form (admin) — modal with name, sku, gtin, category, unit, attributes.
+- **A3/A4** Stock item state editor + manual adjustment — "Adjust" action on Stock Levels rows; modal with movement_type, quantity, reason; calls `POST /stock-movements`.
+- **A5** CSV import page (admin) — three tabs (Products/Lots/Stock Items), file picker + preview + import; calls existing CSV import endpoints.
+- **A6** Tag-data-mapping editor — inline edit + delete on existing mappings.
+
+### UI — Cross-entity polish (C2, C4, C5, C6)
+
+- **C2** Webhook test-fire button on integration list — calls `POST /integrations/{id}/test`, shows upstream response status + latency inline.
+- **C4** API key metadata on User detail — shows "Key issued X days ago" next to key prefix using `api_key_created_at`.
+- **C5** Dead-letter events page — admin-only `/admin/dead-letters` with retry/abandon per-row + bulk select.
+- **C6** Alert bulk acknowledge — checkbox column on Alert History + "Acknowledge selected" button.
+
+---
+
 ### Ops — `azd-job.sh` log-streaming fix (kills the `azd-kv-get.sh` flake)
 
 - **Symptom.** `scripts/azd-kv-get.sh dev <secret>` (and any `azd-job.sh`-based wrapper) routinely returned `error: could not extract output from job log` for short-lived scripts (`get_kv_secret.py`, ~2s wall-clock). The wrapper waited 20 s then issued exactly **one** Log Analytics query — but Container Apps → Log Analytics ingestion lag is highly variable in centralus (typically 60–120 s, sometimes >2 min), so the query landed before the row was indexed and returned empty. Operators had to re-run with `--update-only` after a manual `sleep 90`. Made `azd-kv-get.sh` effectively unusable for interactive secret retrieval.

@@ -201,6 +201,7 @@ module apiApp 'modules/container-app.bicep' = {
     mqttPasswordSecretUri: kv.outputs.mqttPasswordUri
     mqttBrokerUrl: mqtt.outputs.mqttUrl
     mqttUsername: mqttUsername
+    mqttUsernameSecretUri: kv.outputs.mqttUsernameUri
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     appEnvironment: appEnvironment
     corsOrigins: '${corsOriginsExtra},https://${ui.outputs.defaultHostname}'
@@ -228,6 +229,7 @@ module workerApp 'modules/container-app.bicep' = {
     mqttPasswordSecretUri: kv.outputs.mqttPasswordUri
     mqttBrokerUrl: mqtt.outputs.mqttUrl
     mqttUsername: mqttUsername
+    mqttUsernameSecretUri: kv.outputs.mqttUsernameUri
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     appEnvironment: appEnvironment
     tags: union(tags, { 'azd-service-name': 'worker' })
@@ -271,6 +273,11 @@ module toolsJob 'modules/tools-job.bicep' = {
     postgresAdminPasswordSecretUri: kv.outputs.pgAdminPasswordUri
     apiFqdn: apiApp.outputs.fqdn
     keyVaultName: kv.outputs.name
+    // Sprint 27 D1: pass KV URI for the Test Corp admin key so simulators
+    // get TAGPULSE_API_KEY from KV without the two-step retrieval dance.
+    // The secret is created by smoke_setup.py --key-vault-name; if it
+    // doesn't exist yet the param is empty and the env var is skipped.
+    apiKeySecretUri: '${kv.outputs.uri}secrets/tagpulse-test-corp-admin-key'
     appEnvironment: appEnvironment
     tags: union(tags, { 'azd-service-name': 'tools' })
   }

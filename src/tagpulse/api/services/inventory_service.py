@@ -28,9 +28,11 @@ from tagpulse.models.schemas import (
     StockItemResponse,
     StockItemUpdate,
     StockLevelRow,
+    StockMovementCreate,
     StockMovementResponse,
     TagDataMappingCreate,
     TagDataMappingResponse,
+    TagDataMappingUpdate,
 )
 from tagpulse.repositories.timescaledb.inventory import (
     TimescaleLotRepository,
@@ -66,9 +68,7 @@ class InventoryService:
         movement_repo: TimescaleStockMovementRepository,
         mapping_repo: TimescaleTagDataMappingRepository,
         audit: AuditLogger,
-        telemetry_readings_repo: (
-            TimescaleTelemetryReadingsRepository | None
-        ) = None,
+        telemetry_readings_repo: (TimescaleTelemetryReadingsRepository | None) = None,
         tenant_repo: TimescaleTenantRepository | None = None,
     ) -> None:
         self._products = product_repo
@@ -96,9 +96,7 @@ class InventoryService:
         )
         return product
 
-    async def get_product(
-        self, tenant_id: UUID, product_id: UUID
-    ) -> ProductResponse | None:
+    async def get_product(self, tenant_id: UUID, product_id: UUID) -> ProductResponse | None:
         return await self._products.get(tenant_id, product_id)
 
     async def list_products(
@@ -133,9 +131,7 @@ class InventoryService:
             )
         return result
 
-    async def delete_product(
-        self, tenant_id: UUID, user_id: UUID | None, product_id: UUID
-    ) -> bool:
+    async def delete_product(self, tenant_id: UUID, user_id: UUID | None, product_id: UUID) -> bool:
         deleted = await self._products.delete(tenant_id, product_id)
         if deleted:
             await self._audit.log(
@@ -224,9 +220,7 @@ class InventoryService:
             return lot
         kinds = SUBJECT_KINDS_CACHE.get(tenant_id)
         if kinds is None:
-            kinds = tuple(
-                await self._tenant_repo.get_telemetry_subject_kinds(tenant_id)
-            )
+            kinds = tuple(await self._tenant_repo.get_telemetry_subject_kinds(tenant_id))
             SUBJECT_KINDS_CACHE.set(tenant_id, kinds)
         if "lot" not in kinds:
             return lot
@@ -260,6 +254,18 @@ class InventoryService:
                 changes=patch.model_dump(exclude_unset=True),
             )
         return result
+
+    async def delete_lot(self, tenant_id: UUID, user_id: UUID | None, lot_id: UUID) -> bool:
+        deleted = await self._lots.delete(tenant_id, lot_id)
+        if deleted:
+            await self._audit.log(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                action="lot.deleted",
+                resource_type="lot",
+                resource_id=lot_id,
+            )
+        return deleted
 
     # -- Stock items --
 
@@ -331,6 +337,25 @@ class InventoryService:
             )
         return result
 
+    async def delete_stock_item(
+        self,
+        tenant_id: UUID,
+        user_id: UUID | None,
+        stock_item_id: UUID,
+        *,
+        force: bool = False,
+    ) -> bool:
+        deleted = await self._stock.delete(tenant_id, stock_item_id, force=force)
+        if deleted:
+            await self._audit.log(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                action="stock_item.deleted",
+                resource_type="stock_item",
+                resource_id=stock_item_id,
+            )
+        return deleted
+
     async def stock_levels(
         self,
         tenant_id: UUID,
@@ -338,9 +363,7 @@ class InventoryService:
         product_id: UUID | None = None,
         zone_id: UUID | None = None,
     ) -> Sequence[StockLevelRow]:
-        return await self._stock.stock_levels(
-            tenant_id, product_id=product_id, zone_id=zone_id
-        )
+        return await self._stock.stock_levels(tenant_id, product_id=product_id, zone_id=zone_id)
 
     # -- Stock movements (read-only via API; ingestion writes them) --
 
@@ -366,6 +389,66 @@ class InventoryService:
             limit=limit,
             offset=offset,
         )
+
+    async def create_manual_movement(
+        self,
+        tenant_id: UUID,
+        user_id: UUID | None,
+        payload: StockMovementCreate,
+    ) -> StockMovementResponse:
+        """Record a manual stock adjustment (enter/exit/adjustment)."""
+        now = datetime.now(tz=__import__("datetime").UTC)
+        from_zone: UUID | None = None
+        to_zone: UUID | None = None
+        if payload.movement_type == "exit":
+            from_zone = payload.zone_id
+        else:
+            to_zone = payload.zone_id
+
+        # When a stock_item_id is provided, use it directly.
+        # Otherwise create a placeholder for the movement record.
+        item_id = payload.stock_item_id
+        if item_id is None:
+            # Find the first matching stock item for this product in the zone
+            items = await self._stock.list(
+                tenant_id,
+                product_id=payload.product_id,
+                lot_id=payload.lot_id,
+                zone_id=payload.zone_id,
+                state="in_stock",
+                limit=1,
+            )
+            if items:
+                item_id = items[0].id
+            else:
+                raise ValueError(
+                    "No matching in_stock item found; provide stock_item_id explicitly"
+                )
+
+        movement = await self._movements.insert(
+            tenant_id,
+            item_id,
+            from_zone_id=from_zone,
+            to_zone_id=to_zone,
+            movement_type=payload.movement_type,
+            device_id=None,
+            occurred_at=now,
+            quantity=payload.quantity,
+        )
+        await self._audit.log(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            action="stock_movement.created",
+            resource_type="stock_movement",
+            resource_id=movement.id,
+            changes={
+                "movement_type": payload.movement_type,
+                "quantity": payload.quantity,
+                "reason": payload.reason,
+                "source": "manual",
+            },
+        )
+        return movement
 
     # -- Tag data mappings (admin) --
 
@@ -397,9 +480,7 @@ class InventoryService:
         scope_kind: str | None = None,
         scope_id: UUID | None = None,
     ) -> Sequence[TagDataMappingResponse]:
-        return await self._mappings.list(
-            tenant_id, scope_kind=scope_kind, scope_id=scope_id
-        )
+        return await self._mappings.list(tenant_id, scope_kind=scope_kind, scope_id=scope_id)
 
     async def delete_tag_data_mapping(
         self, tenant_id: UUID, user_id: UUID | None, mapping_id: UUID
@@ -414,3 +495,22 @@ class InventoryService:
                 resource_id=mapping_id,
             )
         return deleted
+
+    async def update_tag_data_mapping(
+        self,
+        tenant_id: UUID,
+        user_id: UUID | None,
+        mapping_id: UUID,
+        patch: TagDataMappingUpdate,
+    ) -> TagDataMappingResponse | None:
+        result = await self._mappings.update(tenant_id, mapping_id, patch)
+        if result is not None:
+            await self._audit.log(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                action="tag_data_mapping.updated",
+                resource_type="tag_data_mapping",
+                resource_id=mapping_id,
+                changes=patch.model_dump(exclude_unset=True),
+            )
+        return result

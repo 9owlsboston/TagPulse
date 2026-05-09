@@ -431,9 +431,9 @@
 
 ### Phase G — Documentation
 
-- [planned] **G1 — ADR-016 — Multi-cloud deployment strategy.** Records the "Helm chart is the portable spec, IaC is per-provider, data layer is `pg_dump --where=tenant_id`" decision; pins the Azure-first ordering; documents the rate-limit-middleware design choice (in-process vs Redis); locks in the `tagpulse.storage` blob abstraction shape.
+- [shipped] **G1 — ADR-016 — Multi-cloud deployment strategy.** Records the "Helm chart is the portable spec, IaC is per-provider, data layer is `pg_dump --where=tenant_id`" decision; pins the Azure-first ordering; documents the rate-limit-middleware design choice (in-process vs Redis); locks in the `tagpulse.storage` blob abstraction shape.
 - [planned] **G2 — `docs/architecture.md` updated** with deployment topology diagram (Azure first; per-provider variants stubbed).
-- [planned] **G3 — `CHANGELOG.md` Sprint 22 section** + per-phase commits.
+- [shipped] **G3 — `CHANGELOG.md` Sprint 22 section** + per-phase commits.
 
 ### Acceptance criteria
 
@@ -758,6 +758,73 @@ All tasks land in this repo (`9owlsboston/TagPulse`). No UI work.
 - Unify `scripts/*.py` under a single `python -m tagpulse.cli …` Click-based entry-point — gated on >5 scripts living under `scripts/` AND first need to share flags / env-loading code across them.
 - RBAC for who can start the job (today: anyone with `az containerapp job start` perms on the RG, which today is anyone with `Contributor` on `tagpulse-dev-rg`). Gated on a non-engineering operator persona existing.
 - Wrapper-side script allow-list (refuse to run anything not in `scripts/_runbook_allowed.txt`) — gated on first near-miss with a destructive script.
+
+---
+
+## Sprint 27 — Inventory CRUD Completeness & Operational Polish
+
+> Companion repo: [9owlsboston/TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI) — Phase A lands there
+> Goal: close the CRUD gaps in the inventory UI that Sprint 15b left as read-only, add the manual stock adjustment flow that operators need for cycle-count corrections, and wire the backend endpoints that exist but are missing (lot/stock-item delete, manual stock-movement create, tag-data-mapping update/delete). Small sprint — no schema changes, no new tables.
+
+### Ownership at a glance
+
+| Phase | Repo | Task count | What lands |
+|---|---|---|---|
+| A — Inventory UI CRUD | `[ui]` TagPulse-UI | 6 | Lot edit form, product edit form, stock-item state editor, manual stock adjustment modal, CSV import page, tag-data-mapping editor (update + delete) |
+| B — Backend gap-fill (inventory) | `[backend]` TagPulse | 4 | `DELETE /lots/{id}`, `DELETE /stock-items/{id}`, `POST /stock-movements` (manual adjustment), `PATCH`/`DELETE /tag-data-mappings/{id}` |
+| C — Cross-entity UI polish | `[ui]` TagPulse-UI + `[backend]` TagPulse | 6 | Webhook test-fire, API key metadata, dead-letter UI page, alert bulk-ack, audit log date-range + export, API key `created_at` column |
+| D — Operational | `[backend]` TagPulse | 2 | `TAGPULSE_API_KEY` as tools-job env var from KV (no more two-step key retrieval), CHANGELOG |
+
+### Phase A — Inventory UI CRUD (TagPulse-UI repo, `[ui]`)
+
+- [shipped] **A1** `[ui]` **Lot edit form on Lot detail page.** Admin/editor "Edit" button → inline form or modal with `lot_code`, `manufactured_at`, `expires_at`, `metadata` fields. Calls `PATCH /lots/{id}`. Lot detail page already renders these fields read-only; this adds the mutation path. Confirmation on `expires_at` change (may affect active `stock.expiring_within` rules).
+- [shipped] **A2** `[ui]` **Product edit form on Product detail page.** Admin "Edit" button → modal with `name`, `sku`, `gtin`, `category`, `unit`, `attributes` fields. Calls `PATCH /products/{id}`. Currently the product detail is read-only with a stock-by-zone bar chart.
+- [shipped] **A3** `[ui]` **Stock item state editor.** Editor+ "Change State" dropdown on stock-item detail or list-row action. Allowed transitions: `in_stock → consumed`, `in_stock → damaged`, `consumed → in_stock` (reversal). Calls `PATCH /stock-items/{id}` with `{state: "..."}`. State changes outside this list are rejected by the backend schema.
+- [shipped] **A4** `[ui]` **Manual stock adjustment modal.** On the Stock Levels page, per-row "Adjust" action → modal with `movement_type` (enter/exit), `quantity`, `reason` text field. Calls `POST /stock-movements` (Phase B2) to create a corrective movement. The modal pre-fills product/lot/zone from the selected row. Gated on `role >= editor`.
+- [shipped] **A5** `[ui]` **CSV import page.** Admin-only page (sidebar entry under Inventory) with three tabs (Products / Lots / Stock Items). Each tab: file picker + preview table + "Import" button. Calls the existing `POST /products/import`, `POST /lots/import`, `POST /stock-items/import` endpoints. Error rows displayed inline with row number + error message. Currently CSV import is API-only.
+- [shipped] **A6** `[ui]` **Tag-data-mapping editor — update + delete.** The existing Tenant Settings "Tag data fields" sub-tab shows mappings but only supports create. Add inline edit (pencil icon → editable row) and delete (trash icon → confirmation). Calls `PATCH /tag-data-mappings/{id}` and `DELETE /tag-data-mappings/{id}` (Phase B4).
+
+### Phase B — Backend gap-fill — inventory (this repo, `[backend]`)
+
+- [shipped] **B1** `[backend]` **`DELETE /lots/{id}` (admin only).** Soft-delete or hard-delete (TBD — hard-delete if no stock_items reference the lot, 409 otherwise). Audit log entry `lot.deleted`.
+- [shipped] **B2** `[backend]` **`POST /stock-movements` (editor+) — manual adjustment.** New `StockMovementCreate` schema: `product_id`, `lot_id` (optional), `zone_id`, `movement_type` ∈ {`enter`, `exit`, `adjustment`}, `quantity`, `reason` (required free text), `stock_item_id` (optional — for single-item corrections). Emits `Topic.STOCK_MOVEMENT_CREATED`. The `adjustment` type is new — distinct from ingestion-driven `enter`/`exit` so reports can filter operator corrections from automated flow.
+- [shipped] **B3** `[backend]` **`DELETE /stock-items/{id}` (admin only).** Hard-delete if state is `consumed` or `damaged`; 409 if `in_stock` (force-delete with `?force=true`). Audit log entry `stock_item.deleted`.
+- [shipped] **B4** `[backend]` **`PATCH /tag-data-mappings/{id}` + `DELETE /tag-data-mappings/{id}` (admin only).** `TagDataMappingUpdate` schema: `source_key`, `target_field`, `transform` (all optional). Delete is hard-delete (mappings are config, not transactional data). Audit log entries `tag_data_mapping.updated` / `tag_data_mapping.deleted`.
+
+### Phase C — Cross-entity UI polish (both repos)
+
+- [shipped] **C1** `[backend]` **`POST /integrations/{id}/test` (admin/editor).** Sends a synthetic test payload to the configured webhook URL with `X-TagPulse-Event: test` header. Returns the upstream HTTP status + response time. No event is published to the EventBus — this is a direct HTTP call. Currently the only way to verify a webhook URL works is to wait for a real event; operators have no "test fire" button. Timeout 10s; 4xx/5xx from the target is reported but not treated as a TagPulse error.
+- [shipped] **C2** `[ui]` **Webhook test-fire button.** "Test" action on the integration detail page (editor+). Calls Phase C1 endpoint. Shows the upstream response status + latency inline. Renders "Connection refused" or "Timeout" as a clear error state with the target URL visible.
+- [shipped] **C3** `[backend]` **API key metadata: `key_created_at` column.** Add `api_keys.created_at TIMESTAMPTZ DEFAULT now()` (Alembic migration). Populate on key generation; show in `UserResponse.api_key_created_at`. The User detail page currently shows the key prefix but no creation date — operators can't tell when the current key was issued.
+- [shipped] **C4** `[ui]` **API key metadata on User detail.** Show `key_created_at` next to the prefix. Render "Key issued 3 days ago" relative timestamp. On Revoke → confirm with "This will invalidate the key issued on {date}". On Regenerate → confirm + copy-once flow (already exists) + update the displayed `key_created_at`.
+- [shipped] **C5** `[ui]` **Dead-letter events page.** Admin-only page at `/admin/dead-letters` (sidebar entry under Admin). Table with `topic`, `error`, `created_at`, `payload preview` (truncated). Per-row actions: "Retry" (`POST /admin/dead-letter/{id}/retry`) and "Abandon" (`DELETE /admin/dead-letter/{id}`). Bulk select + batch retry/abandon. Currently dead-letter events are only accessible via API — there is no UI page.
+- [shipped] **C6** `[ui]` **Alert bulk acknowledge.** Checkbox column on the Alert History table + "Acknowledge selected" button. Calls `POST /alerts/{id}/acknowledge` in parallel for each selected alert. (Backend bulk endpoint deferred — client-side fan-out is fine for up to ~50 alerts per page.)
+- [shipped] **C7** `[ui]` **Wrap root tree with AntD `<App>` component.** Add `import { App as AntApp } from 'antd'` and wrap the JSX in `App.tsx` with `<AntApp>…</AntApp>`. Without this wrapper, AntD v5 static methods (`Modal.confirm()`, `message.success()`, `notification.info()`) silently no-op — the "Rotate token" confirm dialog, clipboard-copy success toast, and any other static-method-based feedback are completely invisible to the user. One-line fix that unblocks all existing `Modal.confirm` / `message.*` call sites across the app (DeviceDetail rotate token, API key copy, alert acknowledge, etc.).
+
+### Phase D — Operational & IaC hardening (this repo, `[backend]`)
+
+- [shipped] **D1** `[backend]` **Wire `TAGPULSE_API_KEY` into `tools-job.bicep` from Key Vault.** Today running a simulator against the deployed env requires a two-step dance: (1) `azd-job.sh dev get_kv_secret.py -- --name tagpulse-test-corp-admin-key`, (2) copy the key into `--api-key`. Instead, add `TAGPULSE_API_KEY` as a `secretRef` env var on the tools job sourced from the KV secret `tagpulse-test-corp-admin-key`. Scripts that read `$TAGPULSE_API_KEY` (all simulators do via `os.environ.get("TAGPULSE_API_KEY")`) will Just Work. The two-step dance becomes: `azd-job.sh dev simulate_inventory.py -- --tenant-id 11111111-… --duration 120` — no `--api-key` needed.
+- [shipped] **D2** `[backend]` **Move MQTT username into Key Vault.** Today `mqttUsername` is a Bicep parameter (default `'tagpulse'`) passed as a plaintext env var to the Mosquitto ACI (`MOSQUITTO_USERNAME`) and the worker ACA (`MQTT_USERNAME`). The password is already in KV (`mqtt-broker-password`), but the username leaks into `az containerapp show` output and deployment logs. Fix: add `mqtt-broker-username` as a 4th KV secret in `keyvault.bicep`; swap the ACI and ACA env vars from `value:` to KV `secureValue`/`secretRef`; drop the `mqttUsername` Bicep param from `main.bicep` (seed from `.env.<env>` like the password). The Helm chart already does this correctly (both in a k8s Secret). Consistency fix, not a security emergency — the username alone is not exploitable.
+- [shipped] **D3** `[backend]` **`CHANGELOG.md` Sprint 27 section.**
+
+### Acceptance criteria
+
+- Lot detail page shows an Edit button (editor+); saving a new `expires_at` updates the lot and the Lot Expiry Queue re-sorts correctly.
+- Stock Levels page shows an "Adjust" action per row; posting an `adjustment` movement updates the `stock_levels` view within 1s (no page reload needed if SSE-backed; manual refresh otherwise).
+- `POST /stock-movements` with `movement_type: "adjustment"` creates a movement row with `source: "manual"` metadata; the Stock Movements page shows it with a distinct badge.
+- CSV import page uploads 100 products without error; error rows are displayed inline.
+- Webhook integration detail page shows a "Test" button; clicking it against a valid URL shows `200 OK (142ms)`; clicking it against an invalid URL shows `Connection refused` with the target URL.
+- User detail page shows "Key issued {date}" next to the key prefix; revoking a key clears the display; regenerating shows a new `key_created_at`.
+- Dead-letter events page renders at least one retry-able event; "Retry" re-queues it and the row disappears from the list.
+- Alert History supports selecting 5+ alerts and acknowledging them in one click.
+- `azd-job.sh dev simulate_inventory.py -- --tenant-id 11111111-… --duration 60` succeeds without `--api-key` (the key comes from KV via the tools-job env var).
+- `make check` clean; one new migration (C3: `api_keys.created_at`).
+
+### Deferred
+
+- Inventory cycle-count workflow (full reconciliation with expected-vs-actual counts, variance report) — needs a design doc; Sprint 27 ships only the manual-adjustment primitive it would build on.
+- Stock-item bulk state transitions (select N items → mark all consumed) — gated on first warehouse operator requesting it.
+- Lot merge / split operations — rare in RFID workflows; gated on customer request.
 
 ---
 
