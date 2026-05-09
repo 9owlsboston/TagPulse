@@ -483,6 +483,9 @@ class UserModel(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     api_key_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_key_prefix: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    api_key_created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

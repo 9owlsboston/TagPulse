@@ -101,6 +101,9 @@ async def generate_user_api_key(
     raw_key, prefix, key_hash = generate_api_key(tenant.slug)
     row.api_key_hash = key_hash
     row.api_key_prefix = prefix
+    row.api_key_created_at = __import__("datetime").datetime.now(
+        __import__("datetime").UTC
+    )
     await session.flush()
     return ApiKeyResponse(api_key=raw_key, prefix=prefix)
 
@@ -121,6 +124,7 @@ async def revoke_api_key(
         raise HTTPException(status_code=404, detail="User not found") from None
     row.api_key_hash = None
     row.api_key_prefix = None
+    row.api_key_created_at = None
     await session.flush()
 
 
