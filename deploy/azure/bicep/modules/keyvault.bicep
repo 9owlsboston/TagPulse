@@ -73,6 +73,14 @@ resource mqttPassword 'Microsoft.KeyVault/vaults/secrets@2024-04-01-preview' = {
   }
 }
 
+resource mqttUsername 'Microsoft.KeyVault/vaults/secrets@2024-04-01-preview' = {
+  parent: kv
+  name: 'mqtt-broker-username'
+  properties: {
+    value: secrets.?mqttUsername ?? 'tagpulse'
+  }
+}
+
 output id string = kv.id
 output name string = kv.name
 output uri string = kv.properties.vaultUri
@@ -83,3 +91,5 @@ output jwtSecretUri string = jwtSecret.properties.secretUri
 output pgAdminPasswordUri string = pgAdminPassword.properties.secretUri
 #disable-next-line outputs-should-not-contain-secrets
 output mqttPasswordUri string = mqttPassword.properties.secretUri
+#disable-next-line outputs-should-not-contain-secrets
+output mqttUsernameUri string = mqttUsername.properties.secretUri

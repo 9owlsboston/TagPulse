@@ -98,7 +98,7 @@ resource aci 'Microsoft.ContainerInstance/containerGroups@2023-05-01' = {
           environmentVariables: [
             {
               name: 'MOSQUITTO_USERNAME'
-              value: mqttUsername
+              secureValue: mqttUsername
             }
             {
               name: 'MOSQUITTO_PASSWORD'

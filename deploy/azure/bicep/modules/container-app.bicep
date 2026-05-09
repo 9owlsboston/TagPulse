@@ -60,6 +60,9 @@ param mqttBrokerUrl string
 @description('MQTT broker username.')
 param mqttUsername string
 
+@description('Key Vault secret URI for the MQTT broker username (Sprint 27 D2). When set, overrides the plaintext mqttUsername param with a KV secret ref.')
+param mqttUsernameSecretUri string = ''
+
 @description('App Insights connection string for OTel.')
 param appInsightsConnectionString string
 
@@ -131,6 +134,14 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
           identity: userAssignedIdentityId
           keyVaultUrl: mqttPasswordSecretUri
         }
+        // Sprint 27 D2: MQTT username from KV when available
+        ...(empty(mqttUsernameSecretUri) ? [] : [
+          {
+            name: 'mqtt-username'
+            identity: userAssignedIdentityId
+            keyVaultUrl: mqttUsernameSecretUri
+          }
+        ])
       ]
     }
     template: {
@@ -156,7 +167,12 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'MQTT_BROKER_URL', value: mqttBrokerUrl }
             { name: 'MQTT_BROKER_HOST', value: brokerHost }
             { name: 'MQTT_BROKER_PORT', value: brokerPort }
-            { name: 'MQTT_USERNAME', value: mqttUsername }
+            // Sprint 27 D2: prefer KV secret ref for MQTT_USERNAME when available
+            ...(empty(mqttUsernameSecretUri) ? [
+              { name: 'MQTT_USERNAME', value: mqttUsername }
+            ] : [
+              { name: 'MQTT_USERNAME', secretRef: 'mqtt-username' }
+            ])
             { name: 'MQTT_PASSWORD', secretRef: 'mqtt-password' }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
             { name: 'OTEL_SERVICE_NAME', value: appName }
