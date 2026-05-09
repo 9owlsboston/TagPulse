@@ -124,6 +124,7 @@ module kv 'modules/keyvault.bicep' = {
       jwtSecret: jwtSecret
       postgresAdminPassword: postgresAdminPassword
       mqttPassword: mqttPassword
+      mqttUsername: mqttUsername
     }
     // Purge protection is irreversible and pins the KV name for 7 days after
     // teardown. Enable for staging/production only; dev iterates frequently.
