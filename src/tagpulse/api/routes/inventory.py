@@ -28,9 +28,11 @@ from tagpulse.models.schemas import (
     StockItemResponse,
     StockItemUpdate,
     StockLevelRow,
+    StockMovementCreate,
     StockMovementResponse,
     TagDataMappingCreate,
     TagDataMappingResponse,
+    TagDataMappingUpdate,
 )
 
 router = APIRouter(tags=["inventory"])
@@ -206,6 +208,20 @@ async def update_lot(
     return lot
 
 
+@router.delete("/lots/{lot_id}", status_code=204)
+async def delete_lot(
+    lot_id: UUID,
+    user: AuthenticatedUser = require_role("admin"),
+    service: InventoryService = Depends(get_inventory_service),
+) -> None:
+    try:
+        deleted = await service.delete_lot(user.tenant_id, user.user_id, lot_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Lot not found")
+
+
 # -- Stock items --
 
 
@@ -280,6 +296,23 @@ async def update_stock_item(
     return item
 
 
+@router.delete("/stock-items/{stock_item_id}", status_code=204)
+async def delete_stock_item(
+    stock_item_id: UUID,
+    force: bool = Query(default=False),
+    user: AuthenticatedUser = require_role("admin"),
+    service: InventoryService = Depends(get_inventory_service),
+) -> None:
+    try:
+        deleted = await service.delete_stock_item(
+            user.tenant_id, user.user_id, stock_item_id, force=force
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Stock item not found")
+
+
 # -- Aggregated views --
 
 
@@ -321,6 +354,23 @@ async def stock_movements(
             offset=offset,
         )
     )
+
+
+@router.post(
+    "/stock-movements", response_model=StockMovementResponse, status_code=201
+)
+async def create_stock_movement(
+    body: StockMovementCreate,
+    user: AuthenticatedUser = require_role("admin", "editor"),
+    service: InventoryService = Depends(get_inventory_service),
+) -> StockMovementResponse:
+    """Create a manual stock adjustment (enter/exit/adjustment)."""
+    try:
+        return await service.create_manual_movement(
+            user.tenant_id, user.user_id, body
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 # -- Tag data mappings (admin) --
@@ -371,3 +421,23 @@ async def delete_tag_data_mapping(
     )
     if not deleted:
         raise HTTPException(status_code=404, detail="Mapping not found")
+
+
+@router.patch(
+    "/tag-data-mappings/{mapping_id}", response_model=TagDataMappingResponse
+)
+async def update_tag_data_mapping(
+    mapping_id: UUID,
+    body: TagDataMappingUpdate,
+    user: AuthenticatedUser = require_role("admin"),
+    service: InventoryService = Depends(get_inventory_service),
+) -> TagDataMappingResponse:
+    try:
+        result = await service.update_tag_data_mapping(
+            user.tenant_id, user.user_id, mapping_id, body
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    if result is None:
+        raise HTTPException(status_code=404, detail="Mapping not found")
+    return result

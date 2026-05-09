@@ -1,8 +1,11 @@
 """Integration CRUD API routes + delivery history."""
 
+import logging
+import time
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
@@ -14,6 +17,8 @@ from tagpulse.models.integration_schemas import (
     IntegrationUpdate,
 )
 from tagpulse.repositories.timescaledb.session import get_session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -103,3 +108,80 @@ async def list_deliveries(
     return await service.list_deliveries(
         user.tenant_id, integration_id, limit=limit, offset=offset
     )
+
+
+class WebhookTestResult(BaseModel):
+    status_code: int | None
+    response_time_ms: float
+    error: str | None = None
+
+
+@router.post(
+    "/{integration_id}/test",
+    response_model=WebhookTestResult,
+)
+async def test_integration(
+    integration_id: UUID,
+    user: AuthenticatedUser = require_role("admin", "editor"),
+    session: AsyncSession = Depends(get_session),
+) -> WebhookTestResult:
+    """Send a test payload to a webhook integration (Sprint 27 C1)."""
+    service = IntegrationService(session)
+    integration = await service.get(user.tenant_id, integration_id)
+    if integration is None:
+        raise HTTPException(status_code=404, detail="Integration not found")
+    if integration.type != "webhook":
+        raise HTTPException(
+            status_code=400, detail="Test is only supported for webhook integrations"
+        )
+
+    url = integration.config.get("url") if integration.config else None
+    if not url:
+        raise HTTPException(
+            status_code=400, detail="Webhook URL not configured"
+        )
+
+    import httpx
+
+    test_payload = {
+        "event": "test",
+        "integration_id": str(integration_id),
+        "tenant_id": str(user.tenant_id),
+        "message": "This is a test event from TagPulse",
+    }
+
+    start = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                url,
+                json=test_payload,
+                headers={"X-TagPulse-Event": "test"},
+            )
+        elapsed_ms = (time.monotonic() - start) * 1000
+        return WebhookTestResult(
+            status_code=resp.status_code,
+            response_time_ms=round(elapsed_ms, 1),
+        )
+    except httpx.ConnectError:
+        elapsed_ms = (time.monotonic() - start) * 1000
+        return WebhookTestResult(
+            status_code=None,
+            response_time_ms=round(elapsed_ms, 1),
+            error="Connection refused",
+        )
+    except httpx.TimeoutException:
+        elapsed_ms = (time.monotonic() - start) * 1000
+        return WebhookTestResult(
+            status_code=None,
+            response_time_ms=round(elapsed_ms, 1),
+            error="Timeout (10s)",
+        )
+    except httpx.HTTPError as exc:
+        elapsed_ms = (time.monotonic() - start) * 1000
+        logger.warning("webhook test-fire failed: %s", exc)
+        return WebhookTestResult(
+            status_code=None,
+            response_time_ms=round(elapsed_ms, 1),
+            error=str(exc),
+        )

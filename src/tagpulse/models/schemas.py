@@ -847,6 +847,18 @@ class StockMovementResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class StockMovementCreate(BaseModel):
+    """Manual stock adjustment (Sprint 27 B2)."""
+
+    product_id: UUID
+    lot_id: UUID | None = None
+    zone_id: UUID | None = None
+    movement_type: Literal["enter", "exit", "adjustment"]
+    quantity: int = Field(default=1, ge=1)
+    reason: str = Field(..., min_length=1, max_length=500)
+    stock_item_id: UUID | None = None
+
+
 class StockLevelRow(BaseModel):
     """One bucket from the ``stock_levels`` view."""
 
@@ -886,3 +898,11 @@ class TagDataMappingResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TagDataMappingUpdate(BaseModel):
+    """Partial update for a tag-data-mapping (Sprint 27 B4)."""
+
+    semantic_field: str | None = Field(default=None, min_length=1, max_length=40)
+    tag_data_key: str | None = Field(default=None, min_length=1, max_length=64)
+    transform: str | None = Field(default=None, max_length=40)

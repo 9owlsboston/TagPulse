@@ -34,6 +34,7 @@ from tagpulse.models.schemas import (
     StockMovementResponse,
     TagDataMappingCreate,
     TagDataMappingResponse,
+    TagDataMappingUpdate,
 )
 
 # ---- Mappers ----
@@ -352,6 +353,30 @@ class TimescaleLotRepository:
             ) from exc
         return _lot_to_response(row)
 
+    async def delete(
+        self, tenant_id: uuid.UUID, lot_id: uuid.UUID
+    ) -> bool:
+        """Hard-delete a lot. Raises ValueError if stock_items reference it."""
+        # Check for referencing stock items
+        ref_stmt = select(func.count()).select_from(StockItemModel).where(
+            StockItemModel.tenant_id == tenant_id,
+            StockItemModel.lot_id == lot_id,
+        )
+        ref_count = (await self._session.execute(ref_stmt)).scalar_one()
+        if ref_count > 0:
+            raise ValueError(
+                f"Cannot delete lot: {ref_count} stock item(s) reference it"
+            )
+        stmt = select(LotModel).where(
+            LotModel.id == lot_id, LotModel.tenant_id == tenant_id
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            return False
+        await self._session.delete(row)
+        await self._session.flush()
+        return True
+
 
 # ---- Stock items ----
 
@@ -521,6 +546,29 @@ class TimescaleStockItemRepository:
             for r in result.mappings().all()
         ]
 
+    async def delete(
+        self,
+        tenant_id: uuid.UUID,
+        stock_item_id: uuid.UUID,
+        *,
+        force: bool = False,
+    ) -> bool:
+        """Delete a stock item. Only consumed/damaged items unless force=True."""
+        stmt = select(StockItemModel).where(
+            StockItemModel.id == stock_item_id,
+            StockItemModel.tenant_id == tenant_id,
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            return False
+        if row.state == "in_stock" and not force:
+            raise ValueError(
+                "Cannot delete an in_stock item; use ?force=true or change state first"
+            )
+        await self._session.delete(row)
+        await self._session.flush()
+        return True
+
 
 # ---- Stock movements ----
 
@@ -646,6 +694,29 @@ class TimescaleTagDataMappingRepository:
         stmt = stmt.order_by(TagDataMappingModel.created_at.asc())
         result = await self._session.execute(stmt)
         return [_mapping_to_response(r) for r in result.scalars()]
+
+    async def update(
+        self,
+        tenant_id: uuid.UUID,
+        mapping_id: uuid.UUID,
+        patch: TagDataMappingUpdate,
+    ) -> TagDataMappingResponse | None:
+        stmt = select(TagDataMappingModel).where(
+            TagDataMappingModel.id == mapping_id,
+            TagDataMappingModel.tenant_id == tenant_id,
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            return None
+        for k, v in patch.model_dump(exclude_unset=True).items():
+            setattr(row, k, v)
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            raise ValueError(
+                "mapping already exists for this scope + semantic_field"
+            ) from exc
+        return _mapping_to_response(row)
 
     async def delete(
         self, tenant_id: uuid.UUID, mapping_id: uuid.UUID
