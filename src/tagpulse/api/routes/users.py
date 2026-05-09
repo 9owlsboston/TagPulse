@@ -65,9 +65,7 @@ async def update_user(
     session: AsyncSession = Depends(get_session),
 ) -> UserResponse:
     """Update a user's role or status (admin only)."""
-    stmt = select(UserModel).where(
-        UserModel.id == user_id, UserModel.tenant_id == user.tenant_id
-    )
+    stmt = select(UserModel).where(UserModel.id == user_id, UserModel.tenant_id == user.tenant_id)
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:
@@ -85,9 +83,7 @@ async def generate_user_api_key(
     session: AsyncSession = Depends(get_session),
 ) -> ApiKeyResponse:
     """Generate an API key for a user (admin only). Key is returned once."""
-    stmt = select(UserModel).where(
-        UserModel.id == user_id, UserModel.tenant_id == user.tenant_id
-    )
+    stmt = select(UserModel).where(UserModel.id == user_id, UserModel.tenant_id == user.tenant_id)
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:
@@ -101,9 +97,7 @@ async def generate_user_api_key(
     raw_key, prefix, key_hash = generate_api_key(tenant.slug)
     row.api_key_hash = key_hash
     row.api_key_prefix = prefix
-    row.api_key_created_at = __import__("datetime").datetime.now(
-        __import__("datetime").UTC
-    )
+    row.api_key_created_at = __import__("datetime").datetime.now(__import__("datetime").UTC)
     await session.flush()
     return ApiKeyResponse(api_key=raw_key, prefix=prefix)
 
@@ -115,9 +109,7 @@ async def revoke_api_key(
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Revoke a user's API key (admin only)."""
-    stmt = select(UserModel).where(
-        UserModel.id == user_id, UserModel.tenant_id == user.tenant_id
-    )
+    stmt = select(UserModel).where(UserModel.id == user_id, UserModel.tenant_id == user.tenant_id)
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:

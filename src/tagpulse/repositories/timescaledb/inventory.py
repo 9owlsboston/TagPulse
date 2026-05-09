@@ -120,9 +120,7 @@ class TimescaleProductRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(
-        self, tenant_id: uuid.UUID, payload: ProductCreate
-    ) -> ProductResponse:
+    async def create(self, tenant_id: uuid.UUID, payload: ProductCreate) -> ProductResponse:
         row = ProductModel(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
@@ -140,9 +138,7 @@ class TimescaleProductRepository:
             raise ValueError("sku already in use for this tenant") from exc
         return _product_to_response(row)
 
-    async def get(
-        self, tenant_id: uuid.UUID, product_id: uuid.UUID
-    ) -> ProductResponse | None:
+    async def get(self, tenant_id: uuid.UUID, product_id: uuid.UUID) -> ProductResponse | None:
         stmt = select(ProductModel).where(
             ProductModel.id == product_id,
             ProductModel.tenant_id == tenant_id,
@@ -150,9 +146,7 @@ class TimescaleProductRepository:
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _product_to_response(row) if row else None
 
-    async def get_by_gtin(
-        self, tenant_id: uuid.UUID, gtin: str
-    ) -> ProductResponse | None:
+    async def get_by_gtin(self, tenant_id: uuid.UUID, gtin: str) -> ProductResponse | None:
         stmt = select(ProductModel).where(
             ProductModel.tenant_id == tenant_id, ProductModel.gtin == gtin
         )
@@ -178,11 +172,7 @@ class TimescaleProductRepository:
                 | (ProductModel.sku.ilike(like))
                 | (ProductModel.gtin.ilike(like))
             )
-        stmt = (
-            stmt.order_by(ProductModel.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        stmt = stmt.order_by(ProductModel.created_at.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_product_to_response(r) for r in result.scalars()]
 
@@ -207,9 +197,7 @@ class TimescaleProductRepository:
             raise ValueError("sku already in use for this tenant") from exc
         return _product_to_response(row)
 
-    async def delete(
-        self, tenant_id: uuid.UUID, product_id: uuid.UUID
-    ) -> bool:
+    async def delete(self, tenant_id: uuid.UUID, product_id: uuid.UUID) -> bool:
         """Hard delete; only allowed when no stock_items reference it.
 
         Includes terminal-state items (consumed/expired/lost) — the FK
@@ -223,8 +211,7 @@ class TimescaleProductRepository:
         ref_count = (await self._session.execute(ref_stmt)).scalar_one()
         if ref_count > 0:
             raise ValueError(
-                f"cannot delete product with {ref_count} stock items "
-                "(retire it instead)"
+                f"cannot delete product with {ref_count} stock items (retire it instead)"
             )
         stmt = select(ProductModel).where(
             ProductModel.id == product_id,
@@ -261,17 +248,11 @@ class TimescaleLotRepository:
         try:
             await self._session.flush()
         except IntegrityError as exc:
-            raise ValueError(
-                "lot_code already exists for this product"
-            ) from exc
+            raise ValueError("lot_code already exists for this product") from exc
         return _lot_to_response(row)
 
-    async def get(
-        self, tenant_id: uuid.UUID, lot_id: uuid.UUID
-    ) -> LotResponse | None:
-        stmt = select(LotModel).where(
-            LotModel.id == lot_id, LotModel.tenant_id == tenant_id
-        )
+    async def get(self, tenant_id: uuid.UUID, lot_id: uuid.UUID) -> LotResponse | None:
+        stmt = select(LotModel).where(LotModel.id == lot_id, LotModel.tenant_id == tenant_id)
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _lot_to_response(row) if row else None
 
@@ -289,18 +270,12 @@ class TimescaleLotRepository:
             LotModel.product_id == product_id,
         )
         if expiring_within_days is not None:
-            cutoff = datetime.now(UTC).timestamp() + (
-                expiring_within_days * 86400
-            )
+            cutoff = datetime.now(UTC).timestamp() + (expiring_within_days * 86400)
             stmt = stmt.where(
                 LotModel.expires_at.isnot(None),
                 LotModel.expires_at <= datetime.fromtimestamp(cutoff, tz=UTC),
             )
-        stmt = (
-            stmt.order_by(LotModel.expires_at.asc().nullslast())
-            .limit(limit)
-            .offset(offset)
-        )
+        stmt = stmt.order_by(LotModel.expires_at.asc().nullslast()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_lot_to_response(r) for r in result.scalars()]
 
@@ -320,11 +295,7 @@ class TimescaleLotRepository:
                 LotModel.expires_at.isnot(None),
                 LotModel.expires_at <= cutoff,
             )
-        stmt = (
-            stmt.order_by(LotModel.expires_at.asc().nullslast())
-            .limit(limit)
-            .offset(offset)
-        )
+        stmt = stmt.order_by(LotModel.expires_at.asc().nullslast()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_lot_to_response(r) for r in result.scalars()]
 
@@ -334,9 +305,7 @@ class TimescaleLotRepository:
         lot_id: uuid.UUID,
         patch: LotUpdate,
     ) -> LotResponse | None:
-        stmt = select(LotModel).where(
-            LotModel.id == lot_id, LotModel.tenant_id == tenant_id
-        )
+        stmt = select(LotModel).where(LotModel.id == lot_id, LotModel.tenant_id == tenant_id)
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         if row is None:
             return None
@@ -348,28 +317,24 @@ class TimescaleLotRepository:
         try:
             await self._session.flush()
         except IntegrityError as exc:
-            raise ValueError(
-                "lot_code already exists for this product"
-            ) from exc
+            raise ValueError("lot_code already exists for this product") from exc
         return _lot_to_response(row)
 
-    async def delete(
-        self, tenant_id: uuid.UUID, lot_id: uuid.UUID
-    ) -> bool:
+    async def delete(self, tenant_id: uuid.UUID, lot_id: uuid.UUID) -> bool:
         """Hard-delete a lot. Raises ValueError if stock_items reference it."""
         # Check for referencing stock items
-        ref_stmt = select(func.count()).select_from(StockItemModel).where(
-            StockItemModel.tenant_id == tenant_id,
-            StockItemModel.lot_id == lot_id,
+        ref_stmt = (
+            select(func.count())
+            .select_from(StockItemModel)
+            .where(
+                StockItemModel.tenant_id == tenant_id,
+                StockItemModel.lot_id == lot_id,
+            )
         )
         ref_count = (await self._session.execute(ref_stmt)).scalar_one()
         if ref_count > 0:
-            raise ValueError(
-                f"Cannot delete lot: {ref_count} stock item(s) reference it"
-            )
-        stmt = select(LotModel).where(
-            LotModel.id == lot_id, LotModel.tenant_id == tenant_id
-        )
+            raise ValueError(f"Cannot delete lot: {ref_count} stock item(s) reference it")
+        stmt = select(LotModel).where(LotModel.id == lot_id, LotModel.tenant_id == tenant_id)
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         if row is None:
             return False
@@ -385,9 +350,7 @@ class TimescaleStockItemRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(
-        self, tenant_id: uuid.UUID, payload: StockItemCreate
-    ) -> StockItemResponse:
+    async def create(self, tenant_id: uuid.UUID, payload: StockItemCreate) -> StockItemResponse:
         row = StockItemModel(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
@@ -403,14 +366,10 @@ class TimescaleStockItemRepository:
         try:
             await self._session.flush()
         except IntegrityError as exc:
-            raise ValueError(
-                "active stock item with this binding_value already exists"
-            ) from exc
+            raise ValueError("active stock item with this binding_value already exists") from exc
         return _stock_item_to_response(row)
 
-    async def get(
-        self, tenant_id: uuid.UUID, stock_item_id: uuid.UUID
-    ) -> StockItemResponse | None:
+    async def get(self, tenant_id: uuid.UUID, stock_item_id: uuid.UUID) -> StockItemResponse | None:
         stmt = select(StockItemModel).where(
             StockItemModel.id == stock_item_id,
             StockItemModel.tenant_id == tenant_id,
@@ -444,9 +403,7 @@ class TimescaleStockItemRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> Sequence[StockItemResponse]:
-        stmt = select(StockItemModel).where(
-            StockItemModel.tenant_id == tenant_id
-        )
+        stmt = select(StockItemModel).where(StockItemModel.tenant_id == tenant_id)
         if product_id is not None:
             stmt = stmt.where(StockItemModel.product_id == product_id)
         if lot_id is not None:
@@ -455,11 +412,7 @@ class TimescaleStockItemRepository:
             stmt = stmt.where(StockItemModel.current_zone_id == zone_id)
         if state is not None:
             stmt = stmt.where(StockItemModel.state == state)
-        stmt = (
-            stmt.order_by(StockItemModel.last_seen_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        stmt = stmt.order_by(StockItemModel.last_seen_at.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_stock_item_to_response(r) for r in result.scalars()]
 
@@ -532,8 +485,7 @@ class TimescaleStockItemRepository:
             params["zone_id"] = zone_id
         sql = (
             "SELECT product_id, lot_id, current_zone_id AS zone_id, quantity "
-            "FROM stock_levels WHERE " + " AND ".join(where) +
-            " ORDER BY quantity DESC"
+            "FROM stock_levels WHERE " + " AND ".join(where) + " ORDER BY quantity DESC"
         )
         result = await self._session.execute(text(sql), params)
         return [
@@ -616,9 +568,7 @@ class TimescaleStockMovementRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> Sequence[StockMovementResponse]:
-        stmt = select(StockMovementModel).where(
-            StockMovementModel.tenant_id == tenant_id
-        )
+        stmt = select(StockMovementModel).where(StockMovementModel.tenant_id == tenant_id)
         if stock_item_id is not None:
             stmt = stmt.where(StockMovementModel.stock_item_id == stock_item_id)
         if product_id is not None:
@@ -640,11 +590,7 @@ class TimescaleStockMovementRepository:
             stmt = stmt.where(StockMovementModel.occurred_at >= since)
         if until is not None:
             stmt = stmt.where(StockMovementModel.occurred_at <= until)
-        stmt = (
-            stmt.order_by(StockMovementModel.occurred_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        stmt = stmt.order_by(StockMovementModel.occurred_at.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_movement_to_response(r) for r in result.scalars()]
 
@@ -672,9 +618,7 @@ class TimescaleTagDataMappingRepository:
         try:
             await self._session.flush()
         except IntegrityError as exc:
-            raise ValueError(
-                "mapping already exists for this scope + semantic_field"
-            ) from exc
+            raise ValueError("mapping already exists for this scope + semantic_field") from exc
         return _mapping_to_response(row)
 
     async def list(  # noqa: A003
@@ -684,9 +628,7 @@ class TimescaleTagDataMappingRepository:
         scope_kind: str | None = None,
         scope_id: uuid.UUID | None = None,
     ) -> Sequence[TagDataMappingResponse]:
-        stmt = select(TagDataMappingModel).where(
-            TagDataMappingModel.tenant_id == tenant_id
-        )
+        stmt = select(TagDataMappingModel).where(TagDataMappingModel.tenant_id == tenant_id)
         if scope_kind is not None:
             stmt = stmt.where(TagDataMappingModel.scope_kind == scope_kind)
         if scope_id is not None:
@@ -713,14 +655,10 @@ class TimescaleTagDataMappingRepository:
         try:
             await self._session.flush()
         except IntegrityError as exc:
-            raise ValueError(
-                "mapping already exists for this scope + semantic_field"
-            ) from exc
+            raise ValueError("mapping already exists for this scope + semantic_field") from exc
         return _mapping_to_response(row)
 
-    async def delete(
-        self, tenant_id: uuid.UUID, mapping_id: uuid.UUID
-    ) -> bool:
+    async def delete(self, tenant_id: uuid.UUID, mapping_id: uuid.UUID) -> bool:
         stmt = select(TagDataMappingModel).where(
             TagDataMappingModel.id == mapping_id,
             TagDataMappingModel.tenant_id == tenant_id,

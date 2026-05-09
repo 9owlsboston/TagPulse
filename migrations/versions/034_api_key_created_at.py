@@ -8,8 +8,8 @@ Tracks when the current API key was generated so operators can tell
 how old a key is from the user detail page.
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "034"
 down_revision = "033"
