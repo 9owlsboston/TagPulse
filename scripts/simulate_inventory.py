@@ -58,8 +58,11 @@ ITEMS = [
 
 
 def _gtin14(company_prefix: str, item_ref: str) -> str:
-    """Compute GTIN-14 from indicator '0' + prefix + item_ref + checksum."""
-    body = "0" + company_prefix + item_ref  # 13 digits
+    """Compute GTIN-14 from indicator '0' + prefix + item_ref(truncated) + checksum."""
+    # GTIN-14 body = indicator(1) + company_prefix(7) + item_ref_short(5) = 13 digits
+    # item_ref may be 6 digits for SGTIN-96; truncate to last 5 for GTIN-14.
+    ref_short = item_ref[-5:]
+    body = "0" + company_prefix + ref_short  # 13 digits
     if len(body) != 13 or not body.isdigit():
         raise ValueError(f"invalid gtin13 body: {body}")
     # Mod-10 check digit per GS1 §7.9.
