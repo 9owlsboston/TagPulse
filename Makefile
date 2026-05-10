@@ -1,4 +1,8 @@
-.PHONY: lint typecheck test format check run export-openapi migration-check
+.PHONY: lint typecheck test format check run export-openapi migration-check \
+        smoke rotate-key logs doctor help
+
+# Default ENV for ops targets — override on the command line: make logs ENV=prod
+ENV ?= dev
 
 lint:        ## Run linter
 	ruff check src tests
@@ -31,3 +35,25 @@ run:         ## Start development server
 export-openapi:  ## Export the FastAPI OpenAPI spec to openapi.json
 	python -c "import json; from tagpulse.api.main import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))" > openapi.json
 	@echo "Wrote openapi.json ($$(wc -c < openapi.json) bytes)"
+
+# ---------------------------------------------------------------------------
+# Sprint 28 F1 — operator targets. Every target accepts ENV=<dev|staging|prod>
+# (default: dev). All wrap scripts/ that source scripts/lib/azd-common.sh.
+# ---------------------------------------------------------------------------
+
+smoke:       ## Sprint 28 A5: post-deploy smoke (curl /healthz, /readyz, /tenant/config) — ENV=dev
+	scripts/azd-smoke.sh $(ENV)
+
+rotate-key:  ## Sprint 28: rotate a tenant API key via tools-job — ENV=dev TENANT=test-corp
+	@if [ -z "$(TENANT)" ]; then echo "TENANT=<slug> required" >&2; exit 2; fi
+	scripts/azd-job.sh $(ENV) smoke_setup.py -- --regenerate-key --tenant-slug "$(TENANT)"
+
+logs:        ## Tail container logs — ENV=dev SERVICE=api SINCE=15m
+	@if [ -z "$(SERVICE)" ]; then echo "SERVICE=<api|worker|mqtt> required" >&2; exit 2; fi
+	scripts/azd-logs.sh $(ENV) $(SERVICE) $(if $(SINCE),--since $(SINCE),)
+
+doctor:      ## Sprint 28 F3: aggregate health check for an env — ENV=dev
+	scripts/azd-doctor.sh $(ENV)
+
+help:        ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | sort | awk -F':.*?## ' '{printf "  %-16s %s\n", $$1, $$2}'
