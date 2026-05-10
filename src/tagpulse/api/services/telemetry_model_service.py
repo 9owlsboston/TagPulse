@@ -48,9 +48,7 @@ class TelemetryModelService:
         )
         return _to_response(row)
 
-    async def list_all(
-        self, tenant_id: uuid.UUID
-    ) -> list[TelemetryModelResponse]:
+    async def list_all(self, tenant_id: uuid.UUID) -> list[TelemetryModelResponse]:
         stmt = (
             select(TelemetryModelDef)
             .where(TelemetryModelDef.tenant_id == tenant_id)
@@ -103,9 +101,7 @@ class TelemetryModelService:
         row = result.scalar_one_or_none()
         return _to_response(row) if row else None
 
-    async def delete(
-        self, tenant_id: uuid.UUID, model_id: uuid.UUID
-    ) -> bool:
+    async def delete(self, tenant_id: uuid.UUID, model_id: uuid.UUID) -> bool:
         stmt = (
             delete(TelemetryModelDef)
             .where(
@@ -143,7 +139,7 @@ class TelemetryModelService:
             return None
 
         new_metrics = [m.model_dump() for m in patch.metrics]
-        row.metrics = new_metrics  # type: ignore[assignment]
+        row.metrics = new_metrics
         await self._session.flush()
         await self._session.refresh(row)
 
