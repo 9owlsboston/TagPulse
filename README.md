@@ -2,7 +2,14 @@
 
 IoT platform for RFID tag readers and sensor data. Ingests device telemetry, manages device registry, and runs pluggable analytics modules tailored to application needs.
 
-## Quick Start
+## Status
+
+- **Current sprint:** 28 — Operational Excellence & On-Call Readiness (see [docs/roadmap.md §sprint-28](docs/roadmap.md#sprint-28)).
+- **Shipped through Sprint 28:** Azure deploy via `azd up` (Sprint 22+), Static Web App frontend (Sprint 24), VNet integration + private endpoints (Sprint 23), tenant-scoped KV (Sprint 26), subject-scoped telemetry (Sprints 18–21), SLOs + alerts + on-call runbooks (Sprint 28).
+- **Operators:** start at [docs/operator-quickstart.md](docs/operator-quickstart.md). On-call → [docs/runbooks/incident-template.md](docs/runbooks/incident-template.md).
+- **Developers on a laptop:** [docs/quickstart.md](docs/quickstart.md).
+
+## Quick Start (developer laptop)
 
 ```bash
 # Install dependencies
@@ -17,15 +24,16 @@ make run
 
 ## Architecture
 
-- **Device registry & config** — register, configure, and monitor IoT device fleet
-- **Dual ingestion** — MQTT and HTTP endpoints for device telemetry
-- **TimescaleDB** — time-series storage for tag reads + relational storage for device registry
-- **Rules & alerts** — user-defined rules evaluated against telemetry, with webhook/email alert routing
-- **Plugin analytics** — analytics modules as internal Python packages
-- **Integration layer** — outbound webhooks, SSE streaming, scheduled data exports
-- **Admin UI** — device management, telemetry dashboards, rule/alert configuration (Q3)
+- **Device registry & config** — register, configure, and monitor IoT device fleet.
+- **Dual ingestion** — MQTT (on `:1883`; `:8883` TLS opt-in via Sprint 28 C6) and HTTP endpoints for device telemetry.
+- **TimescaleDB on Azure PG Flex (PG15)** — time-series storage for tag reads + relational storage for device registry.
+- **Rules & alerts** — user-defined rules evaluated against telemetry, with webhook/email alert routing.
+- **Plugin analytics** — analytics modules as internal Python packages.
+- **Integration layer** — outbound webhooks, SSE streaming, scheduled data exports.
+- **Admin UI** — React SPA on Azure Static Web Apps (shipped Sprint 24).
+- **Observability** — OpenTelemetry → Application Insights, SLO-aligned metric alerts (Sprint 28 D2), KQL workbook (Sprint 28 D3).
 
-See [docs/architecture.md](docs/architecture.md) for the full system overview.
+See [docs/architecture.md](docs/architecture.md) for the full system overview and [docs/azure-architecture.md](docs/azure-architecture.md) for the Azure-specific layout.
 
 ## Deployment
 

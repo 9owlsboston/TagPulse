@@ -5,7 +5,7 @@ Works for `dev`, `staging`, or `prod` — each runs independently with its own
 resource group, Container Registry, Key Vault, and CD identity.
 
 > Companion docs: [deploy/azure/README.md](../../deploy/azure/README.md) for
-> module/SKU details, [docs/adr/016-cloud-readiness.md](../adr/016-cloud-readiness.md)
+> module/SKU details, [docs/adr/016-multi-cloud-deployment-strategy.md](../adr/016-multi-cloud-deployment-strategy.md)
 > for the design decisions, [CONTRIBUTING.md](../../CONTRIBUTING.md) for sprint workflow.
 
 ---

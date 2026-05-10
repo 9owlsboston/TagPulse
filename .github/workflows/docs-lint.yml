@@ -1,0 +1,79 @@
+# Sprint 28 H5 — Markdown lint + link check on docs changes.
+#
+# Runs `markdownlint-cli2` and `lychee` against any PR that touches a
+# markdown file under docs/, the top-level *.md files, or CHANGELOG.md.
+# Fails on broken internal links and on style rules. External link
+# failures are non-fatal by default (lychee `--max-retries 3` + treat
+# 5xx as success) because flaky upstreams shouldn't block reviewers;
+# upgrade to fail-on-external after one quarter of data.
+name: docs-lint
+
+on:
+  pull_request:
+    paths:
+      - "docs/**/*.md"
+      - "**/*.md"
+      - "CHANGELOG.md"
+      - ".markdownlint.jsonc"
+      - ".markdownlintignore"
+      - ".lycheeignore"
+      - ".github/workflows/docs-lint.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  markdownlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          # Globs are processed by markdownlint-cli2 itself; .markdownlintignore
+          # excludes generated dirs (egg-info, .pytest_cache, node_modules).
+          globs: |
+            **/*.md
+            !**/node_modules/**
+            !**/.venv/**
+            !**/*.egg-info/**
+            !.pytest_cache/**
+
+  link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run lychee link check
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # `--no-progress` keeps the log readable; `--max-retries 3`
+          # smooths over flaky upstreams; `.lycheeignore` carries the
+          # URL exclusion patterns (placeholder hosts, future docs).
+          # Roadmap + CHANGELOG are excluded because they intentionally
+          # carry forward-references and historical absolute paths;
+          # they get caught by reviewer eyes, not by CI.
+          args: >-
+            --no-progress
+            --max-retries 3
+            --retry-wait-time 5
+            --accept 200,201,202,203,204,206,301,302,303,304,307,308,403,429
+            './docs/adr/**/*.md'
+            './docs/design/**/*.md'
+            './docs/guides/**/*.md'
+            './docs/observability/**/*.md'
+            './docs/refs/**/*.md'
+            './docs/runbooks/**/*.md'
+            './docs/architecture.md'
+            './docs/azure-architecture.md'
+            './docs/azure-iot-asset-tracking.md'
+            './docs/data-models.md'
+            './docs/operator-quickstart.md'
+            './docs/quickstart.md'
+            './docs/review-checklist.md'
+            './docs/user-guide.md'
+            './README.md'
+            './CONTRIBUTING.md'
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
