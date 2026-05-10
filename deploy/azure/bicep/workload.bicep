@@ -56,6 +56,27 @@ param enableVnetIntegration bool = false
 @description('Sprint 23 Phase B -- disable public network access on KV / Postgres and bump ACR to Premium with a private endpoint. ONLY safe when enableVnetIntegration=true (otherwise no clients can reach those services). Default false. Both flags default off so the Sprint 22 deploy path still works for envs without the corporate `Deny`-mode policy.')
 param disablePublicNetworkAccess bool = false
 
+@description('Sprint 28 C6 — enable Mosquitto TLS listener on 8883. Default false; flip to true after seeding the mqtt-tls-* KV secrets and rebuilding the broker image. The 1883 listener stays online in parallel for one sprint to ride the worker/edge cutover.')
+param mqttTlsEnabled bool = false
+
+@description('PEM-encoded CA for the broker TLS listener. Ignored when mqttTlsEnabled=false.')
+@secure()
+param mqttTlsCa string = ''
+
+@description('PEM-encoded server cert. Ignored when mqttTlsEnabled=false.')
+@secure()
+param mqttTlsCert string = ''
+
+@description('PEM-encoded server private key. Ignored when mqttTlsEnabled=false.')
+@secure()
+param mqttTlsKey string = ''
+
+@description('Sprint 28 D2 — deploy Azure Monitor metric alerts + action group. Default false so dev envs stay un-paged. Set to true in staging + production param files.')
+param deployAlerts bool = false
+
+@description('Email recipient for the on-call action group. Required when deployAlerts=true.')
+param alertEmail string = ''
+
 // Sprint 23 Phase B safety guard. `disablePublicNetworkAccess=true` with
 // `enableVnetIntegration=false` would close the public KV/Postgres firewall
 // AND skip provisioning the private endpoints that replace them -- bricking
@@ -125,6 +146,9 @@ module kv 'modules/keyvault.bicep' = {
       postgresAdminPassword: postgresAdminPassword
       mqttPassword: mqttPassword
       mqttUsername: mqttUsername
+      mqttTlsCa: mqttTlsCa
+      mqttTlsCert: mqttTlsCert
+      mqttTlsKey: mqttTlsKey
     }
     // Purge protection is irreversible and pins the KV name for 7 days after
     // teardown. Enable for staging/production only; dev iterates frequently.
@@ -166,6 +190,10 @@ module mqtt 'modules/mqtt.bicep' = {
     imageTag: imageTag
     userAssignedIdentityId: identity.outputs.id
     useImagePlaceholders: useImagePlaceholders
+    mqttTlsEnabled: mqttTlsEnabled
+    mqttTlsCa: mqttTlsCa
+    mqttTlsCert: mqttTlsCert
+    mqttTlsKey: mqttTlsKey
     tags: tags
   }
 }
@@ -337,6 +365,18 @@ module acrPrivateEndpoint 'modules/private-endpoint.bicep' = if (disablePublicNe
     dnsZoneName: 'privatelink.azurecr.io'
     subnetId: network!.outputs.peSubnetId
     vnetId: network!.outputs.id
+    tags: tags
+  }
+}
+
+// Sprint 28 D2 — alerts + action group. Default-off; staging/prod param
+// files set `deployAlerts = true` and `alertEmail`.
+module alerts 'modules/alerts.bicep' = if (deployAlerts) {
+  params: {
+    appInsightsId: monitoring.outputs.appInsightsId
+    location: location
+    namePrefix: namePrefix
+    alertEmail: alertEmail
     tags: tags
   }
 }

@@ -27,6 +27,17 @@ param useImagePlaceholders = bool(readEnvironmentVariable('AZURE_USE_IMAGE_PLACE
 param enableVnetIntegration = bool(readEnvironmentVariable('AZURE_ENABLE_VNET', 'false'))
 param disablePublicNetworkAccess = bool(readEnvironmentVariable('AZURE_DISABLE_PUBLIC_NETWORK_ACCESS', 'false'))
 
+// Sprint 28 C6 — TLS on the broker. Default off. Set AZURE_MQTT_TLS_ENABLED=true
+// + the three cert env vars after seeding the matching KV secrets.
+param mqttTlsEnabled = bool(readEnvironmentVariable('AZURE_MQTT_TLS_ENABLED', 'false'))
+param mqttTlsCa = readEnvironmentVariable('AZURE_MQTT_TLS_CA', '')
+param mqttTlsCert = readEnvironmentVariable('AZURE_MQTT_TLS_CERT', '')
+param mqttTlsKey = readEnvironmentVariable('AZURE_MQTT_TLS_KEY', '')
+
+// Sprint 28 D2 — alerts. Default off in dev. Staging/prod flip via env.
+param deployAlerts = bool(readEnvironmentVariable('AZURE_DEPLOY_ALERTS', 'false'))
+param alertEmail = readEnvironmentVariable('AZURE_ALERT_EMAIL', '')
+
 param tags = {
   workload: 'tagpulse'
   managedBy: 'bicep'

@@ -135,6 +135,8 @@ class MqttSubscriber:
         username: str | None = None,
         password: str | None = None,
         usage_meter: UsageMeter | None = None,
+        use_tls: bool = False,
+        tls_ca_path: str | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -143,6 +145,15 @@ class MqttSubscriber:
         self._username = username
         self._password = password
         self._usage_meter = usage_meter
+        # Sprint 28 C6 — server-TLS to Mosquitto. When ``use_tls`` is
+        # True the subscriber builds an aiomqtt ``TLSParameters`` and
+        # passes it to ``aiomqtt.Client(tls_params=...)``. An empty
+        # ``tls_ca_path`` means "trust the system CA bundle" — fine
+        # for certs issued by a public CA, required when using a
+        # self-signed cert from KV (the entrypoint writes it to a
+        # known path on the worker container).
+        self._use_tls = use_tls
+        self._tls_ca_path = tls_ca_path or None
 
     async def run(self) -> None:
         """Connect to broker, subscribe, and process messages until cancelled.
@@ -165,11 +176,23 @@ class MqttSubscriber:
                 attempt_reason,
             )
             try:
+                tls_params = None
+                if self._use_tls:
+                    import ssl as _ssl
+
+                    import aiomqtt as _aiomqtt
+
+                    tls_params = _aiomqtt.TLSParameters(
+                        ca_certs=self._tls_ca_path,
+                        cert_reqs=_ssl.CERT_REQUIRED,
+                        tls_version=_ssl.PROTOCOL_TLS_CLIENT,
+                    )
                 async with aiomqtt.Client(
                     hostname=self._host,
                     port=self._port,
                     username=self._username,
                     password=self._password,
+                    tls_params=tls_params,
                 ) as client:
                     await client.subscribe(TOPIC_FILTER)
                     await client.subscribe(SUBJECT_TOPIC_FILTER)
@@ -192,7 +215,7 @@ class MqttSubscriber:
                             raise
                         except Exception:  # noqa: BLE001
                             logger.exception(
-                                "MQTT message handler raised; dropping message and continuing. topic=%s",
+                                "MQTT message handler raised; dropping and continuing. topic=%s",
                                 message.topic,
                             )
                         else:

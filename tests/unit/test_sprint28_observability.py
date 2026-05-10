@@ -14,7 +14,6 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from tagpulse.core import otel_metrics
 from tagpulse.core.user_auth import AuthenticatedUser, _annotate_span_with_user
 
-
 # --- D4 ----------------------------------------------------------------
 
 

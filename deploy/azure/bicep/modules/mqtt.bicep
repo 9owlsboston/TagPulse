@@ -42,11 +42,66 @@ param userAssignedIdentityId string
 @description('When true, use a public placeholder image instead of the ACR-hosted custom image. Required on first provision (before scripts/azd-mqtt-build.sh has pushed the image). Auto-toggled by scripts/azd-image-check.sh.')
 param useImagePlaceholders bool = false
 
+@description('Sprint 28 C6 — when true, open port 8883 on the ACI and inject the TLS material below into the container. Default false so the same Bicep deploys without certificates.')
+param mqttTlsEnabled bool = false
+
+@description('PEM-encoded CA bundle for the broker TLS listener. Ignored when mqttTlsEnabled=false.')
+@secure()
+param mqttTlsCa string = ''
+
+@description('PEM-encoded server certificate for the broker. Ignored when mqttTlsEnabled=false.')
+@secure()
+param mqttTlsCert string = ''
+
+@description('PEM-encoded server private key for the broker. Ignored when mqttTlsEnabled=false.')
+@secure()
+param mqttTlsKey string = ''
+
 // Public placeholder for ACI's first-provision use. Public images don't need
 // imageRegistryCredentials (and ACI rejects the block when present with a
 // public image), so we omit it conditionally below.
 var aciPlaceholderImage = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 var brokerImage = useImagePlaceholders ? aciPlaceholderImage : '${acrLoginServer}/tagpulse-mqtt:${imageTag}'
+
+// Sprint 28 C6 — port + env-var lists are assembled here so the resource
+// body stays linear. When TLS is enabled the entrypoint writes the cert
+// material to /mosquitto/config and drops an `include_dir` fragment that
+// opens 8883; the 1883 listener stays online for one sprint to give the
+// fleet a no-coordination cutover window.
+var aciPorts = mqttTlsEnabled ? [
+  { protocol: 'TCP', port: 1883 }
+  { protocol: 'TCP', port: 8883 }
+] : [
+  { protocol: 'TCP', port: 1883 }
+]
+
+var containerPorts = aciPorts
+
+var baseEnvVars = [
+  {
+    name: 'MOSQUITTO_USERNAME'
+    secureValue: mqttUsername
+  }
+  {
+    name: 'MOSQUITTO_PASSWORD'
+    secureValue: mqttPassword
+  }
+]
+var tlsEnvVars = mqttTlsEnabled ? [
+  {
+    name: 'MOSQUITTO_TLS_CA'
+    secureValue: mqttTlsCa
+  }
+  {
+    name: 'MOSQUITTO_TLS_CERT'
+    secureValue: mqttTlsCert
+  }
+  {
+    name: 'MOSQUITTO_TLS_KEY'
+    secureValue: mqttTlsKey
+  }
+] : []
+var allEnvVars = concat(baseEnvVars, tlsEnvVars)
 
 resource aci 'Microsoft.ContainerInstance/containerGroups@2023-05-01' = {
   name: containerGroupName
@@ -74,37 +129,21 @@ resource aci 'Microsoft.ContainerInstance/containerGroups@2023-05-01' = {
     ipAddress: {
       type: 'Public'
       dnsNameLabel: dnsLabelPrefix
-      ports: [
-        {
-          protocol: 'TCP'
-          port: 1883
-        }
-      ]
+      ports: aciPorts
     }
     containers: [
       {
         name: 'mosquitto'
         properties: {
           image: brokerImage
-          ports: [
-            { protocol: 'TCP', port: 1883 }
-          ]
+          ports: containerPorts
           resources: {
             requests: {
               cpu: 1
               memoryInGB: 1
             }
           }
-          environmentVariables: [
-            {
-              name: 'MOSQUITTO_USERNAME'
-              secureValue: mqttUsername
-            }
-            {
-              name: 'MOSQUITTO_PASSWORD'
-              secureValue: mqttPassword
-            }
-          ]
+          environmentVariables: allEnvVars
         }
       }
     ]
@@ -113,3 +152,4 @@ resource aci 'Microsoft.ContainerInstance/containerGroups@2023-05-01' = {
 
 output fqdn string = aci.properties.ipAddress.fqdn
 output mqttUrl string = 'mqtt://${aci.properties.ipAddress.fqdn}:1883'
+output mqttTlsUrl string = mqttTlsEnabled ? 'mqtts://${aci.properties.ipAddress.fqdn}:8883' : ''

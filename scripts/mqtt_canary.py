@@ -59,7 +59,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-async def _publish(host: str, port: int, username: str, password: str, topic: str, body: str) -> None:
+async def _publish(
+    host: str, port: int, username: str, password: str, topic: str, body: str
+) -> None:
     import aiomqtt
 
     log.info("connecting to mqtt %s:%d as %s", host, port, username)
@@ -70,16 +72,16 @@ async def _publish(host: str, port: int, username: str, password: str, topic: st
     log.info("published canary to %s", topic)
 
 
-async def _wait_for_row(database_url: str, tenant_id: uuid.UUID, tag_id: str, timeout_s: int) -> bool:
+async def _wait_for_row(
+    database_url: str, tenant_id: uuid.UUID, tag_id: str, timeout_s: int
+) -> bool:
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
     engine = create_async_engine(database_url, pool_pre_ping=True)
     deadline = asyncio.get_event_loop().time() + timeout_s
     poll_interval = 1.0
-    sql = text(
-        "SELECT 1 FROM tag_reads WHERE tenant_id = :tid AND tag_id = :tag LIMIT 1"
-    )
+    sql = text("SELECT 1 FROM tag_reads WHERE tenant_id = :tid AND tag_id = :tag LIMIT 1")
     while asyncio.get_event_loop().time() < deadline:
         async with engine.begin() as conn:
             row = (await conn.execute(sql, {"tid": tenant_id, "tag": tag_id})).first()
@@ -117,10 +119,7 @@ async def _run_async(args: argparse.Namespace) -> int:
     run_id = uuid.uuid4().hex[:8]
     tag_id = f"CANARY-{run_id}"
     topic = f"tenants/{tenant_uuid}/devices/{device_uuid}/tag-reads"
-    body = (
-        '{"tag_id":"' + tag_id + '","timestamp":"'
-        + datetime.now(UTC).isoformat() + '"}'
-    )
+    body = '{"tag_id":"' + tag_id + '","timestamp":"' + datetime.now(UTC).isoformat() + '"}'
 
     try:
         await _publish(host, port, username, password, topic, body)

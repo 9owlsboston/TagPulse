@@ -38,7 +38,7 @@ class _FakeSession:
     async def commit(self) -> None:
         return None
 
-    async def __aenter__(self) -> "_FakeSession":
+    async def __aenter__(self) -> _FakeSession:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
