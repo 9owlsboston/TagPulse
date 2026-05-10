@@ -187,6 +187,7 @@ class AsyncEventBus:
                     error_message=error_message[:4000],
                     retry_count=0,
                     status="pending",
+                    source="event_bus",
                     failed_at=datetime.now(UTC),
                 )
                 session.add(row)

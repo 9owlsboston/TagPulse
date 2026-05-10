@@ -209,6 +209,50 @@ class MqttSubscriber:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
 
+    async def _persist_mqtt_drop(
+        self,
+        tenant_id: UUID,
+        topic_str: str,
+        payload: Any,
+        topic_kind: str,
+        reason: str,
+    ) -> None:
+        """Sprint 28 C3: persist a schema-level MQTT drop to dead_letter_events.
+
+        Called only from the ``invalid_schema`` branches where the topic
+        was parseable enough to know the tenant — keeps row volume bounded
+        and lets operators see the actual rejected payload from the admin
+        UI / triage runbook. JSON-parse failures stay metric-only by
+        design (could spike under broker-flood).
+        """
+        from tagpulse.models.database import DeadLetterEventModel
+
+        try:
+            body: dict[str, Any] = (
+                payload if isinstance(payload, dict) else {"raw": str(payload)[:1000]}
+            )
+            row = DeadLetterEventModel(
+                tenant_id=tenant_id,
+                topic=topic_str[:50],
+                payload=body,
+                error_message=f"mqtt {topic_kind} {reason}",
+                retry_count=0,
+                status="rejected",
+                source="mqtt_subscriber",
+            )
+            async with self._session_factory() as session:
+                session.add(row)
+                await session.commit()
+        except Exception:  # noqa: BLE001
+            # Persistence is best-effort; a DB outage must not stall the
+            # message loop. Counter + log already recorded.
+            logger.exception(
+                "failed to persist MQTT drop topic=%s kind=%s reason=%s",
+                topic_str,
+                topic_kind,
+                reason,
+            )
+
     async def _handle_message(self, message: aiomqtt.Message) -> None:
         """Route message to the appropriate handler with a fresh DB session."""
         # Sprint 19: route the subject-scoped topic family first so its
@@ -300,6 +344,9 @@ class MqttSubscriber:
                     payload,
                 )
                 _record_rejection("tag_read", "invalid_schema")
+                await self._persist_mqtt_drop(
+                    tenant_id, str(message.topic), payload, "tag_read", "invalid_schema"
+                )
                 continue
 
         if not reads:
@@ -338,6 +385,9 @@ class MqttSubscriber:
                 payload,
             )
             _record_rejection("status", "invalid_schema")
+            await self._persist_mqtt_drop(
+                tenant_id, str(message.topic), payload, "status", "invalid_schema"
+            )
             return
 
         try:
@@ -380,6 +430,9 @@ class MqttSubscriber:
                     payload,
                 )
                 _record_rejection("telemetry", "invalid_schema")
+                await self._persist_mqtt_drop(
+                    tenant_id, str(message.topic), payload, "telemetry", "invalid_schema"
+                )
                 return
             readings_raw = [
                 {
@@ -428,6 +481,9 @@ class MqttSubscriber:
                 payload,
             )
             _record_rejection("location", "invalid_schema")
+            await self._persist_mqtt_drop(
+                tenant_id, str(message.topic), payload, "location", "invalid_schema"
+            )
             return
         try:
             async with self._session_factory() as session:
@@ -456,6 +512,9 @@ class MqttSubscriber:
                 payload,
             )
             _record_rejection("event", "invalid_schema")
+            await self._persist_mqtt_drop(
+                tenant_id, str(message.topic), payload, "event", "invalid_schema"
+            )
             return
         try:
             async with self._session_factory() as session:
@@ -501,6 +560,13 @@ class MqttSubscriber:
                 message.topic,
             )
             _record_rejection("subject_telemetry", "invalid_schema")
+            await self._persist_mqtt_drop(
+                tenant_id,
+                str(message.topic),
+                payload,
+                "subject_telemetry",
+                "invalid_schema",
+            )
             return
 
         try:

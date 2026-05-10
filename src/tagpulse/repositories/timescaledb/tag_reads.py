@@ -116,6 +116,7 @@ class TimescaleTagReadRepository:
             error_message=reason,
             retry_count=0,
             status="rejected",
+            source="tag_read_rejected",
         )
         self._session.add(row)
         await self._session.flush()
