@@ -34,6 +34,21 @@ See [docs/architecture.md](docs/architecture.md) for the full system overview.
 - **Provider-agnostic Helm chart** (k8s portability target): [deploy/common/helm/tagpulse/README.md](deploy/common/helm/tagpulse/README.md).
 - **Operator runbooks** (token rotation, deploy, etc.): [docs/runbooks/](docs/runbooks/README.md).
 
+### Deployment topology (CI/CD vs local azd)
+
+There are three distinct paths that can change what's running in Azure. Knowing which one fired is essential when correlating an incident with a workflow run (see [issue #17](https://github.com/9owlsboston/TagPulse/issues/17)).
+
+| Path | Trigger | What it does | Touches ACA revisions? |
+| --- | --- | --- | --- |
+| [`build-and-push.yml`](.github/workflows/build-and-push.yml) | every push to `main`, `v*` tag, PR | Builds `tagpulse-{api,worker,migrations}` images, pushes to GHCR (always) and ACR (on `main`/tag). Smokes the tools image. Attests provenance. | **No.** Registry only. ACA pulls images at deploy time, not on push. |
+| [`deploy-azure.yml`](.github/workflows/deploy-azure.yml) | `v*` tag push (→ `production`), or manual `workflow_dispatch` (→ `dev`/`staging`/`production`) | Reuses an already-pushed image tag, runs the migrations job, then updates the ACA app to the new revision. This is the **only CI path that creates revisions.** | **Yes.** Revision name pattern: `<app>--<sprint-or-tag>-<sha>`. |
+| Local `azd deploy` (operator laptop) | manual, ad hoc | `azd` builds locally and updates the ACA app directly. | **Yes**, but the revision name is `<app>--azd-<unix_ts>` (e.g. `tpdev-api--azd-1778312957`) — that prefix uniquely identifies a laptop deploy. |
+
+**Audit rules of thumb**
+- `azd-<digits>` revision suffix → someone ran `azd deploy` locally; correlate with operator activity, not a workflow run.
+- `build-and-push` finishing alone never changes what's live. If a new revision appeared right after it, it came from one of the other two paths.
+- `dev` (`tagpulse-dev-rg`) is a free-fire zone for local `azd deploy`. `staging` and `production` should only ever change via `deploy-azure.yml` so the audit trail is in GitHub Actions.
+
 ## Project Structure
 
 ```
