@@ -1,5 +1,7 @@
 # TagPulse Architecture
 
+> Logical view (services, domains, event flows). For the deployed Azure infrastructure (VNet, NSGs, ACA env, private endpoints, Bicep modules) see [azure-architecture.md](azure-architecture.md).
+
 ## System Overview
 
 ![TagPulse Architecture](assets/architecture.png)
