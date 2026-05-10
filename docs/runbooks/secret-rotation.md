@@ -21,6 +21,7 @@
 | `ui-deploy-token` (`AZURE_STATIC_WEB_APPS_API_TOKEN`) | Static Web App deploy token; lives in TagPulse-UI repo's GH env secrets | 90-day, automated cron in TagPulse-UI repo (D2) | Cron / engineer with `azd-ui-token-rotate.sh` access | UI deployments only; no runtime data exposure |
 | `azd-cicd-sp-secret` | Service principal secret used by `deploy-azure.yml` GH workflow | 12-month | Engineer with subscription `User Access Administrator` | Full deploy capability against the env's RG |
 | `tagpulse-tls-ca` / `tagpulse-tls-cert` / `tagpulse-tls-key` (Sprint 28 C6, future) | Mosquitto TLS cert/key for `:8883` listener | 12-month, auto-rotate via KV-managed cert | Auto / engineer with KV `Certificates Officer` | TLS interception of MQTT traffic |
+| `mqtt-tls-ca` / `mqtt-tls-cert` / `mqtt-tls-key` (Sprint 28 C6) | PEM material for the Mosquitto `:8883` server-TLS listener (server-auth only; mTLS deferred per ADR-012) | 12-month, or on cert expiry / suspected key compromise | Engineer with KV `Secrets Officer` + cert provisioning access | TLS termination on the broker — bad/expired cert breaks all 8883 clients; the 1883 listener stays online during cutover but should be removed once the fleet is on 8883 |
 
 > **Audit your env now:** `scripts/azd-kv-audit.sh <env>` (Sprint 28 B1).
 
@@ -63,6 +64,48 @@ scripts/azd-mqtt-canary.py     # via azd-job; Sprint 28 C2
 **Order matters**: KV update → Mosquitto restart → device-side credential update.
 If devices update before the broker restarts, they'll fail auth and reconnect-loop
 until the broker also updates. Coordinate during a low-traffic window.
+
+### `mqtt-tls-ca` / `mqtt-tls-cert` / `mqtt-tls-key` (Sprint 28 C6)
+
+Server-TLS only. The broker's entrypoint reads the three PEM blobs from
+`MOSQUITTO_TLS_CA/CERT/KEY` env vars (sourced from KV secretRefs on the ACI),
+writes them to `/mosquitto/config/{ca.pem,server.pem,server.key}`, and drops
+a `conf.d/tls.conf` fragment that opens `:8883`. Bicep param `mqttTlsEnabled`
+(workload-level) gates the port + env vars.
+
+```bash
+# 1. Provision a fresh cert for the broker FQDN (one-time setup; subsequent
+#    rotations skip the keypair generation if the existing key is fine).
+#    Replace with your CA workflow — Let's Encrypt via DNS-01, a corporate
+#    CA, or `openssl req -x509 ...` for a self-signed dev cert.
+FQDN="$(azd env get-value AZURE_MQTT_FQDN)"   # e.g. tpdev-mqtt.eastus.azurecontainer.io
+# ... cert generation produces ca.pem, server.pem, server.key ...
+
+# 2. Update KV (use --dry-run / preview first).
+az keyvault secret set --vault-name <KV> --name mqtt-tls-ca   --file ./ca.pem
+az keyvault secret set --vault-name <KV> --name mqtt-tls-cert --file ./server.pem
+az keyvault secret set --vault-name <KV> --name mqtt-tls-key  --file ./server.key
+
+# 3. Restart Mosquitto so the entrypoint re-renders the conf.d fragment.
+scripts/azd-mqtt-restart.sh <env>
+
+# 4. Verify the 8883 listener.
+openssl s_client -connect "$FQDN":8883 -servername "$FQDN" </dev/null 2>&1 | head -20
+scripts/azd-job.sh <env> mqtt_canary.py   # adjust --port 8883 once cutover is complete
+```
+
+**First-time enablement** (not a rotation) additionally requires:
+
+1. Seed the KV secrets above.
+2. Set `AZURE_MQTT_TLS_ENABLED=true` in the azd env.
+3. Re-run `azd up` to provision port 8883 on the ACI and the secureValue env
+   vars on the container.
+4. Update worker config: set `MQTT_USE_TLS=true` and (if using a private CA)
+   `MQTT_TLS_CA_PATH=/path/to/ca.pem` on the api + worker apps.
+
+**Cutover safety**: the 1883 listener stays online in parallel for one sprint.
+Remove it from `mosquitto.prod.conf` only after every device + the worker have
+confirmed-connected on 8883 (check broker logs for the listener split).
 
 ### `pg-admin-password`
 
