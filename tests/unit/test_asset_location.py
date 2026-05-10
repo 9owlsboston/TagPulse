@@ -87,9 +87,7 @@ class _FakeAssetLocationRepo:
         limit: int = 200,
         offset: int = 0,
     ) -> Sequence[AssetInZoneSummary]:
-        self.in_zone_calls.append(
-            {"zone_id": zone_id, "limit": limit, "offset": offset}
-        )
+        self.in_zone_calls.append({"zone_id": zone_id, "limit": limit, "offset": offset})
         return self.in_zone
 
 
@@ -171,9 +169,7 @@ async def test_get_asset_path_passes_window_to_repo() -> None:
         ),
     ]
 
-    got = await svc.get_asset_path(
-        tenant, asset.id, since=since, until=until, limit=50
-    )
+    got = await svc.get_asset_path(tenant, asset.id, since=since, until=until, limit=50)
 
     assert len(got) == 2
     assert {p.source for p in got} == {"rfid", "samsara"}
@@ -183,6 +179,20 @@ async def test_get_asset_path_passes_window_to_repo() -> None:
         "limit": 50,
         "asset_id": asset.id,
     }
+
+
+def test_path_sql_references_existing_tag_reads_columns() -> None:
+    """Regression: ``_PATH_SQL`` must use ``tr.device_id`` (the actual column
+    on ``tag_reads``), not ``tr.reader_id`` which has never existed and caused
+    a 500 on every ``GET /assets/{id}/path`` call.
+    """
+    from tagpulse.repositories.timescaledb.asset_location import (
+        TimescaleAssetLocationRepository,
+    )
+
+    sql = str(TimescaleAssetLocationRepository._PATH_SQL)
+    assert "tr.reader_id" not in sql, "tag_reads has no reader_id column"
+    assert "tr.device_id" in sql
 
 
 @pytest.mark.asyncio

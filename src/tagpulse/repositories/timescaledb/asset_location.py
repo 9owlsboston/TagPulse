@@ -115,7 +115,7 @@ class TimescaleAssetLocationRepository:
                 tr.longitude             AS longitude,
                 tr.location_accuracy_m   AS accuracy_meters,
                 'rfid'::text             AS source,
-                tr.reader_id             AS device_id,
+                tr.device_id             AS device_id,
                 tr.id                    AS tag_read_id,
                 NULL::uuid               AS external_id
             FROM tag_reads tr
