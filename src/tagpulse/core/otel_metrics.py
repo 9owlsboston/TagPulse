@@ -1,5 +1,7 @@
 """Custom application metrics — counters, gauges for TagPulse components."""
 
+import time
+
 from opentelemetry import metrics
 
 meter = metrics.get_meter("tagpulse")
@@ -214,4 +216,68 @@ dwell_alerts_counter = meter.create_counter(
     "tagpulse_dwell_alerts_total",
     description="Synthetic zone.dwell_exceeded alerts emitted by the dwell worker.",
     unit="alerts",
+)
+
+# -- Sprint 28 C1: MQTT subscriber operational metrics --
+
+mqtt_reconnect_attempts_counter = meter.create_counter(
+    "tagpulse_mqtt_reconnect_attempts_total",
+    description=(
+        "MQTT subscriber connection / reconnection attempts. The 'reason' "
+        "label classifies the trigger: 'startup' for the first attempt, "
+        "or a short error class (e.g. 'connection_refused', 'auth_failed', "
+        "'timeout', 'other') for retries. Worker stays connected on the "
+        "happy path so this rate should be near zero."
+    ),
+    unit="attempts",
+)
+
+mqtt_messages_rejected_counter = meter.create_counter(
+    "tagpulse_mqtt_messages_rejected_total",
+    description=(
+        "Inbound MQTT messages dropped by the subscriber before reaching "
+        "ingestion. Labelled by 'topic_kind' (tag_read | status | telemetry "
+        "| location | event | subject_telemetry | unparseable | unknown_suffix) "
+        "and 'reason' (invalid_json | invalid_schema | non_dict_payload | "
+        "no_valid_items | invalid_topic | unknown_subject_kind | unknown_suffix)."
+    ),
+    unit="messages",
+)
+
+
+# Tracks the wall-clock time the subscriber last processed any message.
+# Mutable container so the observable-gauge callback can read it without a
+# closure over a frame-local. Sentinel 0.0 = never received.
+_MQTT_LAST_MESSAGE_TS: dict[str, float] = {"value": 0.0}
+
+
+def mark_mqtt_message_processed() -> None:
+    """Mark "now" as the last time the MQTT subscriber processed a message.
+
+    Called from the subscriber's message loop after a successful (or
+    deliberately-dropped) handler return so the
+    ``mqtt_subscriber_last_message_age_seconds`` gauge reflects liveness.
+    """
+    _MQTT_LAST_MESSAGE_TS["value"] = time.time()
+
+
+def _observe_mqtt_age(_options):  # type: ignore[no-untyped-def]
+    last = _MQTT_LAST_MESSAGE_TS["value"]
+    if last <= 0.0:
+        # Never received a message yet — emit nothing rather than report
+        # a misleading "age = process uptime".
+        return []
+    return [metrics.Observation(time.time() - last)]
+
+
+mqtt_subscriber_last_message_age_seconds = meter.create_observable_gauge(
+    name="tagpulse_mqtt_subscriber_last_message_age_seconds",
+    callbacks=[_observe_mqtt_age],
+    description=(
+        "Seconds since the MQTT subscriber last processed a message of any "
+        "kind. A monotonically rising value while devices are publishing "
+        "indicates a stalled subscriber (broker still up, but our consumer "
+        "has stopped reading). See Sprint 28 D4 healthz exposure."
+    ),
+    unit="s",
 )
