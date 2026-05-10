@@ -10,8 +10,14 @@
 > mosquitto_pub -h tpdev-mqtt-mwig6fst.centralus.azurecontainer.io -p 1883 \
 >   -u <device_id> -P <device_token> \
 >   -t 'tenants/<tenant_id>/devices/<device_id>/tag-reads' \
->   -m '[{"device_id":"<device_id>","tag_id":"E2806894...","timestamp":"2026-05-08T10:15:30Z","signal_strength":-52.0}]'
+>   -m '{"tag_id":"E2806894...","timestamp":"2026-05-08T10:15:30Z","signal_strength":-52.0}'
 > ```
+>
+> **Wire-shape note:** on MQTT, ``device_id`` comes from the topic and is
+> NOT required (or expected) in the body. The subscriber accepts a single
+> object (above), the same object wrapped in an array, or a batch array
+> (HTTP-style); a body-supplied ``device_id`` is silently ignored in
+> favour of the topic-derived one. See [§3.2 Payload shapes](#32-payload-shapes-one-example-each).
 > Read on for what each of those values is, where to get them, and the rest of
 > the wire contract.
 
@@ -111,17 +117,28 @@ tenants/{tenant_id}/subjects/{subject_kind}/{subject_id}/telemetry
 
 ### 3.2 Payload shapes (one example each)
 
-`tag-reads` — an array of one or more reads (batch up to 100):
+`tag-reads` — single object (canonical) **or** an array of up to 100
+objects (batch). On MQTT, ``device_id`` comes from the topic; if you
+include it in the body it is silently dropped in favour of the
+topic-derived UUID, so a misrouted publish cannot smuggle reads under
+another device.
+
+```json
+{
+  "tag_id": "E280689400005000A1B2C3D4",
+  "timestamp": "2026-05-08T10:15:30.123Z",
+  "signal_strength": -52.0,
+  "reader_antenna": 1,
+  "tag_data": {"epc_hex": "300833B2DDD9014000000000"}
+}
+```
+
+Batch form (same per-element shape, array wrapper, max 100 elements):
+
 ```json
 [
-  {
-    "device_id": "00000000-0000-0000-0000-000000000002",
-    "tag_id": "E280689400005000A1B2C3D4",
-    "timestamp": "2026-05-08T10:15:30.123Z",
-    "signal_strength": -52.0,
-    "reader_antenna": 1,
-    "tag_data": {"epc_hex": "300833B2DDD9014000000000"}
-  }
+  {"tag_id": "E280…A1", "timestamp": "2026-05-08T10:15:30.000Z", "signal_strength": -52.0},
+  {"tag_id": "E280…B2", "timestamp": "2026-05-08T10:15:30.050Z", "signal_strength": -49.5}
 ]
 ```
 
@@ -175,7 +192,7 @@ mosquitto_pub -h "$BROKER" -p 1883 \
   -u "$DEVICE" -P "$TOKEN" \
   -q 1 \
   -t "tenants/$TENANT/devices/$DEVICE/tag-reads" \
-  -m '[{"device_id":"'$DEVICE'","tag_id":"E2806894TEST","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","signal_strength":-52.0}]'
+  -m '{"tag_id":"E2806894TEST","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","signal_strength":-52.0}'
 ```
 
 Confirm it landed:
