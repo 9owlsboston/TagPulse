@@ -210,22 +210,45 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 async def _run_mqtt_subscriber(event_bus: AsyncEventBus, usage_meter: UsageMeter) -> None:
-    """Run MQTT subscriber with per-message sessions to avoid stale ORM state."""
-    subscriber = MqttSubscriber(
-        host=settings.mqtt_broker_host,
-        port=settings.mqtt_broker_port,
-        session_factory=async_session_factory,
-        event_bus=event_bus,
-        username=settings.mqtt_username,
-        password=settings.mqtt_password,
-        usage_meter=usage_meter,
-    )
-    try:
-        await subscriber.run()
-    except asyncio.CancelledError:
-        logger.info("MQTT subscriber stopped")
-    except Exception:
-        logger.exception("MQTT subscriber crashed")
+    """Run MQTT subscriber with per-message sessions to avoid stale ORM state.
+
+    Sprint 31 (#18): supervised. If ``subscriber.run()`` ever returns or
+    raises (broker disconnect, unhandled crash inside the loop, etc.) we
+    log + sleep with exponential backoff and reconnect, so a transient
+    failure or a future regression cannot take ingest fully offline
+    while the rest of the worker keeps reporting healthy. Cancellation
+    (graceful shutdown) still exits immediately.
+    """
+    backoff_s = 1.0
+    backoff_max_s = 60.0
+    while True:
+        subscriber = MqttSubscriber(
+            host=settings.mqtt_broker_host,
+            port=settings.mqtt_broker_port,
+            session_factory=async_session_factory,
+            event_bus=event_bus,
+            username=settings.mqtt_username,
+            password=settings.mqtt_password,
+            usage_meter=usage_meter,
+        )
+        try:
+            await subscriber.run()
+        except asyncio.CancelledError:
+            logger.info("MQTT subscriber stopped")
+            raise
+        except Exception:
+            logger.exception("MQTT subscriber crashed; restarting in %.1fs", backoff_s)
+        else:
+            logger.warning(
+                "MQTT subscriber returned without error; restarting in %.1fs",
+                backoff_s,
+            )
+        try:
+            await asyncio.sleep(backoff_s)
+        except asyncio.CancelledError:
+            logger.info("MQTT subscriber stopped during backoff")
+            raise
+        backoff_s = min(backoff_s * 2, backoff_max_s)
 
 
 app = FastAPI(
