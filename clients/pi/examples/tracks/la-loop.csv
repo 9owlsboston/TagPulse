@@ -1,0 +1,12 @@
+# Downtown Los Angeles loop (Walt Disney Concert Hall -> Grand Central
+# Market -> Pershing Square -> LA City Hall -> Union Station -> back).
+# Columns: lat,lon,accuracy_m,dwell_s
+lat,lon,accuracy_m,dwell_s
+34.0553,-118.2498,5,3
+34.0509,-118.2487,5,3
+34.0480,-118.2510,5,4
+34.0537,-118.2428,5,3
+34.0561,-118.2365,5,4
+34.0537,-118.2428,5,3
+34.0530,-118.2473,5,4
+34.0553,-118.2498,5,5

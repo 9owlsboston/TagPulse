@@ -4,6 +4,10 @@
 !.env.example
 !.env.*.example
 
+# clients/pi smoke publisher sidecar (contains BROKER_PASS)
+.tp_paho_edge.env
+!.tp_paho_edge.env.example
+
 # azd — per-environment state (contains real secret values in .azure/<env>/.env)
 .azure/
 
