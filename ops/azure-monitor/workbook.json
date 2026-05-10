@@ -1,0 +1,57 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# TagPulse SLO Dashboard\n\nFronts the four SLOs in `docs/observability/slos.md`. Each KQL block is also kept under `ops/azure-monitor/kql/` so they version with the code; edit there first, then paste back."
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let api = requests | where timestamp > ago(28d) | where url contains '/api/v1' | where url !contains '/health/' | where url !endswith '/metrics' | where url !contains '/openapi.json'; api | summarize total = count(), errors = countif(toint(resultCode) >= 500), p95_ms = percentile(duration, 95) by bin(timestamp, 5m) | extend availability_pct = 100.0 * (total - errors) / total | project timestamp, total, errors, availability_pct, p95_ms | order by timestamp desc",
+        "size": 1,
+        "title": "SLO #1 + #2 — API availability and p95 latency",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics | where timestamp > ago(7d) | where name == 'tagpulse_mqtt_subscriber_last_message_age_seconds' | extend env = tostring(customDimensions['service.namespace']) | summarize age_p95 = percentile(value, 95), age_max = max(value) by bin(timestamp, 5m), env | order by timestamp desc",
+        "size": 1,
+        "title": "SLO #3 — Ingestion freshness (lower is better)",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics | where timestamp > ago(7d) | where name == 'tagpulse_dead_letter_events_total' | extend source = tostring(customDimensions['source']) | summarize rows_per_hour = sum(value) by bin(timestamp, 1h), source | order by timestamp desc, source asc",
+        "size": 1,
+        "title": "SLO #4 — Dead-letter rows by source (Sprint 28 C3)",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "requests | where timestamp > ago(24h) | where toint(resultCode) >= 500 | extend tenant_id = tostring(customDimensions['tenant_id']), tenant_slug = tostring(customDimensions['tenant_slug']) | where isnotempty(tenant_id) | summarize errors = count(), latest = max(timestamp) by tenant_id, tenant_slug | order by errors desc",
+        "size": 1,
+        "title": "5xx by tenant (Sprint 28 D5 attribute)",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components"
+      }
+    }
+  ],
+  "fallbackResourceIds": [],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

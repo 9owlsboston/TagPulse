@@ -1,0 +1,14 @@
+// 5xx by tenant_id over the last 24h.
+// Uses the tenant_id span attribute added in Sprint 28 D5
+// (tagpulse.core.user_auth._annotate_span_with_user). Helps the
+// on-call distinguish "platform-wide outage" from "single tenant
+// running a bad load test".
+requests
+| where timestamp > ago(24h)
+| where toint(resultCode) >= 500
+| extend tenant_id = tostring(customDimensions["tenant_id"]),
+         tenant_slug = tostring(customDimensions["tenant_slug"])
+| where isnotempty(tenant_id)
+| summarize errors = count(), latest = max(timestamp)
+    by tenant_id, tenant_slug
+| order by errors desc

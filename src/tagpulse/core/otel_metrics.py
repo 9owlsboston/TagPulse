@@ -261,6 +261,19 @@ def mark_mqtt_message_processed() -> None:
     _MQTT_LAST_MESSAGE_TS["value"] = time.time()
 
 
+def mqtt_message_age_seconds() -> float | None:
+    """Return seconds since the MQTT subscriber last processed a message.
+
+    Returns ``None`` when no message has ever been processed (sentinel
+    0.0). Used by the Sprint 28 D4 ``/health/detail`` exposure so cloud
+    operators can see ingest freshness without scraping OTLP.
+    """
+    last = _MQTT_LAST_MESSAGE_TS["value"]
+    if last <= 0.0:
+        return None
+    return time.time() - last
+
+
 def _observe_mqtt_age(_options):  # type: ignore[no-untyped-def]
     last = _MQTT_LAST_MESSAGE_TS["value"]
     if last <= 0.0:
