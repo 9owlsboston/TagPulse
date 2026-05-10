@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -126,24 +127,30 @@ class MqttSubscriber:
                 SUBJECT_TOPIC_FILTER,
             )
             async for message in client.messages:
-                await self._handle_message(message)
+                # Sprint 31 (#18): a single bad payload must never escape the
+                # message loop. Anything `_handle_message` raises (TypeError
+                # from `**payload` when the body is a list, ValidationError,
+                # repository errors, …) is logged and dropped so the
+                # subscriber keeps consuming. CancelledError still
+                # propagates so graceful shutdown works.
+                try:
+                    await self._handle_message(message)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "MQTT message handler raised; dropping message and continuing. topic=%s",
+                        message.topic,
+                    )
 
     async def _handle_message(self, message: aiomqtt.Message) -> None:
         """Route message to the appropriate handler with a fresh DB session."""
         # Sprint 19: route the subject-scoped topic family first so its
         # 6-segment shape is matched before falling through to the
         # legacy 5-segment device topics.
-        s_tenant_id, subject_kind, subject_id = _parse_subject_topic(
-            str(message.topic)
-        )
-        if (
-            s_tenant_id is not None
-            and subject_kind is not None
-            and subject_id is not None
-        ):
-            await self._handle_subject_telemetry(
-                s_tenant_id, subject_kind, subject_id, message
-            )
+        s_tenant_id, subject_kind, subject_id = _parse_subject_topic(str(message.topic))
+        if s_tenant_id is not None and subject_kind is not None and subject_id is not None:
+            await self._handle_subject_telemetry(s_tenant_id, subject_kind, subject_id, message)
             return
 
         tenant_id, device_id, topic_type = _parse_topic(str(message.topic))
@@ -172,32 +179,71 @@ class MqttSubscriber:
     async def _handle_tag_read(
         self, tenant_id: UUID, device_id: UUID, message: aiomqtt.Message
     ) -> None:
+        # Sprint 31 (#18, #19): accept any of these shapes the docs and
+        # reference clients have shipped over time:
+        #   1. {"tag_id": …, …}                       (canonical, smoke pub)
+        #   2. {"device_id": …, "tag_id": …, …}       (Pi reference agent)
+        #   3. [{...}, {...}]                         (HTTP /tag-reads/batch
+        #                                              shape — used in
+        #                                              docs/guides/device-
+        #                                              developer-guide.md)
+        # In every case the topic-derived ``device_id`` wins; any
+        # ``device_id`` field on the body is stripped so the
+        # ``TagReadCreate(device_id=device_id, **payload)`` call below
+        # cannot raise ``TypeError: got multiple values for keyword
+        # argument 'device_id'``.
         try:
-            payload: dict[str, Any] = json.loads(message.payload)
-        except (json.JSONDecodeError, TypeError):
+            raw: Any = json.loads(message.payload)
+        except (json.JSONDecodeError, TypeError, ValueError):
             logger.warning("Skipping tag-read with invalid JSON on topic %s", message.topic)
             return
 
-        try:
-            read = TagReadCreate(device_id=device_id, **payload)
-        except ValueError:
+        if isinstance(raw, list):
+            items: list[Any] = raw
+        elif isinstance(raw, dict):
+            items = [raw]
+        else:
             logger.warning(
-                "Skipping tag-read with invalid schema on topic %s: %s",
+                "Skipping tag-read with non-object/array payload on topic %s: %r",
                 message.topic,
-                payload,
+                type(raw).__name__,
             )
+            return
+
+        reads: list[TagReadCreate] = []
+        for item in items:
+            if not isinstance(item, dict):
+                logger.warning(
+                    "Skipping tag-read element with non-object shape on topic %s: %r",
+                    message.topic,
+                    type(item).__name__,
+                )
+                continue
+            payload = {k: v for k, v in item.items() if k != "device_id"}
+            try:
+                reads.append(TagReadCreate(device_id=device_id, **payload))
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Skipping tag-read with invalid schema on topic %s: %s",
+                    message.topic,
+                    payload,
+                )
+                continue
+
+        if not reads:
             return
 
         try:
             async with self._session_factory() as session:
                 ingestion_service = self._build_ingestion_service(session)
-                await ingestion_service.ingest(tenant_id, read)
+                for read in reads:
+                    await ingestion_service.ingest(tenant_id, read)
                 await session.commit()
         except Exception:
             logger.exception(
-                "Failed to ingest tag read from MQTT: device=%s tag=%s",
+                "Failed to ingest tag reads from MQTT: device=%s count=%d",
                 device_id,
-                payload.get("tag_id"),
+                len(reads),
             )
 
     async def _handle_status(
@@ -270,9 +316,7 @@ class MqttSubscriber:
         try:
             readings = [TelemetryReading(**r) for r in readings_raw]
         except ValueError:
-            logger.warning(
-                "Skipping telemetry with invalid reading schema on %s", message.topic
-            )
+            logger.warning("Skipping telemetry with invalid reading schema on %s", message.topic)
             return
 
         try:
@@ -337,9 +381,7 @@ class MqttSubscriber:
                 await svc.ingest_device_event(tenant_id, event)
                 await session.commit()
         except Exception:
-            logger.exception(
-                "Failed to ingest device event from MQTT: device=%s", device_id
-            )
+            logger.exception("Failed to ingest device event from MQTT: device=%s", device_id)
 
     async def _handle_subject_telemetry(
         self,
@@ -395,9 +437,7 @@ class MqttSubscriber:
                         source="external",
                         metadata=metadata,
                     )
-                    published.append(
-                        (row, reading.metric_name, reading.metric_value, reading.unit)
-                    )
+                    published.append((row, reading.metric_name, reading.metric_value, reading.unit))
                 await session.commit()
             # Sprint 20: publish AFTER commit so rule-engine handlers
             # never see a row the caller cannot read back.
