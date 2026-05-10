@@ -33,7 +33,7 @@ on:
         default: production
         options: [dev, staging, production]
       image_tag:
-        description: 'Image tag to deploy (defaults to ref tag, falls back to commit SHA)'
+        description: 'Image tag to deploy (full sha-<40hex>, short sha-<7hex>, v* tag, or empty to use this workflow''s commit SHA)'
         required: false
         type: string
 
@@ -55,9 +55,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve image tag
-        id: tag
+      - name: Resolve image tag (requested)
+        id: requested
         run: |
+          # Sprint 32: this step records what the operator asked for; the
+          # actual tag used by later steps comes from "Expand image tag",
+          # which can resolve a short SHA prefix to the full tag in ACR.
           if [ -n "${{ inputs.image_tag }}" ]; then
             echo "tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
@@ -65,7 +68,7 @@ jobs:
           else
             echo "tag=sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
           fi
-          echo "Image tag: $(cat "$GITHUB_OUTPUT" | tail -1)"
+          echo "Requested tag: $(cat "$GITHUB_OUTPUT" | tail -1)"
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -73,6 +76,72 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Expand image tag (short SHA → full SHA)
+        id: tag
+        env:
+          ACR: ${{ vars.AZURE_ACR_NAME }}
+          REQUESTED: ${{ steps.requested.outputs.tag }}
+        run: |
+          # Sprint 32: build-and-push.yml tags images with the FULL 40-char
+          # commit SHA (`type=sha,format=long` in docker/metadata-action),
+          # but operators almost always have a 7-char short SHA in hand
+          # (`git rev-parse --short HEAD`, GitHub UI, commit URLs). Earlier
+          # the deploy hard-required the long form, so passing
+          # `image_tag=sha-aeed4a4` failed at the verify step even though
+          # the image was sitting right there as
+          # `sha-aeed4a499b618e933f0caa05e524f204d9b3ce5b`.
+          #
+          # Resolution rules (first match wins):
+          #   1. Tag exists verbatim in tagpulse-api               → use it.
+          #   2. Looks like `sha-<hex-prefix>` (any length 4–39)   → expand
+          #      to the unique matching long-form tag in ACR.
+          #   3. Otherwise                                          → fail
+          #      with a list of recent tags so the operator can retry.
+          #
+          # We probe `tagpulse-api` only; the next step still verifies that
+          # the resolved tag exists across all three repositories.
+          set -e
+          REQ="$REQUESTED"
+          echo "Probing ACR for tag: $REQ"
+
+          if az acr repository show-tags \
+               --name "$ACR" --repository tagpulse-api \
+               --query "[?@=='${REQ}'] | [0]" -o tsv 2>/dev/null \
+               | grep -q "^${REQ}$"; then
+            echo "Tag $REQ exists verbatim — using as-is"
+            echo "tag=$REQ" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Try short-SHA expansion. Strip the sha- prefix, require hex.
+          if [[ "$REQ" =~ ^sha-([0-9a-fA-F]{4,39})$ ]]; then
+            PREFIX="${BASH_REMATCH[1]}"
+            echo "Tag $REQ not found verbatim; treating $PREFIX as short SHA prefix"
+            MATCHES=$(az acr repository show-tags \
+              --name "$ACR" --repository tagpulse-api \
+              --query "[?starts_with(@, 'sha-${PREFIX}')]" -o tsv | sort -u)
+            COUNT=$(echo "$MATCHES" | grep -c . || true)
+            if [ "$COUNT" -eq 1 ]; then
+              RESOLVED=$(echo "$MATCHES" | head -1)
+              echo "Resolved $REQ → $RESOLVED"
+              echo "tag=$RESOLVED" >> "$GITHUB_OUTPUT"
+              exit 0
+            elif [ "$COUNT" -eq 0 ]; then
+              echo "::error::No image tag in tagpulse-api starts with sha-${PREFIX}"
+            else
+              echo "::error::Short SHA $PREFIX is ambiguous — ${COUNT} matches:"
+              echo "$MATCHES" | sed 's/^/  - /'
+            fi
+          else
+            echo "::error::Tag $REQ not found in tagpulse-api and is not a short-SHA prefix"
+          fi
+
+          echo "Recent tags in tagpulse-api:"
+          az acr repository show-tags \
+            --name "$ACR" --repository tagpulse-api \
+            --orderby time_desc --top 10 -o tsv | sed 's/^/  - /'
+          exit 1
 
       - name: Discover resource names
         id: names
