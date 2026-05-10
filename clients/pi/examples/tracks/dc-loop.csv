@@ -1,0 +1,10 @@
+# Washington, DC National Mall loop (Lincoln Memorial -> Washington Monument ->
+# US Capitol -> Smithsonian Castle -> WWII Memorial -> back).
+# Columns: lat,lon,accuracy_m,dwell_s
+lat,lon,accuracy_m,dwell_s
+38.8893,-77.0502,5,3
+38.8895,-77.0353,5,4
+38.8899,-77.0091,5,4
+38.8881,-77.0260,5,3
+38.8894,-77.0405,5,3
+38.8893,-77.0502,5,5

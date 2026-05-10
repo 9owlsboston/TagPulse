@@ -1,0 +1,13 @@
+# Downtown San Francisco loop (Union Square -> Financial District ->
+# Embarcadero -> Market St -> back to Union Square).
+# Columns: lat,lon,accuracy_m,dwell_s
+lat,lon,accuracy_m,dwell_s
+37.7880,-122.4074,5,3
+37.7897,-122.4001,5,3
+37.7946,-122.3950,5,4
+37.7955,-122.3937,5,3
+37.7916,-122.3933,5,3
+37.7894,-122.3970,5,4
+37.7873,-122.4023,5,3
+37.7859,-122.4083,5,5
+37.7880,-122.4074,5,3

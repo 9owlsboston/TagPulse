@@ -1,0 +1,12 @@
+# Sample movement track around downtown Boston for smoke testing.
+# Columns: lat,lon,accuracy_m,dwell_s
+# dwell_s = how long (seconds) the device stays at this point before
+# moving to the next. With --track-interp HZ this is the segment duration.
+lat,lon,accuracy_m,dwell_s
+42.3601,-71.0589,5,3
+42.3589,-71.0577,5,3
+42.3568,-71.0556,5,4
+42.3554,-71.0608,5,3
+42.3580,-71.0636,5,4
+42.3601,-71.0612,5,3
+42.3601,-71.0589,5,5
