@@ -1,9 +1,30 @@
 # ADR-012: mTLS for MQTT (broker selection + PKI tooling)
 
-- Status: accepted
+- Status: **partially implemented (server-TLS only)** — see [Implementation status](#implementation-status) below
 - Date: 2026-05-02
+- Last updated: 2026-05-10 (Sprint 28 C6)
 - Supersedes: none
-- Related: [ADR-002 MQTT for device connectivity](002-mqtt-device-connectivity.md), [ADR-011 Device identity roadmap](011-device-identity-roadmap.md), [docs/design/edge-device-contract.md](../design/edge-device-contract.md)
+- Related: [ADR-002 MQTT for device connectivity](002-mqtt-device-connectivity.md), [ADR-011 Device identity roadmap](011-device-identity-roadmap.md), [docs/design/edge-device-contract.md](../design/edge-device-contract.md), [docs/runbooks/secret-rotation.md §mqtt-tls](../runbooks/secret-rotation.md#mqtt-tls-ca--mqtt-tls-cert--mqtt-tls-key-sprint-28-c6)
+
+## Implementation status
+
+| Surface | Shipped | Pending |
+|---|---|---|
+| Broker TLS listener `:8883` | Sprint 28 C6 (`mqttTlsEnabled` Bicep param, conditional ACI port + secureValue env vars, `conf.d/tls.conf` fragment) | — |
+| Worker server-auth client | Sprint 28 C6 (`MQTT_USE_TLS` + `MQTT_TLS_CA_PATH` worker config, `aiomqtt.TLSParameters`) | — |
+| Cert lifecycle / rotation runbook | Sprint 28 C6 (KV `mqtt-tls-{ca,cert,key}` secrets, runbook procedure) | — |
+| Client certs (mTLS) | — | **Deferred.** `mosquitto-go-auth` HTTP backend + `/internal/mqtt-auth` endpoint not built. |
+| `devices.cert_thumbprint` + cert→device mapping | — | **Deferred.** |
+| Per-tenant CA via `step-ca` | — | **Deferred.** |
+| `tenants.require_mtls` flag + token deprecation | — | **Deferred.** |
+
+The original ADR (below) remains the design of record for the deferred mTLS
+work. Sprint 28 C6 only delivered the broker-server-auth half of the
+listener: TLS terminates on Mosquitto, the cert validates the broker's
+identity to clients, but **clients still authenticate with the shared
+username/password from ADR-011 Phase 1**. mTLS for clients remains a
+follow-up workstream — see [docs/roadmap.md](../roadmap.md) for the
+sprint where it is re-prioritised.
 
 ## Context
 
@@ -38,7 +59,7 @@ Reader hardware ranges from sub-$100 ARM boards to mid-range industrial gateways
 ## Trade-offs accepted
 
 - **Cert lifecycle is now operational surface.** Renewal failures bring devices offline. Mitigated by the 90-day window + dashboard alert (`devices_with_expiring_certs_total` Prometheus query) at 14 days remaining.
-- **Mosquitto is a single point of failure.** Acceptable for MVP. Clustering opens [ADR-014: MQTT broker scale-out](014-mqtt-broker-scale-out.md) when we cross ~10k concurrent connections.
+- **Mosquitto is a single point of failure.** Acceptable for MVP. Clustering opens a future ADR (provisionally `ADR-014: MQTT broker scale-out`, not yet drafted) when we cross ~10k concurrent connections.
 - **Adds `cryptography` to backend deps.** Already a transitive dep of `httpx` in many setups; explicit pin keeps the cert-parsing path (`api/routes/devices.py::attach_device_cert`) reproducible.
 
 ## Consequences

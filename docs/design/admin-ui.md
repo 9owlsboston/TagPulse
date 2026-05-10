@@ -143,7 +143,7 @@ TagPulse-UI/
 - **Create/edit:** Modal form with type-specific config (URL for webhook, events for SSE, schedule for export).
 - **Delivery log (`/integrations/:id/deliveries`):** Table with status, attempts, response_code, error.
 
-### Usage & Billing (`/admin/usage`) 
+### Usage & Billing (`/admin/usage`)
 - **Usage chart:** Recharts bar chart — daily usage per dimension.
 - **Quota progress:** Progress bars showing current vs. limit per dimension.
 - **Summary table:** Aggregated totals per billing period.

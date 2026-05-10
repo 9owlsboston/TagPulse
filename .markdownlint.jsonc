@@ -1,0 +1,20 @@
+{
+  // Sprint 28 H5 — narrow lint scope. Per the H5 roadmap spec, fail
+  // only on the rules our existing markdown style already implies:
+  // no trailing whitespace, single H1 per file, file ends with a
+  // single newline. Everything else is off so this CI step doesn't
+  // churn the existing 79-file corpus; tighten over time as files are
+  // cleaned up.
+  //
+  // Deferred (enable in a future sprint after a cleanup pass):
+  // - MD040 fenced-code-language: 100+ unlabelled fences across
+  //   docs/design/, docs/guides/, docs/runbooks/. Adding language
+  //   tags is a separate sweep.
+  "default": false,
+  "MD009": true,
+  "MD025": { "level": 1 },
+  "MD041": false,
+  "MD047": true
+}
+
+

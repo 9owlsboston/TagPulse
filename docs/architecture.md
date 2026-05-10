@@ -185,9 +185,24 @@ Three-phase roadmap per [ADR-011](adr/011-device-identity-roadmap.md): **Phase 1
 
 | Dependency | Role | Required? |
 |-----------|------|-----------|
-| MQTT Broker (EMQX / Mosquitto) | Device message transport | Yes |
+| MQTT Broker (EMQX / Mosquitto) | Device message transport. `:1883` plaintext always; `:8883` TLS opt-in via Sprint 28 C6 (`mqttTlsEnabled` Bicep param, server-auth only — mTLS for clients is deferred per [ADR-012](adr/012-mtls-for-mqtt.md)). | Yes |
 | TimescaleDB | Data storage | Yes |
 | SMTP server | Email alert delivery | Optional |
+| Azure Monitor / Application Insights | Telemetry sink + alert action group (Sprint 28 D2). Default-off; staging/production enable via `AZURE_DEPLOY_ALERTS=true` + `AZURE_ALERT_EMAIL`. See [observability/slos.md](observability/slos.md) for the alert→runbook map. | Optional (recommended for any non-dev env) |
+
+## Observability surface (Sprint 28)
+
+Four SLO-aligned signals back the alert rules in `deploy/azure/bicep/modules/alerts.bicep`:
+
+| Signal | Source | Alert (Bicep resource) | Runbook |
+|---|---|---|---|
+| MQTT subscriber `last_message_age_seconds` | OTel gauge (Sprint 28 C1) | `tp${env}-alert-mqtt-stalled` (SEV1, >10 min) | [mqtt-outage.md](runbooks/mqtt-outage.md) |
+| `requests/failed` count | App Insights | `tp${env}-alert-availability-fast-burn` (SEV1, >50/1h) | [incident-template.md](runbooks/incident-template.md) |
+| `requests/duration` p95 | App Insights | `tp${env}-alert-api-p95-latency` (SEV2, >500ms/30min) | [incident-template.md](runbooks/incident-template.md) |
+| `tagpulse_dead_letter_events_total` | OTel counter (extends Sprint 27 with C3 `source` column) | `tp${env}-alert-dead-letter-burst` (SEV1, >200/1h) | [dead-letter-triage.md](runbooks/dead-letter-triage.md) |
+
+KQL queries + the workbook live under [`ops/azure-monitor/`](../ops/azure-monitor/README.md).
+SLO + burn-rate math: [observability/slos.md](observability/slos.md).
 
 ## Project Structure
 
