@@ -6,6 +6,19 @@
 #
 # Reuses the images already published by build-and-push.yml — no rebuild.
 #
+# Sprint 28 wave 6 (A1–A5) coverage already in this workflow:
+#   A1 preflight   → "Azure login (OIDC)" + "Discover resource names"
+#                    fail fast if RG / Container Apps absent.
+#   A2 ACA resolve → "Discover resource names" parallels the local
+#                    `aca_name` helper in scripts/lib/azd-common.sh.
+#   A3 image-SHA   → "Verify all three images exist in ACR" guards
+#                    against partial build-and-push.yml runs.
+#   A4 what-if     → posted as a PR comment by the bicep-whatif job
+#                    in .github/workflows/ci.yml.
+#   A5 smoke gate  → "Smoke test /health/ready" + "Network smoke".
+#                    The richer scripts/azd-smoke.sh (Sprint 28 F2) is
+#                    operator-side, since CI doesn't carry azd state.
+#
 # Per-environment GitHub Environments must exist (Settings → Environments):
 #   - dev / staging / production, each with these *variables* set
 #     (no secrets needed; OIDC federated identity replaces them):

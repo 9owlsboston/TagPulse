@@ -22,3 +22,75 @@ jobs:
         run: make typecheck
       - name: Test
         run: make test
+
+  # Sprint 28 A1+A4: Bicep `what-if` preview on PRs that touch
+  # deploy/azure/bicep/. Posts the diff back to the PR so reviewers can
+  # see the planned change set without running az locally. Skipped on
+  # forks (no OIDC trust) and on main (no PR target).
+  bicep-whatif:
+    if: github.event_name == 'pull_request' && github.repository_owner == '9owlsboston'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            bicep:
+              - 'deploy/azure/bicep/**'
+      - name: Skip when no Bicep changes
+        if: steps.changes.outputs.bicep != 'true'
+        run: echo "No deploy/azure/bicep/ changes — skipping what-if."
+      - name: Azure login (OIDC)
+        if: steps.changes.outputs.bicep == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Run what-if
+        if: steps.changes.outputs.bicep == 'true'
+        id: whatif
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -e
+          # NB: 'main.bicep' is the entry point. The output is captured
+          # raw and trimmed to keep the PR comment under GitHub's 65k
+          # body limit.
+          OUT=$(az deployment group what-if \
+            --resource-group "$RG" \
+            --template-file deploy/azure/bicep/main.bicep \
+            --no-pretty-print 2>&1 | head -c 60000)
+          {
+            echo "report<<EOF"
+            echo "$OUT"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Comment on PR
+        if: steps.changes.outputs.bicep == 'true'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: bicep-whatif
+          message: |
+            ### Bicep `what-if` preview (env: dev)
+
+            <details>
+            <summary>Click to expand</summary>
+
+            ```text
+            ${{ steps.whatif.outputs.report }}
+            ```
+
+            </details>
+
+            > Generated automatically by `.github/workflows/ci.yml` for
+            > PRs touching `deploy/azure/bicep/**`. The diff is run
+            > against the **dev** resource group — staging/production
+            > behavior may differ if their parameter files diverge.
+
