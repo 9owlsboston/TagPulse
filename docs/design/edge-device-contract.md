@@ -71,6 +71,20 @@ Devices may publish only on their own `device_id`. The broker rejects writes els
 - MQTT: each publish carries up to 100 events, flushed every ≤1 s under load.
 - A single MQTT message must be ≤256 KB after JSON encoding (server limit; broker limit is higher to absorb spikes).
 
+### 3.4.1 Tag-read payload shape (MQTT)
+
+The `…/tag-reads` topic accepts either a single reading object or an
+array of up to 100 reading objects. `device_id` is **derived from the
+topic** (`tenants/{tid}/devices/{did}/tag-reads`); if the body carries
+its own `device_id` field the broker silently drops it in favour of
+the topic-derived UUID. This guarantees a misrouted publisher cannot
+ingest reads under another device, and matches the smoke publisher in
+`clients/pi/examples/paho_smoke_publisher.py`.
+
+Conformance: a malformed publish (non-JSON bytes, JSON scalar, schema
+mismatch) MUST be logged + dropped at the subscriber, not propagate to
+the message loop. See [Sprint 31 issue #18](https://github.com/9owlsboston/TagPulse/issues/18) for the regression that motivated this rule.
+
 ### 3.5 Clock rules
 
 - All `timestamp` fields **MUST** be UTC ISO-8601 with `Z` suffix or explicit `+00:00`.
