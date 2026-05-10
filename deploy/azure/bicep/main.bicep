@@ -57,6 +57,27 @@ param enableVnetIntegration bool = false
 @description('Sprint 23 Phase B — disable public access on KV/Postgres + ACR Premium with PE. Requires enableVnetIntegration=true. Default false. Set via env var AZURE_DISABLE_PUBLIC_NETWORK_ACCESS in main.bicepparam.')
 param disablePublicNetworkAccess bool = false
 
+@description('Sprint 28 C6 — enable Mosquitto 8883 TLS listener. Default false; requires the three mqtt-tls-* params below to be non-empty.')
+param mqttTlsEnabled bool = false
+
+@description('PEM-encoded CA. Set via env var AZURE_MQTT_TLS_CA.')
+@secure()
+param mqttTlsCa string = ''
+
+@description('PEM-encoded server cert. Set via env var AZURE_MQTT_TLS_CERT.')
+@secure()
+param mqttTlsCert string = ''
+
+@description('PEM-encoded server private key. Set via env var AZURE_MQTT_TLS_KEY.')
+@secure()
+param mqttTlsKey string = ''
+
+@description('Sprint 28 D2 — deploy Azure Monitor alerts + action group.')
+param deployAlerts bool = false
+
+@description('On-call email for the action group. Required when deployAlerts=true.')
+param alertEmail string = ''
+
 @description('Common tags.')
 param tags object = {
   workload: 'tagpulse'
@@ -89,6 +110,12 @@ module workload 'workload.bicep' = {
     useImagePlaceholders: useImagePlaceholders
     enableVnetIntegration: enableVnetIntegration
     disablePublicNetworkAccess: disablePublicNetworkAccess
+    mqttTlsEnabled: mqttTlsEnabled
+    mqttTlsCa: mqttTlsCa
+    mqttTlsCert: mqttTlsCert
+    mqttTlsKey: mqttTlsKey
+    deployAlerts: deployAlerts
+    alertEmail: alertEmail
     tags: tags
   }
 }

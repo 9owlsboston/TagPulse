@@ -26,7 +26,7 @@ api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 tenant_id_header = APIKeyHeader(name="X-Tenant-ID", auto_error=False)
 
 
-def _annotate_span_with_user(user: "AuthenticatedUser") -> None:
+def _annotate_span_with_user(user: AuthenticatedUser) -> None:
     """Sprint 28 D5: stamp tenant_id + role on the current OTel span.
 
     Auto-instrumentation gives us spans per request but no business

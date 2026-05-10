@@ -36,18 +36,14 @@ class TimescaleTagReadRepository:
             sensor_data=read.sensor_data,
             latitude=read.location.latitude if read.location else None,
             longitude=read.location.longitude if read.location else None,
-            location_accuracy_m=(
-                read.location.accuracy_m if read.location else None
-            ),
+            location_accuracy_m=(read.location.accuracy_m if read.location else None),
             location_source=read.location.source if read.location else None,
             epc=read.identity.epc if read.identity else None,
             epc_hex=read.identity.epc_hex if read.identity else None,
             epc_scheme=read.identity.epc_scheme if read.identity else None,
             epc_decoded=read.identity.epc_decoded if read.identity else None,
             tid=read.identity.tid if read.identity else None,
-            user_memory_hex=(
-                read.identity.user_memory_hex if read.identity else None
-            ),
+            user_memory_hex=(read.identity.user_memory_hex if read.identity else None),
             tag_data=read.tag_data,
             reader_antenna=read.reader_antenna,
         )
@@ -69,18 +65,14 @@ class TimescaleTagReadRepository:
                 sensor_data=r.sensor_data,
                 latitude=r.location.latitude if r.location else None,
                 longitude=r.location.longitude if r.location else None,
-                location_accuracy_m=(
-                    r.location.accuracy_m if r.location else None
-                ),
+                location_accuracy_m=(r.location.accuracy_m if r.location else None),
                 location_source=r.location.source if r.location else None,
                 epc=r.identity.epc if r.identity else None,
                 epc_hex=r.identity.epc_hex if r.identity else None,
                 epc_scheme=r.identity.epc_scheme if r.identity else None,
                 epc_decoded=r.identity.epc_decoded if r.identity else None,
                 tid=r.identity.tid if r.identity else None,
-                user_memory_hex=(
-                    r.identity.user_memory_hex if r.identity else None
-                ),
+                user_memory_hex=(r.identity.user_memory_hex if r.identity else None),
                 tag_data=r.tag_data,
                 reader_antenna=r.reader_antenna,
             )
@@ -134,9 +126,11 @@ class TimescaleTagReadRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[TagReadResponse]:
-        stmt = select(TagReadModel).where(
-            TagReadModel.tenant_id == tenant_id
-        ).order_by(TagReadModel.timestamp.desc())
+        stmt = (
+            select(TagReadModel)
+            .where(TagReadModel.tenant_id == tenant_id)
+            .order_by(TagReadModel.timestamp.desc())
+        )
         if device_id is not None:
             stmt = stmt.where(TagReadModel.device_id == device_id)
         if tag_id is not None:
@@ -198,9 +192,7 @@ class TimescaleTagReadRepository:
         bucket = func.date_trunc("hour", TagReadModel.timestamp).label("bucket")
         if window_minutes != 60:
             bucket = func.to_timestamp(
-                func.floor(
-                    func.extract("epoch", TagReadModel.timestamp) / (window_minutes * 60)
-                )
+                func.floor(func.extract("epoch", TagReadModel.timestamp) / (window_minutes * 60))
                 * (window_minutes * 60)
             ).label("bucket")
         stmt = (

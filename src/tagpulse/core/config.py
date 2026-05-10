@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     mqtt_broker_port: int = 1883
     mqtt_username: str | None = None
     mqtt_password: str | None = None
+    # Sprint 28 C6 — server-TLS to Mosquitto on port 8883. Default off so
+    # this commit deploys without flipping any clients. Cutover order is
+    # documented in docs/runbooks/mqtt-outage.md §"TLS cutover".
+    # ``mqtt_tls_ca_path`` points to a PEM file inside the worker container
+    # (mounted as a secret-volume or written from KV at boot); empty means
+    # use the system CA bundle.
+    mqtt_use_tls: bool = False
+    mqtt_tls_ca_path: str = ""
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     log_level: str = "info"
