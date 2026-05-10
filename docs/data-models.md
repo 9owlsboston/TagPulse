@@ -2,6 +2,8 @@
 
 This document is the single reference for all database tables, Pydantic API schemas, and their relationships. Source of truth for column types lives in [`src/tagpulse/models/database.py`](../src/tagpulse/models/database.py) (ORM) and the `src/tagpulse/models/` schema files (API contracts).
 
+> **New here?** Start with [guides/domain-concepts-101.md](guides/domain-concepts-101.md) for a plain-English primer on devices, tags, assets, lots, stock items, bindings, and how location is derived. This document goes deeper on schema.
+>
 > **RFID domain primer:** what an RFID tag actually carries (TID, EPC, user memory, sensor data) and how those fields land in `tag_reads` and `device_telemetry` is captured in [design/rfid-tag-data-model.md](design/rfid-tag-data-model.md).
 >
 > **Mobile readers / carriers:** the `devices.mobility` flag, `assets.parent_asset_id` / `stock_items.parent_stock_item_id` containment columns, and the `binding_kind='device'` extension to `asset_tag_bindings` are specified in [design/mobile-carriers-and-manifests.md](design/mobile-carriers-and-manifests.md). All landed across migrations 017–019 and 028.
