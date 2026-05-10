@@ -50,9 +50,11 @@ set -euo pipefail
 
 ENV_NAME=""
 FORCE=0
+DRY_RUN=0
 for arg in "$@"; do
   case "$arg" in
     --force) FORCE=1 ;;
+    --dry-run) DRY_RUN=1 ;;
     -h|--help)
       sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -143,6 +145,16 @@ fi
 
 # ---------- rotate -----------------------------------------------------------
 echo "==> Rotating apiKey for SWA ${SWA_NAME} in ${RG_NAME}..." >&2
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  cat >&2 <<EOF
+DRY-RUN: would run:
+  az staticwebapp secrets reset-api-key --name $SWA_NAME --resource-group $RG_NAME
+  az staticwebapp secrets list         --name $SWA_NAME --resource-group $RG_NAME --query properties.apiKey
+  printf '%s' "<new-token>" | gh -R ${TAGPULSE_UI_REPO:-9owlsboston/TagPulse-UI} secret set AZURE_STATIC_WEB_APPS_API_TOKEN --env $ENV_NAME --body -
+  jq … >> deploy/azure/.audit/ui-token-rotation.jsonl
+EOF
+  exit 0
+fi
 az staticwebapp secrets reset-api-key \
   --name "$SWA_NAME" \
   --resource-group "$RG_NAME" \
