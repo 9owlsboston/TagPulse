@@ -1,0 +1,12 @@
+# Downtown Chicago loop ("the Loop": Millennium Park -> Wrigley Bldg ->
+# Magnificent Mile -> Navy Pier approach -> Art Institute -> back).
+# Columns: lat,lon,accuracy_m,dwell_s
+lat,lon,accuracy_m,dwell_s
+41.8826,-87.6226,5,3
+41.8868,-87.6243,5,3
+41.8902,-87.6243,5,4
+41.8916,-87.6184,5,3
+41.8917,-87.6086,5,4
+41.8858,-87.6083,5,3
+41.8796,-87.6237,5,4
+41.8826,-87.6226,5,5
