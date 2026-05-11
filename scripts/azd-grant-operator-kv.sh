@@ -146,19 +146,31 @@ if [[ $ALLOW_MY_IP -eq 1 ]]; then
     MY_IP="$IP_OVERRIDE"
     echo "==> Using --ip override: $MY_IP"
   else
-    # Probe KV to learn what IP Azure ACTUALLY sees. api.ipify.org reports
-    # the laptop's source IP, which differs from Azure's view when traffic
-    # egresses via Cloud Shell, an Azure VM, or a corporate proxy in Azure.
-    # The KV firewall only allowlists what Azure sees.
+    # Try three discovery paths in order:
+    #   1. Probe KV — when publicNetworkAccess=Enabled with defaultAction=Deny
+    #      and our IP is missing, Azure returns "Client address: <ip>" in the
+    #      ForbiddenByFirewall response. That's the IP Azure ACTUALLY sees,
+    #      which is what the firewall allowlists against.
+    #   2. ipify — laptop's source IP. Works for direct egress; wrong when
+    #      traffic goes via Cloud Shell, an Azure VM, or a proxy.
+    #
+    # publicNetworkAccess=Disabled returns "ForbiddenByConnection" with NO
+    # client address — the firewall is fully bypassed in that mode, so the
+    # probe can't help. We fall straight to ipify in that case.
     echo "==> Probing KV to discover the source IP Azure sees..."
     PROBE_ERR="$(az keyvault secret list --vault-name "$KV_NAME" --maxresults 1 -o none 2>&1 || true)"
     MY_IP="$(echo "$PROBE_ERR" | grep -oE 'Client address: [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $3}')"
-    if [[ -z "$MY_IP" ]]; then
-      # Vault is reachable already (no ForbiddenByFirewall) — fall back to ipify.
-      MY_IP="$(curl -fsS https://api.ipify.org || true)"
-      [[ -n "$MY_IP" ]] && echo "    KV probe didn't reveal an IP (already reachable?); using api.ipify.org: $MY_IP"
-    else
+    if [[ -n "$MY_IP" ]]; then
       echo "    Azure sees: $MY_IP"
+    else
+      if echo "$PROBE_ERR" | grep -q 'ForbiddenByConnection'; then
+        echo "    KV has publicNetworkAccess=Disabled (no client-address in error);"
+        echo "    falling back to https://api.ipify.org."
+      else
+        echo "    KV probe didn't reveal a client address; falling back to api.ipify.org."
+      fi
+      MY_IP="$(curl -fsS --max-time 8 https://api.ipify.org || true)"
+      [[ -n "$MY_IP" ]] && echo "    ipify reports: $MY_IP"
     fi
   fi
   if [[ -z "$MY_IP" ]]; then
