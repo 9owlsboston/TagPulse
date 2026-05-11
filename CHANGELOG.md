@@ -4,6 +4,11 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- `.github/workflows/dev-wake.yml` — scheduled Mon–Fri 13:00 UTC (+ `workflow_dispatch`). Starts the dev PG Flex server if `Stopped`, restarts the active api revision to drain the stale asyncpg pool, runs `make doctor ENV=dev` as a sanity check. Closes the "every morning the dev env is dead" loop. Scope: dev only.
+- `.github/workflows/dev-kv-cleanup.yml` — scheduled nightly 00:00 UTC (+ `workflow_dispatch`). Purges all entries from the dev KV `ipRules` and resets `publicNetworkAccess=Disabled` to match the Bicep baseline. Operators who ran `azd-grant-operator-kv.sh dev --allow-my-ip` and forgot to revoke get auto-cleaned. Scope: dev only.
+
 ### Fixes
 
 - `scripts/azd-doctor.sh` — probe `/health/ready` instead of the non-existent `/healthz` (was a false red).
