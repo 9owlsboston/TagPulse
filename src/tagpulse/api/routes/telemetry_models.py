@@ -55,9 +55,7 @@ async def get_telemetry_model_by_subject(
         raise HTTPException(status_code=404, detail="Unknown subject_kind") from None
     result = await service.get_by_subject(user.tenant_id, subject_kind, key)
     if result is None:
-        raise HTTPException(
-            status_code=404, detail="Telemetry model not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Telemetry model not found") from None
     return result
 
 
@@ -78,9 +76,7 @@ async def delete_telemetry_model(
     """Delete a telemetry model definition."""
     deleted = await service.delete(user.tenant_id, model_id)
     if not deleted:
-        raise HTTPException(
-            status_code=404, detail="Telemetry model not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Telemetry model not found") from None
 
 
 @router.patch("/{model_id}", response_model=TelemetryModelResponse)
@@ -98,7 +94,5 @@ async def update_telemetry_model(
     """
     updated = await service.update(user.tenant_id, user.user_id, model_id, body)
     if updated is None:
-        raise HTTPException(
-            status_code=404, detail="Telemetry model not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Telemetry model not found") from None
     return updated
