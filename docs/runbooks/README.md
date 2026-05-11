@@ -24,6 +24,7 @@ referenced from the incident template.
 | [operational-tooling.md](operational-tooling.md) | Sprint 26 | The `make doctor` / `make smoke` / `scripts/azd-*` loop. |
 | [secret-rotation.md](secret-rotation.md) | Sprint 27 D2 (extended Sprint 28 C6) | KV rotation for JWT, MQTT user/pass, MQTT TLS material (Sprint 28 C6), PG admin, UI deploy token, CI SP. |
 | [azd-survival-guide.md](azd-survival-guide.md) | Sprint 22 Phase C | `azd` state recovery, env value resolution, image-existence checks. |
+| [github-workflows.md](github-workflows.md) | Post Sprint 28 | Catalog of every `.github/workflows/*.yml`: trigger, schedule, purpose, manual-run, failure triage. |
 
 ## Incident response
 
