@@ -19,6 +19,7 @@ These tests pin down two contracts:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
@@ -171,10 +172,21 @@ async def test_run_loop_swallows_handler_exceptions() -> None:
     ]
 
     class FakeMessages:
+        """Yields 3 messages then blocks forever (until cancelled).
+
+        Sprint 28 C1 wrapped the message loop in a supervised reconnect
+        loop, so a finite iterator would just trigger an immediate
+        reconnect-and-replay. Blocking after the last message means the
+        loop sits at a real ``await`` point that cancellation can
+        interrupt cleanly.
+        """
+
         def __aiter__(self) -> AsyncIterator[Any]:
             async def gen() -> AsyncIterator[Any]:
                 for m in messages:
                     yield m
+                # Park here forever; the test will cancel the task.
+                await asyncio.Event().wait()
 
             return gen()
 
@@ -185,9 +197,17 @@ async def test_run_loop_swallows_handler_exceptions() -> None:
     fake_client.messages = FakeMessages()
 
     with patch("tagpulse.ingestion.mqtt_subscriber.aiomqtt.Client", return_value=fake_client):
-        # The loop terminates when the async iterator is exhausted, so
-        # we don't need a cancel — but keep a timeout as a safety net.
-        await asyncio.wait_for(sub.run(), timeout=2.0)
+        task = asyncio.create_task(sub.run())
+        # Give the loop time to drain all 3 fake messages, then cancel.
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if len(handled) >= 3:
+                break
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2.0)
 
     # All three messages were dispatched; the boom didn't stop the loop.
     assert handled == ["ok-1", "boom", "ok-2"]
+
+
