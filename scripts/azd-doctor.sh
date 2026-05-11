@@ -55,15 +55,19 @@ else
 fi
 
 # 3. api running + healthz
+#    The app exposes /health (FastAPI), /health/ready, /health/live.
+#    /healthz is NOT a route — earlier versions of this script probed it
+#    and reported a false red. Probe /health/ready (the readiness path
+#    documented in azure-first-deploy.md).
 api_name=$(aca_name "$ENV_SHORT" api)
 if [[ -n "$api_name" ]]; then
   fqdn=$(az containerapp show -n "$api_name" -g "$RG" --query 'properties.configuration.ingress.fqdn' -o tsv 2>/dev/null || echo '')
   if [[ -n "$fqdn" ]]; then
-    code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 "https://$fqdn/healthz" || echo 000)
+    code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 "https://$fqdn/health/ready" || echo 000)
     if [[ "$code" == "200" ]]; then
-      emit green "api /healthz" "$fqdn"
+      emit green "api /health/ready" "$fqdn"
     else
-      emit red "api /healthz" "HTTP $code"
+      emit red "api /health/ready" "HTTP $code"
     fi
   else
     emit yellow "api ingress" "fqdn not resolvable"
@@ -85,17 +89,21 @@ else
   emit yellow "worker Container App" "not found"
 fi
 
-# 5. Mosquitto ACI
+# 5. Mosquitto (Container App OR ACI depending on env)
 mqtt_name=$(aca_name "$ENV_SHORT" mqtt)
 if [[ -n "$mqtt_name" ]]; then
-  state=$(az container show -n "$mqtt_name" -g "$RG" --query 'instanceView.state' -o tsv 2>/dev/null || echo Unknown)
+  # Try ACI first (current dev shape), fall back to ACA.
+  state=$(az container show -n "$mqtt_name" -g "$RG" --query 'instanceView.state' -o tsv 2>/dev/null || echo '')
+  if [[ -z "$state" ]]; then
+    state=$(az containerapp show -n "$mqtt_name" -g "$RG" --query 'properties.runningStatus' -o tsv 2>/dev/null || echo Unknown)
+  fi
   if [[ "$state" == "Running" ]]; then
-    emit green "mosquitto ACI" "$state"
+    emit green "mosquitto" "$mqtt_name = $state"
   else
-    emit red "mosquitto ACI" "$state"
+    emit red "mosquitto" "$mqtt_name = $state"
   fi
 else
-  emit yellow "mosquitto ACI" "not found (in-VNet ACA env? check naming)"
+  emit yellow "mosquitto" "not found (in-VNet ACA env? check naming)"
 fi
 
 # 6. PG Flexible Server
@@ -115,7 +123,7 @@ fi
 if [[ -n "${KV_NAME:-}" ]] && az keyvault secret list --vault-name "$KV_NAME" --maxresults 1 >/dev/null 2>&1; then
   emit green "key vault reachable" "$KV_NAME"
 elif [[ -n "${KV_NAME:-}" ]]; then
-  emit yellow "key vault reachable" "$KV_NAME (firewall? RBAC?)"
+  emit yellow "key vault reachable" "$KV_NAME (run: scripts/azd-grant-operator-kv.sh $ENV_SHORT --allow-my-ip)"
 else
   emit yellow "key vault" "name not set in azd env"
 fi
