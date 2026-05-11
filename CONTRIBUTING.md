@@ -16,6 +16,10 @@ docker compose up -d db mqtt
 make run
 ```
 
+> **New here?** Read [docs/guides/contributor-workflow.md](docs/guides/contributor-workflow.md)
+> for the full picture: sprint model, multi-PR workflow, CHANGELOG conflict
+> resolution, release process. The sections below are the quick reference.
+
 ## Branch Naming
 
 - `feat/short-description` — new features
