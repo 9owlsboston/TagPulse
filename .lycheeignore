@@ -1,0 +1,28 @@
+# Sprint 28 H5 — lychee link-check exclusions.
+# One regex per line. Lychee treats these as regex against the
+# resolved URL (file:// URLs included).
+
+# Placeholder + example hosts intentionally referenced in docs.
+^https?://localhost(?::\d+)?(?:/|$)
+^https?://127\.0\.0\.1(?::\d+)?(?:/|$)
+^https?://example\.(com|org|net)(?:/|$)
+^https?://api\.example\.com(?:/|$)
+oncall@example\.com
+
+# Internal-only / future hostnames that won't resolve from CI runners.
+^https?://tp[a-z]+-(api|mqtt|ui)\.
+
+# Azure resource FQDNs templated with ${env}.
+\$\{env\}
+
+# {{TOKEN}}-style placeholders.
+\{\{\s*[A-Z_]+\s*\}\}
+
+# Cross-repo references to the TagPulse-UI repo (lives at
+# github.com/9owlsboston/TagPulse-UI, not in this checkout).
+^file://.*TagPulse-UI/
+^https?://github\.com/9owlsboston/TagPulse-UI(?:/|$)
+
+# Home-dir / template absolute paths (e.g., ~/.templates/...).
+^file://.*/~/
+^file://.*/\.templates/

@@ -1,0 +1,11 @@
+// SLO #3: ingestion freshness.
+// Source: tagpulse_mqtt_subscriber_last_message_age_seconds (Sprint 28 C1).
+// The OTel observable gauge surfaces in App Insights as a customMetric
+// emitted by the api/worker container running the subscriber.
+customMetrics
+| where timestamp > ago(7d)
+| where name == "tagpulse_mqtt_subscriber_last_message_age_seconds"
+| extend env = tostring(customDimensions["service.namespace"])
+| summarize age_p95 = percentile(value, 95), age_max = max(value)
+    by bin(timestamp, 5m), env
+| order by timestamp desc

@@ -164,6 +164,19 @@ class TelemetryModelCreate(BaseModel):
         return self
 
 
+class TelemetryModelUpdate(BaseModel):
+    """Sprint 28 G1: PATCH-style update for a telemetry model.
+
+    Only ``metrics`` is mutable. ``subject_kind`` and ``device_type`` define
+    the model's identity (the Sprint 18 unique constraint
+    ``ix_telemetry_models_tenant_subject`` keys on these), so changing them
+    via PATCH would amount to creating a different row — callers should
+    DELETE + POST instead.
+    """
+
+    metrics: list[MetricDefinition] = Field(min_length=1)
+
+
 class TelemetryModelResponse(BaseModel):
     """Telemetry model definition returned from the API."""
 

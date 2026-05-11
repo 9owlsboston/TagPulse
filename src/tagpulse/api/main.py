@@ -230,6 +230,8 @@ async def _run_mqtt_subscriber(event_bus: AsyncEventBus, usage_meter: UsageMeter
             username=settings.mqtt_username,
             password=settings.mqtt_password,
             usage_meter=usage_meter,
+            use_tls=settings.mqtt_use_tls,
+            tls_ca_path=settings.mqtt_tls_ca_path or None,
         )
         try:
             await subscriber.run()

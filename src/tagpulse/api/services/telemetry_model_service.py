@@ -6,8 +6,13 @@ import uuid
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.core.audit import AuditLogger
 from tagpulse.models.database import TelemetryModelDef
-from tagpulse.models.schemas import TelemetryModelCreate, TelemetryModelResponse
+from tagpulse.models.schemas import (
+    TelemetryModelCreate,
+    TelemetryModelResponse,
+    TelemetryModelUpdate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +20,13 @@ logger = logging.getLogger(__name__)
 class TelemetryModelService:
     """Manages telemetry model definitions."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        audit: AuditLogger | None = None,
+    ) -> None:
         self._session = session
+        self._audit = audit
 
     async def create(
         self, tenant_id: uuid.UUID, body: TelemetryModelCreate
@@ -38,9 +48,7 @@ class TelemetryModelService:
         )
         return _to_response(row)
 
-    async def list_all(
-        self, tenant_id: uuid.UUID
-    ) -> list[TelemetryModelResponse]:
+    async def list_all(self, tenant_id: uuid.UUID) -> list[TelemetryModelResponse]:
         stmt = (
             select(TelemetryModelDef)
             .where(TelemetryModelDef.tenant_id == tenant_id)
@@ -93,9 +101,7 @@ class TelemetryModelService:
         row = result.scalar_one_or_none()
         return _to_response(row) if row else None
 
-    async def delete(
-        self, tenant_id: uuid.UUID, model_id: uuid.UUID
-    ) -> bool:
+    async def delete(self, tenant_id: uuid.UUID, model_id: uuid.UUID) -> bool:
         stmt = (
             delete(TelemetryModelDef)
             .where(
@@ -109,6 +115,50 @@ class TelemetryModelService:
         if deleted:
             logger.info("Telemetry model deleted: id=%s", model_id)
         return deleted is not None
+
+    async def update(
+        self,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID | None,
+        model_id: uuid.UUID,
+        patch: TelemetryModelUpdate,
+    ) -> TelemetryModelResponse | None:
+        """Sprint 28 G1: PATCH a telemetry model's mutable fields.
+
+        Only ``metrics`` is mutable; identity columns (``subject_kind``,
+        ``device_type``) intentionally cannot change. Returns ``None`` when
+        no row matches ``(tenant_id, model_id)``.
+        """
+        stmt = select(TelemetryModelDef).where(
+            TelemetryModelDef.id == model_id,
+            TelemetryModelDef.tenant_id == tenant_id,
+        )
+        result = await self._session.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+
+        new_metrics = [m.model_dump() for m in patch.metrics]
+        row.metrics = new_metrics
+        await self._session.flush()
+        await self._session.refresh(row)
+
+        if self._audit is not None:
+            await self._audit.log(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                action="telemetry_model.updated",
+                resource_type="telemetry_model",
+                resource_id=row.id,
+                changes={"metrics_count": len(new_metrics)},
+            )
+        logger.info(
+            "Telemetry model updated: id=%s tenant=%s metrics_count=%d",
+            model_id,
+            tenant_id,
+            len(new_metrics),
+        )
+        return _to_response(row)
 
 
 def _to_response(row: TelemetryModelDef) -> TelemetryModelResponse:

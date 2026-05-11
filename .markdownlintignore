@@ -1,0 +1,10 @@
+# Sprint 28 H5 — files excluded from markdownlint + lychee runs.
+# Generated dirs first, then upstream-vendored content.
+node_modules/
+.venv/
+.pytest_cache/
+**/*.egg-info/
+# clients/pi has its own packaging; let the edge repo lint itself.
+clients/pi/
+# Roadmap is a 175 KB internal planning doc; not user-facing.
+docs/roadmap.md

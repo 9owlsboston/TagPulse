@@ -260,22 +260,26 @@ def enable_subject_telemetry(
     return list(resp.json().get("telemetry_subject_kinds", target))
 
 
-def assert_legacy_telemetry_models_410(client: httpx.Client, tenant_id: UUID, api_key: str) -> bool:
-    """Sprint 21 deprecation cutover: the legacy
-    ``GET /telemetry-models/{device_type}`` endpoint must return 410 Gone.
-    Probes with a synthetic device_type and reports the result.
+def assert_legacy_telemetry_models_404(client: httpx.Client, tenant_id: UUID, api_key: str) -> bool:
+    """Sprint 28 H6 final removal: the legacy
+    ``GET /telemetry-models/{device_type}`` route is gone (the Sprint 21
+    410 Gone tombstone was retired after a full retention window). The
+    single-segment path is still registered for DELETE/PATCH on
+    ``{model_id}``, so a GET hits FastAPI's method router — either 404
+    (no method match) or 405 (method not allowed) confirms the legacy
+    GET-by-device_type contract is gone.
     """
     headers = _api_headers(tenant_id, api_key)
     resp = client.get(
         f"{API_URL}/telemetry-models/_smoke_probe_device_type",
         headers=headers,
     )
-    if resp.status_code == 410:
-        print("    Sprint 21 cutover OK: legacy endpoint returns 410 Gone")
+    if resp.status_code in (404, 405):
+        print(f"    Sprint 28 H6 cutover OK: legacy endpoint returns {resp.status_code}")
         return True
     print(
         f"    WARN: legacy GET /telemetry-models/{{device_type}} returned "
-        f"{resp.status_code} (expected 410)"
+        f"{resp.status_code} (expected 404 or 405)"
     )
     return False
 
@@ -793,7 +797,7 @@ async def _run(args: argparse.Namespace) -> int:
                 kinds=["lot", "stock_item"],
             )
             print(f"    telemetry_subject_kinds: {kinds}")
-            assert_legacy_telemetry_models_410(client, args.tenant_id, api_key)
+            assert_legacy_telemetry_models_404(client, args.tenant_id, api_key)
 
         print(f"  Ensuring {args.assets} assets + bindings…")
         ensure_assets_with_bindings(
@@ -929,7 +933,9 @@ async def _run(args: argparse.Namespace) -> int:
                 "  • Tenant → telemetry_subject_kinds includes "
                 "'lot' + 'stock_item' (Sprint 19 opt-in)"
             )
-            print("  • Sprint 21 cutover verified: GET /telemetry-models/{device_type} → 410 Gone")
+            print(
+                "  • Sprint 28 H6 cutover verified: GET /telemetry-models/{device_type} → 404/405"
+            )
         print("  • Alerts will populate within ~1 min as wandering assets cross the geofence.")
         print()
         print(
@@ -1037,7 +1043,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Sprint 19/21: opt the tenant into subject-scoped telemetry "
         "by adding 'lot' and 'stock_item' to telemetry_subject_kinds, and "
         "verify that the Sprint 21 cutover of "
-        "GET /telemetry-models/{device_type} returns 410 Gone. Required "
+        "GET /telemetry-models/{device_type} returns 404/405 (route removed in Sprint 28 H6). Required "
         "for `simulate_devices.py --cold-chain` to actually populate the "
         "lot/stock_item telemetry rows.",
     )

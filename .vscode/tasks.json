@@ -35,6 +35,42 @@
       "command": "make check",
       "group": "test",
       "problemMatcher": []
+    },
+    {
+      "label": "Azure: Doctor (dev)",
+      "type": "shell",
+      "command": "make doctor ENV=dev",
+      "problemMatcher": []
+    },
+    {
+      "label": "Azure: Smoke (dev)",
+      "type": "shell",
+      "command": "make smoke ENV=dev",
+      "problemMatcher": []
+    },
+    {
+      "label": "Azure: Tail api logs (dev)",
+      "type": "shell",
+      "command": "make logs ENV=dev SERVICE=api SINCE=15m",
+      "problemMatcher": []
+    },
+    {
+      "label": "Azure: Tail worker logs (dev)",
+      "type": "shell",
+      "command": "make logs ENV=dev SERVICE=worker SINCE=15m",
+      "problemMatcher": []
+    },
+    {
+      "label": "Azure: Tools job — seed tenant (dev)",
+      "type": "shell",
+      "command": "scripts/azd-job.sh dev smoke_setup.py -- --full --with-roles --with-subject-telemetry --regenerate-key",
+      "problemMatcher": []
+    },
+    {
+      "label": "Azure: Tools job — rotate test-corp key (dev)",
+      "type": "shell",
+      "command": "make rotate-key ENV=dev TENANT=test-corp",
+      "problemMatcher": []
     }
   ]
 }

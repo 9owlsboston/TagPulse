@@ -14,6 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tagpulse.api.services.device_service import DeviceService
 from tagpulse.api.services.telemetry_model_service import TelemetryModelService
 from tagpulse.api.services.telemetry_service import TelemetryService
+from tagpulse.core.otel_metrics import (
+    mark_mqtt_message_processed,
+    mqtt_messages_rejected_counter,
+    mqtt_reconnect_attempts_counter,
+)
 from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.ingestion.service import IngestionService
@@ -32,6 +37,35 @@ from tagpulse.repositories.timescaledb.telemetry import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _record_rejection(topic_kind: str, reason: str) -> None:
+    """Bump the Sprint 28 C1 mqtt_messages_rejected_total counter.
+
+    Defensive: counter wiring failures must never bring down the message
+    loop, so any OTel exception is swallowed.
+    """
+    try:
+        mqtt_messages_rejected_counter.add(1, {"topic_kind": topic_kind, "reason": reason})
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "failed to record MQTT rejection counter topic_kind=%s reason=%s",
+            topic_kind,
+            reason,
+        )
+
+
+def _classify_connect_error(exc: BaseException) -> str:
+    """Map an exception from aiomqtt.Client connect/recv to a low-cardinality reason label."""
+    name = type(exc).__name__.lower()
+    if "auth" in name or "unauthor" in name:
+        return "auth_failed"
+    if "timeout" in name:
+        return "timeout"
+    if "refused" in name or "connection" in name:
+        return "connection_refused"
+    return "other"
+
 
 # Wildcard catches all per-device topic suffixes — handler branches on suffix.
 TOPIC_FILTER = "tenants/+/devices/+/+"
@@ -101,6 +135,8 @@ class MqttSubscriber:
         username: str | None = None,
         password: str | None = None,
         usage_meter: UsageMeter | None = None,
+        use_tls: bool = False,
+        tls_ca_path: str | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -109,39 +145,136 @@ class MqttSubscriber:
         self._username = username
         self._password = password
         self._usage_meter = usage_meter
+        # Sprint 28 C6 — server-TLS to Mosquitto. When ``use_tls`` is
+        # True the subscriber builds an aiomqtt ``TLSParameters`` and
+        # passes it to ``aiomqtt.Client(tls_params=...)``. An empty
+        # ``tls_ca_path`` means "trust the system CA bundle" — fine
+        # for certs issued by a public CA, required when using a
+        # self-signed cert from KV (the entrypoint writes it to a
+        # known path on the worker container).
+        self._use_tls = use_tls
+        self._tls_ca_path = tls_ca_path or None
 
     async def run(self) -> None:
-        """Connect to broker, subscribe, and process messages until cancelled."""
-        logger.info("MQTT subscriber connecting to %s:%d", self._host, self._port)
-        async with aiomqtt.Client(
-            hostname=self._host,
-            port=self._port,
-            username=self._username,
-            password=self._password,
-        ) as client:
-            await client.subscribe(TOPIC_FILTER)
-            await client.subscribe(SUBJECT_TOPIC_FILTER)
+        """Connect to broker, subscribe, and process messages until cancelled.
+
+        Sprint 28 C1: wraps the connect-and-consume loop in an outer
+        retry with exponential backoff (capped at 30s) so a transient
+        broker hiccup does not require a worker restart. Each connect
+        attempt increments ``mqtt_reconnect_attempts_total{reason}``
+        with reason='startup' on the first attempt and a classified
+        error label thereafter.
+        """
+        backoff = 1.0
+        attempt_reason = "startup"
+        while True:
+            mqtt_reconnect_attempts_counter.add(1, {"reason": attempt_reason})
             logger.info(
-                "MQTT subscribed to %s, %s",
-                TOPIC_FILTER,
-                SUBJECT_TOPIC_FILTER,
+                "MQTT subscriber connecting to %s:%d (reason=%s)",
+                self._host,
+                self._port,
+                attempt_reason,
             )
-            async for message in client.messages:
-                # Sprint 31 (#18): a single bad payload must never escape the
-                # message loop. Anything `_handle_message` raises (TypeError
-                # from `**payload` when the body is a list, ValidationError,
-                # repository errors, …) is logged and dropped so the
-                # subscriber keeps consuming. CancelledError still
-                # propagates so graceful shutdown works.
-                try:
-                    await self._handle_message(message)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:  # noqa: BLE001
-                    logger.exception(
-                        "MQTT message handler raised; dropping message and continuing. topic=%s",
-                        message.topic,
+            try:
+                tls_params = None
+                if self._use_tls:
+                    import ssl as _ssl
+
+                    import aiomqtt as _aiomqtt
+
+                    tls_params = _aiomqtt.TLSParameters(
+                        ca_certs=self._tls_ca_path,
+                        cert_reqs=_ssl.CERT_REQUIRED,
+                        tls_version=_ssl.PROTOCOL_TLS_CLIENT,
                     )
+                async with aiomqtt.Client(
+                    hostname=self._host,
+                    port=self._port,
+                    username=self._username,
+                    password=self._password,
+                    tls_params=tls_params,
+                ) as client:
+                    await client.subscribe(TOPIC_FILTER)
+                    await client.subscribe(SUBJECT_TOPIC_FILTER)
+                    logger.info(
+                        "MQTT subscribed to %s, %s",
+                        TOPIC_FILTER,
+                        SUBJECT_TOPIC_FILTER,
+                    )
+                    backoff = 1.0  # successful connect resets backoff
+                    async for message in client.messages:
+                        # Sprint 31 (#18): a single bad payload must never escape the
+                        # message loop. Anything `_handle_message` raises (TypeError
+                        # from `**payload` when the body is a list, ValidationError,
+                        # repository errors, …) is logged and dropped so the
+                        # subscriber keeps consuming. CancelledError still
+                        # propagates so graceful shutdown works.
+                        try:
+                            await self._handle_message(message)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:  # noqa: BLE001
+                            logger.exception(
+                                "MQTT message handler raised; dropping and continuing. topic=%s",
+                                message.topic,
+                            )
+                        else:
+                            mark_mqtt_message_processed()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                attempt_reason = _classify_connect_error(exc)
+                logger.exception(
+                    "MQTT subscriber loop crashed; reconnecting in %.1fs (reason=%s)",
+                    backoff,
+                    attempt_reason,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+
+    async def _persist_mqtt_drop(
+        self,
+        tenant_id: UUID,
+        topic_str: str,
+        payload: Any,
+        topic_kind: str,
+        reason: str,
+    ) -> None:
+        """Sprint 28 C3: persist a schema-level MQTT drop to dead_letter_events.
+
+        Called only from the ``invalid_schema`` branches where the topic
+        was parseable enough to know the tenant — keeps row volume bounded
+        and lets operators see the actual rejected payload from the admin
+        UI / triage runbook. JSON-parse failures stay metric-only by
+        design (could spike under broker-flood).
+        """
+        from tagpulse.models.database import DeadLetterEventModel
+
+        try:
+            body: dict[str, Any] = (
+                payload if isinstance(payload, dict) else {"raw": str(payload)[:1000]}
+            )
+            row = DeadLetterEventModel(
+                tenant_id=tenant_id,
+                topic=topic_str[:50],
+                payload=body,
+                error_message=f"mqtt {topic_kind} {reason}",
+                retry_count=0,
+                status="rejected",
+                source="mqtt_subscriber",
+            )
+            async with self._session_factory() as session:
+                session.add(row)
+                await session.commit()
+        except Exception:  # noqa: BLE001
+            # Persistence is best-effort; a DB outage must not stall the
+            # message loop. Counter + log already recorded.
+            logger.exception(
+                "failed to persist MQTT drop topic=%s kind=%s reason=%s",
+                topic_str,
+                topic_kind,
+                reason,
+            )
 
     async def _handle_message(self, message: aiomqtt.Message) -> None:
         """Route message to the appropriate handler with a fresh DB session."""
@@ -156,6 +289,7 @@ class MqttSubscriber:
         tenant_id, device_id, topic_type = _parse_topic(str(message.topic))
         if tenant_id is None or device_id is None or topic_type is None:
             logger.warning("Skipping message with unparseable topic: %s", message.topic)
+            _record_rejection("unparseable", "invalid_topic")
             return
         if topic_type not in KNOWN_SUFFIXES:
             logger.warning(
@@ -163,6 +297,7 @@ class MqttSubscriber:
                 topic_type,
                 device_id,
             )
+            _record_rejection("unknown_suffix", "unknown_suffix")
             return
 
         if topic_type == "tag-reads":
@@ -196,6 +331,7 @@ class MqttSubscriber:
             raw: Any = json.loads(message.payload)
         except (json.JSONDecodeError, TypeError, ValueError):
             logger.warning("Skipping tag-read with invalid JSON on topic %s", message.topic)
+            _record_rejection("tag_read", "invalid_json")
             return
 
         if isinstance(raw, list):
@@ -208,6 +344,7 @@ class MqttSubscriber:
                 message.topic,
                 type(raw).__name__,
             )
+            _record_rejection("tag_read", "non_dict_payload")
             return
 
         reads: list[TagReadCreate] = []
@@ -218,6 +355,7 @@ class MqttSubscriber:
                     message.topic,
                     type(item).__name__,
                 )
+                _record_rejection("tag_read", "non_dict_payload")
                 continue
             payload = {k: v for k, v in item.items() if k != "device_id"}
             try:
@@ -228,9 +366,14 @@ class MqttSubscriber:
                     message.topic,
                     payload,
                 )
+                _record_rejection("tag_read", "invalid_schema")
+                await self._persist_mqtt_drop(
+                    tenant_id, str(message.topic), payload, "tag_read", "invalid_schema"
+                )
                 continue
 
         if not reads:
+            _record_rejection("tag_read", "no_valid_items")
             return
 
         try:
@@ -253,6 +396,7 @@ class MqttSubscriber:
             payload: dict[str, Any] = json.loads(message.payload)
         except (json.JSONDecodeError, TypeError):
             logger.warning("Skipping status with invalid JSON on topic %s", message.topic)
+            _record_rejection("status", "invalid_json")
             return
 
         try:
@@ -262,6 +406,10 @@ class MqttSubscriber:
                 "Skipping status with invalid schema on topic %s: %s",
                 message.topic,
                 payload,
+            )
+            _record_rejection("status", "invalid_schema")
+            await self._persist_mqtt_drop(
+                tenant_id, str(message.topic), payload, "status", "invalid_schema"
             )
             return
 
@@ -289,6 +437,7 @@ class MqttSubscriber:
             payload: dict[str, Any] = json.loads(message.payload)
         except (json.JSONDecodeError, TypeError):
             logger.warning("Skipping telemetry with invalid JSON on topic %s", message.topic)
+            _record_rejection("telemetry", "invalid_json")
             return
 
         if isinstance(payload.get("readings"), list):
@@ -302,6 +451,10 @@ class MqttSubscriber:
                     "Skipping telemetry with invalid schema on topic %s: %s",
                     message.topic,
                     payload,
+                )
+                _record_rejection("telemetry", "invalid_schema")
+                await self._persist_mqtt_drop(
+                    tenant_id, str(message.topic), payload, "telemetry", "invalid_schema"
                 )
                 return
             readings_raw = [
@@ -317,6 +470,7 @@ class MqttSubscriber:
             readings = [TelemetryReading(**r) for r in readings_raw]
         except ValueError:
             logger.warning("Skipping telemetry with invalid reading schema on %s", message.topic)
+            _record_rejection("telemetry", "invalid_schema")
             return
 
         try:
@@ -338,6 +492,7 @@ class MqttSubscriber:
             payload: dict[str, Any] = json.loads(message.payload)
         except (json.JSONDecodeError, TypeError):
             logger.warning("Skipping location with invalid JSON on topic %s", message.topic)
+            _record_rejection("location", "invalid_json")
             return
         payload.setdefault("device_id", str(device_id))
         try:
@@ -347,6 +502,10 @@ class MqttSubscriber:
                 "Skipping location with invalid schema on topic %s: %s",
                 message.topic,
                 payload,
+            )
+            _record_rejection("location", "invalid_schema")
+            await self._persist_mqtt_drop(
+                tenant_id, str(message.topic), payload, "location", "invalid_schema"
             )
             return
         try:
@@ -364,6 +523,7 @@ class MqttSubscriber:
             payload: dict[str, Any] = json.loads(message.payload)
         except (json.JSONDecodeError, TypeError):
             logger.warning("Skipping event with invalid JSON on topic %s", message.topic)
+            _record_rejection("event", "invalid_json")
             return
         payload.setdefault("device_id", str(device_id))
         try:
@@ -373,6 +533,10 @@ class MqttSubscriber:
                 "Skipping device-event with invalid schema on topic %s: %s",
                 message.topic,
                 payload,
+            )
+            _record_rejection("event", "invalid_schema")
+            await self._persist_mqtt_drop(
+                tenant_id, str(message.topic), payload, "event", "invalid_schema"
             )
             return
         try:
@@ -404,6 +568,7 @@ class MqttSubscriber:
                 "Skipping subject telemetry with invalid JSON on %s",
                 message.topic,
             )
+            _record_rejection("subject_telemetry", "invalid_json")
             return
 
         if isinstance(payload.get("readings"), list):
@@ -416,6 +581,14 @@ class MqttSubscriber:
             logger.warning(
                 "Skipping subject telemetry with invalid reading schema on %s",
                 message.topic,
+            )
+            _record_rejection("subject_telemetry", "invalid_schema")
+            await self._persist_mqtt_drop(
+                tenant_id,
+                str(message.topic),
+                payload,
+                "subject_telemetry",
+                "invalid_schema",
             )
             return
 

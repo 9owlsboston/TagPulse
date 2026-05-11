@@ -46,9 +46,7 @@ from tagpulse.models.schemas import (
 
 
 class FakeTagReadRepo:
-    async def insert(
-        self, tenant_id: UUID, read: TagReadCreate
-    ) -> TagReadResponse:
+    async def insert(self, tenant_id: UUID, read: TagReadCreate) -> TagReadResponse:
         return TagReadResponse(
             id=uuid4(),
             device_id=read.device_id,
@@ -59,9 +57,7 @@ class FakeTagReadRepo:
             created_at=datetime.now(UTC),
         )
 
-    async def record_rejection(
-        self, tenant_id: UUID, read: TagReadCreate, reason: str
-    ) -> None:
+    async def record_rejection(self, tenant_id: UUID, read: TagReadCreate, reason: str) -> None:
         return None
 
 
@@ -146,9 +142,7 @@ class FakeBindingRepo:
 
 
 class FakeStockRepo:
-    def __init__(
-        self, stock_id: UUID | None, lot_id: UUID | None
-    ) -> None:
+    def __init__(self, stock_id: UUID | None, lot_id: UUID | None) -> None:
         self._stock_id = stock_id
         self._lot_id = lot_id
         self._tenant: UUID | None = None
@@ -182,9 +176,7 @@ class FakeTenantRepo:
     async def get_tracking_modes(self, tenant_id: UUID) -> list[str]:
         return ["asset", "inventory"]
 
-    async def get_telemetry_subject_kinds(
-        self, tenant_id: UUID
-    ) -> list[str]:
+    async def get_telemetry_subject_kinds(self, tenant_id: UUID) -> list[str]:
         return list(self._kinds)
 
 
@@ -232,17 +224,13 @@ async def test_subject_fanout_writes_one_row_per_opted_in_subject() -> None:
         identity=Identity(epc="urn:epc:id:sgtin:00000.1.1", epc_hex=None),
     )
 
-    await service._mirror_tag_borne_sensors(
-        tenant_id, read, tag_read_id=uuid4()
-    )
+    await service._mirror_tag_borne_sensors(tenant_id, read, tag_read_id=uuid4())
 
     kinds = sorted(i["subject_kind"] for i in readings_repo.inserts)
     assert kinds == ["asset", "lot", "stock_item"]
     assert all(i["metric_name"] == "temperature_c" for i in readings_repo.inserts)
     assert all(i["source"] == "tag" for i in readings_repo.inserts)
-    asset_row = next(
-        i for i in readings_repo.inserts if i["subject_kind"] == "asset"
-    )
+    asset_row = next(i for i in readings_repo.inserts if i["subject_kind"] == "asset")
     assert asset_row["subject_id"] == asset_id
     assert asset_row["device_id"] == read.device_id
 
@@ -266,9 +254,7 @@ async def test_subject_fanout_skips_when_tenant_not_opted_in() -> None:
         signal_strength=-50.0,
         tag_data={"temperature_c": 4.2},
     )
-    await service._mirror_tag_borne_sensors(
-        uuid4(), read, tag_read_id=uuid4()
-    )
+    await service._mirror_tag_borne_sensors(uuid4(), read, tag_read_id=uuid4())
     assert readings_repo.inserts == []
 
 
@@ -296,13 +282,9 @@ async def test_subject_fanout_unresolved_logs_and_skips(
     import logging
 
     with caplog.at_level(logging.INFO, logger="tagpulse.ingestion.service"):
-        await service._mirror_tag_borne_sensors(
-            uuid4(), read, tag_read_id=uuid4()
-        )
+        await service._mirror_tag_borne_sensors(uuid4(), read, tag_read_id=uuid4())
     assert readings_repo.inserts == []
-    assert any(
-        "telemetry.subject_unresolved" in r.message for r in caplog.records
-    )
+    assert any("telemetry.subject_unresolved" in r.message for r in caplog.records)
 
 
 # -- MQTT subject topic parser --
@@ -311,34 +293,26 @@ async def test_subject_fanout_unresolved_logs_and_skips(
 def test_parse_subject_topic_valid() -> None:
     tid = uuid.uuid4()
     sid = uuid.uuid4()
-    parsed = _parse_subject_topic(
-        f"tenants/{tid}/subjects/asset/{sid}/telemetry"
-    )
+    parsed = _parse_subject_topic(f"tenants/{tid}/subjects/asset/{sid}/telemetry")
     assert parsed == (tid, "asset", sid)
 
 
 def test_parse_subject_topic_unknown_kind() -> None:
     tid = uuid.uuid4()
     sid = uuid.uuid4()
-    parsed = _parse_subject_topic(
-        f"tenants/{tid}/subjects/widget/{sid}/telemetry"
-    )
+    parsed = _parse_subject_topic(f"tenants/{tid}/subjects/widget/{sid}/telemetry")
     assert parsed == (None, None, None)
 
 
 def test_parse_subject_topic_legacy_topic_returns_none() -> None:
     tid = uuid.uuid4()
     did = uuid.uuid4()
-    parsed = _parse_subject_topic(
-        f"tenants/{tid}/devices/{did}/telemetry"
-    )
+    parsed = _parse_subject_topic(f"tenants/{tid}/devices/{did}/telemetry")
     assert parsed == (None, None, None)
 
 
 def test_parse_subject_topic_bad_uuid() -> None:
-    parsed = _parse_subject_topic(
-        "tenants/not-a-uuid/subjects/asset/also-not/telemetry"
-    )
+    parsed = _parse_subject_topic("tenants/not-a-uuid/subjects/asset/also-not/telemetry")
     assert parsed == (None, None, None)
 
 
@@ -349,9 +323,7 @@ class _FakeAssetRepo:
     def __init__(self, asset: AssetResponse | None) -> None:
         self._asset = asset
 
-    async def get(
-        self, tenant_id: UUID, asset_id: UUID
-    ) -> AssetResponse | None:
+    async def get(self, tenant_id: UUID, asset_id: UUID) -> AssetResponse | None:
         return self._asset
 
 
@@ -393,9 +365,7 @@ async def test_get_asset_embeds_latest_when_opted_in() -> None:
         telemetry_readings_repo=readings_repo,  # type: ignore[arg-type]
         tenant_repo=FakeTenantRepo(kinds=["device", "asset"]),  # type: ignore[arg-type]
     )
-    fetched = await svc.get_asset(
-        tenant_id, asset_id, with_latest_telemetry=True
-    )
+    fetched = await svc.get_asset(tenant_id, asset_id, with_latest_telemetry=True)
     assert fetched is not None
     assert fetched.latest_telemetry is not None
     assert len(fetched.latest_telemetry) == 1
@@ -428,9 +398,7 @@ async def test_get_asset_skips_latest_when_not_opted_in() -> None:
         telemetry_readings_repo=FakeTelemetryReadingsRepo(),  # type: ignore[arg-type]
         tenant_repo=FakeTenantRepo(kinds=["device"]),  # type: ignore[arg-type]
     )
-    fetched = await svc.get_asset(
-        tenant_id, asset_id, with_latest_telemetry=True
-    )
+    fetched = await svc.get_asset(tenant_id, asset_id, with_latest_telemetry=True)
     assert fetched is not None
     assert fetched.latest_telemetry is None
 
@@ -439,11 +407,19 @@ async def test_get_asset_skips_latest_when_not_opted_in() -> None:
 
 
 @pytest.mark.asyncio
-async def test_telemetry_models_legacy_path_returns_410() -> None:
-    """``GET /telemetry-models/{device_type}`` was removed in Sprint 21
-    (ADR-015 §6). The Sprint 19 301 redirect is gone; callers now get
-    a 410 Gone with a migration hint pointing at the subject-scoped
-    form."""
+async def test_telemetry_models_legacy_path_no_longer_routed() -> None:
+    """``GET /telemetry-models/{device_type}`` was finally removed in
+    Sprint 28 (H6).
+
+    Deprecation history:
+    - Sprint 19: introduced 301 redirect to ``/device/{device_type}``.
+    - Sprint 21: redirect replaced with 410 Gone tombstone.
+    - Sprint 28: tombstone dropped entirely. The single-segment path
+      ``/telemetry-models/{x}`` is still registered for DELETE and
+      PATCH (as ``{model_id}``), so a GET hits FastAPI's method
+      router and returns 405 Method Not Allowed — either way the
+      legacy GET-by-device_type contract is gone.
+    """
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
 
@@ -468,12 +444,9 @@ async def test_telemetry_models_legacy_path_returns_410() -> None:
     app.dependency_overrides[get_current_user] = _user
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(
-        transport=transport, base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.get(
             "/telemetry-models/temperature-sensor",
             follow_redirects=False,
         )
-    assert r.status_code == 410
-    assert "device/temperature-sensor" in r.json()["detail"]
+    assert r.status_code in (404, 405)
