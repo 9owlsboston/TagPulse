@@ -22,6 +22,15 @@ jobs:
         run: make typecheck
       - name: Test
         run: make test
+      # Sprint 28 H6: openapi.json must match what the live FastAPI app
+      # emits. Regenerate and fail if the working tree drifts — forces
+      # contributors to commit `make export-openapi` output alongside
+      # route changes so clients (and the UI repo) consume an accurate
+      # spec.
+      - name: OpenAPI drift check
+        run: |
+          make export-openapi
+          git diff --exit-code openapi.json
 
   # Sprint 28 A1+A4: Bicep `what-if` preview on PRs that touch
   # deploy/azure/bicep/. Posts the diff back to the PR so reviewers can

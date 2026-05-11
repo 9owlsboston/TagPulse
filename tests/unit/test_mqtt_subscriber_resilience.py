@@ -209,5 +209,3 @@ async def test_run_loop_swallows_handler_exceptions() -> None:
 
     # All three messages were dispatched; the boom didn't stop the loop.
     assert handled == ["ok-1", "boom", "ok-2"]
-
-

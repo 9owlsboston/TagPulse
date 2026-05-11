@@ -11662,56 +11662,6 @@
         ]
       }
     },
-    "/telemetry-models/{device_type}": {
-      "get": {
-        "deprecated": true,
-        "description": "Removed in Sprint 21 (ADR-015 \u00a76).\n\nThe Sprint 19 301 redirect to ``/telemetry-models/device/{device_type}``\nhas been removed after one full retention cycle. Callers must address\nthe subject-scoped path directly. Returns 410 Gone with a Location-style\nhint so any forgotten clients still get a clear migration message.",
-        "operationId": "get_telemetry_model_legacy_telemetry_models__device_type__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "device_type",
-            "required": true,
-            "schema": {
-              "title": "Device Type",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
-          }
-        ],
-        "summary": "Get Telemetry Model Legacy",
-        "tags": [
-          "telemetry-models"
-        ]
-      }
-    },
     "/telemetry-models/{model_id}": {
       "delete": {
         "description": "Delete a telemetry model definition.",
