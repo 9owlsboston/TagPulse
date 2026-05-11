@@ -6,6 +6,8 @@ All notable changes to TagPulse will be documented in this file.
 
 ### Added
 
+- `docs/runbooks/github-workflows.md` — operator-facing catalog of every workflow in `.github/workflows/` (trigger, schedule, purpose, manual-run, failure triage). Linked from `docs/runbooks/README.md`.
+- `docs/guides/contributor-workflow.md` — developer-facing guide covering branching, the sprint model (planning unit, not a branch), multi-PR workflow, CHANGELOG conflict resolution, and the release model (current continuous-deploy + future SemVer-tag flow). Linked from `CONTRIBUTING.md`.
 - `.github/workflows/dev-wake.yml` — scheduled Mon–Fri 13:00 UTC (+ `workflow_dispatch`). Starts the dev PG Flex server if `Stopped`, restarts the active api revision to drain the stale asyncpg pool, runs `make doctor ENV=dev` as a sanity check. Closes the "every morning the dev env is dead" loop. Scope: dev only.
 - `.github/workflows/dev-kv-cleanup.yml` — scheduled nightly 00:00 UTC (+ `workflow_dispatch`). Purges all entries from the dev KV `ipRules` and resets `publicNetworkAccess=Disabled` to match the Bicep baseline. Operators who ran `azd-grant-operator-kv.sh dev --allow-my-ip` and forgot to revoke get auto-cleaned. Scope: dev only.
 
