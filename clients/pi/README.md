@@ -139,6 +139,38 @@ Configuration (broker host, tenant, device, password) is read from
 `.tp_paho_edge.env` next to the script — copy `.tp_paho_edge.env.example`
 and fill it in. CLI flags and real env vars override the file.
 
+### TLS (port 8883)
+
+Sprint 28 C6 added an optional TLS listener on the dev broker. **TLS is not
+transparent on the client side** — paho-mqtt opens a plain TCP socket by
+default, so connecting to port 8883 without explicit TLS setup will hang and
+time out (the broker drops the connection at the TLS handshake layer because
+your client is sending raw MQTT bytes).
+
+The publisher auto-enables TLS when `BROKER_PORT=8883`, but you still have
+to tell it which CA to trust:
+
+```bash
+# in .tp_paho_edge.env
+BROKER_PORT=8883
+TLS_CA=/abs/path/to/ca.pem    # the dev CA pem distributed out-of-band
+```
+
+Or via flag:
+
+```bash
+python3 examples/paho_smoke_publisher.py --once --tls-ca /abs/path/to/ca.pem
+```
+
+Notes:
+- The dev broker uses a **self-signed CA** (`tagpulse-dev-mqtt-ca`). The
+  system CA bundle does **not** trust it — you must point `TLS_CA` /
+  `--tls-ca` at the pem the platform team gave you.
+- For a quick handshake-debug run only (skips verification — never use in
+  prod or against a broker you don't operate): `--insecure`.
+- Port `1883` (plaintext) remains open on dev for backward compatibility;
+  drop the `BROKER_PORT` line and `TLS_CA` to fall back to it.
+
 ### Simulating device movement
 
 Two ways to feed a sequence of GPS waypoints to the publisher; pick based on
