@@ -355,6 +355,17 @@ def main() -> int:
     ap.add_argument("--password", default=None, help="override BROKER_PASS")
     ap.add_argument("--tenant", default=None, help="override TENANT_ID")
     ap.add_argument("--device", default=None, help="override DEVICE_ID")
+    # TLS (Sprint 28 C6). Auto-enabled when --port==8883 or TLS_CA is set.
+    ap.add_argument(
+        "--tls-ca",
+        default=None,
+        help="path to CA pem for TLS broker (overrides TLS_CA env)",
+    )
+    ap.add_argument(
+        "--insecure",
+        action="store_true",
+        help="skip TLS server-cert verification (debug only)",
+    )
     # Topic + tag-read core
     ap.add_argument(
         "--topic",
@@ -496,6 +507,19 @@ def main() -> int:
         qos=1,
         retain=True,
     )
+
+    tls_ca = args.tls_ca or env.get("TLS_CA")
+    use_tls = bool(tls_ca) or port == 8883 or args.insecure
+    if use_tls:
+        import ssl
+
+        if tls_ca:
+            client.tls_set(ca_certs=tls_ca, cert_reqs=ssl.CERT_REQUIRED)
+        else:
+            client.tls_set(cert_reqs=ssl.CERT_NONE if args.insecure else ssl.CERT_REQUIRED)
+        if args.insecure:
+            client.tls_insecure_set(True)
+        print(f"[tls] enabled ca={tls_ca or '(system)'} insecure={args.insecure}", flush=True)
 
     print(
         f"[main] client_id={client_id} broker={host}:{port} topic={topic} qos={args.qos}",
