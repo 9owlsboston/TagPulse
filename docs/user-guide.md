@@ -143,7 +143,7 @@ You can change this later — disabling a mode just hides the UI; existing data 
 
 In the same panel, **Telemetry subjects** controls which non-device subjects ingestion fans tag-borne telemetry out to. Defaults to `["device"]` (Sprint 14 behavior — every reading lands keyed on the reporting reader). Tick **`asset`** to also key cold-chain readings to the asset that carries the tag, **`lot`** for lot-level cold-chain (the most common cold-chain shape), or **`stock_item`** for serial-level. Without the opt-in the rules editor still accepts a `telemetry.threshold` rule on those subjects, but no event will ever match. The flip propagates to all API workers within ~30 s (the writing worker sees it immediately).
 
-> **Smoke shortcut.** `python scripts/smoke_setup.py --with-subject-telemetry` (or the all-in-one `--full`) does this PATCH for you on `test-corp` — adds `lot` + `stock_item` and verifies the Sprint 21 cutover of `GET /telemetry-models/{device_type}` to `410 Gone` in one shot. Pair with `simulate_devices.py --cold-chain` to drive lot/stock_item readings end-to-end.
+> **Smoke shortcut.** `python scripts/smoke_setup.py --with-subject-telemetry` (or the all-in-one `--full`) does this PATCH for you on `test-corp` — adds `lot` + `stock_item` and verifies that the legacy `GET /telemetry-models/{device_type}` path is gone (Sprint 28 H6: 404, previously 410 Gone in Sprint 21). Pair with `simulate_devices.py --cold-chain` to drive lot/stock_item readings end-to-end.
 
 ### Step 2 — (Optional) Configure the map provider
 
@@ -169,7 +169,7 @@ Tell TagPulse what metrics each device type sends. For an `rfid_reader`:
 
 Skipping this step is fine — ingestion still works — but rule conditions and the Telemetry chart get a much better experience when models exist.
 
-> **Subject-scoped models (Sprint 18+).** Each model carries a `subject_kind` (defaults to `device`). For a cold-chain milk lot, define a `lot`-scoped model named `temperature_c` with min/max `-30/30` — the rules editor's **Cold-chain breach (lot)** template will surface it as a target. The `device_type` field is **required only when** `subject_kind = device`; for `asset` / `lot` / `stock_item` models it must be omitted (the API rejects the combination). The legacy `GET /telemetry-models/{device_type}` endpoint is removed in Sprint 21 — use `GET /telemetry-models/device/{device_type}`.
+> **Subject-scoped models (Sprint 18+).** Each model carries a `subject_kind` (defaults to `device`). For a cold-chain milk lot, define a `lot`-scoped model named `temperature_c` with min/max `-30/30` — the rules editor's **Cold-chain breach (lot)** template will surface it as a target. The `device_type` field is **required only when** `subject_kind = device`; for `asset` / `lot` / `stock_item` models it must be omitted (the API rejects the combination). The legacy `GET /telemetry-models/{device_type}` endpoint was removed in Sprint 28 (H6) — use `GET /telemetry-models/device/{device_type}`.
 
 ### Step 4 — Lay out sites & zones (asset mode)
 

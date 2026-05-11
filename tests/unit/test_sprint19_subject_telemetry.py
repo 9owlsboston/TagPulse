@@ -439,11 +439,19 @@ async def test_get_asset_skips_latest_when_not_opted_in() -> None:
 
 
 @pytest.mark.asyncio
-async def test_telemetry_models_legacy_path_returns_410() -> None:
-    """``GET /telemetry-models/{device_type}`` was removed in Sprint 21
-    (ADR-015 §6). The Sprint 19 301 redirect is gone; callers now get
-    a 410 Gone with a migration hint pointing at the subject-scoped
-    form."""
+async def test_telemetry_models_legacy_path_no_longer_routed() -> None:
+    """``GET /telemetry-models/{device_type}`` was finally removed in
+    Sprint 28 (H6).
+
+    Deprecation history:
+    - Sprint 19: introduced 301 redirect to ``/device/{device_type}``.
+    - Sprint 21: redirect replaced with 410 Gone tombstone.
+    - Sprint 28: tombstone dropped entirely. The single-segment path
+      ``/telemetry-models/{x}`` is still registered for DELETE and
+      PATCH (as ``{model_id}``), so a GET hits FastAPI's method
+      router and returns 405 Method Not Allowed — either way the
+      legacy GET-by-device_type contract is gone.
+    """
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
 
@@ -475,5 +483,4 @@ async def test_telemetry_models_legacy_path_returns_410() -> None:
             "/telemetry-models/temperature-sensor",
             follow_redirects=False,
         )
-    assert r.status_code == 410
-    assert "device/temperature-sensor" in r.json()["detail"]
+    assert r.status_code in (404, 405)

@@ -6,7 +6,7 @@ All notable changes to TagPulse will be documented in this file.
 
 ### Sprint 28 — Operational Excellence & On-Call Readiness
 
-Phases A (deploy/IaC reliability), B (KV ergonomics), C (MQTT broker/subscriber ops), D (platform observability), E (runbooks), F (operator inner loop), G1 (backend), and H1–H5 (docs hygiene) shipped on `sprint-28/ops-excellence` (PR #25). UI Phase G2–G8 lands as a separate PR in `TagPulse-UI`. H6 (deprecated `/{device_type}` route removal + `openapi.json` regen) is deferred — it is a breaking change and will land in a dedicated sprint.
+Phases A (deploy/IaC reliability), B (KV ergonomics), C (MQTT broker/subscriber ops), D (platform observability), E (runbooks), F (operator inner loop), G1 (backend), and H1–H6 (docs hygiene + OpenAPI gate) shipped on `sprint-28/ops-excellence` (PR #25). UI Phase G2–G8 lands as a separate PR in `TagPulse-UI`.
 
 - **F2** `scripts/lib/azd-common.sh` — shared shell library (`azd_env_resolve`, `aca_name`, `kv_secret_get`, `require_clean_tree`). All `scripts/azd-*.sh` switched to source it.
 - **F1 / F3 / F4** `make doctor`, `make smoke`, `make logs`, `make rotate-key` Makefile targets; `scripts/azd-doctor.sh` aggregate health check; VS Code tasks.
@@ -31,10 +31,10 @@ Phases A (deploy/IaC reliability), B (KV ergonomics), C (MQTT broker/subscriber 
 - **H3** `docs/operator-quickstart.md` — one-page operator doc (resource topology, login flow, 7 most-common tasks, alert→runbook map).
 - **H4** `README.md` + `docs/architecture.md` + `docs/adr/012-mtls-for-mqtt.md` refresh. ADR-012 status now reflects C6 (server-TLS shipped, mTLS deferred).
 - **H5** `.github/workflows/docs-lint.yml` — `markdownlint-cli2` + `lychee` on `pull_request` for `docs/`, top-level `*.md`, `CHANGELOG.md`. `.markdownlint.jsonc`, `.markdownlintignore`, `.lycheeignore`.
+- **H6** Drop the Sprint 21 `GET /telemetry-models/{device_type}` 410 Gone tombstone ([src/tagpulse/api/routes/telemetry_models.py](src/tagpulse/api/routes/telemetry_models.py)). The Sprint 19 301 redirect (one window) and the Sprint 21 410 Gone (one window) both ran past their full retention cycles, so the legacy route now simply 404s like any other un-routed path. `openapi.json` regenerated. New CI gate runs `make export-openapi && git diff --exit-code openapi.json` so route changes can't ship without a matching spec update.
 
 Deferred to a follow-up sprint:
 
-- **H6** drop deprecated `/{device_type}` telemetry-models route + commit regenerated `openapi.json` + `make export-openapi && git diff --exit-code` CI gate. Breaking change requiring a dedicated migration window.
 - **E4** first quarterly DR drill execution (the runbook E2 is ready; the drill itself moves with the next ops cadence).
 - **G2–G8** UI CRUD gap-fill — separate workstream in `TagPulse-UI`.
 

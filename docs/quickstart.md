@@ -311,7 +311,7 @@ With `--full` it additionally provisions:
 6. **Telemetry model** for `rfid_reader` (`temperature`, `humidity`, `battery_pct`) so the Telemetry page renders charts as the simulator pushes `sensor_data`.
 7. **Rules** → high-temperature threshold (>30 C, notification) + `zone.entered` and `zone.exited` notifications on the geofence zone.
 8. **Role users** → `editor@example.com` (role `editor`) and `viewer@example.com` (role `viewer`), each with their own API key. Use these to verify the UI's role gating (Create/Delete buttons hidden for viewers) and that the API returns `403 Requires role: admin, editor` for viewer write attempts.
-9. **Subject-scoped telemetry opt-in** (Sprint 19) → adds `lot` and `stock_item` to `tenants.telemetry_subject_kinds` via `PATCH /tenant/config`, so `simulate_devices.py --cold-chain` actually persists lot/stock_item readings and the Sprint 20 `lot.cold_chain_breach` rule can fire. Also probes `GET /telemetry-models/{device_type}` and asserts the **Sprint 21 cutover** to `410 Gone` (the deprecated per-device-type read endpoint is removed; use `GET /telemetry-models/device/{device_type}` instead).
+9. **Subject-scoped telemetry opt-in** (Sprint 19) → adds `lot` and `stock_item` to `tenants.telemetry_subject_kinds` via `PATCH /tenant/config`, so `simulate_devices.py --cold-chain` actually persists lot/stock_item readings and the Sprint 20 `lot.cold_chain_breach` rule can fire. Also probes the legacy `GET /telemetry-models/{device_type}` path and asserts the Sprint 28 H6 final removal (now a plain 404 — the Sprint 21 410 Gone tombstone was retired after a full retention window). Use `GET /telemetry-models/device/{device_type}` instead.
 
 > Run `--with-subject-telemetry` standalone if you only want the Sprint 19/21 toggle without the rest of `--full`.
 
@@ -747,8 +747,9 @@ TENANT=11111111-1111-1111-1111-111111111111
 #    until "lot" is in the list. (Skip this step if you've already run
 #    `python scripts/smoke_setup.py --full` or
 #    `--with-subject-telemetry` -- it does the same PATCH for you and
-#    also asserts the Sprint 21 GET /telemetry-models/{device_type}
-#    cutover to 410 Gone.)
+#    also probes the legacy GET /telemetry-models/{device_type} path,
+#    which now 404s after Sprint 28 H6 removed the Sprint 21 410
+#    tombstone.)
 curl -X PATCH \
   -H "Authorization: Bearer $TAGPULSE_API_KEY" \
   -H "X-Tenant-ID: $TENANT" \
