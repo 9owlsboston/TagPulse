@@ -1,0 +1,138 @@
+# Nightly KV cleanup for the dev environment.
+#
+# `scripts/azd-grant-operator-kv.sh dev --allow-my-ip` opens a temporary
+# hole in the KV firewall so operators can read secrets from a laptop.
+# Operators are expected to run `--revoke-my-ip` when done, but in
+# practice often forget. This workflow enforces the baseline nightly:
+#
+#   - publicNetworkAccess = Disabled (private endpoint only)
+#   - networkAcls.ipRules = []      (purge any leftover operator IPs)
+#
+# That matches the Bicep declared state (Sprint 23-B). If you need
+# laptop access tomorrow, re-run --allow-my-ip — the loop is intended.
+#
+# Scope is strictly dev. Production KVs are private-endpoint only and
+# never get a temporary IP allow, so no automation is needed there.
+
+name: dev-kv-cleanup
+
+on:
+  schedule:
+    # 00:00 UTC = 20:00 ET. Aligned with the test tenant's nightly
+    # "stop dev resources" automation so we end the day in the same
+    # baseline state every time.
+    - cron: '0 0 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: dev-kv-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sign in to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve KV name
+        id: kv
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -euo pipefail
+          KV=$(az keyvault list -g "$RG" --query '[0].name' -o tsv)
+          [[ -z "$KV" ]] && { echo "::error::no KV in $RG"; exit 1; }
+          echo "name=$KV" >> "$GITHUB_OUTPUT"
+
+      - name: Snapshot current state
+        env:
+          KV: ${{ steps.kv.outputs.name }}
+        run: |
+          set -euo pipefail
+          echo "Before cleanup:"
+          az keyvault show -n "$KV" \
+            --query 'properties.{publicNetworkAccess:publicNetworkAccess,defaultAction:networkAcls.defaultAction,ipRules:networkAcls.ipRules}' \
+            -o jsonc
+
+      - name: Purge operator IP rules
+        env:
+          KV: ${{ steps.kv.outputs.name }}
+        run: |
+          set -euo pipefail
+          # Read every IP rule and remove it one at a time. Idempotent —
+          # an empty list is a no-op.
+          IPS=$(az keyvault network-rule list --name "$KV" \
+                  --query 'ipRules[].value' -o tsv 2>/dev/null || true)
+          if [[ -n "$IPS" ]]; then
+            while IFS= read -r ip; do
+              [[ -z "$ip" ]] && continue
+              echo "removing $ip"
+              az keyvault network-rule remove --name "$KV" --ip-address "$ip" -o none || true
+            done <<< "$IPS"
+          else
+            echo "no ipRules to purge"
+          fi
+
+      - name: Restore publicNetworkAccess=Disabled
+        env:
+          KV: ${{ steps.kv.outputs.name }}
+        run: |
+          set -euo pipefail
+          # Match the Bicep baseline. Idempotent.
+          az keyvault update --name "$KV" --public-network-access Disabled -o none
+
+      - name: Verify final state
+        env:
+          KV: ${{ steps.kv.outputs.name }}
+        run: |
+          set -euo pipefail
+          echo "After cleanup:"
+          STATE=$(az keyvault show -n "$KV" \
+            --query 'properties.{publicNetworkAccess:publicNetworkAccess,defaultAction:networkAcls.defaultAction,ipRules:networkAcls.ipRules}' \
+            -o jsonc)
+          echo "$STATE"
+          PNA=$(echo "$STATE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["publicNetworkAccess"])')
+          if [[ "$PNA" != "Disabled" ]]; then
+            echo "::error::publicNetworkAccess is $PNA, expected Disabled"
+            exit 1
+          fi
+
+      - name: Open issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'dev-kv-cleanup failed',
+              body: [
+                'Nightly KV firewall reset failed. The dev KV may still have',
+                'an operator IP allowlisted or `publicNetworkAccess=Enabled`.',
+                '',
+                `Run: ${runUrl}`,
+                '',
+                'Manual recovery:',
+                '```',
+                'scripts/azd-grant-operator-kv.sh dev --revoke-my-ip',
+                '# or, to fully reconcile to Bicep state:',
+                'azd provision -e dev',
+                '```',
+              ].join('\n'),
+              labels: ['ops', 'security'],
+            });
