@@ -81,6 +81,37 @@ resource mqttUsername 'Microsoft.KeyVault/vaults/secrets@2024-04-01-preview' = {
   }
 }
 
+// Sprint 28 C6 — optional TLS material for the Mosquitto 8883 listener.
+// Created only when callers pass non-empty values; the broker's
+// entrypoint reads these via env vars and writes the cert files on
+// boot. Keeping them as standard KV secrets (rather than KV
+// Certificates) so the rotation runbook (docs/runbooks/secret-rotation.md)
+// can treat them like the rest of the secret set. mTLS for clients is a
+// follow-up workstream (ADR-012).
+resource mqttTlsCa 'Microsoft.KeyVault/vaults/secrets@2024-04-01-preview' = if (!empty(secrets.?mqttTlsCa ?? '')) {
+  parent: kv
+  name: 'mqtt-tls-ca'
+  properties: {
+    value: secrets.?mqttTlsCa ?? ''
+  }
+}
+
+resource mqttTlsCert 'Microsoft.KeyVault/vaults/secrets@2024-04-01-preview' = if (!empty(secrets.?mqttTlsCert ?? '')) {
+  parent: kv
+  name: 'mqtt-tls-cert'
+  properties: {
+    value: secrets.?mqttTlsCert ?? ''
+  }
+}
+
+resource mqttTlsKey 'Microsoft.KeyVault/vaults/secrets@2024-04-01-preview' = if (!empty(secrets.?mqttTlsKey ?? '')) {
+  parent: kv
+  name: 'mqtt-tls-key'
+  properties: {
+    value: secrets.?mqttTlsKey ?? ''
+  }
+}
+
 output id string = kv.id
 output name string = kv.name
 output uri string = kv.properties.vaultUri

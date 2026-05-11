@@ -4,6 +4,42 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Sprint 28 — Operational Excellence & On-Call Readiness
+
+Phases A (deploy/IaC reliability), B (KV ergonomics), C (MQTT broker/subscriber ops), D (platform observability), E (runbooks), F (operator inner loop), G1 (backend), and H1–H6 (docs hygiene + OpenAPI gate) shipped on `sprint-28/ops-excellence` (PR #25). UI Phase G2–G8 lands as a separate PR in `TagPulse-UI`.
+
+- **F2** `scripts/lib/azd-common.sh` — shared shell library (`azd_env_resolve`, `aca_name`, `kv_secret_get`, `require_clean_tree`). All `scripts/azd-*.sh` switched to source it.
+- **F1 / F3 / F4** `make doctor`, `make smoke`, `make logs`, `make rotate-key` Makefile targets; `scripts/azd-doctor.sh` aggregate health check; VS Code tasks.
+- **B1–B4** KV ergonomics: `scripts/azd-kv-audit.sh`, `azd-kv-get.sh --list`, `azd-kv-recover.sh`, `azd-grant-operator-kv.sh --dry-run`, `azd-ui-token-rotate.sh --dry-run`, `scripts/sweep_kv_expiries.py`.
+- **A1–A5** CI: preflight gate, ACA name-resolver helper, image-SHA cross-check, Bicep `what-if` PR comment, post-deploy smoke gate. PR-comment summaries on the deploy workflow.
+- **G1** `PATCH /telemetry-models/{model_id}` (admin) + `TelemetryModelUpdate` schema + `telemetry_model.updated` audit log. Unblocks UI G6.
+- **C1** MQTT subscriber OTel counters: `mqtt_reconnect_attempts_total`, `mqtt_messages_rejected_total{reason}`, `mqtt_subscriber_last_message_age_seconds` gauge.
+- **C2 / C5** `scripts/mqtt_canary.py` (broker round-trip) + `scripts/azd-mqtt-restart.sh` (ACI restart + canary).
+- **C3** `dead_letter_events.source` classifier column (Alembic migration 035). Malformed MQTT payloads routed to the existing dead-letter sink with `source='mqtt'`.
+- **C4** `docs/runbooks/mqtt-outage.md`.
+- **C6** Optional MQTT server-TLS listener on `tcp/8883` (Mosquitto + Bicep + worker + `clients/pi/`). `tcp/1883` remains during the Sprint 28 → 29 deprecation window. Per-env self-signed CA in KV (`mqtt-tls-cert` / `mqtt-tls-key`). mTLS deferred per [ADR-012](docs/adr/012-mtls-for-mqtt.md).
+- **D1** `docs/observability/slos.md` — 4 SLOs (api availability/latency, MQTT E2E, alert delivery) with burn-rate math and freeze policy.
+- **D2** `deploy/azure/bicep/modules/alerts.bicep` — action group + 4 metric alerts (api 5xx, MQTT freshness, dead-letter growth, KV secret expiring).
+- **D3** `ops/azure-monitor/` — saved KQL queries + workbook JSON.
+- **D4** `/health/detail` exposes `mqtt_subscriber.last_message_age_seconds`.
+- **D5** OTel span attributes: `tenant_id`, `tenant_slug`, `user_role`, `user_id` audit with allowlist + introspection test.
+- **E1** `docs/runbooks/incident-template.md` (SEV1/2/3, comms templates, postmortem skeleton).
+- **E2** `docs/runbooks/db-failover-and-restore.md` (PITR drill, RPO/RTO targets, Last drilled row).
+- **E3** `docs/runbooks/dead-letter-triage.md`.
+- **H1** `docs/refs/docs-audit-sprint28.md` — 79-file markdown inventory (stale/orphaned/contradictory flags + a re-run script).
+- **H2** `docs/runbooks/README.md` — categorized index (First-time setup / Day-to-day ops / Incident response / Migrations & cutovers).
+- **H3** `docs/operator-quickstart.md` — one-page operator doc (resource topology, login flow, 7 most-common tasks, alert→runbook map).
+- **H4** `README.md` + `docs/architecture.md` + `docs/adr/012-mtls-for-mqtt.md` refresh. ADR-012 status now reflects C6 (server-TLS shipped, mTLS deferred).
+- **H5** `.github/workflows/docs-lint.yml` — `markdownlint-cli2` + `lychee` on `pull_request` for `docs/`, top-level `*.md`, `CHANGELOG.md`. `.markdownlint.jsonc`, `.markdownlintignore`, `.lycheeignore`.
+- **H6** Drop the Sprint 21 `GET /telemetry-models/{device_type}` 410 Gone tombstone ([src/tagpulse/api/routes/telemetry_models.py](src/tagpulse/api/routes/telemetry_models.py)). The Sprint 19 301 redirect (one window) and the Sprint 21 410 Gone (one window) both ran past their full retention cycles, so the legacy route now simply 404s like any other un-routed path. `openapi.json` regenerated. New CI gate runs `make export-openapi && git diff --exit-code openapi.json` so route changes can't ship without a matching spec update.
+
+Deferred to a follow-up sprint:
+
+- **E4** first quarterly DR drill execution (the runbook E2 is ready; the drill itself moves with the next ops cadence).
+- **G2–G8** UI CRUD gap-fill — separate workstream in `TagPulse-UI`.
+
+### Earlier in Unreleased
+
 - **CI: `deploy-azure.yml` now accepts short SHA tags** ([.github/workflows/deploy-azure.yml](.github/workflows/deploy-azure.yml)). `build-and-push.yml` tags ACR images with the full 40-char commit SHA (`type=sha,format=long`) but operators almost always have a 7-char short SHA in hand from `git rev-parse --short HEAD` or the GitHub UI. Passing `image_tag=sha-aeed4a4` previously failed at the verify step even though the image was sitting in ACR as `sha-aeed4a499b618e933f0caa05e524f204d9b3ce5b`. New "Expand image tag (short SHA → full SHA)" step probes ACR after Azure login and resolves any `sha-<4-39 hex>` prefix to its unique long-form match (errors with the candidate list if ambiguous). Verbatim tags (full SHA, `latest`, `v*`) continue to work unchanged.
 
 - **Fix: MQTT subscriber crashed permanently on a single malformed payload** ([src/tagpulse/ingestion/mqtt_subscriber.py](src/tagpulse/ingestion/mqtt_subscriber.py), closes [#18](https://github.com/9owlsboston/TagPulse/issues/18)). One bad publish on `…/tag-reads` raised a `TypeError` out of `_handle_tag_read` (either `argument after ** must be a mapping, not list` for an array body, or `got multiple values for keyword argument 'device_id'` when the body carried its own `device_id`) and killed the subscriber task. The worker container kept reporting healthy while ingest was silently dead until restart. Three fixes:

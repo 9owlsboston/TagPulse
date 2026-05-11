@@ -372,6 +372,13 @@ class DeadLetterEventModel(Base):
     error_message: Mapped[str] = mapped_column(Text, nullable=False)
     retry_count: Mapped[int] = mapped_column(nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    # Sprint 28 C3 — low-cardinality source classifier so the triage
+    # runbook can route rows to the right investigator without parsing
+    # ``topic``. Values constrained by ``ck_dead_letter_events_source``:
+    # event_bus | tag_read_rejected | mqtt_subscriber | other.
+    source: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="event_bus", server_default="event_bus"
+    )
     failed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )

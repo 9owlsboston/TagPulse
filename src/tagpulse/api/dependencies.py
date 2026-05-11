@@ -78,7 +78,7 @@ async def get_telemetry_model_service(
     session: AsyncSession = Depends(get_session),
 ) -> AsyncGenerator[TelemetryModelService, None]:
     """Provide a TelemetryModelService bound to the current session."""
-    yield TelemetryModelService(session=session)
+    yield TelemetryModelService(session=session, audit=AuditLogger(session=session))
 
 
 async def get_telemetry_readings_repo(

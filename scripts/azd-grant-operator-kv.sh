@@ -50,6 +50,7 @@ PRINCIPAL=""
 ALLOW_MY_IP=0
 REVOKE_MY_IP=0
 IP_OVERRIDE=""
+DRY_RUN=0
 
 ENV_NAME="${1:-}"
 if [[ -z "$ENV_NAME" || "$ENV_NAME" == "-h" || "$ENV_NAME" == "--help" ]]; then
@@ -65,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --allow-my-ip)  ALLOW_MY_IP=1; shift ;;
     --revoke-my-ip) REVOKE_MY_IP=1; shift ;;
     --ip)           IP_OVERRIDE="$2"; shift 2 ;;
+    --dry-run)      DRY_RUN=1; shift ;;
     *) echo "error: unknown arg '$1'" >&2; exit 1 ;;
   esac
 done
@@ -126,6 +128,12 @@ if [[ $REVOKE_MY_IP -eq 1 ]]; then
     exit 1
   fi
   echo "==> Removing $MY_IP from KV ipRules and re-disabling public network access"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "DRY-RUN: would run:"
+    echo "  az keyvault network-rule remove --name $KV_NAME --ip-address $MY_IP"
+    echo "  az keyvault update --name $KV_NAME --public-network-access Disabled"
+    exit 0
+  fi
   az keyvault network-rule remove --name "$KV_NAME" --ip-address "$MY_IP" -o none || true
   az keyvault update --name "$KV_NAME" --public-network-access Disabled -o none
   echo "==> Done. KV is back to private-endpoint-only."
@@ -161,14 +169,20 @@ if [[ $ALLOW_MY_IP -eq 1 ]]; then
   echo "    Sets publicNetworkAccess=Enabled with defaultAction=Deny."
   echo "    Private-endpoint traffic AND $MY_IP will reach the data plane;"
   echo "    everything else stays blocked. Run with --revoke-my-ip when done."
-  az keyvault update \
-    --name "$KV_NAME" \
-    --public-network-access Enabled \
-    --default-action Deny \
-    --bypass AzureServices \
-    -o none
-  az keyvault network-rule add --name "$KV_NAME" --ip-address "$MY_IP" -o none
-  echo "==> Done. Allow ~30s for the firewall update to settle, then retry your secret-show."
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "DRY-RUN: would run:"
+    echo "  az keyvault update --name $KV_NAME --public-network-access Enabled --default-action Deny --bypass AzureServices"
+    echo "  az keyvault network-rule add --name $KV_NAME --ip-address $MY_IP"
+  else
+    az keyvault update \
+      --name "$KV_NAME" \
+      --public-network-access Enabled \
+      --default-action Deny \
+      --bypass AzureServices \
+      -o none
+    az keyvault network-rule add --name "$KV_NAME" --ip-address "$MY_IP" -o none
+    echo "==> Done. Allow ~30s for the firewall update to settle, then retry your secret-show."
+  fi
   # Fall through to RBAC handling so a fresh operator gets both in one run.
 fi
 
@@ -186,6 +200,11 @@ if [[ -n "$EXISTING" ]]; then
 fi
 
 echo "==> Creating role assignment"
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "DRY-RUN: would run:"
+  echo "  az role assignment create --assignee-object-id $PRINCIPAL --assignee-principal-type $PRINCIPAL_TYPE --role '$ROLE' --scope $SCOPE"
+  exit 0
+fi
 az role assignment create \
   --assignee-object-id "$PRINCIPAL" \
   --assignee-principal-type "$PRINCIPAL_TYPE" \

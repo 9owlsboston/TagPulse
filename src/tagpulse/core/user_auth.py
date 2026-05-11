@@ -12,6 +12,7 @@ from uuid import UUID
 import jwt
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import APIKeyHeader
+from opentelemetry import trace
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +24,31 @@ logger = logging.getLogger(__name__)
 
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 tenant_id_header = APIKeyHeader(name="X-Tenant-ID", auto_error=False)
+
+
+def _annotate_span_with_user(user: AuthenticatedUser) -> None:
+    """Sprint 28 D5: stamp tenant_id + role on the current OTel span.
+
+    Auto-instrumentation gives us spans per request but no business
+    identity. Without this, App Insights traces can show ``500 on
+    POST /tag-reads`` but operators can't filter to a single tenant
+    without joining to the request-id log line. Setting the attributes
+    here (the only place every authenticated request flows through)
+    keeps the producer side O(1) and lets KQL queries pivot on
+    ``customDimensions.tenant_id``.
+
+    Cardinality note: tenant_id is high (UUID) but App Insights
+    handles it as a string dimension — no metric blow-up because we
+    only attach it to spans, not to OTel counters.
+    """
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return
+    span.set_attribute("tenant_id", str(user.tenant_id))
+    span.set_attribute("tenant_slug", user.tenant_slug)
+    span.set_attribute("user_role", user.role)
+    if user.user_id is not None:
+        span.set_attribute("user_id", str(user.user_id))
 
 
 class AuthenticatedUser:
@@ -121,7 +147,7 @@ async def get_current_user(
         if not raw_token.startswith("tp_"):
             # Decode JWT
             payload = decode_jwt(raw_token)
-            return AuthenticatedUser(
+            user_obj = AuthenticatedUser(
                 user_id=UUID(payload["sub"]),
                 tenant_id=UUID(payload["tid"]),
                 tenant_name=payload["tenant_name"],
@@ -129,6 +155,8 @@ async def get_current_user(
                 role=payload["role"],
                 email=payload.get("email"),
             )
+            _annotate_span_with_user(user_obj)
+            return user_obj
         # API key auth
         prefix = raw_token[:10]
         stmt = select(UserModel).where(
@@ -150,7 +178,7 @@ async def get_current_user(
         tenant = await session.get(TenantModel, user.tenant_id)
         if tenant is None or tenant.status != "active":
             raise HTTPException(status_code=401, detail="Tenant inactive")
-        return AuthenticatedUser(
+        user_obj = AuthenticatedUser(
             user_id=user.id,
             tenant_id=tenant.id,
             tenant_name=tenant.name,
@@ -158,6 +186,8 @@ async def get_current_user(
             role=user.role,
             email=user.email,
         )
+        _annotate_span_with_user(user_obj)
+        return user_obj
 
     # Fall back to X-Tenant-ID (backward compat — viewer role)
     if x_tenant_id:
@@ -172,13 +202,15 @@ async def get_current_user(
         tenant = tenant_result.scalar_one_or_none()
         if tenant is None:
             raise HTTPException(status_code=401, detail="Tenant not found")
-        return AuthenticatedUser(
+        user_obj = AuthenticatedUser(
             user_id=None,
             tenant_id=tenant.id,
             tenant_name=tenant.name,
             tenant_slug=tenant.slug,
             role="viewer",
         )
+        _annotate_span_with_user(user_obj)
+        return user_obj
 
     raise HTTPException(status_code=401, detail="Authentication required")
 

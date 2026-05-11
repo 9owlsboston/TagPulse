@@ -31,6 +31,7 @@ def _load_metrics() -> None:
             eventbus_dropped,
             eventbus_published,
         )
+
         _eventbus_published = eventbus_published
         _eventbus_consumed = eventbus_consumed
         _eventbus_dropped = eventbus_dropped
@@ -132,9 +133,7 @@ class AsyncEventBus:
                     try:
                         await handler(event)
                     except Exception:
-                        logger.exception(
-                            "EventBus drain: handler failed for %s", topic
-                        )
+                        logger.exception("EventBus drain: handler failed for %s", topic)
                 drained += 1
         logger.info("EventBus drained %d events", drained)
         await self.stop(timeout=1.0)
@@ -163,13 +162,9 @@ class AsyncEventBus:
                         event.id,
                         topic,
                     )
-                    await self._persist_dead_letter(
-                        topic, event, error_tb
-                    )
+                    await self._persist_dead_letter(topic, event, error_tb)
 
-    async def _persist_dead_letter(
-        self, topic: Topic, event: Event, error_message: str
-    ) -> None:
+    async def _persist_dead_letter(self, topic: Topic, event: Event, error_message: str) -> None:
         """Write failed event to dead_letter_events table."""
         if self._dead_letter_factory is None:
             return
@@ -187,6 +182,7 @@ class AsyncEventBus:
                     error_message=error_message[:4000],
                     retry_count=0,
                     status="pending",
+                    source="event_bus",
                     failed_at=datetime.now(UTC),
                 )
                 session.add(row)

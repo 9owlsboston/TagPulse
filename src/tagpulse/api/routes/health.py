@@ -23,6 +23,7 @@ from tagpulse.core.migration_check import (
     expected_head_revision,
     fetch_db_revision,
 )
+from tagpulse.core.otel_metrics import mqtt_message_age_seconds
 from tagpulse.repositories.timescaledb.session import async_session_factory
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,15 @@ async def detail(request: Request) -> JSONResponse:
                 "running": event_bus._running if event_bus else False,
             },
             "usage_meter": {"status": meter_status},
+            # Sprint 28 D4: expose MQTT subscriber freshness alongside the
+            # OTel gauge so operators can see "ingest stalled" without
+            # waiting for the metric to scrape. ``null`` = never received
+            # (process just started, or broker unreachable since boot);
+            # rising value with constant device traffic = stalled
+            # subscriber. The C4 outage runbook keys off this field.
+            "mqtt_subscriber": {
+                "last_message_age_seconds": mqtt_message_age_seconds(),
+            },
         }
     )
 

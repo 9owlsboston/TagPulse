@@ -9,7 +9,11 @@ from tagpulse.api.services.telemetry_model_service import (
     TelemetryModelService,
 )
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
-from tagpulse.models.schemas import TelemetryModelCreate, TelemetryModelResponse
+from tagpulse.models.schemas import (
+    TelemetryModelCreate,
+    TelemetryModelResponse,
+    TelemetryModelUpdate,
+)
 
 router = APIRouter(prefix="/telemetry-models", tags=["telemetry-models"])
 
@@ -51,31 +55,16 @@ async def get_telemetry_model_by_subject(
         raise HTTPException(status_code=404, detail="Unknown subject_kind") from None
     result = await service.get_by_subject(user.tenant_id, subject_kind, key)
     if result is None:
-        raise HTTPException(
-            status_code=404, detail="Telemetry model not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Telemetry model not found") from None
     return result
 
 
-@router.get("/{device_type}", response_model=None, deprecated=True)
-async def get_telemetry_model_legacy(
-    device_type: str,
-    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
-) -> None:
-    """Removed in Sprint 21 (ADR-015 §6).
-
-    The Sprint 19 301 redirect to ``/telemetry-models/device/{device_type}``
-    has been removed after one full retention cycle. Callers must address
-    the subject-scoped path directly. Returns 410 Gone with a Location-style
-    hint so any forgotten clients still get a clear migration message.
-    """
-    raise HTTPException(
-        status_code=410,
-        detail=(
-            "GET /telemetry-models/{device_type} was removed in Sprint 21. "
-            f"Use GET /telemetry-models/device/{device_type} instead."
-        ),
-    )
+# Sprint 28 H6 (May 2026): the Sprint 21 ``GET /telemetry-models/{device_type}``
+# 410 Gone tombstone has been removed. Callers receive FastAPI's default 404
+# from the un-routed path. See ADR-013 §6 and ADR-015 §6 for the deprecation
+# history; the Sprint 19 301 redirect and Sprint 21 410 Gone both ran for a
+# full retention window each, so no surviving clients should still hit the
+# legacy path.
 
 
 @router.delete("/{model_id}", status_code=204)
@@ -87,6 +76,23 @@ async def delete_telemetry_model(
     """Delete a telemetry model definition."""
     deleted = await service.delete(user.tenant_id, model_id)
     if not deleted:
-        raise HTTPException(
-            status_code=404, detail="Telemetry model not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Telemetry model not found") from None
+
+
+@router.patch("/{model_id}", response_model=TelemetryModelResponse)
+async def update_telemetry_model(
+    model_id: UUID,
+    body: TelemetryModelUpdate,
+    user: AuthenticatedUser = require_role("admin", "editor"),
+    service: TelemetryModelService = Depends(get_telemetry_model_service),
+) -> TelemetryModelResponse:
+    """Sprint 28 G1: update a telemetry model's metrics list.
+
+    Only ``metrics`` is mutable. To change ``subject_kind`` or ``device_type``
+    delete the model and POST a new one — those columns key the Sprint 18
+    unique constraint and are part of the model's identity.
+    """
+    updated = await service.update(user.tenant_id, user.user_id, model_id, body)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Telemetry model not found") from None
+    return updated

@@ -1,0 +1,18 @@
+// SLO #1: API availability (rolling 28d, 5-min buckets).
+// SLO #2: API p95 latency on ingest routes.
+// See docs/observability/slos.md for the contract.
+let api = requests
+| where timestamp > ago(28d)
+| where url contains "/api/v1"
+| where url !contains "/health/"
+| where url !endswith "/metrics"
+| where url !contains "/openapi.json";
+api
+| summarize
+    total = count(),
+    errors = countif(toint(resultCode) >= 500),
+    p95_ms = percentile(duration, 95)
+    by bin(timestamp, 5m)
+| extend availability_pct = 100.0 * (total - errors) / total
+| project timestamp, total, errors, availability_pct, p95_ms
+| order by timestamp desc

@@ -1,0 +1,9 @@
+// SLO #4 detail view: dead-letter rows pivoted by Sprint 28 C3 source.
+// Counter is emitted from AsyncEventBus + writers; this query reads
+// the OTel counter exported to App Insights as a customMetric.
+customMetrics
+| where timestamp > ago(7d)
+| where name == "tagpulse_dead_letter_events_total"
+| extend source = tostring(customDimensions["source"])
+| summarize rows_per_hour = sum(value) by bin(timestamp, 1h), source
+| order by timestamp desc, source asc
