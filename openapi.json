@@ -722,8 +722,8 @@
       "Body_import_lots_lots_import_post": {
         "properties": {
           "upload": {
+            "contentMediaType": "application/octet-stream",
             "description": "CSV: product_sku,lot_code,manufactured_at,expires_at",
-            "format": "binary",
             "title": "Upload",
             "type": "string"
           }
@@ -737,8 +737,8 @@
       "Body_import_products_products_import_post": {
         "properties": {
           "upload": {
+            "contentMediaType": "application/octet-stream",
             "description": "CSV: sku,gtin,name,category,unit",
-            "format": "binary",
             "title": "Upload",
             "type": "string"
           }
@@ -752,8 +752,8 @@
       "Body_import_stock_items_stock_items_import_post": {
         "properties": {
           "upload": {
+            "contentMediaType": "application/octet-stream",
             "description": "CSV: product_sku,lot_code,binding_value,binding_kind",
-            "format": "binary",
             "title": "Upload",
             "type": "string"
           }
@@ -5172,6 +5172,13 @@
       },
       "ValidationError": {
         "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
           "loc": {
             "items": {
               "anyOf": [
