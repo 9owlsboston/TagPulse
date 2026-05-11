@@ -110,7 +110,16 @@ azd_env_resolve() {
   KV_NAME="$(azd env get-value AZURE_KEYVAULT_NAME 2>/dev/null || true)"
   [[ -z "$KV_NAME" ]] && KV_NAME="$(azd env get-value keyVaultName 2>/dev/null || echo '')"
   ACR_NAME="$(azd env get-value AZURE_CONTAINER_REGISTRY_NAME 2>/dev/null || true)"
-  [[ -z "$ACR_NAME" ]] && ACR_NAME="$(azd env get-value containerRegistryName 2>/dev/null || echo '')"
+  [[ -z "$ACR_NAME" ]] && ACR_NAME="$(azd env get-value containerRegistryName 2>/dev/null || true)"
+  # Sprint 28+ Bicep emits the output as `acrName`; older deploys used the
+  # other two names above. Keep all three lookups.
+  [[ -z "$ACR_NAME" ]] && ACR_NAME="$(azd env get-value acrName 2>/dev/null || true)"
+  # Last-ditch: derive from the login-server FQDN if only that is set.
+  if [[ -z "$ACR_NAME" ]]; then
+    local _login
+    _login="$(azd env get-value AZURE_ACR_LOGIN_SERVER 2>/dev/null || azd env get-value acrLoginServer 2>/dev/null || echo '')"
+    [[ -n "$_login" ]] && ACR_NAME="${_login%%.*}"
+  fi
   CONTAINER_APPS_ENV_NAME="$(azd env get-value containerAppsEnvName 2>/dev/null || echo '')"
   JOB_NAME="$(azd env get-value toolsJobName 2>/dev/null || echo '')"
   SUBSCRIPTION_ID="$(azd env get-value AZURE_SUBSCRIPTION_ID 2>/dev/null || echo '')"
@@ -158,10 +167,23 @@ aca_name() {
   fi
 
   case "$kind" in
-    api|worker|mqtt)
+    api|worker)
       # Container App: tp${env}-${kind}
       az containerapp list -g "$rg" \
         --query "[?starts_with(name, 'tp${env_short}-${kind}')].name | [0]" -o tsv 2>/dev/null
+      ;;
+    mqtt)
+      # mqtt may be deployed as a Container App OR an Azure Container
+      # Instance (ACI) depending on the env (Sprint 28 dev uses ACI inside
+      # the ACA VNet). Try ACA first, then ACI.
+      local n
+      n=$(az containerapp list -g "$rg" \
+        --query "[?starts_with(name, 'tp${env_short}-mqtt')].name | [0]" -o tsv 2>/dev/null)
+      if [[ -z "$n" ]]; then
+        n=$(az container list -g "$rg" \
+          --query "[?starts_with(name, 'tp${env_short}-mqtt')].name | [0]" -o tsv 2>/dev/null)
+      fi
+      printf '%s' "$n"
       ;;
     migrations|migrations-job)
       # Job: tp${env}-migrations OR tp${env}-migrations-job — try both.
