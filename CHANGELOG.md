@@ -4,6 +4,11 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Fixes
+
+- `docs/runbooks/db-failover-and-restore.md` §A1 — derive PG short name from `postgresFqdn` (azd env) instead of the non-existent `POSTGRES_SERVER_NAME`, which silently produced `--name ""` and hung the `az` call.
+- `docs/runbooks/db-failover-and-restore.md` §A3a — document the api-revision restart needed to drain asyncpg's stale connection pool after the Flex server returns from `Stopped`.
+
 ### Sprint 28 — Operational Excellence & On-Call Readiness
 
 Phases A (deploy/IaC reliability), B (KV ergonomics), C (MQTT broker/subscriber ops), D (platform observability), E (runbooks), F (operator inner loop), G1 (backend), and H1–H6 (docs hygiene + OpenAPI gate) shipped on `sprint-28/ops-excellence` (PR #25). UI Phase G2–G8 lands as a separate PR in `TagPulse-UI`.
