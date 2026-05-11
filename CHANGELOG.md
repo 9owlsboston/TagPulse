@@ -10,6 +10,7 @@ All notable changes to TagPulse will be documented in this file.
 - `scripts/lib/azd-common.sh` `aca_name` — fall back to ACI lookup for `mqtt` (current dev shape is `tp${env}-mqtt` ACI, not a Container App) so doctor reports its real state.
 - `scripts/lib/azd-common.sh` `azd_env_resolve` — add `acrName` and `AZURE_ACR_LOGIN_SERVER`/`acrLoginServer` (FQDN-derived) fallbacks for `ACR_NAME` so the doctor's ACR-image check works without manually setting `AZURE_CONTAINER_REGISTRY_NAME`.
 - `scripts/azd-doctor.sh` — KV-reachable yellow now prints the exact remediation command (`azd-grant-operator-kv.sh <env> --allow-my-ip`) instead of "firewall? RBAC?".
+- `scripts/azd-grant-operator-kv.sh` — fix `--allow-my-ip` against vaults with `publicNetworkAccess=Disabled`. The probe parser was looking for `Client address:` in the error, but PE-only vaults return `ForbiddenByConnection` with no client address; the probe returned empty and the script bailed before applying the firewall update. Now detects `ForbiddenByConnection` and falls straight to `api.ipify.org` instead.
 - `docs/runbooks/db-failover-and-restore.md` §A1 — derive PG short name from `postgresFqdn` (azd env) instead of the non-existent `POSTGRES_SERVER_NAME`, which silently produced `--name ""` and hung the `az` call.
 - `docs/runbooks/db-failover-and-restore.md` §A3a — document the api-revision restart needed to drain asyncpg's stale connection pool after the Flex server returns from `Stopped`.
 
