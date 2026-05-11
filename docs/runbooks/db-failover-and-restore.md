@@ -28,11 +28,21 @@ This runbook covers two distinct failure modes:
 
 ```bash
 make doctor ENV=production       # 'pg state' line
+
+# The azd env exposes the server FQDN, not its short name. Derive the
+# short name (first dotted label) before passing it to `az`.
+PG_FQDN="$(azd env get-value postgresFqdn)"
+PG_NAME="${PG_FQDN%%.*}"
 az postgres flexible-server show \
   --resource-group "$(azd env get-value AZURE_RESOURCE_GROUP)" \
-  --name "$(azd env get-value POSTGRES_SERVER_NAME)" \
+  --name "$PG_NAME" \
   --query 'state' -o tsv
 ```
+
+> Earlier versions of this runbook referenced `POSTGRES_SERVER_NAME`,
+> which is not emitted by our Bicep `outputs`. Using it produces
+> `ERROR: key not found in environment values` and an empty `--name`
+> argument that hangs the `az` call. Always derive from `postgresFqdn`.
 
 | State                | Meaning                                  | Action               |
 | -------------------- | ---------------------------------------- | -------------------- |
@@ -64,6 +74,26 @@ scripts/azd-pg-ensure-running.sh production
 The script polls until `state == Ready`. Production servers have
 auto-start disabled — if production stopped, treat it as a SEV-1
 and skip to §B (corruption can't be ruled out).
+
+#### A3a. Drain the api's stale connection pool (recommended)
+
+asyncpg's pool holds TCP sockets that the Flex server severed when
+it stopped. The api will reconnect on the next request, but in-flight
+requests can stall for the full TCP keepalive window (~2 min). Force
+a clean restart of the active api revision:
+
+```bash
+RG="$(azd env get-value AZURE_RESOURCE_GROUP)"
+API="$(az containerapp list -g "$RG" \
+        --query "[?contains(name,'api')].name | [0]" -o tsv)"
+REV="$(az containerapp revision list -n "$API" -g "$RG" \
+        --query "[?properties.active].name | [0]" -o tsv)"
+az containerapp revision restart -n "$API" -g "$RG" --revision "$REV"
+```
+
+The same restart is wired into the `azd` `predeploy` hook, so a
+subsequent `azd deploy` self-heals automatically. Skip this step if
+`make smoke ENV=<env>` already passes after A3.
 
 ### A4. Forced failover to standby
 
