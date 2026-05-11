@@ -1,0 +1,123 @@
+# Scheduled wake-up for the dev environment.
+#
+# The dev PG Flex Burstable server is stopped overnight by the test
+# tenant's automation (and also auto-stops after 7 days of idle on the
+# Azure side). This workflow brings it back up before working hours
+# so operators don't hit the "API timing out / doctor red" loop every
+# morning.
+#
+# Steps:
+#   1. Start the PG Flexible Server (idempotent — script polls until
+#      state == Ready; no-op if already running).
+#   2. Restart the active api Container App revision to drain asyncpg's
+#      stale connection pool (per db-failover-and-restore.md §A3a).
+#   3. Run `make doctor ENV=dev` as a sanity check; non-fatal.
+#
+# Scope is strictly dev — production servers must never be stopped, so
+# this workflow doesn't reference any other env.
+#
+# OIDC: uses the same federated credential as deploy-azure.yml /
+# rotate-ui-token.yml (subject `repo:9owlsboston/TagPulse:environment:dev`).
+# RBAC: the dev OIDC SP has Contributor on `tagpulse-dev-rg`, which covers
+# both `flexible-server start` and `containerapp revision restart`.
+
+name: dev-wake
+
+on:
+  schedule:
+    # 13:00 UTC = 09:00 ET (Mon–Fri). Adjust if your team is on a
+    # different timezone or wants weekend coverage.
+    - cron: '0 13 * * 1-5'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write  # for the failure-issue fallback
+
+concurrency:
+  group: dev-wake
+  cancel-in-progress: false
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sign in to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Start PG Flexible Server (if stopped)
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -euo pipefail
+          PG=$(az postgres flexible-server list -g "$RG" --query '[0].name' -o tsv)
+          [[ -z "$PG" ]] && { echo "::error::no PG Flex server found in $RG"; exit 1; }
+
+          STATE=$(az postgres flexible-server show -n "$PG" -g "$RG" --query state -o tsv)
+          echo "PG $PG state=$STATE"
+          if [[ "$STATE" == "Stopped" ]]; then
+            echo "starting $PG ..."
+            az postgres flexible-server start -n "$PG" -g "$RG" -o none
+            for i in $(seq 1 60); do
+              sleep 10
+              STATE=$(az postgres flexible-server show -n "$PG" -g "$RG" --query state -o tsv)
+              echo "  [$i] state=$STATE"
+              [[ "$STATE" == "Ready" ]] && break
+            done
+            [[ "$STATE" == "Ready" ]] || { echo "::error::PG never reached Ready (state=$STATE)"; exit 1; }
+          fi
+
+      - name: Restart active api revision (drain stale asyncpg pool)
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -euo pipefail
+          API=$(az containerapp list -g "$RG" \
+                  --query "[?contains(name,'api')].name | [0]" -o tsv)
+          [[ -z "$API" ]] && { echo "::warning::no api Container App found"; exit 0; }
+          REV=$(az containerapp revision list -n "$API" -g "$RG" \
+                  --query "[?properties.active].name | [0]" -o tsv)
+          [[ -z "$REV" ]] && { echo "::warning::no active revision on $API"; exit 0; }
+          echo "restarting $API revision $REV"
+          az containerapp revision restart -n "$API" -g "$RG" --revision "$REV" -o none
+
+      - name: Doctor (informational; non-blocking)
+        continue-on-error: true
+        run: |
+          # The doctor probes data-plane endpoints from this runner's
+          # public IP, which is NOT in the KV firewall — the KV-reachable
+          # yellow is expected. We just want to see api/PG/worker green.
+          make doctor ENV=dev || true
+
+      - name: Open issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'dev-wake failed',
+              body: [
+                'Scheduled dev wake-up failed. PG may still be Stopped and the api stalled.',
+                '',
+                `Run: ${runUrl}`,
+                '',
+                'Manual recovery:',
+                '```',
+                'scripts/azd-pg-ensure-running.sh dev',
+                'make doctor ENV=dev',
+                '```',
+              ].join('\n'),
+              labels: ['ops'],
+            });
