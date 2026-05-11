@@ -148,7 +148,7 @@ def make_tag_read_payload(args: argparse.Namespace) -> dict:
         "timestamp": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "signal_strength": args.rssi
         if args.rssi is not None
-        else round(random.uniform(-75, -45), 1),
+        else round(random.uniform(-75, -45), 1),  # noqa: S311 — simulator noise, not crypto
         "reader_antenna": args.antenna,
     }
 
@@ -264,7 +264,7 @@ def load_track(path: Path) -> list[Waypoint]:
     rows: list[Waypoint] = []
     with path.open() as f:
         reader = csv.reader(f)
-        for i, raw in enumerate(reader):
+        for _i, raw in enumerate(reader):
             if not raw or all(not c.strip() for c in raw):
                 continue
             if raw[0].lstrip().startswith("#"):
