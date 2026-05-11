@@ -33,7 +33,17 @@ run:         ## Start development server
 	uvicorn tagpulse.api.main:app --reload --host 0.0.0.0 --port 8000
 
 export-openapi:  ## Export the FastAPI OpenAPI spec to openapi.json
-	python -c "import json; from tagpulse.api.main import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))" > openapi.json
+	# Sprint 28 H6: dedupe per-operation `security` lists. Some routes
+	# depend on multiple ``APIKeyHeader``-typed security helpers (e.g.,
+	# ``api_key_header`` + ``tenant_id_header`` in core/user_auth.py).
+	# FastAPI emits one entry per dependency, but the global
+	# ``components.securitySchemes`` only registers one ``APIKeyHeader``
+	# scheme. CPython 3.12 happens to dedupe these identical entries
+	# during dict construction; 3.11 doesn't, which produces a noisy
+	# `git diff --exit-code` failure under the Sprint 28 drift gate.
+	# Normalize here so the committed spec is stable regardless of the
+	# generating interpreter.
+	python scripts/export_openapi.py > openapi.json
 	@echo "Wrote openapi.json ($$(wc -c < openapi.json) bytes)"
 
 # ---------------------------------------------------------------------------

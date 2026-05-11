@@ -933,7 +933,9 @@ async def _run(args: argparse.Namespace) -> int:
                 "  • Tenant → telemetry_subject_kinds includes "
                 "'lot' + 'stock_item' (Sprint 19 opt-in)"
             )
-            print("  • Sprint 28 H6 cutover verified: GET /telemetry-models/{device_type} → 404/405")
+            print(
+                "  • Sprint 28 H6 cutover verified: GET /telemetry-models/{device_type} → 404/405"
+            )
         print("  • Alerts will populate within ~1 min as wandering assets cross the geofence.")
         print()
         print(

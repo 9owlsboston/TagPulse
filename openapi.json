@@ -5610,9 +5610,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Audit Logs",
@@ -5679,9 +5676,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Dead Letters",
@@ -5724,9 +5718,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Abandon Dead Letter",
@@ -5767,9 +5758,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -5822,9 +5810,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -5904,9 +5889,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Get Usage",
@@ -5982,9 +5964,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -6103,9 +6082,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Alerts",
@@ -6146,9 +6122,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -6267,9 +6240,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Get Read Frequency",
@@ -6383,9 +6353,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Assets",
@@ -6428,9 +6395,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -6499,9 +6463,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Assets Current Locations",
@@ -6542,9 +6503,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -6591,9 +6549,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -6650,9 +6605,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -6717,9 +6669,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Bindings",
@@ -6776,9 +6725,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Bind Tag",
@@ -6829,9 +6775,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Unbind Tag",
@@ -6879,9 +6822,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -6941,9 +6881,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -7021,9 +6958,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List External Positions",
@@ -7083,9 +7017,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Load Asset",
@@ -7133,9 +7064,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -7223,9 +7151,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Get Asset Path",
@@ -7283,9 +7208,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -7390,9 +7312,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Device Health",
@@ -7440,9 +7359,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -7543,9 +7459,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Devices",
@@ -7589,9 +7502,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -7641,9 +7551,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -7703,9 +7610,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Update Device",
@@ -7746,9 +7650,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -7810,9 +7711,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Attach Device Cert",
@@ -7862,9 +7760,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Decommission Device",
@@ -7905,9 +7800,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -7957,9 +7849,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -8178,9 +8067,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Integrations",
@@ -8224,9 +8110,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -8276,9 +8159,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Stream Events",
@@ -8319,9 +8199,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -8369,9 +8246,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -8429,9 +8303,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -8510,9 +8381,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Deliveries",
@@ -8560,9 +8428,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -8648,9 +8513,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List All Lots",
@@ -8697,9 +8559,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Import Lots",
@@ -8739,9 +8598,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -8789,9 +8645,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -8848,9 +8701,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -8970,9 +8820,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Products",
@@ -9015,9 +8862,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -9066,9 +8910,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Import Products",
@@ -9108,9 +8949,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -9157,9 +8995,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -9216,9 +9051,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -9313,9 +9145,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Lots",
@@ -9372,9 +9201,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Create Lot",
@@ -9405,9 +9231,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -9457,9 +9280,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -9515,9 +9335,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Rules",
@@ -9563,9 +9380,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Create Rule",
@@ -9606,9 +9420,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -9656,9 +9467,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -9716,9 +9524,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -9786,9 +9591,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Sites",
@@ -9833,9 +9635,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Create Site",
@@ -9875,9 +9674,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -9924,9 +9720,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -9983,9 +9776,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -10120,9 +9910,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Stock Items",
@@ -10165,9 +9952,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -10238,9 +10022,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Import Stock Items",
@@ -10292,9 +10073,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Delete Stock Item",
@@ -10339,9 +10117,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -10398,9 +10173,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -10477,9 +10249,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -10632,9 +10401,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Stock Movements",
@@ -10678,9 +10444,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -10758,9 +10521,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Tag Data Mappings",
@@ -10805,9 +10565,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Create Tag Data Mapping",
@@ -10847,9 +10604,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -10906,9 +10660,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -11080,9 +10831,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Query Tag Reads",
@@ -11126,9 +10874,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -11184,9 +10929,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -11281,9 +11023,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -11390,9 +11129,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -11517,9 +11253,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Telemetry",
@@ -11569,9 +11302,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Ingest Telemetry",
@@ -11601,9 +11331,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -11651,9 +11378,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Create Telemetry Model",
@@ -11694,9 +11418,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -11756,9 +11477,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Update Telemetry Model",
@@ -11814,9 +11532,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -11930,9 +11645,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Telemetry Aggregates",
@@ -12032,9 +11744,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -12168,9 +11877,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Telemetry Readings",
@@ -12220,9 +11926,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -12290,9 +11993,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Recent Reads",
@@ -12318,9 +12018,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -12368,9 +12065,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Update Tenant Config",
@@ -12396,9 +12090,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -12446,9 +12137,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Update Map Config",
@@ -12478,9 +12166,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -12526,9 +12211,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -12590,9 +12272,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Update User",
@@ -12633,9 +12312,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -12683,9 +12359,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -12770,9 +12443,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "List Zones",
@@ -12817,9 +12487,6 @@
         "security": [
           {
             "APIKeyHeader": []
-          },
-          {
-            "APIKeyHeader": []
           }
         ],
         "summary": "Create Zone",
@@ -12859,9 +12526,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -12908,9 +12572,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -12967,9 +12628,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
@@ -13046,9 +12704,6 @@
           }
         },
         "security": [
-          {
-            "APIKeyHeader": []
-          },
           {
             "APIKeyHeader": []
           }
