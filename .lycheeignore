@@ -21,6 +21,7 @@ oncall@example\.com
 # Cross-repo references to the TagPulse-UI repo (lives at
 # github.com/9owlsboston/TagPulse-UI, not in this checkout).
 ^file://.*TagPulse-UI/
+^https?://github\.com/9owlsboston/TagPulse-UI(?:/|$)
 
 # Home-dir / template absolute paths (e.g., ~/.templates/...).
 ^file://.*/~/
