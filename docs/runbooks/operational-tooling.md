@@ -148,6 +148,30 @@ error: 2 local commit(s) not yet pushed to origin/sprint-26/foo.
        Push + redeploy first, or pass --allow-stale.
 ```
 
+## `make doctor` recovery cheat sheet
+
+When a doctor check goes ✗ (red) or ! (yellow), look up the line label in the
+table below and run the recovery script. Replace `<env>` with `dev`,
+`staging`, or `prod`.
+
+| Doctor line | Status | Recovery |
+|---|---|---|
+| `azd env resolves` | ✗ | `azd env new <env>` (first deploy) or `azd env select <env>`. See [azd-survival-guide.md](azd-survival-guide.md). |
+| `resource group` | ✗ | RG was deleted or never created. `azd up` re-provisions. |
+| `api /health/ready` | ✗ | Tail logs: `make logs ENV=<env> SERVICE=api SINCE=15m`. If app crashed on boot, redeploy: `azd deploy api`. If PG is `Stopped` (next row), fix that first — the api won't pass readiness without it. |
+| `worker replicas` | ✗ | `az containerapp revision restart -n $(scripts/azd-env-load.sh <env> && echo "$WORKER_NAME") -g "$RG" --revision $(az containerapp show ... --query 'properties.latestRevisionName' -o tsv)`. Confirm scale rules in `infra/`. |
+| `mosquitto` | ✗ / ! | `scripts/azd-mqtt-restart.sh <env>`. If image is stale: `scripts/azd-mqtt-build.sh <env>` then restart. See [mqtt-outage.md](mqtt-outage.md). |
+| `postgres state` | ✗ (Stopped) | `scripts/azd-pg-ensure-running.sh <env>` — starts the Flexible Server and waits for `Ready`. Azure auto-stops dev PG after 7 days of inactivity. |
+| `postgres state` | ✗ (other) | Server is degraded — see [db-failover-and-restore.md](db-failover-and-restore.md). |
+| `key vault reachable` | ! | Your operator IP isn't on the KV firewall. `scripts/azd-grant-operator-kv.sh <env> --allow-my-ip` (the hint message says this verbatim). |
+| `ACR tagpulse-api latest` | ! (no tags) | First deploy hasn't pushed an image yet. `azd deploy api`. |
+| `active activity-log alerts` | ! (query failed) | Usually a permissions issue — your principal lacks `Monitoring Reader` on the RG. Cosmetic; ignore unless you're the on-call engineer. |
+| `KV secrets expiring (30d)` | ! | One or more secrets need rotation. See [secret-rotation.md](secret-rotation.md); the secret name is printed on the doctor line. |
+
+If the doctor exits non-zero in CI (`dev-wake.yml`), check the workflow run —
+it captures the same output and uploads it as an artifact. See
+[github-workflows.md](github-workflows.md).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

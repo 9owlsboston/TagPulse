@@ -25,9 +25,9 @@ name: dev-wake
 
 on:
   schedule:
-    # 13:00 UTC = 09:00 ET (Mon–Fri). Adjust if your team is on a
+    # 13:00 UTC = 09:00 ET (Mon–Sun). Adjust if your team is on a
     # different timezone or wants weekend coverage.
-    - cron: '0 13 * * 1-5'
+    - cron: '0 13 * * 1-7'
   workflow_dispatch: {}
 
 permissions:

@@ -13,6 +13,8 @@ All notable changes to TagPulse will be documented in this file.
 
 ### Fixes
 
+- `scripts/lib/azd-common.sh` `azd()` wrapper — extend the upgrade-nag filter to also strip azd 1.25's "Update available:" message (was leaking into command-substituted output and corrupting `RG` / `KV_NAME` / `ACR_NAME` in `azd-doctor.sh`, causing false reds for resource group, ACR, and KV).
+- `.github/workflows/dev-wake.yml` — extend schedule to Mon–Sun (`1-7`) so the dev env is also warm for weekend on-call paging.
 - `scripts/azd-doctor.sh` — probe `/health/ready` instead of the non-existent `/healthz` (was a false red).
 - `scripts/lib/azd-common.sh` `aca_name` — fall back to ACI lookup for `mqtt` (current dev shape is `tp${env}-mqtt` ACI, not a Container App) so doctor reports its real state.
 - `scripts/lib/azd-common.sh` `azd_env_resolve` — add `acrName` and `AZURE_ACR_LOGIN_SERVER`/`acrLoginServer` (FQDN-derived) fallbacks for `ACR_NAME` so the doctor's ACR-image check works without manually setting `AZURE_CONTAINER_REGISTRY_NAME`.
