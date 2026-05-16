@@ -6,6 +6,7 @@
 git clone https://github.com/9owlsboston/TagPulse.git
 cd TagPulse
 pip install -e ".[dev]"
+git config core.hooksPath .githooks   # opt in to the pre-push guard on main
 make check
 ```
 

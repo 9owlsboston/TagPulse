@@ -6,6 +6,7 @@ All notable changes to TagPulse will be documented in this file.
 
 ### Added
 
+- `.githooks/pre-push` — blocks `git push origin main` from a clone that opts in via `git config core.hooksPath .githooks`. `scripts/start-sprint.sh` now sets this automatically; existing clones can opt in with the one-liner now documented in `CONTRIBUTING.md`. Bypass: `git push --no-verify`. Workaround for GitHub Free not supporting branch protection / rulesets on private repos.
 - `docs/runbooks/github-workflows.md` — operator-facing catalog of every workflow in `.github/workflows/` (trigger, schedule, purpose, manual-run, failure triage). Linked from `docs/runbooks/README.md`.
 - `docs/guides/contributor-workflow.md` — developer-facing guide covering branching, the sprint model (planning unit, not a branch), multi-PR workflow, CHANGELOG conflict resolution, and the release model (current continuous-deploy + future SemVer-tag flow). Linked from `CONTRIBUTING.md`.
 - `.github/workflows/dev-wake.yml` — scheduled Mon–Fri 13:00 UTC (+ `workflow_dispatch`). Starts the dev PG Flex server if `Stopped`, restarts the active api revision to drain the stale asyncpg pool, runs `make doctor ENV=dev` as a sanity check. Closes the "every morning the dev env is dead" loop. Scope: dev only.
