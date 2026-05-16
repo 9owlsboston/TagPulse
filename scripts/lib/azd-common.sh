@@ -38,10 +38,10 @@ azd() {
     printf '%s\n' "$out" >&2
     return $rc
   fi
-  if printf '%s' "$out" | grep -q 'out of date'; then
+  if printf '%s' "$out" | grep -qE 'out of date|Update available'; then
     AZD_OUTDATED=1
     out=$(printf '%s' "$out" | grep -vE \
-      'out of date|aka\.ms/install-azd|aka\.ms/azd/upgrade|To update to the latest|^If the install script|^curl -fsSL|^$')
+      'out of date|Update available|aka\.ms/install-azd|aka\.ms/azd/upgrade|github\.com/Azure/azure-dev/releases|To update to the latest|^To update, run|^If the install script|^If you installed azd|^curl -fsSL|^$')
   fi
   [[ -n "$out" ]] && printf '%s\n' "$out"
 }

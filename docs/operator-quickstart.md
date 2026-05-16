@@ -68,7 +68,7 @@ All commands take `ENV=dev|staging|production`. Targets defined in `Makefile`.
 
 | Task | Command | Runbook |
 |---|---|---|
-| **Check env health** | `make doctor ENV=dev` | [operational-tooling.md](runbooks/operational-tooling.md) |
+| **Check env health** | `make doctor ENV=dev` | [operational-tooling.md §doctor-cheat-sheet](runbooks/operational-tooling.md#make-doctor-recovery-cheat-sheet) |
 | **Deploy a code change** | `azd up` (or `azd deploy api`) | [azure-first-deploy.md §subsequent-deploys](runbooks/azure-first-deploy.md) |
 | **Rotate the test-corp API key** | `make rotate-key ENV=dev TENANT=test-corp` | [secret-rotation.md §tagpulse-test-corp-admin-key](runbooks/secret-rotation.md#tagpulse-test-corp-admin-key) |
 | **Simulate MQTT ingestion** | `scripts/azd-job.sh dev mqtt_canary.py` | [mqtt-outage.md §canary](runbooks/mqtt-outage.md) |
