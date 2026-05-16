@@ -22,6 +22,13 @@ if [[ -n $(git status --porcelain) ]]; then
     exit 1
 fi
 
+# Opt the clone into the tracked pre-push guard (blocks direct pushes to main).
+# Idempotent: a no-op if already set.
+if [[ "$(git config --get core.hooksPath || true)" != ".githooks" ]]; then
+    echo "==> Setting core.hooksPath = .githooks (pre-push guard for main)"
+    git config core.hooksPath .githooks
+fi
+
 echo "==> Updating main"
 git checkout main
 git pull --ff-only

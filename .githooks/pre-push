@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Block direct pushes to main. Use scripts/start-sprint.sh + PR flow instead.
+# Bypass with: git push --no-verify
+protected_branch="main"
+remote="$1"
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [[ "$remote_ref" == "refs/heads/$protected_branch" ]]; then
+    echo "✗ Direct push to '$protected_branch' on '$remote' is blocked." >&2
+    echo "  Use: scripts/start-sprint.sh <NN> <topic-slug> [\"PR title\"]" >&2
+    echo "  Bypass (emergencies only): git push --no-verify" >&2
+    exit 1
+  fi
+done
+exit 0
