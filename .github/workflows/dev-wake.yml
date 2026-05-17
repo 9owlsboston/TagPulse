@@ -27,7 +27,10 @@ on:
   schedule:
     # 13:00 UTC = 09:00 ET (Mon–Sun). Adjust if your team is on a
     # different timezone or wants weekend coverage.
-    - cron: '0 13 * * 1-7'
+    # NOTE: day-of-week is 0–6 (0 = Sunday). GitHub Actions rejects
+    # '1-7' as out-of-range and silently disables the schedule, so use
+    # '*' to cover every day.
+    - cron: '0 13 * * *'
   workflow_dispatch: {}
 
 permissions:
