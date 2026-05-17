@@ -25,3 +25,4 @@
 | 021 | [Configurable Sensing Events](021-configurable-sensing-events.md) | proposed | 2026-05-17 |
 | 022 | [Soft Assets — auto-creation policy](022-soft-assets.md) | proposed | 2026-05-17 |
 | 023 | [Outbound Connections — add MQTT dispatcher (Kafka/Pub-Sub deferred)](023-outbound-connections-mqtt-kafka.md) | proposed | 2026-05-17 |
+| 024 | [Indoor position estimation — trilateration processor + `asset_positions` hypertable](024-position-estimation.md) | proposed | 2026-05-17 |

@@ -5,7 +5,7 @@
 - Owner: backend + UI joint
 - Related:
   - Audit inputs (unversioned, sibling repo): `~/ws/TagPulse-Design/IMPLEMENTATION-GAPS.md`, `~/ws/TagPulse-Design/UI-LOOK-AND-FEEL-GAPS.md`
-  - ADRs created by this plan: [019 Categories](../adr/019-categories.md), [020 Labels first-class](../adr/020-labels-first-class.md), [021 Configurable Sensing Events](../adr/021-configurable-sensing-events.md), [022 Soft Assets](../adr/022-soft-assets.md), [023 Outbound Connections MQTT/Kafka](../adr/023-outbound-connections-mqtt-kafka.md)
+  - ADRs created by this plan: [019 Categories](../adr/019-categories.md), [020 Labels first-class](../adr/020-labels-first-class.md), [021 Configurable Sensing Events](../adr/021-configurable-sensing-events.md), [022 Soft Assets](../adr/022-soft-assets.md), [023 Outbound Connections MQTT/Kafka](../adr/023-outbound-connections-mqtt-kafka.md), [024 Indoor Position Estimation](../adr/024-position-estimation.md)
 
 ---
 
@@ -83,6 +83,7 @@ branding backend slice which lands here in Sprint 33.
 | 2.15 | Connections Import/Export JSON + per-conn rate-limit + Monitor | 🟠 | **Commit (rate-limit + monitor only)** | 37 | Import/Export deferred — low value vs. cost. |
 | 2.16 | Auto-association by reel range | 🟡 | **Drop** | — | Depends on pixel-registry (2.14, deferred). Drop entirely; manual association is sufficient. |
 | 2.17 | First-party Python SDK on PyPI | 🟡 | **Defer** | backlog | The generated OpenAPI client serves SDK needs today. |
+| 2.18 | Indoor position estimation (multi-reader triangulation in grid zones) | 🟠 | **Commit** | 40 | ADR 024. Surfaced post-audit by SME review of football-field-size deployments with a 400×600 XY grid of fixed readers. Five of seven prerequisites already in place (`tag_reads.signal_strength`/`reader_antenna`/`sensor_data`/`tag_data`, reader-side `telemetry_readings subject_kind='device'`). Adds `devices.position_x/y/z`, `sites.coord_system JSONB`, new `asset_positions` hypertable, third `processor='trilateration'` value on the ADR 021 v2 enum, one reference algorithm (`weighted_centroid_log_distance`), pluggable algorithm interface, BYO-precomputed-positions ingest path for customers running Zebra/Impinj/Mojix/RFcode RTLS. Adds `devices/{device_id}/status` MQTT topic for reader-level periodic status (reader temp, RSSI baseline, position update for mobile readers). |
 
 ### 3.2 UI gaps (`UI-LOOK-AND-FEEL-GAPS.md`)
 
@@ -138,6 +139,7 @@ code:
 | [021](../adr/021-configurable-sensing-events.md) | Configurable Sensing Events (replacing rules-only) | 36 |
 | [022](../adr/022-soft-assets.md) | Soft Assets auto-creation policy | 39 |
 | [023](../adr/023-outbound-connections-mqtt-kafka.md) | Outbound Connections — add MQTT dispatcher | 37 |
+| [024](../adr/024-position-estimation.md) | Indoor position estimation — trilateration processor + `asset_positions` | 40 |
 
 Each stub captures: known context, the four candidate options seen in the
 audit + design references, the recommended option with rationale, and the
@@ -161,18 +163,23 @@ So that future audits don't refile these as gaps:
 | Compliance Status panel on Gateways list | RFID readers don't have the bridge-firmware compliance concept. |
 | Developer Portal landing page | Out-of-scope for a single-product SaaS at this stage. |
 | Bell-icon notifications | Nice-to-have, deferred indefinitely. |
+| Sub-meter indoor positioning accuracy out of the box | ADR 024 ships pluggable triangulation + one reference algorithm. Customers needing sub-meter precision use the BYO-positions ingest path (POST to `/v1/asset-positions` from their vendor's SDK) or replace the bundled algorithm. |
+| Phase-angle / FMCW / UWB-anchor positioning | Data shape doesn't fit `tag_reads`; no committed customer ask. Out-of-scope until demanded (then a new processor + columns). |
+| Real-time RTLS vendor replacement (Zebra Aurora, Impinj ItemSense, Mojix, RFcode) | TagPulse is the platform of record + integration fabric, not a competing RTLS engine. Interop via the BYO-positions path. |
+| Automated reader-position calibration | Reader (x, y) is operator-supplied. Algorithms that derive reader position from observed tag patterns are out-of-scope. |
 
 ---
 
 ## 6 — Acceptance criteria for this kickoff PR
 
 - [x] This document lands at `docs/design/reference-design-remediation.md`.
-- [x] Five ADR stubs (019–023) land at `docs/adr/0NN-*.md` with status **Proposed**.
-- [x] `docs/adr/README.md` index appended with the five new rows.
+- [x] Six ADR stubs (019–024) land at `docs/adr/0NN-*.md` with status **Proposed**.
+- [x] `docs/adr/README.md` index appended with the six new rows.
 - [x] `CHANGELOG.md` `## Unreleased` section gains a "Docs" entry.
 - [x] `make check` clean (545 passed, 1 skipped).
 - [x] PR description links to this plan and the two source audits.
 - [x] Quick-wins additions QW5 (Dark theme) + QW6 (Per-tenant branding) recorded in §2 and §3.3.
+- [x] Post-audit gap 2.18 (indoor position estimation, SME-surfaced) recorded in §3.1, with ADR 024 stub + four matching scope-outs in §5.
 
 ---
 
