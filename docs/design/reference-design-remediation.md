@@ -68,13 +68,13 @@ branding backend slice which lands here in Sprint 33.
 |---|---|---|---|---|---|
 | 2.1 | Categories entity | 🔴 | **Commit** | 34 | ADR 019. Unblocks 2.3, 2.8, 2.14. |
 | 2.2 | Labels first-class | 🔴 | **Commit** | 35 | ADR 020. Replaces free-form `metadata` JSONB for catalogued use cases; raw `metadata` stays for true bag-of-properties. |
-| 2.3 | Configurable Sensing Events | 🔴 | **Commit** | 36 | ADR 021. New `sensing_event_configs` table; `rules` stays for non-category-scoped automations. Coexistence designed in the ADR. |
+| 2.3 | Configurable Sensing Events | 🔴 | **Commit** | 36 | ADR 021 **v2**: extend `rules` (8 nullable columns + new `sensing.<event_type>.<trigger>` condition types). Discarded v1's parallel-table approach after first-review push-back — 60% overlap with existing `rules`/`alerts` didn't justify a second CRUD surface. All four event types (Location/Geolocation/Temperature/Geofencing) ship in one migration in S36. |
 | 2.4 | Soft Assets | 🔴 | **Commit (deferred)** | 39 | ADR 022. Has cost implications (one row per unique stray pixel); slot last so we can size based on observed `tag_reads_without_asset_total` in dev. |
 | 2.5 | MQTT/Kafka/Pub-Sub Connections | 🔴 | **Commit (MQTT only)** | 37 | ADR 023. Kafka + Pub-Sub deferred to backlog; covers only ~5 % of expected enterprise integrations and each is a separate dispatcher. |
 | 2.6 | `users.role` adds `installer` | 🟠 | **Commit** | 34 | Trivial; ride along with the Categories migration. |
 | 2.7 | `sites.kind` + `latitude` + `longitude` + structured address | 🟠 | **Commit** | 34 | Required for Site/Transporter icon column in Locations UI. |
 | 2.8 | `assets.category_id` FK + `external_ref` validation | 🟠 | **Commit** | 34 | Same sprint as Categories — they're one migration. |
-| 2.9 | Outbound event envelope (`confidence`, `keySet[]`, `eventConfigurationId`, `categoryId`, `labels[]`) | 🟠 | **Commit** | 36 | Lands with Sensing Events ADR 021 so the new fields have a source. |
+| 2.9 | Outbound event envelope (`confidence`, `keySet[]`, `eventConfigurationId`, `categoryId`, `labels[]`) | 🟠 | **Commit** | 36 | Lands with ADR 021 v2 in a dispatcher-layer module. Fires for **all** rules — legacy rules get `confidence=1.0`, `keySet=[]`, `categoryId=null`, `labels=[]`. Additive to existing webhook payloads. |
 | 2.10 | Per-catalog API security keys + JWT exchange | 🟠 | **Defer** | backlog | Today's auth (per-tenant + per-user + per-device tokens) satisfies the security model. Revisit if a customer asks for per-catalog scoping. |
 | 2.11 | Bridge OTA toggle + gateway-driven push | 🟡 | **Commit** | 38 | Lands with Bridge/Gateway split; minimal — just `devices.configuration.ota_upgrade_enabled` + edge contract field. |
 | 2.12 | Bridge Survey tool | 🟡 | **Drop** | — | Highly specific to BLE relay deployments; TagPulse's RFID-reader primary use case doesn't need it. Document as out-of-scope. |
@@ -92,7 +92,7 @@ branding backend slice which lands here in Sprint 33.
 | 1.1 | Categories nav item | 🔴 | **Commit** | 34 | Lands with backend Categories. |
 | 1.1 | Pixels nav item (read-only page) | 🟠 | **Commit** | 38 | UI-only; reads from existing bindings + reads. |
 | 1.1 | Bridges vs Gateways sidebar split | 🟠 | **Commit** | 38 | Driven by `devices.device_role` (see ADR 011 — already partially scoped). |
-| 1.1 | Unify Telemetry/Models/Rules/Alerts → "Sensing Events & Data" | 🟠 | **Commit** | 36 | Lands with Sensing Events ADR 021. |
+| 1.1 | Unify Telemetry/Models/Rules/Alerts → "Sensing Events & Data" | 🟠 | **Commit** | 36 | Free with ADR 021 v2 — one backend table = one consolidated UI list. Legacy condition types remain editable under a "Legacy rule" sub-tab. |
 | 1.1 | Admin items → top-right Account dropdown | 🟠 | **Commit** | 33 (quick-win) | Pure UI refactor. |
 | 1.2 | Notification bell | 🟡 | **Defer** | backlog | Useful but not on critical path. |
 | 2.1 | Light Sider + teal `colorPrimary` + ConfigProvider | 🟠 | **Commit** | 33 (quick-win) | Highest visual-impact-per-LOC change in the audit. |
@@ -101,7 +101,7 @@ branding backend slice which lands here in Sprint 33.
 | 3.2 | Locations/Zones two-tab redesign + Soft Assets column | 🟠 | **Commit** | 34 (tabs) + 39 (Soft Assets column) | Tabs ride with `sites.kind`; Soft Assets column waits for ADR 022. |
 | 3.3 | Categories page | 🔴 | **Commit** | 34 | |
 | 3.4 | Pixels page | 🟠 | **Commit** | 38 | UI-only as noted above. |
-| 3.5 | Sensing Events modal | 🔴 | **Commit** | 36 | |
+| 3.5 | Sensing Events modal | 🔴 | **Commit** | 36 | New "Add Sensing Event" modal per reference layout. Form posts to `/v1/.../sensing-events` which resolves to `RuleService` with `kind=sensing` filter (ADR 021 v2). |
 | 3.6 | Connections page redesign | 🟠 | **Commit** | 37 | |
 | 3.7 | Gateways list with status banner + Compliance panel | 🟠 | **Commit (status banner only)** | 38 | Compliance panel **dropped** — Compliance Status is bridge-firmware-specific and TagPulse's RFID-reader use case has no equivalent. |
 | 3.8 | Per-device Monitor tab w/ Connectivity KPIs + 8h/1d/3d range | 🟠 | **Commit** | 38 | Lands with Connectivity Monitor backend (2.13). |
