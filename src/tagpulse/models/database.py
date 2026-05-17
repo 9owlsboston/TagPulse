@@ -525,7 +525,11 @@ class CategoryModel(Base):
     Every asset *should* belong to exactly one Category. Category
     declares the sensing-event capability template (``category_type``)
     and the required-tag count consumed by ADR 021 (Configurable
-    Sensing Events) and the future deferred tag registry (gap 2.14).
+    Sensing Events). (The reference design calls these "tags";
+    TagPulse's domain term is "tag" — see ``docs/data-models.md``
+    §"Where is the tag?". The reference design's separate Tag
+    registry concept (gap 2.14) is deferred and TagPulse already has
+    equivalents via ``tag_reads`` + ``asset_tag_bindings``.)
 
     Invariants:
 

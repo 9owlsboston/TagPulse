@@ -13,6 +13,14 @@ exactly one Category, Category declares the sensing-event capability template
 and the required-tag count, and Configurable Sensing Events (ADR 021) scope
 themselves per `(category, event_type)`.
 
+> **Terminology note.** The reference design calls RFID tags "tags"
+> throughout. TagPulse's domain term is **tag** — see
+> [`docs/data-models.md` §"Where is the tag?"](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table)
+> for the why. This ADR uses TagPulse's vocabulary for all
+> TagPulse-owned schema (column names, enum values, API fields) and
+> only keeps the word "tag" when naming an external reference-design
+> concept verbatim (e.g. gap 2.14 "deferred tag registry").
+
 Without Categories:
 
 - Sensing Events (ADR 021) cannot scope correctly — every config would have to
