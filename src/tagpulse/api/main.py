@@ -31,6 +31,7 @@ from tagpulse.api.routes.security import router as security_router
 from tagpulse.api.routes.sites_zones import router as sites_zones_router
 from tagpulse.api.routes.telemetry import router as telemetry_router
 from tagpulse.api.routes.telemetry_models import router as telemetry_models_router
+from tagpulse.api.routes.tenant_branding import router as tenant_branding_router
 from tagpulse.api.routes.tenant_config import router as tenant_config_router
 from tagpulse.api.routes.users import router as users_router
 from tagpulse.core.config import settings
@@ -374,3 +375,4 @@ app.include_router(assets_router)
 app.include_router(inventory_router)
 app.include_router(inventory_imports_router)
 app.include_router(tenant_config_router)
+app.include_router(tenant_branding_router)
