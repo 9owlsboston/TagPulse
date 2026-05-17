@@ -11,14 +11,14 @@ class UserCreate(BaseModel):
 
     email: str = Field(min_length=1, max_length=255)
     name: str = Field(min_length=1, max_length=255)
-    role: str = Field(default="viewer", pattern=r"^(admin|editor|viewer)$")
+    role: str = Field(default="viewer", pattern=r"^(admin|editor|viewer|installer)$")
 
 
 class UserUpdate(BaseModel):
     """Partial update for a user."""
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    role: str | None = Field(default=None, pattern=r"^(admin|editor|viewer)$")
+    role: str | None = Field(default=None, pattern=r"^(admin|editor|viewer|installer)$")
     status: str | None = Field(default=None, pattern=r"^(active|inactive)$")
 
 

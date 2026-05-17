@@ -32,6 +32,7 @@ def _asset_to_response(row: AssetModel) -> AssetResponse:
         asset_type=row.asset_type,
         status=row.status,
         parent_asset_id=row.parent_asset_id,
+        category_id=row.category_id,
         metadata=row.metadata_,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -57,9 +58,7 @@ class TimescaleAssetRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(
-        self, tenant_id: uuid.UUID, asset: AssetCreate
-    ) -> AssetResponse:
+    async def create(self, tenant_id: uuid.UUID, asset: AssetCreate) -> AssetResponse:
         row = AssetModel(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
@@ -68,6 +67,7 @@ class TimescaleAssetRepository:
             asset_type=asset.asset_type,
             status=asset.status,
             parent_asset_id=asset.parent_asset_id,
+            category_id=asset.category_id,
             metadata_=asset.metadata,
         )
         self._session.add(row)
@@ -75,14 +75,11 @@ class TimescaleAssetRepository:
             await self._session.flush()
         except IntegrityError as exc:
             raise ValueError(
-                f"Asset external_ref '{asset.external_ref}' already exists "
-                "for this tenant"
+                f"Asset external_ref '{asset.external_ref}' already exists for this tenant"
             ) from exc
         return _asset_to_response(row)
 
-    async def get(
-        self, tenant_id: uuid.UUID, asset_id: uuid.UUID
-    ) -> AssetResponse | None:
+    async def get(self, tenant_id: uuid.UUID, asset_id: uuid.UUID) -> AssetResponse | None:
         stmt = select(AssetModel).where(
             AssetModel.id == asset_id, AssetModel.tenant_id == tenant_id
         )
@@ -106,10 +103,7 @@ class TimescaleAssetRepository:
             stmt = stmt.where(AssetModel.status == status)
         if q:
             like = f"%{q}%"
-            stmt = stmt.where(
-                (AssetModel.name.ilike(like))
-                | (AssetModel.external_ref.ilike(like))
-            )
+            stmt = stmt.where((AssetModel.name.ilike(like)) | (AssetModel.external_ref.ilike(like)))
         stmt = stmt.order_by(AssetModel.created_at.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_asset_to_response(r) for r in result.scalars()]
@@ -134,9 +128,7 @@ class TimescaleAssetRepository:
         try:
             await self._session.flush()
         except IntegrityError as exc:
-            raise ValueError(
-                "external_ref already in use for this tenant"
-            ) from exc
+            raise ValueError("external_ref already in use for this tenant") from exc
         return _asset_to_response(row)
 
     async def delete(self, tenant_id: uuid.UUID, asset_id: uuid.UUID) -> bool:
@@ -186,7 +178,7 @@ class TimescaleAssetRepository:
             """
             WITH RECURSIVE descendants AS (
                 SELECT id, tenant_id, external_ref, name, asset_type, status,
-                       parent_asset_id, metadata, created_at, updated_at,
+                       parent_asset_id, category_id, metadata, created_at, updated_at,
                        1 AS depth
                 FROM assets
                 WHERE tenant_id = :tenant_id
@@ -194,7 +186,7 @@ class TimescaleAssetRepository:
                   AND status != 'retired'
                 UNION ALL
                 SELECT a.id, a.tenant_id, a.external_ref, a.name, a.asset_type,
-                       a.status, a.parent_asset_id, a.metadata, a.created_at,
+                       a.status, a.parent_asset_id, a.category_id, a.metadata, a.created_at,
                        a.updated_at, d.depth + 1
                 FROM assets a
                 JOIN descendants d ON a.parent_asset_id = d.id
@@ -204,9 +196,7 @@ class TimescaleAssetRepository:
             SELECT * FROM descendants ORDER BY depth, name
             """
         )
-        result = await self._session.execute(
-            stmt, {"tenant_id": tenant_id, "root_id": asset_id}
-        )
+        result = await self._session.execute(stmt, {"tenant_id": tenant_id, "root_id": asset_id})
         rows = result.mappings().all()
         out: list[tuple[AssetResponse, int]] = []
         for r in rows:
@@ -220,6 +210,7 @@ class TimescaleAssetRepository:
                         asset_type=r["asset_type"],
                         status=r["status"],
                         parent_asset_id=r["parent_asset_id"],
+                        category_id=r["category_id"],
                         metadata=r["metadata"],
                         created_at=r["created_at"],
                         updated_at=r["updated_at"],
@@ -255,8 +246,7 @@ class TimescaleAssetTagBindingRepository:
             await self._session.flush()
         except IntegrityError as exc:
             raise ValueError(
-                f"binding_value '{payload.binding_value}' is already actively "
-                "bound for this tenant"
+                f"binding_value '{payload.binding_value}' is already actively bound for this tenant"
             ) from exc
         return _binding_to_response(row)
 
@@ -309,9 +299,7 @@ class TimescaleAssetTagBindingRepository:
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _binding_to_response(row) if row else None
 
-    async def count_other_tenant_collisions(
-        self, tenant_id: uuid.UUID, binding_value: str
-    ) -> int:
+    async def count_other_tenant_collisions(self, tenant_id: uuid.UUID, binding_value: str) -> int:
         """Number of *other* tenants with an active binding for this value.
 
         Admin-only tooling per assets-and-zones.md §11 Q3 — never reveals tenant
@@ -319,9 +307,7 @@ class TimescaleAssetTagBindingRepository:
         ``asset_tag_bindings(binding_value) WHERE unbound_at IS NULL``.
         Bypasses RLS — caller must be admin and gate access at the route layer.
         """
-        stmt = select(
-            func.count(func.distinct(AssetTagBindingModel.tenant_id))
-        ).where(
+        stmt = select(func.count(func.distinct(AssetTagBindingModel.tenant_id))).where(
             AssetTagBindingModel.binding_value == binding_value,
             AssetTagBindingModel.unbound_at.is_(None),
             AssetTagBindingModel.tenant_id != tenant_id,

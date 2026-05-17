@@ -1,6 +1,6 @@
 # ADR-019: Categories as a First-Class Entity
 
-- Status: Proposed (Sprint 33, May 2026)
+- Status: Accepted (Sprint 34, May 2026)
 - Implements: gap 2.1 (and unblocks 2.8) in `~/ws/TagPulse-Design/IMPLEMENTATION-GAPS.md`
 - Related: [reference-design-remediation plan](../design/reference-design-remediation.md), [data-models.md §assets](../data-models.md), ADR [005 rules engine](005-embedded-rules-engine.md), ADR [021 Configurable Sensing Events](021-configurable-sensing-events.md) (downstream consumer)
 
