@@ -45,15 +45,18 @@ Sprint 38 (edge)           ──> Bridge/Gateway split; Connectivity Monitor; O
 Sprint 39 (soft assets)    ──> ADR 022 lands; auto-create policy; convert-to-asset flow
 ```
 
-**Parallel quick-wins track** (no backend deps, ship during Sprint 33–34):
+**Parallel quick-wins track** (mostly no backend deps — #6 is a tiny backend slice; all ship during Sprint 33–34):
 
 1. TagPulse-UI `<ConfigProvider>` + teal `colorPrimary` + light Sider.
 2. Sider section groups (DATA MANAGEMENT / EDGE MANAGEMENT dividers).
 3. Top-bar account-management dropdown — move admin items out of sidebar.
 4. Reusable `<LastUpdate timestamp onRefresh/>` component.
+5. **Light + Dark theme toggle** (Light is default). Ant Design `theme.algorithm` swap (`defaultAlgorithm` ↔ `darkAlgorithm`), preference persisted in `localStorage` under `tagpulse.theme`, honours `prefers-color-scheme` on first visit. Toggle lives in the Account dropdown from quick-win #3. Token overrides applied to both algorithms so the teal `colorPrimary` (and any later brand colour from quick-win #6) reads correctly in dark. Tracked in TagPulse-UI.
+6. **Per-tenant branding** — logo + display name + optional brand colour. **Has a small backend slice in TagPulse** (this repo) plus a UI form in TagPulse-UI. See §3.3 below.
 
-These four PRs close ~30 % of the perceptual gap at near-zero engineering cost
-and are tracked in the TagPulse-UI repo, not here.
+These six PRs together close ~30 % of the perceptual gap at near-zero
+engineering cost and are tracked in the TagPulse-UI repo, except for the
+branding backend slice which lands here in Sprint 33.
 
 ---
 
@@ -108,6 +111,18 @@ and are tracked in the TagPulse-UI repo, not here.
 | §5 | Two-line cells / kebab-menu action column | 🟡 | **Commit (opportunistic)** | rolling | Same — adopt during each page's redesign. |
 | §6 | Empty-state component | 🟡 | **Commit** | 33 (quick-win) | `<EmptyState illustration title action/>` wrapper; 1-day UI ticket. |
 
+### 3.3 Additions surfaced during planning (not in the original audits)
+
+| # | Item | Severity | Decision | Sprint | Notes |
+|---|---|---|---|---|---|
+| QW5 | Light + Dark theme toggle | 🟠 | **Commit** | 33 (quick-win) | Pure TagPulse-UI. Ant Design `ConfigProvider` with `theme.algorithm` swap. Token overrides ensure teal/brand colour remains legible in dark. Persisted to `localStorage`; first visit reads `prefers-color-scheme`. Default = Light to match reference design. |
+| QW6 | Per-tenant branding (logo + display name + brand colour) | 🟠 | **Commit** | 33 | Two-part. **Backend slice (this repo, Sprint 33):** migration adds `tenants.logo_url VARCHAR(2048) NULL`, `tenants.display_name VARCHAR(255) NULL`, `tenants.brand_color VARCHAR(7) NULL`. New endpoint `PATCH /v1/tenants/{slug}/branding` (admin role; validates `logo_url` is `https://`, `<=2 MiB` HEAD content-length, image content-type; validates `brand_color` against `^#[0-9A-Fa-f]{6}$`). Existing `GET /v1/tenants/{slug}` response gains the three fields. No secret material involved — logo is a public-by-design URL the operator hosts (CDN, blob storage, public website). **UI slice (TagPulse-UI, Sprint 33–34):** Account dropdown → Branding form with URL input + live preview + colour picker; Sider header reads `display_name ?? name` and renders `<img src={logo_url}/>` with a tasteful default; login page picks up branding via the tenant-slug subdomain or query param. Brand colour, when set, overrides the default teal `colorPrimary` at `ConfigProvider` level. |
+
+Neither item warrants its own ADR — QW5 is a one-file `ConfigProvider` change
+and QW6 is three nullable columns + one PATCH endpoint. Both are documented
+here as the system of record. If branding grows (multi-region logos,
+favicons, email-template theming), promote to ADR-024 at that point.
+
 ---
 
 ## 4 — ADRs created by this plan
@@ -155,8 +170,9 @@ So that future audits don't refile these as gaps:
 - [x] Five ADR stubs (019–023) land at `docs/adr/0NN-*.md` with status **Proposed**.
 - [x] `docs/adr/README.md` index appended with the five new rows.
 - [x] `CHANGELOG.md` `## Unreleased` section gains a "Docs" entry.
-- [ ] `make check` clean (run during commit).
-- [ ] PR description links to this plan and the two source audits.
+- [x] `make check` clean (545 passed, 1 skipped).
+- [x] PR description links to this plan and the two source audits.
+- [x] Quick-wins additions QW5 (Dark theme) + QW6 (Per-tenant branding) recorded in §2 and §3.3.
 
 ---
 
