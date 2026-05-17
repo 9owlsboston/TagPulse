@@ -806,7 +806,7 @@
           "category_type": {
             "enum": [
               "liquid_container",
-              "reference_pixel",
+              "reference_tag",
               "rti_container",
               "object"
             ],
@@ -830,10 +830,10 @@
             "title": "Name",
             "type": "string"
           },
-          "required_pixels": {
+          "required_tags": {
             "default": 1,
             "minimum": 1.0,
-            "title": "Required Pixels",
+            "title": "Required Tags",
             "type": "integer"
           },
           "sku_upc": {
@@ -862,7 +862,7 @@
           "category_type": {
             "enum": [
               "liquid_container",
-              "reference_pixel",
+              "reference_tag",
               "rti_container",
               "object"
             ],
@@ -894,8 +894,8 @@
             "title": "Name",
             "type": "string"
           },
-          "required_pixels": {
-            "title": "Required Pixels",
+          "required_tags": {
+            "title": "Required Tags",
             "type": "integer"
           },
           "sku_upc": {
@@ -927,7 +927,7 @@
           "sku_upc",
           "description",
           "category_type",
-          "required_pixels",
+          "required_tags",
           "created_at",
           "updated_at"
         ],
@@ -961,7 +961,7 @@
             ],
             "title": "Name"
           },
-          "required_pixels": {
+          "required_tags": {
             "anyOf": [
               {
                 "minimum": 1.0,
@@ -971,7 +971,7 @@
                 "type": "null"
               }
             ],
-            "title": "Required Pixels"
+            "title": "Required Tags"
           },
           "sku_upc": {
             "anyOf": [

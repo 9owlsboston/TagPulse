@@ -55,7 +55,7 @@ def _repo(session: AsyncSession) -> TimescaleCategoryRepository:
 
 
 def _diff(old: CategoryResponse, new: CategoryResponse) -> dict[str, dict[str, object]]:
-    fields = ("name", "sku_upc", "description", "required_pixels")
+    fields = ("name", "sku_upc", "description", "required_tags")
     changes: dict[str, dict[str, object]] = {}
     for field in fields:
         old_value = getattr(old, field)
@@ -103,7 +103,7 @@ async def create_category(
         changes={
             "name": created.name,
             "category_type": created.category_type,
-            "required_pixels": created.required_pixels,
+            "required_tags": created.required_tags,
             "sku_upc": created.sku_upc,
         },
         user_id=user.user_id,

@@ -10,8 +10,16 @@ Today `assets.asset_type` is a free-form `VARCHAR(50)` per
 [`models/database.py`](../../src/tagpulse/models/database.py). The reference
 design treats Categories as a first-class entity: every asset must belong to
 exactly one Category, Category declares the sensing-event capability template
-and the required-pixel count, and Configurable Sensing Events (ADR 021) scope
+and the required-tag count, and Configurable Sensing Events (ADR 021) scope
 themselves per `(category, event_type)`.
+
+> **Terminology note.** The reference design calls RFID tags "pixels"
+> throughout. TagPulse's domain term is **tag** — see
+> [`docs/data-models.md` §"Where is the tag?"](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table)
+> for the why. This ADR uses TagPulse's vocabulary for all
+> TagPulse-owned schema (column names, enum values, API fields) and
+> only keeps the word "pixel" when naming an external reference-design
+> concept verbatim (e.g. gap 2.14 "Pixel registry").
 
 Without Categories:
 
@@ -21,7 +29,7 @@ Without Categories:
   type.
 - The outbound event envelope (gap 2.9) cannot carry `categoryId`.
 - The reference design's Pixel registry (gap 2.14, currently deferred) cannot
-  enforce the required-pixel-count contract.
+  enforce the required-tag-count contract.
 
 ## Decision (proposed — to be ratified in Sprint 34)
 
@@ -35,8 +43,8 @@ CREATE TABLE categories (
     name VARCHAR(255) NOT NULL,
     sku_upc VARCHAR(64),
     description TEXT,
-    category_type VARCHAR(32) NOT NULL,   -- liquid_container | reference_pixel | rti_container | object
-    required_pixels SMALLINT NOT NULL DEFAULT 1,
+    category_type VARCHAR(32) NOT NULL,   -- liquid_container | reference_tag | rti_container | object
+    required_tags SMALLINT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (tenant_id, name)
@@ -68,14 +76,14 @@ DELETE /v1/tenants/{slug}/categories/{id}          (delete, admin; 409 if refere
 ```
 
 UI: new sidebar item "Categories" under the top-level section; CRUD page with
-columns Name · SKU/UPC · ID · Description · Type · # required pixels.
+columns Name · SKU/UPC · ID · Description · Type · # required tags.
 
 ## Alternatives considered
 
 1. **Status quo (free-form `asset_type`)** — rejected; can't scope Sensing
    Events, can't propagate `categoryId` in outbound events.
 2. **Tag-based categorisation via Labels (ADR 020)** — rejected; Categories
-   carry behavioural metadata (`required_pixels`, `category_type`) that
+   carry behavioural metadata (`required_tags`, `category_type`) that
    Labels deliberately don't.
 3. **Categories as JSONB array on `tenants`** — rejected; doesn't scale, no
    FK integrity, no per-row audit.
@@ -94,7 +102,7 @@ columns Name · SKU/UPC · ID · Description · Type · # required pixels.
 
 - Should `category_type` be DB-enforced (CHECK constraint) or app-enforced
   (Pydantic enum only)? Lean DB-enforced for safety.
-- Should `required_pixels` be inferred from `category_type` (like the
+- Should `required_tags` be inferred from `category_type` (like the
   reference design) or operator-set? Lean operator-set with a per-type
   default suggestion in the UI.
 - Cross-tenant import path for category catalogs? Defer until first

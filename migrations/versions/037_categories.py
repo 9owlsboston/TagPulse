@@ -10,15 +10,17 @@ Adds:
 
 - ``categories`` table — tenant-scoped, RLS-protected, with
   ``UNIQUE(tenant_id, name)``. ``category_type`` is one of
-  ``liquid_container`` / ``reference_pixel`` / ``rti_container`` /
+  ``liquid_container`` / ``reference_tag`` / ``rti_container`` /
   ``object`` (CHECK constraint; immutability enforced in the API
-  layer, not here). ``required_pixels`` defaults to 1 and must be
-  positive.
+  layer, not here). ``required_tags`` defaults to 1 and must be
+  positive. (The reference design calls these "pixels"; TagPulse's
+  domain term is "tag" — see ``docs/data-models.md`` §"Where is the
+  tag?".)
 - ``assets.category_id`` — nullable FK to ``categories(id)`` with
   ``ON DELETE RESTRICT``. Indexed for the per-category Asset filter.
 - Backfill — every distinct ``(tenant_id, asset_type)`` pair in the
   existing ``assets`` table becomes a ``category_type='object'`` row
-  with ``required_pixels=1`` and ``name=asset_type``; the asset's new
+  with ``required_tags=1`` and ``name=asset_type``; the asset's new
   ``category_id`` is set to that row.
 
 Note: ``assets.asset_type`` stays in place this sprint as a
@@ -42,7 +44,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-_CATEGORY_TYPES = ("liquid_container", "reference_pixel", "rti_container", "object")
+_CATEGORY_TYPES = ("liquid_container", "reference_tag", "rti_container", "object")
 
 
 def upgrade() -> None:
@@ -66,7 +68,7 @@ def upgrade() -> None:
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("category_type", sa.String(32), nullable=False),
         sa.Column(
-            "required_pixels",
+            "required_tags",
             sa.SmallInteger(),
             nullable=False,
             server_default=sa.text("1"),
@@ -92,9 +94,9 @@ def upgrade() -> None:
         "category_type IN (" + ", ".join(f"'{value}'" for value in _CATEGORY_TYPES) + ")",
     )
     op.create_check_constraint(
-        "ck_categories_required_pixels_positive",
+        "ck_categories_required_tags_positive",
         "categories",
-        "required_pixels >= 1",
+        "required_tags >= 1",
     )
     op.execute("ALTER TABLE categories ENABLE ROW LEVEL SECURITY")
     op.execute(
@@ -104,13 +106,13 @@ def upgrade() -> None:
 
     # -- 2. Backfill from existing assets.asset_type --
     # One Category row per distinct (tenant_id, asset_type). Default
-    # category_type='object' / required_pixels=1 per the ADR. Migrations
+    # category_type='object' / required_tags=1 per the ADR. Migrations
     # run as the table owner and bypass the RLS policy (Postgres default
     # without FORCE ROW LEVEL SECURITY), so no per-tenant SET is
     # required.
     op.execute(
         """
-        INSERT INTO categories (tenant_id, name, category_type, required_pixels)
+        INSERT INTO categories (tenant_id, name, category_type, required_tags)
         SELECT DISTINCT tenant_id, asset_type, 'object', 1
           FROM assets
          WHERE asset_type IS NOT NULL AND asset_type <> ''

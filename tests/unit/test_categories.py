@@ -25,13 +25,13 @@ class TestCategoryCreate:
         body = CategoryCreate(name="Pallet", category_type="object")
         assert body.name == "Pallet"
         assert body.category_type == "object"
-        assert body.required_pixels == 1
+        assert body.required_tags == 1
         assert body.sku_upc is None
         assert body.description is None
 
     @pytest.mark.parametrize(
         "category_type",
-        ["liquid_container", "reference_pixel", "rti_container", "object"],
+        ["liquid_container", "reference_tag", "rti_container", "object"],
     )
     def test_all_four_category_types_accepted(self, category_type: str) -> None:
         body = CategoryCreate(name="X", category_type=category_type)  # type: ignore[arg-type]
@@ -41,15 +41,15 @@ class TestCategoryCreate:
         with pytest.raises(ValidationError):
             CategoryCreate(name="X", category_type="widget")  # type: ignore[arg-type]
 
-    def test_required_pixels_must_be_positive(self) -> None:
+    def test_required_tags_must_be_positive(self) -> None:
         with pytest.raises(ValidationError):
-            CategoryCreate(name="X", category_type="object", required_pixels=0)
+            CategoryCreate(name="X", category_type="object", required_tags=0)
         with pytest.raises(ValidationError):
-            CategoryCreate(name="X", category_type="object", required_pixels=-3)
+            CategoryCreate(name="X", category_type="object", required_tags=-3)
 
-    def test_required_pixels_greater_than_one_accepted(self) -> None:
-        body = CategoryCreate(name="Pallet", category_type="object", required_pixels=4)
-        assert body.required_pixels == 4
+    def test_required_tags_greater_than_one_accepted(self) -> None:
+        body = CategoryCreate(name="Pallet", category_type="object", required_tags=4)
+        assert body.required_tags == 4
 
     def test_name_required(self) -> None:
         with pytest.raises(ValidationError):
@@ -86,9 +86,9 @@ class TestCategoryUpdate:
         # 400.
         assert "category_type" not in CategoryUpdate.model_fields
 
-    def test_required_pixels_zero_rejected(self) -> None:
+    def test_required_tags_zero_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            CategoryUpdate(required_pixels=0)
+            CategoryUpdate(required_tags=0)
 
 
 class TestCategoryResponse:
@@ -209,7 +209,7 @@ class TestRouterDiffHelper:
             "sku_upc": None,
             "description": None,
             "category_type": "object",
-            "required_pixels": 1,
+            "required_tags": 1,
             "created_at": now,
             "updated_at": now,
         }

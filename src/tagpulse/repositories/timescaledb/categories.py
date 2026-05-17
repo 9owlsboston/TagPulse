@@ -73,7 +73,7 @@ class TimescaleCategoryRepository:
             sku_upc=payload.sku_upc,
             description=payload.description,
             category_type=payload.category_type,
-            required_pixels=payload.required_pixels,
+            required_tags=payload.required_tags,
         )
         self._session.add(row)
         try:

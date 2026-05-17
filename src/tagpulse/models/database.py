@@ -524,18 +524,22 @@ class CategoryModel(Base):
 
     Every asset *should* belong to exactly one Category. Category
     declares the sensing-event capability template (``category_type``)
-    and the required-pixel count consumed by ADR 021 (Configurable
-    Sensing Events) and the future pixel registry (gap 2.14).
+    and the required-tag count consumed by ADR 021 (Configurable
+    Sensing Events). (The reference design calls these "pixels";
+    TagPulse's domain term is "tag" — see ``docs/data-models.md``
+    §"Where is the tag?". The reference design's separate Pixel
+    registry concept (gap 2.14) is deferred and TagPulse already has
+    equivalents via ``tag_reads`` + ``asset_tag_bindings``.)
 
     Invariants:
 
     - ``UNIQUE(tenant_id, name)`` — enforced by the DB.
     - ``category_type`` must be one of ``liquid_container`` /
-      ``reference_pixel`` / ``rti_container`` / ``object`` — enforced
+      ``reference_tag`` / ``rti_container`` / ``object`` — enforced
       by a DB ``CHECK`` constraint AND a Pydantic ``Literal``.
     - ``category_type`` is **immutable after create** — enforced in
       the API layer (``PATCH`` rejects changes), not in the DB.
-    - ``required_pixels`` must be ``>= 1`` — DB ``CHECK``.
+    - ``required_tags`` must be ``>= 1`` — DB ``CHECK``.
     - Cannot be deleted while any asset references it — enforced by
       the ``ON DELETE RESTRICT`` FK on ``assets.category_id``; the API
       surfaces a 409 with the count of referencing assets.
@@ -551,7 +555,7 @@ class CategoryModel(Base):
     sku_upc: Mapped[str | None] = mapped_column(String(64), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     category_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    required_pixels: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    required_tags: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

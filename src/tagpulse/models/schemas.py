@@ -939,7 +939,7 @@ class TagDataMappingUpdate(BaseModel):
 
 # -- Sprint 34 (ADR 019): Categories --
 
-CategoryType = Literal["liquid_container", "reference_pixel", "rti_container", "object"]
+CategoryType = Literal["liquid_container", "reference_tag", "rti_container", "object"]
 
 
 class CategoryCreate(BaseModel):
@@ -949,7 +949,7 @@ class CategoryCreate(BaseModel):
     sku_upc: str | None = Field(default=None, max_length=64)
     description: str | None = None
     category_type: CategoryType
-    required_pixels: int = Field(default=1, ge=1)
+    required_tags: int = Field(default=1, ge=1)
 
 
 class CategoryUpdate(BaseModel):
@@ -964,7 +964,7 @@ class CategoryUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     sku_upc: str | None = Field(default=None, max_length=64)
     description: str | None = None
-    required_pixels: int | None = Field(default=None, ge=1)
+    required_tags: int | None = Field(default=None, ge=1)
 
 
 class CategoryResponse(BaseModel):
@@ -976,7 +976,7 @@ class CategoryResponse(BaseModel):
     sku_upc: str | None
     description: str | None
     category_type: CategoryType
-    required_pixels: int
+    required_tags: int
     created_at: datetime
     updated_at: datetime
 
