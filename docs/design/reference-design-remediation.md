@@ -1,0 +1,179 @@
+# Reference-Design Remediation Plan
+
+- Sprint: 33 (kickoff sprint — this doc + ADR stubs only; implementation lands across Sprints 34–39)
+- Status: Proposed
+- Owner: backend + UI joint
+- Related:
+  - Audit inputs (unversioned, sibling repo): `~/ws/TagPulse-Design/IMPLEMENTATION-GAPS.md`, `~/ws/TagPulse-Design/UI-LOOK-AND-FEEL-GAPS.md`
+  - ADRs created by this plan: [019 Categories](../adr/019-categories.md), [020 Labels first-class](../adr/020-labels-first-class.md), [021 Configurable Sensing Events](../adr/021-configurable-sensing-events.md), [022 Soft Assets](../adr/022-soft-assets.md), [023 Outbound Connections MQTT/Kafka](../adr/023-outbound-connections-mqtt-kafka.md)
+
+---
+
+## 1 — Purpose
+
+Two gap audits exist against the Wiliot Cloud Platform reference design (which
+TagPulse uses as its visual + behavioural reference, not as a clone target):
+
+| Audit | Scope | Where |
+|---|---|---|
+| `IMPLEMENTATION-GAPS.md` | Schema, services, APIs, payload envelopes | `~/ws/TagPulse-Design/` (unversioned) |
+| `UI-LOOK-AND-FEEL-GAPS.md` | TagPulse-UI IA, theming, page layouts, form patterns | `~/ws/TagPulse-Design/` (unversioned) |
+
+Together they enumerate ~25 distinct gaps tagged 🔴 (5) / 🟠 (12) / 🟡 (8).
+**This document is the scope-lock**: which gaps we commit to, which we defer,
+which we drop, and how they fan out across the next 6 sprints.
+
+It is *not* a design doc for any one gap — each accepted gap gets its own ADR
+(see §4) and, where it touches ≥3 components, a per-feature design doc in
+`docs/design/`.
+
+---
+
+## 2 — Method
+
+For every gap in both audits, force a **Commit / Defer / Drop** decision and
+pin a sprint slot. The five 🔴 gaps drive sprint sequencing because they
+unblock downstream UI work:
+
+```
+Sprint 33 (kickoff)        ──> this doc + 5 ADR stubs + UI quick-wins track
+Sprint 34 (categories)     ──> ADR 019 lands; assets.category_id; UI Categories page
+Sprint 35 (labels)         ──> ADR 020 lands; labels catalog; label chips replace metadata JSON
+Sprint 36 (sensing events) ──> ADR 021 lands; sensing_event_configs; new modal
+Sprint 37 (connections)    ──> ADR 023 lands; MQTT dispatcher; Connections page redesign
+Sprint 38 (edge)           ──> Bridge/Gateway split; Connectivity Monitor; OTA toggle
+Sprint 39 (soft assets)    ──> ADR 022 lands; auto-create policy; convert-to-asset flow
+```
+
+**Parallel quick-wins track** (no backend deps, ship during Sprint 33–34):
+
+1. TagPulse-UI `<ConfigProvider>` + teal `colorPrimary` + light Sider.
+2. Sider section groups (DATA MANAGEMENT / EDGE MANAGEMENT dividers).
+3. Top-bar account-management dropdown — move admin items out of sidebar.
+4. Reusable `<LastUpdate timestamp onRefresh/>` component.
+
+These four PRs close ~30 % of the perceptual gap at near-zero engineering cost
+and are tracked in the TagPulse-UI repo, not here.
+
+---
+
+## 3 — Scope decisions
+
+### 3.1 Backend gaps (`IMPLEMENTATION-GAPS.md`)
+
+| # | Gap | Severity | Decision | Sprint | Notes |
+|---|---|---|---|---|---|
+| 2.1 | Categories entity | 🔴 | **Commit** | 34 | ADR 019. Unblocks 2.3, 2.8, 2.14. |
+| 2.2 | Labels first-class | 🔴 | **Commit** | 35 | ADR 020. Replaces free-form `metadata` JSONB for catalogued use cases; raw `metadata` stays for true bag-of-properties. |
+| 2.3 | Configurable Sensing Events | 🔴 | **Commit** | 36 | ADR 021. New `sensing_event_configs` table; `rules` stays for non-category-scoped automations. Coexistence designed in the ADR. |
+| 2.4 | Soft Assets | 🔴 | **Commit (deferred)** | 39 | ADR 022. Has cost implications (one row per unique stray pixel); slot last so we can size based on observed `tag_reads_without_asset_total` in dev. |
+| 2.5 | MQTT/Kafka/Pub-Sub Connections | 🔴 | **Commit (MQTT only)** | 37 | ADR 023. Kafka + Pub-Sub deferred to backlog; covers only ~5 % of expected enterprise integrations and each is a separate dispatcher. |
+| 2.6 | `users.role` adds `installer` | 🟠 | **Commit** | 34 | Trivial; ride along with the Categories migration. |
+| 2.7 | `sites.kind` + `latitude` + `longitude` + structured address | 🟠 | **Commit** | 34 | Required for Site/Transporter icon column in Locations UI. |
+| 2.8 | `assets.category_id` FK + `external_ref` validation | 🟠 | **Commit** | 34 | Same sprint as Categories — they're one migration. |
+| 2.9 | Outbound event envelope (`confidence`, `keySet[]`, `eventConfigurationId`, `categoryId`, `labels[]`) | 🟠 | **Commit** | 36 | Lands with Sensing Events ADR 021 so the new fields have a source. |
+| 2.10 | Per-catalog API security keys + JWT exchange | 🟠 | **Defer** | backlog | Today's auth (per-tenant + per-user + per-device tokens) satisfies the security model. Revisit if a customer asks for per-catalog scoping. |
+| 2.11 | Bridge OTA toggle + gateway-driven push | 🟡 | **Commit** | 38 | Lands with Bridge/Gateway split; minimal — just `devices.configuration.ota_upgrade_enabled` + edge contract field. |
+| 2.12 | Bridge Survey tool | 🟡 | **Drop** | — | Highly specific to BLE relay deployments; TagPulse's RFID-reader primary use case doesn't need it. Document as out-of-scope. |
+| 2.13 | Connectivity Monitor (uptime % / disconnections / avg) | 🟠 | **Commit** | 38 | Lands with Bridge/Gateway split. Single analytics module over existing `device_health` + `last_seen` data. |
+| 2.14 | Pixel registry (batch CSV 6 000, reel-range, transfer) | 🟡 | **Defer** | backlog | TagPulse intentionally has no `tags` table (see [data-models.md](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table)). A read-only Pixels page can be served from `asset_tag_bindings` + `tag_reads` without a new entity — that's a UI ticket, not a backend one. |
+| 2.15 | Connections Import/Export JSON + per-conn rate-limit + Monitor | 🟠 | **Commit (rate-limit + monitor only)** | 37 | Import/Export deferred — low value vs. cost. |
+| 2.16 | Auto-association by reel range | 🟡 | **Drop** | — | Depends on pixel-registry (2.14, deferred). Drop entirely; manual association is sufficient. |
+| 2.17 | First-party Python SDK on PyPI | 🟡 | **Defer** | backlog | The generated OpenAPI client serves SDK needs today. |
+
+### 3.2 UI gaps (`UI-LOOK-AND-FEEL-GAPS.md`)
+
+| # | Gap | Severity | Decision | Sprint | Notes |
+|---|---|---|---|---|---|
+| 1.1 | Sider section groups | 🔴 | **Commit** | 33 (quick-win) | Ant Menu `type: 'group'`. Zero backend dep. |
+| 1.1 | Categories nav item | 🔴 | **Commit** | 34 | Lands with backend Categories. |
+| 1.1 | Pixels nav item (read-only page) | 🟠 | **Commit** | 38 | UI-only; reads from existing bindings + reads. |
+| 1.1 | Bridges vs Gateways sidebar split | 🟠 | **Commit** | 38 | Driven by `devices.device_role` (see ADR 011 — already partially scoped). |
+| 1.1 | Unify Telemetry/Models/Rules/Alerts → "Sensing Events & Data" | 🟠 | **Commit** | 36 | Lands with Sensing Events ADR 021. |
+| 1.1 | Admin items → top-right Account dropdown | 🟠 | **Commit** | 33 (quick-win) | Pure UI refactor. |
+| 1.2 | Notification bell | 🟡 | **Defer** | backlog | Useful but not on critical path. |
+| 2.1 | Light Sider + teal `colorPrimary` + ConfigProvider | 🟠 | **Commit** | 33 (quick-win) | Highest visual-impact-per-LOC change in the audit. |
+| 2.2 | Typography polish | 🟡 | **Defer** | backlog | Marginal value. |
+| 3.1 | Onboarding cards on Dashboard | 🟡 | **Drop** | — | TagPulse's operator-dashboard model is intentional. Keep as-is. |
+| 3.2 | Locations/Zones two-tab redesign + Soft Assets column | 🟠 | **Commit** | 34 (tabs) + 39 (Soft Assets column) | Tabs ride with `sites.kind`; Soft Assets column waits for ADR 022. |
+| 3.3 | Categories page | 🔴 | **Commit** | 34 | |
+| 3.4 | Pixels page | 🟠 | **Commit** | 38 | UI-only as noted above. |
+| 3.5 | Sensing Events modal | 🔴 | **Commit** | 36 | |
+| 3.6 | Connections page redesign | 🟠 | **Commit** | 37 | |
+| 3.7 | Gateways list with status banner + Compliance panel | 🟠 | **Commit (status banner only)** | 38 | Compliance panel **dropped** — Compliance Status is bridge-firmware-specific and TagPulse's RFID-reader use case has no equivalent. |
+| 3.8 | Per-device Monitor tab w/ Connectivity KPIs + 8h/1d/3d range | 🟠 | **Commit** | 38 | Lands with Connectivity Monitor backend (2.13). |
+| 3.9 | Asset Detail Events Log tab + Labels chips | 🟠 | **Commit** | 35 (chips) + 36 (Events Log) | |
+| 3.10 | Developer Portal landing card | 🟡 | **Defer** | backlog | Link out to Swagger UI from Dashboard footer is sufficient short-term. |
+| §4 | Modal width / sticky footer / Advanced accordion patterns | 🟡 | **Commit (opportunistic)** | rolling | Adopt as each affected page is touched, not as a dedicated sprint. |
+| §5 | Two-line cells / kebab-menu action column | 🟡 | **Commit (opportunistic)** | rolling | Same — adopt during each page's redesign. |
+| §6 | Empty-state component | 🟡 | **Commit** | 33 (quick-win) | `<EmptyState illustration title action/>` wrapper; 1-day UI ticket. |
+
+---
+
+## 4 — ADRs created by this plan
+
+Each blocking-tier gap gets a stub ADR landed in this PR so reviewers can
+debate the *shape* before the implementing sprint loads its first line of
+code:
+
+| ADR | Title | Sprint that implements |
+|---|---|---|
+| [019](../adr/019-categories.md) | Categories as a first-class entity | 34 |
+| [020](../adr/020-labels-first-class.md) | Labels first-class (catalog + per-entity associations) | 35 |
+| [021](../adr/021-configurable-sensing-events.md) | Configurable Sensing Events (replacing rules-only) | 36 |
+| [022](../adr/022-soft-assets.md) | Soft Assets auto-creation policy | 39 |
+| [023](../adr/023-outbound-connections-mqtt-kafka.md) | Outbound Connections — add MQTT dispatcher | 37 |
+
+Each stub captures: known context, the four candidate options seen in the
+audit + design references, the recommended option with rationale, and the
+open questions for the implementing sprint to close.
+
+---
+
+## 5 — What this plan deliberately does **not** commit to
+
+So that future audits don't refile these as gaps:
+
+| Item | Why excluded |
+|---|---|
+| 1:1 pixel-perfect parity with the reference UI | Different audience (operator-heavy, multi-mode); TagPulse keeps draggable dashboard, Map page, Polygon zones, Path replay, Bulk Reassign Zone, `<ApiHealthGate>`, `<RoleGuard>`, CSV Import, mTLS for MQTT, RLS multi-tenancy — see [§7 of IMPLEMENTATION-GAPS.md](~/ws/TagPulse-Design/IMPLEMENTATION-GAPS.md) and [§9 of UI-LOOK-AND-FEEL-GAPS.md](~/ws/TagPulse-Design/UI-LOOK-AND-FEEL-GAPS.md). |
+| First-class `pixels` table | Intentional per [data-models.md](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table). Read-only page from bindings is sufficient. |
+| Kafka + Pub-Sub dispatchers | Marginal use case. Re-evaluate when a customer asks. |
+| Per-catalog security keys + JWT exchange | Existing tenant/user/device token model satisfies our threat model. |
+| Bridge OTA full firmware-push pipeline | Toggle field only; the actual firmware-distribution mechanism stays an edge-side concern. |
+| Bridge Survey tool | RFID-reader use case doesn't need it. |
+| Pixel batch CSV (up to 6 000) + reel-range ops + cross-account transfer | Depends on the dropped pixel registry. |
+| Compliance Status panel on Gateways list | RFID readers don't have the bridge-firmware compliance concept. |
+| Developer Portal landing page | Out-of-scope for a single-product SaaS at this stage. |
+| Bell-icon notifications | Nice-to-have, deferred indefinitely. |
+
+---
+
+## 6 — Acceptance criteria for this kickoff PR
+
+- [x] This document lands at `docs/design/reference-design-remediation.md`.
+- [x] Five ADR stubs (019–023) land at `docs/adr/0NN-*.md` with status **Proposed**.
+- [x] `docs/adr/README.md` index appended with the five new rows.
+- [x] `CHANGELOG.md` `## Unreleased` section gains a "Docs" entry.
+- [ ] `make check` clean (run during commit).
+- [ ] PR description links to this plan and the two source audits.
+
+---
+
+## 7 — Updating this document
+
+When a subsequent sprint implements one of the committed gaps:
+
+1. Flip the row's decision column from **Commit** to **Done** + link the
+   implementing PR.
+2. Move any new gaps discovered during implementation into the table with a
+   fresh decision.
+3. Annotate any sprint slot that slips with the new target sprint and a
+   one-line reason.
+
+When a deferred or dropped gap is re-litigated (e.g. customer ask):
+re-open the row, change the decision, and link the new ADR.
+
+The audits in `~/ws/TagPulse-Design/` are **read-only snapshots** as of
+2026-05-17. Don't re-edit them — produce a new dated audit if the
+reference design itself evolves.
