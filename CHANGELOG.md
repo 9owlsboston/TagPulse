@@ -21,6 +21,7 @@ All notable changes to TagPulse will be documented in this file.
 
 ### Fixes
 
+- `scripts/azd-logs.sh` — cap `--tail` at 300 (was 1000, which `az containerapp logs show` rejects with `--tail must be between 0 and 300`, breaking `make logs ENV=<env> SERVICE=<api|worker> SINCE=<duration>`). While here, surface that `SINCE` is *approximate*: `az containerapp logs show` has no time-based filter (only `--tail N` and `--follow`), so the script now emits a one-line stderr note when `SINCE` is provided. For true time-windowed queries, use `az monitor log-analytics query` against the env's Log Analytics workspace.
 - `scripts/lib/azd-common.sh` `azd()` wrapper — extend the upgrade-nag filter to also strip azd 1.25's "Update available:" message (was leaking into command-substituted output and corrupting `RG` / `KV_NAME` / `ACR_NAME` in `azd-doctor.sh`, causing false reds for resource group, ACR, and KV).
 - `.github/workflows/dev-wake.yml` — extend schedule to Mon–Sun (`1-7`) so the dev env is also warm for weekend on-call paging.
 - `.github/workflows/dev-wake.yml` — fix cron expression: `1-7` is out of range for the day-of-week field (valid 0–6) and GitHub Actions silently disabled the schedule, so no scheduled wake fired on Sat May 16 or Sun May 17. Switched to `0 13 * * *` (every day) with a comment documenting the gotcha.

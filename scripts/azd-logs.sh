@@ -46,8 +46,17 @@ case "$SERVICE" in
     ;;
   api|worker)
     log "tailing Container App logs for $NAME (rg=$RG)"
+    # NOTE: `az containerapp logs show` has no time-based filter — only
+    # row-count (--tail, capped at 300 by the CLI) or live (--follow).
+    # When SINCE is set we map it to the maximum row count and warn that
+    # the actual time window depends on log volume. For real time-based
+    # queries, use `az monitor log-analytics query` against the env's
+    # Log Analytics workspace.
+    if [[ -n "$SINCE" ]]; then
+      log "note: SINCE=$SINCE is approximate — az containerapp logs is row-count based; using --tail 300"
+    fi
     az containerapp logs show --name "$NAME" --resource-group "$RG" \
-      $([[ -n "$SINCE" ]] && echo "--tail 1000") \
+      $([[ -n "$SINCE" ]] && echo "--tail 300") \
       $([[ "$FOLLOW" == "1" ]] && echo "--follow")
     ;;
 esac
