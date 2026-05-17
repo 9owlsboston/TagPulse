@@ -2766,6 +2766,58 @@
         "title": "ProvisionStatusResponse",
         "type": "object"
       },
+      "PublicBranding": {
+        "description": "Login-page-facing branding payload. Includes ``name`` so the\nlogin UI can fall back gracefully when ``display_name`` is unset.",
+        "properties": {
+          "brand_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Color"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ],
+        "title": "PublicBranding",
+        "type": "object"
+      },
       "ReadsPerHour": {
         "description": "Aggregation: tag read count per hour bucket.",
         "properties": {
@@ -4760,6 +4812,93 @@
           "unit"
         ],
         "title": "TelemetryResponse",
+        "type": "object"
+      },
+      "TenantBranding": {
+        "description": "Per-tenant branding overrides. ``None`` on any field means\n\"no override; UI uses the system default\".",
+        "properties": {
+          "brand_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Primary brand colour as #RRGGBB hex.",
+            "title": "Brand Color"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Friendly name shown in the Sider/login in place of tenants.name.",
+            "title": "Display Name"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "HTTPS URL to the logo image hosted by the operator.",
+            "title": "Logo Url"
+          }
+        },
+        "title": "TenantBranding",
+        "type": "object"
+      },
+      "TenantBrandingUpdate": {
+        "description": "Admin payload. PATCH semantics: missing fields keep their\ncurrent value, explicit ``null`` clears the override.",
+        "properties": {
+          "brand_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Color"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url"
+          }
+        },
+        "title": "TenantBrandingUpdate",
         "type": "object"
       },
       "TenantConfig": {
@@ -7264,6 +7403,49 @@
         "summary": "Login",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/branding/{slug}": {
+      "get": {
+        "description": "Public branding lookup for the login page (no auth).\n\nReturns the tenant's display name + logo URL + brand colour so the\nlogin UI can skin itself before the user has credentials. 404 if\nthe slug is unknown.",
+        "operationId": "get_public_branding_branding__slug__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicBranding"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Public Branding",
+        "tags": [
+          "tenant"
         ]
       }
     },
@@ -12005,6 +12187,78 @@
         "summary": "Recent Reads",
         "tags": [
           "query"
+        ]
+      }
+    },
+    "/tenant/branding": {
+      "get": {
+        "description": "Return the calling tenant's branding overrides (any role).",
+        "operationId": "get_tenant_branding_tenant_branding_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantBranding"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Tenant Branding",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "patch": {
+        "description": "Update tenant branding (admin only). PATCH semantics; audited.\n\nOnly fields **present** in the request body are written. An\nexplicit ``null`` clears that field's override.",
+        "operationId": "update_tenant_branding_tenant_branding_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantBrandingUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantBranding"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Update Tenant Branding",
+        "tags": [
+          "tenant"
         ]
       }
     },
