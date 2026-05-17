@@ -485,9 +485,10 @@ The physical thing being tracked, distinct from the reader. See [design/assets-a
 |--------|------|-------------|-------|
 | `id` | UUID | PK | |
 | `tenant_id` | UUID | FK → tenants.id, NOT NULL | |
-| `external_ref` | VARCHAR(255) | NULLABLE | ERP / WMS asset code |
+| `external_ref` | VARCHAR(255) | NULLABLE | ERP / WMS asset code. URL-unsafe characters rejected at the API layer (see [ADR-019](adr/019-categories.md), gap 2.8). |
 | `name` | VARCHAR(255) | NOT NULL | |
-| `asset_type` | VARCHAR(50) | NOT NULL | Free-form per tenant (e.g. `pallet`, `tool`) |
+| `asset_type` | VARCHAR(50) | NOT NULL | Free-form per tenant (e.g. `pallet`, `tool`). **Deprecated by [ADR-019](adr/019-categories.md);** kept this release as a compatibility shadow alongside `category_id`. Drops in a future migration once UI + clients have switched. |
+| `category_id` | UUID | FK → categories.id, ON DELETE RESTRICT, NULLABLE | Sprint 34. Backfilled by name match from `asset_type`. See [ADR-019](adr/019-categories.md). |
 | `status` | VARCHAR(20) | NOT NULL, default `'active'` | `active` \| `retired` \| `lost` |
 | `metadata` | JSONB | NULLABLE | |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
@@ -495,7 +496,7 @@ The physical thing being tracked, distinct from the reader. See [design/assets-a
 
 **Unique constraint:** `(tenant_id, external_ref)`
 **RLS:** Yes
-**Migration:** 017
+**Migration:** 017 (base table); 037 adds `category_id`
 
 ---
 
@@ -538,6 +539,33 @@ Physical locations.
 **Unique constraint:** `(tenant_id, name)`
 **RLS:** Yes
 **Migration:** 017
+
+> **Sprint 34 follow-up.** Gap 2.7 of the [reference-design remediation plan](design/reference-design-remediation.md) adds `kind` (Site \| Transporter), `latitude`, `longitude`, and a structured-address breakout to `sites`. Tracked as a separate slice; ships before the Locations UI redesign in Sprint 34/35.
+
+---
+
+### categories
+
+First-class tenant-scoped categorisation for `assets` (Sprint 34, [ADR-019](adr/019-categories.md)). Replaces the free-form `assets.asset_type` string. Carries behavioural metadata (`category_type`, `required_tags`) that downstream Sensing Events (ADR 021) scope themselves against. Cannot be deleted while any asset references it (`FK ON DELETE RESTRICT`).
+
+> **Terminology.** The reference design calls RFID tags "pixels" so its equivalent column is `required_pixels`. TagPulse uses **`required_tags`** — see [§"Where is the tag?"](#where-is-the-tag-and-why-theres-no-tags-table).
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | UUID | PK | |
+| `tenant_id` | UUID | FK → tenants.id, NOT NULL | |
+| `name` | VARCHAR(255) | NOT NULL | |
+| `sku_upc` | VARCHAR(64) | NULLABLE | Optional SKU / UPC for catalogue lookup. |
+| `description` | TEXT | NULLABLE | |
+| `category_type` | VARCHAR(32) | NOT NULL, CHECK | One of `liquid_container` \| `reference_tag` \| `rti_container` \| `object`. **Immutable after create** (API-enforced, 400 on attempted PATCH). |
+| `required_tags` | SMALLINT | NOT NULL, default `1`, CHECK `>= 1` | Operator-set; UI suggests a per-type default. |
+| `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
+
+**Unique constraint:** `(tenant_id, name)`
+**CHECK constraints:** `ck_categories_type`, `ck_categories_required_tags_positive`
+**RLS:** Yes (`tenant_isolation_categories`)
+**Migration:** 037
 
 ---
 
