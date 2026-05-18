@@ -1,9 +1,9 @@
 # ADR-021: Configurable Signaling Events
 
-- Status: Proposed (Sprint 33, May 2026) — **revised after first review**
+- Status: **Accepted** (Sprint 41, May 2026) — ratified after Phases A–E shipped on [PR #54](https://github.com/9owlsboston/TagPulse/pull/54) and the UI surface shipped on TagPulse-UI [PR #46](https://github.com/9owlsboston/TagPulse-UI/pull/46) (`ebb2f82`). Originally **Proposed** in Sprint 33 (May 2026), revised after first review.
 - Implements: gap 2.3 (and the outbound-envelope half of 2.9) in the external schema/API audit notes (held locally)
-- Related: [reference-design-remediation plan](../design/reference-design-remediation.md), ADR [005 embedded rules engine](005-embedded-rules-engine.md) (the existing automation surface that this ADR extends), ADR [015 telemetry rules & deprecation](015-telemetry-rules-and-deprecation.md), ADR [019 Categories](019-categories.md) (scoping prerequisite), ADR [020 Labels](020-labels-first-class.md) (scoping prerequisite)
-- Revision history: v1 proposed a parallel `sensing_event_configs` table; v2 extends `rules` after stakeholder review; **v2.1 (Sprint 41 Phase A) renames "sensing" → "signaling"** throughout (aligns with Azure Monitor's "Signal → Condition → Action" vocabulary; the file path stays `021-configurable-sensing-events.md` for link stability). See §"Decision history" below.
+- Related: [reference-design-remediation plan](../design/reference-design-remediation.md), ADR [005 embedded rules engine](005-embedded-rules-engine.md) (the existing automation surface that this ADR extends), ADR [015 telemetry rules & deprecation](015-telemetry-rules-and-deprecation.md), ADR [019 Categories](019-categories.md) (scoping prerequisite — closed alongside this ADR in Sprint 41 Phase H), ADR [020 Labels](020-labels-first-class.md) (scoping prerequisite)
+- Revision history: v1 proposed a parallel `sensing_event_configs` table; v2 extends `rules` after stakeholder review; **v2.1 (Sprint 41 Phase A) renames "sensing" → "signaling"** throughout (aligns with Azure Monitor's "Signal → Condition → Action" vocabulary; the file path stays `021-configurable-sensing-events.md` for link stability); **v2.2 (Sprint 41 Phase G)** ratifies the ADR to Accepted after the implementation lands in PR #54 (backend Phases A–E) + TagPulse-UI PR #46 (Phase F). See §"Decision history" below.
 
 ## Context
 
@@ -326,8 +326,66 @@ messages, easier to relax per-tenant).
   `/rules?kind=signaling` so the deferred taxonomy-unification ADR
   (which plans `rules` → `alert_rules`) is not left to delete a
   permanent legacy URL.
+- **v2.2 (Sprint 41 Phase G, May 2026)** — **ratified to Accepted.**
+  All five backend phases (A schema → B service/dispatcher shell → C
+  outbound envelope → D IsolatedZones + OverlappingZones processors +
+  `on_inference` consumer → E per-rule integration routing + OpenAPI
+  regen) shipped on [PR #54](https://github.com/9owlsboston/TagPulse/pull/54)
+  (`e54332b` → `9f02f38` → `feae604` → `19f979e` → `975ef6f`); the UI
+  surface (Phase F — `SignalingRuleModal`, `kind=signaling` discriminator
+  in the RuleEditor Tabs wrapper, Sensing-Events sidebar group with a
+  collapsible icon-mode sidebar, asset_type drop) shipped on
+  TagPulse-UI [PR #46](https://github.com/9owlsboston/TagPulse-UI/pull/46)
+  (`ebb2f82`). The four reference-design remediation rows the ADR
+  blocked (2.3 backend, 2.9 envelope, §3.2 1.1 sidebar consolidation,
+  3.5 Sensing-Events modal) are flipped to ✅ Done in the same Phase G
+  pass. Phase H (drop the deprecated `assets.asset_type` shadow column
+  to close ADR [019](019-categories.md)) is the last in-flight Sprint 41
+  item and is the only piece that still gates ADR 019's final close-out;
+  it is deferred to a follow-up sprint because the column drop is a
+  breaking API change (removes `?asset_type=`, `AssetCreate.asset_type`,
+  `AssetUpdate.asset_type`, `AssetResponse.asset_type`) that deserves
+  its own release-note pass — the planning is preserved verbatim in
+  [`docs/roadmap.md`](../roadmap.md) Sprint 41 Phase H. The Sprint 41
+  taxonomy decision (signaling > sensing) is now load-bearing across
+  the codebase: schema columns (`event_type`, `trigger`, `processor`),
+  service classes (`SignalingScopeCapExceededError`,
+  `validate_signaling_condition_config`), modules
+  (`src/tagpulse/signaling/`), event-bus topics
+  (`signaling.attribution_settled`), API discriminator
+  (`?kind=signaling`), and UI components (`SignalingRuleModal`,
+  `SignalingEventType`, `SIGNALING_VALID_PAIRS`) all use the
+  "signaling" word — a future revert to "sensing" would be a
+  multi-PR sweep. The four **v2.1 open-question leans** were all
+  resolved as leaned: kind="signaling" stays `VARCHAR + pattern` (no
+  ENUM migration); discriminator is the in-process two-level
+  `split_signaling_condition_type(...)` helper rather than Pydantic
+  `Field(discriminator=...)`; per-rule `integration_ids` **replace**
+  the global broadcast when non-empty (Phase E2 — pinned by
+  `test_webhook_per_rule_routing.py::TestPerRuleReplace`); default cap
+  of 5 per `(event_type, category)` is hard-reject with admin-only
+  `?override=true` writing one `audit_logs` row (Phase B2 — pinned by
+  `test_signaling_rules_api.py`). OverlappingZones aggregation window
+  is the {30, 60, 300, 1800} enum.
 
-## Open questions for Sprint 36
+## Open questions
+
+All Sprint 41 open questions resolved in v2.2. The remaining cross-ADR
+forward pointers are tracked elsewhere:
+
+- True `(x, y)` indoor trilateration (warehouse aisles in a local
+  coordinate frame): ADR [024 Position Estimation](024-position-estimation.md),
+  Sprint 45 — depends on Sprint 41's `processor` enum being live so the
+  position processor can be a sibling of `IsolatedZones` /
+  `OverlappingZones` rather than a separate evaluator branch.
+- Rule-taxonomy unification (`rules` → `alert_rules`, `condition_type`
+  → discriminated union): deferred to a post-Sprint-41 ADR in the
+  roadmap Backlog. The Sprint 41 deviation that dropped the parallel
+  `/sensing-events` URL in favour of `?kind=signaling` keeps the URL
+  surface stable so the rename, when it happens, isn't left deleting a
+  legacy URL.
+
+## Superseded open questions (Sprint 41 v2.1 — kept as historical record)
 
 - Should `condition_type` stay free-string-with-pattern or migrate to a
   Postgres `ENUM` type? Lean keep as VARCHAR + pattern — easier to extend
