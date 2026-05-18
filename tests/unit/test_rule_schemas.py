@@ -4,10 +4,10 @@ import pytest
 from pydantic import ValidationError
 
 from tagpulse.models.rule_schemas import (
-    SENSING_VALID_PAIRS,
+    SIGNALING_VALID_PAIRS,
     RuleCreate,
     RuleUpdate,
-    split_sensing_condition_type,
+    split_signaling_condition_type,
 )
 
 
@@ -74,28 +74,28 @@ class TestRuleUpdate:
         assert dumped == {"name": "Renamed", "enabled": False}
 
 
-# -- Sprint 41 Phase A: Configurable Sensing Events (ADR-021 v2) --
+# -- Sprint 41 Phase A: Configurable Signaling Events (ADR-021 v2) --
 
 
 # The 12 valid (event_type, trigger) pairs flattened to condition_type
-# strings. Built from SENSING_VALID_PAIRS so the test stays in sync if
+# strings. Built from SIGNALING_VALID_PAIRS so the test stays in sync if
 # the matrix ever changes.
-SENSING_VALID_CONDITION_TYPES = sorted(
-    f"sensing.{event_type}.{trigger}"
-    for event_type, triggers in SENSING_VALID_PAIRS.items()
+SIGNALING_VALID_CONDITION_TYPES = sorted(
+    f"signaling.{event_type}.{trigger}"
+    for event_type, triggers in SIGNALING_VALID_PAIRS.items()
     for trigger in triggers
 )
 
 
-class TestSensingConditionTypes:
-    """ADR-021 v2 §"New condition_type values" — the 12 sensing.*.*
+class TestSignalingConditionTypes:
+    """ADR-021 v2 §"New condition_type values" — the 12 signaling.*.*
     strings must all parse, and impossible (event_type, trigger) pairs
     plus malformed inputs must be rejected at the Pydantic layer."""
 
-    @pytest.mark.parametrize("condition_type", SENSING_VALID_CONDITION_TYPES)
+    @pytest.mark.parametrize("condition_type", SIGNALING_VALID_CONDITION_TYPES)
     def test_all_twelve_valid_pairs_accepted(self, condition_type: str) -> None:
         rule = RuleCreate(
-            name=f"sensing rule {condition_type}",
+            name=f"signaling rule {condition_type}",
             condition_type=condition_type,
             condition_config={},
             action_type="webhook",
@@ -104,41 +104,41 @@ class TestSensingConditionTypes:
         assert rule.condition_type == condition_type
 
     def test_twelve_pairs_is_the_full_matrix(self) -> None:
-        # Guard against drift between the regex and SENSING_VALID_PAIRS.
-        assert len(SENSING_VALID_CONDITION_TYPES) == 12
+        # Guard against drift between the regex and SIGNALING_VALID_PAIRS.
+        assert len(SIGNALING_VALID_CONDITION_TYPES) == 12
 
     @pytest.mark.parametrize(
         "condition_type",
         [
             # temperature has no spatial primitives
-            "sensing.temperature.on_entry",
-            "sensing.temperature.on_exit",
+            "signaling.temperature.on_entry",
+            "signaling.temperature.on_exit",
             # geolocation similarly lacks on_entry/on_exit
-            "sensing.geolocation.on_entry",
-            "sensing.geolocation.on_exit",
+            "signaling.geolocation.on_entry",
+            "signaling.geolocation.on_exit",
             # geolocation has no on_inference (per ADR table)
-            "sensing.geolocation.on_inference",
+            "signaling.geolocation.on_inference",
             # temperature has no on_inference (only location does)
-            "sensing.temperature.on_inference",
+            "signaling.temperature.on_inference",
             # geofencing is spatial-only; non-spatial triggers are invalid
-            "sensing.geofencing.on_change",
-            "sensing.geofencing.periodic",
-            "sensing.geofencing.on_inactivity",
-            "sensing.geofencing.on_inference",
+            "signaling.geofencing.on_change",
+            "signaling.geofencing.periodic",
+            "signaling.geofencing.on_inactivity",
+            "signaling.geofencing.on_inference",
             # Made-up event types
-            "sensing.humidity.on_change",
-            "sensing.location.on_explode",
+            "signaling.humidity.on_change",
+            "signaling.location.on_explode",
             # Wrong namespace depth
-            "sensing.location",
-            "sensing.location.on_change.extra",
+            "signaling.location",
+            "signaling.location.on_change.extra",
             # Wrong prefix
-            "sense.location.on_change",
+            "signal.location.on_change",
         ],
     )
     def test_invalid_pairs_rejected(self, condition_type: str) -> None:
         with pytest.raises(ValidationError):
             RuleCreate(
-                name="bad sensing rule",
+                name="bad signaling rule",
                 condition_type=condition_type,
                 condition_config={},
                 action_type="webhook",
@@ -169,48 +169,48 @@ class TestSensingConditionTypes:
             )
 
 
-class TestSplitSensingConditionType:
-    """``split_sensing_condition_type`` is the in-process discriminator
+class TestSplitSignalingConditionType:
+    """``split_signaling_condition_type`` is the in-process discriminator
     the evaluator + service use to route a rule's condition_type to its
     (event_type, trigger) handlers without re-parsing strings."""
 
     @pytest.mark.parametrize(
         ("condition_type", "expected"),
         [
-            ("sensing.location.on_change", ("location", "on_change")),
-            ("sensing.location.periodic", ("location", "periodic")),
-            ("sensing.location.on_inactivity", ("location", "on_inactivity")),
-            ("sensing.location.on_inference", ("location", "on_inference")),
-            ("sensing.geolocation.on_change", ("geolocation", "on_change")),
-            ("sensing.geolocation.periodic", ("geolocation", "periodic")),
-            ("sensing.geolocation.on_inactivity", ("geolocation", "on_inactivity")),
-            ("sensing.temperature.on_change", ("temperature", "on_change")),
-            ("sensing.temperature.periodic", ("temperature", "periodic")),
-            ("sensing.temperature.on_inactivity", ("temperature", "on_inactivity")),
-            ("sensing.geofencing.on_entry", ("geofencing", "on_entry")),
-            ("sensing.geofencing.on_exit", ("geofencing", "on_exit")),
+            ("signaling.location.on_change", ("location", "on_change")),
+            ("signaling.location.periodic", ("location", "periodic")),
+            ("signaling.location.on_inactivity", ("location", "on_inactivity")),
+            ("signaling.location.on_inference", ("location", "on_inference")),
+            ("signaling.geolocation.on_change", ("geolocation", "on_change")),
+            ("signaling.geolocation.periodic", ("geolocation", "periodic")),
+            ("signaling.geolocation.on_inactivity", ("geolocation", "on_inactivity")),
+            ("signaling.temperature.on_change", ("temperature", "on_change")),
+            ("signaling.temperature.periodic", ("temperature", "periodic")),
+            ("signaling.temperature.on_inactivity", ("temperature", "on_inactivity")),
+            ("signaling.geofencing.on_entry", ("geofencing", "on_entry")),
+            ("signaling.geofencing.on_exit", ("geofencing", "on_exit")),
         ],
     )
     def test_valid_pairs_split(self, condition_type: str, expected: tuple[str, str]) -> None:
-        assert split_sensing_condition_type(condition_type) == expected
+        assert split_signaling_condition_type(condition_type) == expected
 
     @pytest.mark.parametrize(
         "condition_type",
         [
-            # Legacy condition_types map to "not a sensing event"
+            # Legacy condition_types map to "not a signaling event"
             "threshold",
             "absence",
             "zone.entered",
             "telemetry.threshold",
-            # Sensing-shaped but invalid pair
-            "sensing.temperature.on_entry",
-            "sensing.geofencing.on_change",
-            "sensing.humidity.on_change",
+            # Signaling-shaped but invalid pair
+            "signaling.temperature.on_entry",
+            "signaling.geofencing.on_change",
+            "signaling.humidity.on_change",
             # Wrong shape
-            "sensing.location",
-            "sensing.location.on_change.extra",
+            "signaling.location",
+            "signaling.location.on_change.extra",
             "",
         ],
     )
-    def test_non_sensing_returns_none(self, condition_type: str) -> None:
-        assert split_sensing_condition_type(condition_type) is None
+    def test_non_signaling_returns_none(self, condition_type: str) -> None:
+        assert split_signaling_condition_type(condition_type) is None

@@ -218,14 +218,14 @@ User-defined automation rules evaluated against incoming telemetry.
 | `tenant_id` | UUID | FK → tenants.id, NOT NULL, indexed | |
 | `name` | VARCHAR(255) | NOT NULL | |
 | `description` | TEXT | NULLABLE | |
-| `condition_type` | VARCHAR(50) | NOT NULL | 10 legacy values (`threshold`, `absence`, `rate_change`, `stock.*`, `zone.*`, `telemetry.threshold`) + 12 sensing values (`sensing.<event_type>.<trigger>`) per ADR-021 v2 |
+| `condition_type` | VARCHAR(50) | NOT NULL | 10 legacy values (`threshold`, `absence`, `rate_change`, `stock.*`, `zone.*`, `telemetry.threshold`) + 12 signaling values (`signaling.<event_type>.<trigger>`) per ADR-021 v2 |
 | `condition_config` | JSONB | NOT NULL | Type-specific parameters (see below) |
 | `action_type` | VARCHAR(50) | NOT NULL | `webhook`, `email`, `notification` |
 | `action_config` | JSONB | NOT NULL | Type-specific parameters |
 | `scope_device_id` | UUID | NULLABLE | Restrict to single device |
 | `enabled` | BOOLEAN | NOT NULL, default `true` | |
 | `event_type` | VARCHAR(32) | NULLABLE | ADR-021 v2: `location` / `geolocation` / `temperature` / `geofencing`. NULL = legacy rule. |
-| `trigger` | VARCHAR(32) | NULLABLE | ADR-021 v2: `on_change` / `periodic` / `on_inactivity` / `on_inference` / `on_entry` / `on_exit`. Valid pairs constrained by `SENSING_VALID_PAIRS` (Pydantic + regex). |
+| `trigger` | VARCHAR(32) | NULLABLE | ADR-021 v2: `on_change` / `periodic` / `on_inactivity` / `on_inference` / `on_entry` / `on_exit`. Valid pairs constrained by `SIGNALING_VALID_PAIRS` (Pydantic + regex). |
 | `processor` | VARCHAR(32) | NULLABLE | ADR-021 v2: `isolated_zones` / `overlapping_zones`. |
 | `confidence_threshold` | NUMERIC(3,2) | NOT NULL, default `0.0` | ADR-021 v2: `0.0` (All) / `0.5` / `0.75`. |
 | `category_ids` | UUID[] | NOT NULL, default `'{}'` | ADR-021 v2: empty = all categories. |
@@ -237,8 +237,8 @@ User-defined automation rules evaluated against incoming telemetry.
 | `updated_at` | TIMESTAMPTZ | NOT NULL, auto-updated | |
 
 **RLS:** Yes (migration 007)
-**Migration:** 006 (initial), 040 (Sprint 41 sensing-event columns + `idx_rules_sensing_active` partial index)
-**Partial index:** `idx_rules_sensing_active ON rules (tenant_id, event_type, trigger) WHERE enabled = true AND event_type IS NOT NULL` — keeps the sensing-event evaluator hot path narrow.
+**Migration:** 006 (initial), 040 (Sprint 41 signaling-event columns + `idx_rules_signaling_active` partial index)
+**Partial index:** `idx_rules_signaling_active ON rules (tenant_id, event_type, trigger) WHERE enabled = true AND event_type IS NOT NULL` — keeps the signaling-event evaluator hot path narrow.
 
 #### Condition config shapes
 
@@ -257,7 +257,7 @@ User-defined automation rules evaluated against incoming telemetry.
 { "window_minutes": 60, "change_percent": 25.0 }
 ```
 
-**sensing.\*.periodic** (cadence config; processor-specific config in `processor_config` per ADR-021 v2):
+**signaling.\*.periodic** (cadence config; processor-specific config in `processor_config` per ADR-021 v2):
 ```json
 {
   "cadence_minutes": 60,
@@ -576,7 +576,7 @@ Physical locations or mobile carriers (Sprint 15; Sprint 34 added kind + geoloca
 
 ### categories
 
-First-class tenant-scoped categorisation for `assets` (Sprint 34, [ADR-019](adr/019-categories.md)). Replaces the free-form `assets.asset_type` string. Carries behavioural metadata (`category_type`, `required_tags`) that downstream Sensing Events (ADR 021) scope themselves against. Cannot be deleted while any asset references it (`FK ON DELETE RESTRICT`).
+First-class tenant-scoped categorisation for `assets` (Sprint 34, [ADR-019](adr/019-categories.md)). Replaces the free-form `assets.asset_type` string. Carries behavioural metadata (`category_type`, `required_tags`) that downstream Signaling Events (ADR 021) scope themselves against. Cannot be deleted while any asset references it (`FK ON DELETE RESTRICT`).
 
 > **Terminology.** TagPulse uses **`required_tags`** rather than any vendor-specific term — see [§"Where is the tag?"](#where-is-the-tag-and-why-theres-no-tags-table) for the why.
 

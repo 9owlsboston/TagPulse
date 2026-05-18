@@ -269,8 +269,8 @@ class RuleModel(Base):
     action_config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     scope_device_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
-    # -- Sprint 41 / ADR-021 v2 Configurable Sensing Events --
-    # ``event_type IS NULL`` is the legacy-rule discriminator; sensing
+    # -- Sprint 41 / ADR-021 v2 Configurable Signaling Events --
+    # ``event_type IS NULL`` is the legacy-rule discriminator; signaling
     # rules populate all three of (event_type, trigger, processor).
     event_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     trigger: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -567,9 +567,9 @@ class CategoryModel(Base):
     """Tenant-scoped Category for assets (Sprint 34, ADR 019).
 
     Every asset *should* belong to exactly one Category. Category
-    declares the sensing-event capability template (``category_type``)
+    declares the signaling-event capability template (``category_type``)
     and the required-tag count consumed by ADR 021 (Configurable
-    Sensing Events). (A separate tag-registry entity is deferred —
+    Signaling Events). (A separate tag-registry entity is deferred —
     TagPulse already has equivalents via ``tag_reads`` +
     ``asset_tag_bindings``; see ``docs/data-models.md`` §"Where is the
     tag?".)

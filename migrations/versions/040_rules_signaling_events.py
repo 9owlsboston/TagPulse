@@ -1,15 +1,15 @@
-"""Sprint 41 Phase A: extend ``rules`` for Configurable Sensing Events.
+"""Sprint 41 Phase A: extend ``rules`` for Configurable Signaling Events.
 
 Revision ID: 040
 Revises: 039
 Create Date: 2026-05-18
 
-Implements §"Schema" of [ADR-021 v2 Configurable Sensing Events](../../docs/adr/021-configurable-sensing-events.md).
+Implements §"Schema" of [ADR-021 v2 Configurable Signaling Events](../../docs/adr/021-configurable-sensing-events.md).
 
 Adds 9 additive columns to ``rules`` (all nullable or defaulted so
 existing rows survive untouched; NULL ``event_type`` is the implicit
 ``kind = legacy`` discriminator the API + UI use to keep the new
-"Sensing Events" namespace separate from pre-existing rules):
+"Signaling Events" namespace separate from pre-existing rules):
 
 - ``event_type VARCHAR(32) NULL`` —
   ``location`` / ``geolocation`` / ``temperature`` / ``geofencing``.
@@ -32,14 +32,15 @@ existing rows survive untouched; NULL ``event_type`` is the implicit
   empty array means "broadcast to all tenant integrations" (legacy
   behaviour); a populated array replaces the broadcast.
 
-Plus the partial index that keeps the new sensing-events evaluator's
-hot path narrow (only currently-enabled sensing rules show up):
+Plus the partial index that keeps the new signaling-events evaluator's
+hot path narrow (only currently-enabled signaling rules show up):
 
-- ``idx_rules_sensing_active ON rules (tenant_id, event_type, trigger)
+- ``idx_rules_signaling_active ON rules (tenant_id, event_type, trigger)
   WHERE enabled = true AND event_type IS NOT NULL``
 
-The 12 new ``condition_type`` values (``sensing.<event_type>.<trigger>``)
-plus the Pydantic discriminated-union validation live in
+The 12 new ``condition_type`` values
+(``signaling.<event_type>.<trigger>``) plus the Pydantic
+discriminated-union validation live in
 ``src/tagpulse/models/rule_schemas.py`` — see Phase A3 / A4 in the
 sprint plan ([docs/roadmap.md](../../docs/roadmap.md)) for the
 breakdown.
@@ -61,7 +62,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # -- 1. Sensing taxonomy (nullable for legacy rules) --
+    # -- 1. Signaling taxonomy (nullable for legacy rules) --
     op.add_column("rules", sa.Column("event_type", sa.String(32), nullable=True))
     op.add_column("rules", sa.Column("trigger", sa.String(32), nullable=True))
     op.add_column("rules", sa.Column("processor", sa.String(32), nullable=True))
@@ -98,16 +99,16 @@ def upgrade() -> None:
         sa.Column("integration_ids", ARRAY(UUID(as_uuid=True)), nullable=True),
     )
 
-    # -- 4. Partial index for the sensing-events evaluator hot path --
+    # -- 4. Partial index for the signaling-events evaluator hot path --
     op.execute(
-        "CREATE INDEX idx_rules_sensing_active "
+        "CREATE INDEX idx_rules_signaling_active "
         "ON rules (tenant_id, event_type, trigger) "
         "WHERE enabled = true AND event_type IS NOT NULL"
     )
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS idx_rules_sensing_active")
+    op.execute("DROP INDEX IF EXISTS idx_rules_signaling_active")
     op.drop_column("rules", "integration_ids")
     op.drop_column("rules", "site_label_filters")
     op.drop_column("rules", "zone_label_filters")
