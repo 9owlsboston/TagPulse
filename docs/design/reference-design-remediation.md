@@ -4,20 +4,24 @@
 - Status: Proposed
 - Owner: backend + UI joint
 - Related:
-  - Audit inputs (unversioned, sibling repo): `~/ws/TagPulse-Design/IMPLEMENTATION-GAPS.md`, `~/ws/TagPulse-Design/UI-LOOK-AND-FEEL-GAPS.md`
+  - Audit inputs: external gap-audit notes (schema/API + UI/IA) — held locally as a learning aid, not committed to this repo
   - ADRs created by this plan: [019 Categories](../adr/019-categories.md), [020 Labels first-class](../adr/020-labels-first-class.md), [021 Configurable Sensing Events](../adr/021-configurable-sensing-events.md), [022 Soft Assets](../adr/022-soft-assets.md), [023 Outbound Connections MQTT/Kafka](../adr/023-outbound-connections-mqtt-kafka.md), [024 Indoor Position Estimation](../adr/024-position-estimation.md)
 
 ---
 
 ## 1 — Purpose
 
-Two gap audits exist against the Wiliot Cloud Platform reference design (which
-TagPulse uses as its visual + behavioural reference, not as a clone target):
+TagPulse is a learning project for Azure IoT (Container Apps, Key Vault,
+TimescaleDB, MQTT, Functions, etc.). To stress-test the architecture against
+realistic operator expectations, two gap audits exist against an external IoT
+cloud-platform reference design (treated strictly as a visual + behavioural
+learning input, not as a clone target — TagPulse does not implement any one
+vendor's proprietary surface):
 
 | Audit | Scope | Where |
 |---|---|---|
-| `IMPLEMENTATION-GAPS.md` | Schema, services, APIs, payload envelopes | `~/ws/TagPulse-Design/` (unversioned) |
-| `UI-LOOK-AND-FEEL-GAPS.md` | TagPulse-UI IA, theming, page layouts, form patterns | `~/ws/TagPulse-Design/` (unversioned) |
+| Schema/API audit | Schema, services, APIs, payload envelopes | held locally, not in this repo |
+| UI/IA audit | TagPulse-UI IA, theming, page layouts, form patterns | held locally, not in this repo |
 
 Together they enumerate ~25 distinct gaps tagged 🔴 (5) / 🟠 (12) / 🟡 (8).
 **This document is the scope-lock**: which gaps we commit to, which we defer,
@@ -70,7 +74,7 @@ branding backend slice which lands here in Sprint 33.
 | 2.2 | Labels first-class | 🔴 | **✅ Done** (kickoff [#36](https://github.com/9owlsboston/TagPulse/pull/36) `fd38046` · schema [#37](https://github.com/9owlsboston/TagPulse/pull/37) `c5db1a7` · API [#38](https://github.com/9owlsboston/TagPulse/pull/38) `fe0b732` · filter [#39](https://github.com/9owlsboston/TagPulse/pull/39) `4493a02` · docs [#40](https://github.com/9owlsboston/TagPulse/pull/40) `05d48c1`; UI catalog + Asset Detail chips TagPulse-UI [#30](https://github.com/9owlsboston/TagPulse-UI/pull/30) `d475c2e`; UI chips on Site/Zone/Device/Category TagPulse-UI [#37](https://github.com/9owlsboston/TagPulse-UI/pull/37) `eb54523`) | 35 | ADR 020 ratified. Backend catalog + per-entity associations (`/labels`, `/{entity_segment}/{id}/labels`) + deep-object `?labels[KEY]=V1,V2` filter on `GET /assets`/`/sites`/`/zones`/`/devices`. `metadata` JSONB retained as the escape hatch for non-catalogued attributes. UI Phase D shipped: admin-only `/admin/labels` catalog management page (linked from the Account dropdown — admin chrome lives there per QW3, intentionally not in the Sider) + reusable `<LabelChips entityType entityId/>` chip strip wired into Asset Detail. Catalog-key autocomplete on the chip popover is filtered by `entity_type` so users only see legal keys for the entity they're tagging. Sprint 37 row 3.9a extends chip parity to Site / Zone / Device / Category — all five entity types can now attach catalog labels from their detail surface (modal-based for Site/Zone/Category, classic tabbed page for Device). Remaining UI work tracked under row 3.9b (filter strip exposing the Phase C deep-object filter on the four list pages) and 3.9d (inline Label picker in the Create flow). |
 | 2.2a | Labels Phase B — orphan `entity_labels` cleanup on hard-delete entity handlers | 🟠 | **✅ Done** ([#47](https://github.com/9owlsboston/TagPulse/pull/47), [`7ce3292`](https://github.com/9owlsboston/TagPulse/commit/7ce3292)) | 39 | ADR 020 explicitly notes "Orphan cleanup happens in the entity-delete handlers (Phase B)" but Sprint 35 row 2.2 shipped only Phases A/C/D/E. Sites, zones, and categories hard-delete via `await self._session.delete(row)` in their respective repository methods with no preceding cleanup, leaving `entity_labels` rows pointing at non-existent `entity_id`s. `count_associations()` on the parent label joins the catalog table for tenant scope but cannot join the entity table (it's polymorphic) — orphan rows therefore inflate the count forever, returning a 409 `association_count > 0` on `DELETE /labels/{id}` even after every visible entity has dropped the label. Fix adds `TimescaleLabelRepository.delete_for_entity(tenant_id, entity_type, entity_id) -> int` and wires it into the three hard-delete repository methods *before* the entity row is removed (sites/zones cascade; categories cascade after the `CategoryInUseError` guard). Assets (soft-delete to `retired`) and devices (soft-delete via `POST /{id}/decommission`) intentionally keep their label associations through the lifecycle and are not touched. |
 | 2.3 | Configurable Sensing Events | 🔴 | **Commit** | 36 | ADR 021 **v2**: extend `rules` (8 nullable columns + new `sensing.<event_type>.<trigger>` condition types). Discarded v1's parallel-table approach after first-review push-back — 60% overlap with existing `rules`/`alerts` didn't justify a second CRUD surface. All four event types (Location/Geolocation/Temperature/Geofencing) ship in one migration in S36. |
-| 2.4 | Soft Assets | 🔴 | **Commit (deferred)** | 39 | ADR 022. Has cost implications (one row per unique stray pixel); slot last so we can size based on observed `tag_reads_without_asset_total` in dev. |
+| 2.4 | Soft Assets | 🔴 | **Commit (deferred)** | 39 | ADR 022. Has cost implications (one row per unique stray tag); slot last so we can size based on observed `tag_reads_without_asset_total` in dev. |
 | 2.5 | MQTT/Kafka/Pub-Sub Connections | 🔴 | **Commit (MQTT only)** | 37 | ADR 023. Kafka + Pub-Sub deferred to backlog; covers only ~5 % of expected enterprise integrations and each is a separate dispatcher. |
 | 2.6 | `users.role` adds `installer` | 🟠 | **✅ Done** ([#31](https://github.com/9owlsboston/TagPulse/pull/31), [`d6dec19`](https://github.com/9owlsboston/TagPulse/commit/d6dec19)) | 34 | Rode along with the Categories migration (`users.role` CHECK extended in `user_schemas.py`). |
 | 2.7 | `sites.kind` + `latitude` + `longitude` + structured address | 🟠 | **✅ Done** ([#33](https://github.com/9owlsboston/TagPulse/pull/33), [`9ab21fd`](https://github.com/9owlsboston/TagPulse/commit/9ab21fd)) | 34 | Migration 038 + `SiteUpdate` 422 hardening; UI surface shipped in TagPulse-UI [#19](https://github.com/9owlsboston/TagPulse-UI/pull/19). |
@@ -81,9 +85,9 @@ branding backend slice which lands here in Sprint 33.
 | 2.11 | Bridge OTA toggle + gateway-driven push | 🟡 | **Commit** | 38 | Lands with Bridge/Gateway split; minimal — just `devices.configuration.ota_upgrade_enabled` + edge contract field. |
 | 2.12 | Bridge Survey tool | 🟡 | **Drop** | — | Highly specific to BLE relay deployments; TagPulse's RFID-reader primary use case doesn't need it. Document as out-of-scope. |
 | 2.13 | Connectivity Monitor (uptime % / disconnections / avg) | 🟠 | **Commit** | 38 | Lands with Bridge/Gateway split. Single analytics module over existing `device_health` + `last_seen` data. |
-| 2.14 | Pixel registry (batch CSV 6 000, reel-range, transfer) | 🟡 | **Defer** | backlog | TagPulse intentionally has no `tags` table (see [data-models.md](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table)). A read-only Pixels page can be served from `asset_tag_bindings` + `tag_reads` without a new entity — that's a UI ticket, not a backend one. |
+| 2.14 | Tag registry (batch CSV 6 000, reel-range, transfer) | 🟡 | **Defer** | backlog | TagPulse intentionally has no `tags` table (see [data-models.md](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table)). A read-only Tags page can be served from `asset_tag_bindings` + `tag_reads` without a new entity — that's a UI ticket, not a backend one. |
 | 2.15 | Connections Import/Export JSON + per-conn rate-limit + Monitor | 🟠 | **Commit (rate-limit + monitor only)** | 37 | Import/Export deferred — low value vs. cost. |
-| 2.16 | Auto-association by reel range | 🟡 | **Drop** | — | Depends on pixel-registry (2.14, deferred). Drop entirely; manual association is sufficient. |
+| 2.16 | Auto-association by reel range | 🟡 | **Drop** | — | Depends on the deferred tag registry (2.14). Drop entirely; manual association is sufficient. |
 | 2.17 | First-party Python SDK on PyPI | 🟡 | **Defer** | backlog | The generated OpenAPI client serves SDK needs today. |
 | 2.18 | Indoor position estimation (multi-reader triangulation in grid zones) | 🟠 | **Commit** | 40 | ADR 024. Surfaced post-audit by SME review of football-field-size deployments with a 400×600 XY grid of fixed readers. Five of seven prerequisites already in place (`tag_reads.signal_strength`/`reader_antenna`/`sensor_data`/`tag_data`, reader-side `telemetry_readings subject_kind='device'`). Adds `devices.position_x/y/z`, `sites.coord_system JSONB`, new `asset_positions` hypertable, third `processor='trilateration'` value on the ADR 021 v2 enum, one reference algorithm (`weighted_centroid_log_distance`), pluggable algorithm interface, BYO-precomputed-positions ingest path for customers running Zebra/Impinj/Mojix/RFcode RTLS. Adds `devices/{device_id}/status` MQTT topic for reader-level periodic status (reader temp, RSSI baseline, position update for mobile readers). |
 
@@ -93,7 +97,7 @@ branding backend slice which lands here in Sprint 33.
 |---|---|---|---|---|---|
 | 1.1 | Sider section groups | 🔴 | **✅ Done** (TagPulse-UI [#20](https://github.com/9owlsboston/TagPulse-UI/pull/20), [`ae0fd81`](https://github.com/9owlsboston/TagPulse-UI/commit/ae0fd81)) | 33 (quick-win) | Ant Menu `type: 'group'` headers: DATA MANAGEMENT / EDGE MANAGEMENT / INVENTORY. Admin items moved up into the Account dropdown (next row). |
 | 1.1 | Categories nav item | 🔴 | **✅ Done** (TagPulse-UI [#19](https://github.com/9owlsboston/TagPulse-UI/pull/19), [`7954bc6`](https://github.com/9owlsboston/TagPulse-UI/commit/7954bc6)) | 34 | `TagsOutlined`, `minRole: 'viewer'`, between Assets and Sites in `Layout.tsx`. |
-| 1.1 | Pixels nav item (read-only page) | 🟠 | **Commit** | 38 | UI-only; reads from existing bindings + reads. |
+| 1.1 | Tags nav item (read-only page) | 🟠 | **Commit** | 38 | UI-only; reads from existing bindings + reads. |
 | 1.1 | Bridges vs Gateways sidebar split | 🟠 | **Commit** | 38 | Driven by `devices.device_role` (see ADR 011 — already partially scoped). |
 | 1.1 | Unify Telemetry/Models/Rules/Alerts → "Sensing Events & Data" | 🟠 | **Commit** | 36 | Free with ADR 021 v2 — one backend table = one consolidated UI list. Legacy condition types remain editable under a "Legacy rule" sub-tab. |
 | 1.1 | Admin items → top-right Account dropdown | 🟠 | **✅ Done** (TagPulse-UI [#20](https://github.com/9owlsboston/TagPulse-UI/pull/20), [`ae0fd81`](https://github.com/9owlsboston/TagPulse-UI/commit/ae0fd81)) | 33 (quick-win) | Avatar + Dropdown trigger in the Header; admin-only menu group exposes Tenant Settings / Branding / Usage / Users / Audit Log / Dead Letters plus the QW5 dark-mode `Switch`. Sidebar lost all admin entries as a result. |
@@ -104,7 +108,7 @@ branding backend slice which lands here in Sprint 33.
 | 3.2 | Locations/Zones two-tab redesign + Soft Assets column | 🟠 | **✅ Done (tabs)** (TagPulse-UI [#19](https://github.com/9owlsboston/TagPulse-UI/pull/19), [`7954bc6`](https://github.com/9owlsboston/TagPulse-UI/commit/7954bc6)); **Commit (Soft Assets column)** | 34 (tabs) + 39 (Soft Assets column) | Tabs + kind icons + count tags shipped. Soft Assets column still waits for ADR 022. |
 | 3.3 | Categories page | 🔴 | **✅ Done** (TagPulse-UI [#19](https://github.com/9owlsboston/TagPulse-UI/pull/19), [`7954bc6`](https://github.com/9owlsboston/TagPulse-UI/commit/7954bc6)) | 34 | Full CRUD; 409 conflict UI surfaces backend's `asset_count`; `category_type` immutable on edit per ADR 019. |
 | 3.3a | Category wiring on Asset CRUD surfaces (Create / Edit modal Select + List column + Detail row + optional list filter) | 🟠 | **✅ Done** (TagPulse-UI [#36](https://github.com/9owlsboston/TagPulse-UI/pull/36) [`ea53e63`](https://github.com/9owlsboston/TagPulse-UI/commit/ea53e63) + [#44](https://github.com/9owlsboston/TagPulse-UI/pull/44) [`289cea2`](https://github.com/9owlsboston/TagPulse-UI/commit/289cea2)) | 37 (CRUD wiring) + 38 (server-side list filter) | Gap surfaced 2026-05-18 while reviewing Sprint 35 doc audit — the `/categories` page exists and the backend `assets.category_id` FK has been live since Sprint 34 (`d6dec19`, row 2.8), but the Asset Create modal, Edit modal, list table, and Detail Descriptions never got the picker. Net effect: users can manage the catalog but cannot actually attach a Category to any asset from the UI. Scope: AntD `<Select>` populated from `useCategories()` in the Create + Edit Asset modals (allowClear; sorted by `category_type` + name); new "Category" column in `AssetList` (renders `category.name` with a `Tag` coloured by `category_type` enum value, sortable by name); new Descriptions row in `AssetDetail` Overview tab; optional `?category_id=` query filter in the list header (parity with Status filter — server-side support shipped under §3.1 row 2.8a, the UI just passes the param through). UI #36 shipped the modals + column + detail row and the initial (client-side) list filter; UI #44 caught the list filter up to the backend by regenerating the API client to expose `categoryId` on `listAssetsAssetsGet`, extending `useAssets()` with a `category_id?: string` param, and dropping the in-memory narrow in `AssetList` so toggling Categories now causes a fresh server-paginated fetch keyed by the active filter. |
-| 3.4 | Pixels page | 🟠 | **Commit** | 38 | UI-only as noted above. |
+| 3.4 | Tags page | 🟠 | **Commit** | 38 | UI-only as noted above. |
 | 3.5 | Sensing Events modal | 🔴 | **Commit** | 36 | New "Add Sensing Event" modal per reference layout. Form posts to `/v1/.../sensing-events` which resolves to `RuleService` with `kind=sensing` filter (ADR 021 v2). |
 | 3.6 | Connections page redesign | 🟠 | **Commit** | 37 | |
 | 3.7 | Gateways list with status banner + Compliance panel | 🟠 | **Commit (status banner only)** | 38 | Compliance panel **dropped** — Compliance Status is bridge-firmware-specific and TagPulse's RFID-reader use case has no equivalent. |
@@ -161,13 +165,13 @@ So that future audits don't refile these as gaps:
 
 | Item | Why excluded |
 |---|---|
-| 1:1 pixel-perfect parity with the reference UI | Different audience (operator-heavy, multi-mode); TagPulse keeps draggable dashboard, Map page, Polygon zones, Path replay, Bulk Reassign Zone, `<ApiHealthGate>`, `<RoleGuard>`, CSV Import, mTLS for MQTT, RLS multi-tenancy — see [§7 of IMPLEMENTATION-GAPS.md](~/ws/TagPulse-Design/IMPLEMENTATION-GAPS.md) and [§9 of UI-LOOK-AND-FEEL-GAPS.md](~/ws/TagPulse-Design/UI-LOOK-AND-FEEL-GAPS.md). |
-| First-class `pixels` table | Intentional per [data-models.md](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table). Read-only page from bindings is sufficient. |
+| 1:1 visual-perfect parity with the reference UI | Different audience (operator-heavy, multi-mode); TagPulse keeps draggable dashboard, Map page, Polygon zones, Path replay, Bulk Reassign Zone, `<ApiHealthGate>`, `<RoleGuard>`, CSV Import, mTLS for MQTT, RLS multi-tenancy — see the corresponding sections of the local schema/API and UI/IA audit notes. |
+| First-class `tags` table | Intentional per [data-models.md](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table). Read-only page from bindings is sufficient. |
 | Kafka + Pub-Sub dispatchers | Marginal use case. Re-evaluate when a customer asks. |
 | Per-catalog security keys + JWT exchange | Existing tenant/user/device token model satisfies our threat model. |
 | Bridge OTA full firmware-push pipeline | Toggle field only; the actual firmware-distribution mechanism stays an edge-side concern. |
 | Bridge Survey tool | RFID-reader use case doesn't need it. |
-| Pixel batch CSV (up to 6 000) + reel-range ops + cross-account transfer | Depends on the dropped pixel registry. |
+| Tag batch CSV (up to 6 000) + reel-range ops + cross-account transfer | Depends on the deferred tag registry. |
 | Compliance Status panel on Gateways list | RFID readers don't have the bridge-firmware compliance concept. |
 | Developer Portal landing page | Out-of-scope for a single-product SaaS at this stage. |
 | Bell-icon notifications | Nice-to-have, deferred indefinitely. |
@@ -205,6 +209,13 @@ When a subsequent sprint implements one of the committed gaps:
 When a deferred or dropped gap is re-litigated (e.g. customer ask):
 re-open the row, change the decision, and link the new ADR.
 
-The audits in `~/ws/TagPulse-Design/` are **read-only snapshots** as of
+The local audit notes are treated as **read-only snapshots** as of
 2026-05-17. Don't re-edit them — produce a new dated audit if the
 reference design itself evolves.
+
+Vendor neutrality: TagPulse is positioned as an independent Azure IoT
+learning project. Audits and ADRs in this repo refer to an unnamed
+"external reference design". Do not introduce vendor or product brand
+names in committed docs, code, or commit messages — keep proprietary
+vocabulary (tag-naming conventions, page-naming conventions, etc.) inside
+the local audit notes only.

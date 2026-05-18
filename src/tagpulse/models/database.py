@@ -547,11 +547,10 @@ class CategoryModel(Base):
     Every asset *should* belong to exactly one Category. Category
     declares the sensing-event capability template (``category_type``)
     and the required-tag count consumed by ADR 021 (Configurable
-    Sensing Events). (The reference design calls these "pixels";
-    TagPulse's domain term is "tag" — see ``docs/data-models.md``
-    §"Where is the tag?". The reference design's separate Pixel
-    registry concept (gap 2.14) is deferred and TagPulse already has
-    equivalents via ``tag_reads`` + ``asset_tag_bindings``.)
+    Sensing Events). (A separate tag-registry entity is deferred —
+    TagPulse already has equivalents via ``tag_reads`` +
+    ``asset_tag_bindings``; see ``docs/data-models.md`` §"Where is the
+    tag?".)
 
     Invariants:
 
@@ -671,9 +670,7 @@ class EntityLabelModel(Base):
         ForeignKey("labels.id", ondelete="RESTRICT"),
         primary_key=True,
     )
-    entity_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, index=True
-    )
+    entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, index=True)
     value: Mapped[str] = mapped_column(String(64), nullable=False)
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

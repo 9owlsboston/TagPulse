@@ -1,7 +1,7 @@
 # ADR-021: Configurable Sensing Events
 
 - Status: Proposed (Sprint 33, May 2026) — **revised after first review**
-- Implements: gap 2.3 (and the outbound-envelope half of 2.9) in `~/ws/TagPulse-Design/IMPLEMENTATION-GAPS.md`
+- Implements: gap 2.3 (and the outbound-envelope half of 2.9) in the external schema/API audit notes (held locally)
 - Related: [reference-design-remediation plan](../design/reference-design-remediation.md), ADR [005 embedded rules engine](005-embedded-rules-engine.md) (the existing automation surface that this ADR extends), ADR [015 telemetry rules & deprecation](015-telemetry-rules-and-deprecation.md), ADR [019 Categories](019-categories.md) (scoping prerequisite), ADR [020 Labels](020-labels-first-class.md) (scoping prerequisite)
 - Revision history: v1 proposed a parallel `sensing_event_configs` table; v2 (this version) extends `rules` after stakeholder review — see §"Decision history" below.
 
@@ -50,10 +50,10 @@ shapes; the rest are additive columns.
 
 ### Why the original v1 ADR called for a new table (and why it was wrong)
 
-v1 followed `~/ws/TagPulse-Design/IMPLEMENTATION-GAPS.md` §3.4's
-recommendation of a parallel `sensing_event_configs` table, on the
-argument that *"On Inactivity / Periodic / processor configs don't map
-onto threshold/absence cleanly."* On re-reading the actual code:
+v1 followed the external schema/API audit's §3.4 recommendation of a
+parallel `sensing_event_configs` table, on the argument that *"On
+Inactivity / Periodic / processor configs don't map onto threshold/absence
+cleanly."* On re-reading the actual code:
 
 - `condition_config` is already JSONB, so any shape fits cleanly.
 - Our `absence` condition already implements "OnInactivity" for tags.

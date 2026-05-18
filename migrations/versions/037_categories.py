@@ -13,9 +13,7 @@ Adds:
   ``liquid_container`` / ``reference_tag`` / ``rti_container`` /
   ``object`` (CHECK constraint; immutability enforced in the API
   layer, not here). ``required_tags`` defaults to 1 and must be
-  positive. (The reference design calls these "pixels"; TagPulse's
-  domain term is "tag" — see ``docs/data-models.md`` §"Where is the
-  tag?".)
+  positive.
 - ``assets.category_id`` — nullable FK to ``categories(id)`` with
   ``ON DELETE RESTRICT``. Indexed for the per-category Asset filter.
 - Backfill — every distinct ``(tenant_id, asset_type)`` pair in the

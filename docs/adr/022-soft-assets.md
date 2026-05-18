@@ -1,25 +1,25 @@
 # ADR-022: Soft Assets — Auto-Creation Policy
 
 - Status: Proposed (Sprint 33, May 2026)
-- Implements: gap 2.4 in `~/ws/TagPulse-Design/IMPLEMENTATION-GAPS.md`
+- Implements: gap 2.4 in the external schema/API audit notes (held locally)
 - Related: [reference-design-remediation plan](../design/reference-design-remediation.md), ADR [003 TimescaleDB storage](003-timescaledb-storage.md) (`tag_reads` as event-ledger source-of-truth), [data-models.md §"Where is the tag?"](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table), [design/tracking-modes.md](../design/tracking-modes.md) (the asset-mode / inventory-mode split this fits into)
 
 ## Context
 
-Reference design "Soft Assets": when a read arrives from a Pixel that has no
+Reference-design "Soft Assets": when a read arrives from a tag that has no
 asset association, **and** the originating Location has
 `soft_assets_enabled=true`, the platform auto-creates a Soft Asset so no
 telemetry is lost. A Soft Asset converts to a full Asset on first manual
-association of the same pixel, preserving all historical sensing data via a
+association of the same tag, preserving all historical sensing data via a
 `previously_soft_asset=true` label.
 
 Per-zone exclusion: even inside a soft-asset-enabled Location, operators can
 flag staging/transit zones as `soft_assets_excluded=true` so we don't churn
-out one Soft Asset per pixel passing through the loading dock.
+out one Soft Asset per tag passing through the loading dock.
 
 TagPulse already records every read in `tag_reads` regardless of binding
 (ADR 003 event-ledger guarantee). The data is captured. What's missing is the
-**entity surface** — operators have no UI representation of "all the pixels
+**entity surface** — operators have no UI representation of "all the tags
 showing up inside warehouse-A that aren't associated to anything yet."
 
 Inventory mode has an analogous auto-create flow (`stock_items` on first SGTIN

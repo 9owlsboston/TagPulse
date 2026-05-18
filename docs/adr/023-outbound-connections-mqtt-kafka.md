@@ -1,7 +1,7 @@
 # ADR-023: Outbound Connections — Add MQTT Dispatcher (Kafka/Pub-Sub Deferred)
 
 - Status: Proposed (Sprint 33, May 2026)
-- Implements: gap 2.5 (partial — MQTT only) + 2.15 (rate-limit + monitor) in `~/ws/TagPulse-Design/IMPLEMENTATION-GAPS.md`
+- Implements: gap 2.5 (partial — MQTT only) + 2.15 (rate-limit + monitor) in the external schema/API audit notes (held locally)
 - Related: [reference-design-remediation plan](../design/reference-design-remediation.md), ADR [006 webhook integration layer](006-webhook-integration-layer.md) (existing HTTP dispatcher), ADR [002 MQTT for device connectivity](002-mqtt-device-connectivity.md) (inbound MQTT — we reuse the broker patterns), ADR [010 internal event bus](010-internal-event-bus.md), ADR [021 Configurable Sensing Events](021-configurable-sensing-events.md) (the payload shape this dispatcher delivers)
 
 ## Context
