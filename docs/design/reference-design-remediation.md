@@ -38,7 +38,7 @@ unblock downstream UI work:
 ```
 Sprint 33 (kickoff)        ──> this doc + 5 ADR stubs + UI quick-wins track  [✅ shipped]
 Sprint 34 (categories)     ──> ADR 019 lands; assets.category_id; UI Categories page  [✅ shipped]
-Sprint 35 (labels)         ──> ADR 020 lands; labels catalog; label chips replace metadata JSON  [🟡 in flight, kickoff [#36](https://github.com/9owlsboston/TagPulse/pull/36)]
+Sprint 35 (labels)         ──> ADR 020 lands; labels catalog; label chips replace metadata JSON  [✅ backend shipped — kickoff [#36](https://github.com/9owlsboston/TagPulse/pull/36), schema [#37](https://github.com/9owlsboston/TagPulse/pull/37), API [#38](https://github.com/9owlsboston/TagPulse/pull/38), filter [#39](https://github.com/9owlsboston/TagPulse/pull/39); UI chips pending TagPulse-UI]
 Sprint 36 (sensing events) ──> ADR 021 lands; sensing_event_configs; new modal
 Sprint 37 (connections)    ──> ADR 023 lands; MQTT dispatcher; Connections page redesign
 Sprint 38 (edge)           ──> Bridge/Gateway split; Connectivity Monitor; OTA toggle
@@ -67,7 +67,7 @@ branding backend slice which lands here in Sprint 33.
 | # | Gap | Severity | Decision | Sprint | Notes |
 |---|---|---|---|---|---|
 | 2.1 | Categories entity | 🔴 | **✅ Done** ([#31](https://github.com/9owlsboston/TagPulse/pull/31), [`d6dec19`](https://github.com/9owlsboston/TagPulse/commit/d6dec19)) | 34 | ADR 019. Unblocks 2.3, 2.8, 2.14. |
-| 2.2 | Labels first-class | 🔴 | **Commit** | 35 | ADR 020. Replaces free-form `metadata` JSONB for catalogued use cases; raw `metadata` stays for true bag-of-properties. |
+| 2.2 | Labels first-class | 🔴 | **✅ Done** (kickoff [#36](https://github.com/9owlsboston/TagPulse/pull/36) `fd38046` · schema [#37](https://github.com/9owlsboston/TagPulse/pull/37) `c5db1a7` · API [#38](https://github.com/9owlsboston/TagPulse/pull/38) `fe0b732` · filter [#39](https://github.com/9owlsboston/TagPulse/pull/39) `4493a02`) | 35 | ADR 020 ratified. Backend catalog + per-entity associations (`/labels`, `/{entity_segment}/{id}/labels`) + deep-object `?labels[KEY]=V1,V2` filter on `GET /assets`/`/sites`/`/zones`/`/devices`. `metadata` JSONB retained as the escape hatch for non-catalogued attributes. UI chips (row 3.9 below) still in flight in TagPulse-UI. |
 | 2.3 | Configurable Sensing Events | 🔴 | **Commit** | 36 | ADR 021 **v2**: extend `rules` (8 nullable columns + new `sensing.<event_type>.<trigger>` condition types). Discarded v1's parallel-table approach after first-review push-back — 60% overlap with existing `rules`/`alerts` didn't justify a second CRUD surface. All four event types (Location/Geolocation/Temperature/Geofencing) ship in one migration in S36. |
 | 2.4 | Soft Assets | 🔴 | **Commit (deferred)** | 39 | ADR 022. Has cost implications (one row per unique stray pixel); slot last so we can size based on observed `tag_reads_without_asset_total` in dev. |
 | 2.5 | MQTT/Kafka/Pub-Sub Connections | 🔴 | **Commit (MQTT only)** | 37 | ADR 023. Kafka + Pub-Sub deferred to backlog; covers only ~5 % of expected enterprise integrations and each is a separate dispatcher. |
@@ -106,7 +106,7 @@ branding backend slice which lands here in Sprint 33.
 | 3.6 | Connections page redesign | 🟠 | **Commit** | 37 | |
 | 3.7 | Gateways list with status banner + Compliance panel | 🟠 | **Commit (status banner only)** | 38 | Compliance panel **dropped** — Compliance Status is bridge-firmware-specific and TagPulse's RFID-reader use case has no equivalent. |
 | 3.8 | Per-device Monitor tab w/ Connectivity KPIs + 8h/1d/3d range | 🟠 | **Commit** | 38 | Lands with Connectivity Monitor backend (2.13). |
-| 3.9 | Asset Detail Events Log tab + Labels chips | 🟠 | **Commit** | 35 (chips) + 36 (Events Log) | |
+| 3.9 | Asset Detail Events Log tab + Labels chips | 🟠 | **Commit** (backend prerequisites ✅ shipped Sprint 35 — see row 2.2; chips UI pending TagPulse-UI) | 35 (chips) + 36 (Events Log) | |
 | 3.10 | Developer Portal landing card | 🟡 | **Defer** | backlog | Link out to Swagger UI from Dashboard footer is sufficient short-term. |
 | §4 | Modal width / sticky footer / Advanced accordion patterns | 🟡 | **Commit (opportunistic)** | rolling | Adopt as each affected page is touched, not as a dedicated sprint. |
 | §5 | Two-line cells / kebab-menu action column | 🟡 | **Commit (opportunistic)** | rolling | Same — adopt during each page's redesign. |
