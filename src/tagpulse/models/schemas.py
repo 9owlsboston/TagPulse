@@ -420,23 +420,98 @@ class DeviceEventPayload(BaseModel):
 # Sprint 15 — Sites & Zones
 # ---------------------------------------------------------------------------
 
+# -- Sprint 34 gap 2.7: site discriminator + structured address validators --
+
+SiteKind = Literal["site", "transporter"]
+
+_ISO_3166_ALPHA2_RE = re.compile(r"^[A-Z]{2}$")
+
+
+def _normalise_country(value: str | None) -> str | None:
+    """Uppercase + ISO 3166-1 alpha-2 shape check (DB CHECK mirrors this).
+
+    Runs in ``mode="before"`` so it can normalise whitespace and case
+    *before* Pydantic's ``max_length`` check on the field rejects the
+    raw input.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("country must be a string")
+    candidate = value.strip().upper()
+    if not _ISO_3166_ALPHA2_RE.match(candidate):
+        raise ValueError("country must be an ISO 3166-1 alpha-2 code (e.g. 'US')")
+    return candidate
+
 
 class SiteCreate(BaseModel):
     """Create a site."""
 
     name: str = Field(min_length=1, max_length=255)
+    kind: SiteKind = "site"
     address: str | None = None
+    # Structured address (Sprint 34 gap 2.7). All optional; pair them as
+    # the operator has data.
+    street_line1: str | None = Field(default=None, max_length=255)
+    street_line2: str | None = Field(default=None, max_length=255)
+    city: str | None = Field(default=None, max_length=128)
+    region: str | None = Field(default=None, max_length=128)
+    postal_code: str | None = Field(default=None, max_length=32)
+    country: str | None = Field(default=None, max_length=16)
+    # Geolocation (Sprint 34 gap 2.7). Both-or-neither, validated below.
+    latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
     default_timezone: str = Field(default="UTC", max_length=64)
     metadata: dict[str, Any] | None = None
 
+    _normalise_country = field_validator("country", mode="before")(
+        lambda cls, v: _normalise_country(v)
+    )
+
+    @model_validator(mode="after")
+    def _check_latlon_paired(self) -> "SiteCreate":
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must be provided together")
+        return self
+
 
 class SiteUpdate(BaseModel):
-    """Patch a site."""
+    """Patch a site.
+
+    All fields optional. ``kind`` is mutable (a transporter that becomes
+    permanently parked can be reclassified as a site, and vice-versa).
+
+    Geolocation paired-validation only fires when *both* fields appear
+    in the patch payload — the underlying DB CHECK enforces the
+    invariant at write time for partial updates.
+    """
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
+    kind: SiteKind | None = None
     address: str | None = None
+    street_line1: str | None = Field(default=None, max_length=255)
+    street_line2: str | None = Field(default=None, max_length=255)
+    city: str | None = Field(default=None, max_length=128)
+    region: str | None = Field(default=None, max_length=128)
+    postal_code: str | None = Field(default=None, max_length=32)
+    country: str | None = Field(default=None, max_length=16)
+    latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
     default_timezone: str | None = Field(default=None, max_length=64)
     metadata: dict[str, Any] | None = None
+
+    _normalise_country = field_validator("country", mode="before")(
+        lambda cls, v: _normalise_country(v)
+    )
+
+    @model_validator(mode="after")
+    def _check_latlon_paired_if_both_set(self) -> "SiteUpdate":
+        provided = self.model_fields_set
+        lat_in = "latitude" in provided
+        lon_in = "longitude" in provided
+        if lat_in and lon_in and (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must be provided together")
+        return self
 
 
 class SiteResponse(BaseModel):
@@ -445,7 +520,16 @@ class SiteResponse(BaseModel):
     id: UUID
     tenant_id: UUID
     name: str
+    kind: SiteKind
     address: str | None
+    street_line1: str | None
+    street_line2: str | None
+    city: str | None
+    region: str | None
+    postal_code: str | None
+    country: str | None
+    latitude: float | None
+    longitude: float | None
     default_timezone: str
     metadata: dict[str, Any] | None = None
     created_at: datetime

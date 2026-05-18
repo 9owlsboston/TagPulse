@@ -524,23 +524,31 @@ Historical mapping of RFID tag IDs to assets. Bindings carry an open or closed l
 
 ### sites
 
-Physical locations.
+Physical locations or mobile carriers (Sprint 15; Sprint 34 added kind + geolocation + structured address as gap 2.7 of the [reference-design remediation plan](design/reference-design-remediation.md)).
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
 | `id` | UUID | PK | |
 | `tenant_id` | UUID | FK → tenants.id, NOT NULL | |
 | `name` | VARCHAR(255) | NOT NULL | |
-| `address` | TEXT | NULLABLE | |
+| `kind` | VARCHAR(16) | NOT NULL, default `'site'`, CHECK | One of `site` \| `transporter`. Drives the Site/Transporter icon column in the Locations UI. Mutable (a parked transporter can be reclassified). |
+| `address` | TEXT | NULLABLE | **Deprecated free-form fallback.** Retained this release as a compatibility shadow; new code should write the structured columns below and may also mirror the formatted string here. |
+| `street_line1` | VARCHAR(255) | NULLABLE | Structured address (gap 2.7). |
+| `street_line2` | VARCHAR(255) | NULLABLE | |
+| `city` | VARCHAR(128) | NULLABLE | |
+| `region` | VARCHAR(128) | NULLABLE | State / province / county. |
+| `postal_code` | VARCHAR(32) | NULLABLE | |
+| `country` | CHAR(2) | NULLABLE, CHECK `~ '^[A-Z]{2}$'` | ISO 3166-1 alpha-2; API normalises to uppercase. |
+| `latitude` | DOUBLE PRECISION | NULLABLE, CHECK `-90..90` | Both-or-neither with `longitude` (DB CHECK `ck_sites_latlon_paired`). |
+| `longitude` | DOUBLE PRECISION | NULLABLE, CHECK `-180..180` | |
 | `default_timezone` | VARCHAR(64) | NOT NULL, default `'UTC'` | IANA tz |
 | `metadata` | JSONB | NULLABLE | |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
 
 **Unique constraint:** `(tenant_id, name)`
 **RLS:** Yes
-**Migration:** 017
-
-> **Sprint 34 follow-up.** Gap 2.7 of the [reference-design remediation plan](design/reference-design-remediation.md) adds `kind` (Site \| Transporter), `latitude`, `longitude`, and a structured-address breakout to `sites`. Tracked as a separate slice; ships before the Locations UI redesign in Sprint 34/35.
+**Migrations:** 017 (base), 038 (kind + geolocation + structured address — Sprint 34 gap 2.7)
 
 ---
 
