@@ -49,6 +49,14 @@ async def list_assets(
     request: Request,
     asset_type: str | None = Query(default=None),
     status: str | None = Query(default=None),
+    category_id: UUID | None = Query(
+        default=None,
+        description=(
+            "Sprint 37 — server-side filter on the ``assets.category_id`` FK "
+            "(ADR 019). Combines with ``asset_type``/``status``/``q``/"
+            "``labels[…]`` via AND."
+        ),
+    ),
     q: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -63,6 +71,7 @@ async def list_assets(
         user.tenant_id,
         asset_type=asset_type,
         status=status,
+        category_id=category_id,
         q=q,
         labels=labels,
         limit=limit,

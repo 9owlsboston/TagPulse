@@ -93,6 +93,7 @@ class TimescaleAssetRepository:
         *,
         asset_type: str | None = None,
         status: str | None = None,
+        category_id: uuid.UUID | None = None,
         q: str | None = None,
         labels: dict[str, list[str]] | None = None,
         limit: int = 100,
@@ -103,6 +104,8 @@ class TimescaleAssetRepository:
             stmt = stmt.where(AssetModel.asset_type == asset_type)
         if status is not None:
             stmt = stmt.where(AssetModel.status == status)
+        if category_id is not None:
+            stmt = stmt.where(AssetModel.category_id == category_id)
         if q:
             like = f"%{q}%"
             stmt = stmt.where((AssetModel.name.ilike(like)) | (AssetModel.external_ref.ilike(like)))

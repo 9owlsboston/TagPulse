@@ -7242,6 +7242,25 @@
             }
           },
           {
+            "description": "Sprint 37 \u2014 server-side filter on the ``assets.category_id`` FK (ADR 019). Combines with ``asset_type``/``status``/``q``/``labels[\u2026]`` via AND.",
+            "in": "query",
+            "name": "category_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 37 \u2014 server-side filter on the ``assets.category_id`` FK (ADR 019). Combines with ``asset_type``/``status``/``q``/``labels[\u2026]`` via AND.",
+              "title": "Category Id"
+            }
+          },
+          {
             "in": "query",
             "name": "q",
             "required": false,

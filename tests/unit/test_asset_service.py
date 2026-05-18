@@ -35,9 +35,7 @@ def _asset(tenant_id: UUID, **overrides: Any) -> AssetResponse:
     return AssetResponse(**base)
 
 
-def _binding(
-    tenant_id: UUID, asset_id: UUID, **overrides: Any
-) -> AssetTagBindingResponse:
+def _binding(tenant_id: UUID, asset_id: UUID, **overrides: Any) -> AssetTagBindingResponse:
     base = dict(
         id=uuid4(),
         tenant_id=tenant_id,
@@ -55,6 +53,7 @@ def _binding(
 class _FakeAssetRepo:
     def __init__(self) -> None:
         self.next_response: Any = None
+        self.last_list_kwargs: dict[str, Any] | None = None
 
     async def create(self, tenant_id: UUID, payload: AssetCreate) -> AssetResponse:
         return self.next_response or _asset(
@@ -65,8 +64,27 @@ class _FakeAssetRepo:
         return self.next_response
 
     async def list(  # type: ignore[no-untyped-def]
-        self, tenant_id, *, asset_type=None, status=None, q=None, limit=100, offset=0
+        self,
+        tenant_id,
+        *,
+        asset_type=None,
+        status=None,
+        category_id=None,
+        q=None,
+        labels=None,
+        limit=100,
+        offset=0,
     ):
+        self.last_list_kwargs = {
+            "tenant_id": tenant_id,
+            "asset_type": asset_type,
+            "status": status,
+            "category_id": category_id,
+            "q": q,
+            "labels": labels,
+            "limit": limit,
+            "offset": offset,
+        }
         return self.next_response or []
 
     async def update(  # type: ignore[no-untyped-def]
@@ -87,7 +105,9 @@ class _FakeBindingRepo:
         self, tenant_id, asset_id, payload
     ):
         return self.next_response or _binding(
-            tenant_id, asset_id, binding_value=payload.binding_value,
+            tenant_id,
+            asset_id,
+            binding_value=payload.binding_value,
             binding_kind=payload.binding_kind,
         )
 
@@ -117,12 +137,23 @@ class _FakeAudit:
         self.entries: list[dict[str, Any]] = []
 
     async def log(  # type: ignore[no-untyped-def]
-        self, tenant_id, action, resource_type, resource_id, changes=None,
-        *, user_id=None,
+        self,
+        tenant_id,
+        action,
+        resource_type,
+        resource_id,
+        changes=None,
+        *,
+        user_id=None,
     ):
         self.entries.append(
-            {"action": action, "resource_type": resource_type,
-             "resource_id": resource_id, "changes": changes, "user_id": user_id}
+            {
+                "action": action,
+                "resource_type": resource_type,
+                "resource_id": resource_id,
+                "changes": changes,
+                "user_id": user_id,
+            }
         )
 
 
@@ -135,9 +166,7 @@ def _service() -> tuple[AssetService, _FakeAssetRepo, _FakeBindingRepo, _FakeAud
 @pytest.mark.asyncio
 async def test_create_asset_writes_audit() -> None:
     svc, _, _, audit = _service()
-    out = await svc.create_asset(
-        uuid4(), uuid4(), AssetCreate(name="Bin-A", asset_type="bin")
-    )
+    out = await svc.create_asset(uuid4(), uuid4(), AssetCreate(name="Bin-A", asset_type="bin"))
     assert out.name == "Bin-A"
     assert audit.entries[-1]["action"] == "asset.created"
     assert audit.entries[-1]["changes"]["asset_type"] == "bin"
@@ -164,14 +193,14 @@ async def test_bind_tag_audits_with_value_and_kind() -> None:
     svc, _, _, audit = _service()
     aid = uuid4()
     out = await svc.bind_tag(
-        uuid4(), uuid4(), aid,
+        uuid4(),
+        uuid4(),
+        aid,
         AssetTagBindingCreate(binding_value="X1", binding_kind="tid"),
     )
     assert out.binding_value == "X1"
     assert audit.entries[-1]["action"] == "asset.bound"
-    assert audit.entries[-1]["changes"] == {
-        "binding_value": "X1", "binding_kind": "tid"
-    }
+    assert audit.entries[-1]["changes"] == {"binding_value": "X1", "binding_kind": "tid"}
 
 
 @pytest.mark.asyncio
@@ -208,6 +237,35 @@ async def test_get_active_binding_delegates() -> None:
     binding_repo.next_response = expected
     out = await svc.get_active_binding(uuid4(), "E280-1234")
     assert out is expected
+
+
+# ---- Sprint 37: list_assets forwards category_id to the repo ---------
+#
+# Promotes the Category filter from client-side (UI-only) to server-side
+# (row 3.3a in docs/design/reference-design-remediation.md). The route
+# layer accepts ``?category_id=<uuid>``; the service must pass it through
+# to the repo unchanged so the SQL where clause can apply it.
+
+
+@pytest.mark.asyncio
+async def test_list_assets_forwards_category_id_to_repo() -> None:
+    svc, asset_repo, _, _ = _service()
+    tenant = uuid4()
+    cid = uuid4()
+    await svc.list_assets(tenant, category_id=cid)
+    assert asset_repo.last_list_kwargs is not None
+    assert asset_repo.last_list_kwargs["category_id"] == cid
+    # Other filters left at their defaults — kwarg threading is additive.
+    assert asset_repo.last_list_kwargs["asset_type"] is None
+    assert asset_repo.last_list_kwargs["status"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_assets_category_id_defaults_to_none() -> None:
+    svc, asset_repo, _, _ = _service()
+    await svc.list_assets(uuid4())
+    assert asset_repo.last_list_kwargs is not None
+    assert asset_repo.last_list_kwargs["category_id"] is None
 
 
 # ---- Audit mitigation tests (Phase A-C) ------------------------------
@@ -256,11 +314,7 @@ async def test_load_onto_carrier_blocks_multi_step_cycle() -> None:
     keyed = _KeyedAssetRepo()
     # Existing: B is already a child of A. Attempt: load A onto B → cycle.
     keyed.add(_asset(tenant, id=a_id, name="A"))
-    keyed.add(
-        _asset(tenant, id=b_id, name="B").model_copy(
-            update={"parent_asset_id": a_id}
-        )
-    )
+    keyed.add(_asset(tenant, id=b_id, name="B").model_copy(update={"parent_asset_id": a_id}))
     audit = _FakeAudit()
     svc = AssetService(
         asset_repo=keyed,  # type: ignore[arg-type]
