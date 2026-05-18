@@ -970,6 +970,96 @@ All tasks land in this repo (`9owlsboston/TagPulse`). No UI work.
 
 ---
 
+## Sprint 29 — Edge simulator MQTT movement publisher (shipped)
+
+> Goal: extend the Pi edge client's smoke publisher to replay GPS waypoint tracks over a single MQTT session so we can demo asset movement (and exercise the Sprint 17a `subject.zone_changed` evaluator) without real hardware. Single PR, no schema changes.
+
+- [shipped] **Edge MQTT movement simulation — paho publisher tracks** ([#21](https://github.com/9owlsboston/TagPulse/pull/21), [`6ecf9b8`](https://github.com/9owlsboston/TagPulse/commit/6ecf9b8)). Added GPS waypoint replay to the Pi edge client's smoke MQTT publisher.
+- [shipped] **Companion docs: domain concepts 101 + `drive_track` tag-id support** ([#22](https://github.com/9owlsboston/TagPulse/pull/22), [`b7057ee`](https://github.com/9owlsboston/TagPulse/commit/b7057ee)). Added [docs/guides/domain-concepts-101.md](guides/domain-concepts-101.md) primer and extended the `drive_track` helper so simulated waypoints can be published as `tag-reads` (consumed by the Asset Path tab) rather than only as device-`/location` updates.
+- [shipped] **MQTT subscriber resilience + payload shape docs** ([#23](https://github.com/9owlsboston/TagPulse/pull/23), [`567e7f2`](https://github.com/9owlsboston/TagPulse/commit/567e7f2)). Bundled fix for [#18](https://github.com/9owlsboston/TagPulse/issues/18) / [#19](https://github.com/9owlsboston/TagPulse/issues/19).
+- [shipped] **CI deploy-azure: resolve short SHAs + default to latest `main`** ([#24](https://github.com/9owlsboston/TagPulse/pull/24), [`1b0d667`](https://github.com/9owlsboston/TagPulse/commit/1b0d667)). Workflow hardening so manual deploys don't fail on short-SHA inputs.
+
+## Sprints 30, 31, 32 — Not used
+
+> The `sprint-30` / `sprint-31` / `sprint-32` labels were never adopted. Sprint 29 → Sprint 33 happened directly; no intermediate workstream existed. Listed here so future audits don't refile the gap.
+
+## Sprint 33 — Reference-design remediation kickoff + UI quick-wins (shipped)
+
+> Goal: scope-lock the gap audit against an external IoT cloud-platform reference design into a single planning document, land the ADR stubs for the blocking-tier items, and ship the near-zero-cost UI quick-wins that close the perceptual gap. Per-tenant branding backend slice rides along.
+
+- [shipped] **Reference-design remediation plan + ADRs 019–024 (Proposed)** ([#30](https://github.com/9owlsboston/TagPulse/pull/30), [`854ad30`](https://github.com/9owlsboston/TagPulse/commit/854ad30)). Lands [docs/design/reference-design-remediation.md](design/reference-design-remediation.md) (Commit/Defer/Drop decision per gap, sprint slots, §7 "Updating this document" rule) and the six ADR stubs at [docs/adr/019-categories.md](adr/019-categories.md), [adr/020-labels-first-class.md](adr/020-labels-first-class.md), [adr/021-configurable-sensing-events.md](adr/021-configurable-sensing-events.md), [adr/022-soft-assets.md](adr/022-soft-assets.md), [adr/023-outbound-connections-mqtt-kafka.md](adr/023-outbound-connections-mqtt-kafka.md), [adr/024-position-estimation.md](adr/024-position-estimation.md). All six land at status **Proposed**.
+- [shipped] **UI quick-win remediation rows flipped to ✅ Done** ([#35](https://github.com/9owlsboston/TagPulse/pull/35), [`e92bd10`](https://github.com/9owlsboston/TagPulse/commit/e92bd10)). Doc reconciliation after the corresponding TagPulse-UI quick-wins shipped (Sider section groups, Account dropdown, AntD `ConfigProvider`+theme, reusable `<LastUpdate/>`, light/dark toggle, per-tenant branding UI).
+
+## Sprint 34 — Categories + structured sites (shipped)
+
+> Goal: ratify [ADR 019](adr/019-categories.md) and ship the Categories entity end-to-end. Structured site addresses + Site/Transporter discriminator ride along.
+
+- [shipped] **Categories (ADR 019 ratified)** ([#31](https://github.com/9owlsboston/TagPulse/pull/31), [`6487347`](https://github.com/9owlsboston/TagPulse/commit/6487347)). Categories entity ships across backend + UI; `assets.category_id` FK with `ON DELETE RESTRICT`.
+- [shipped] **Structured site address + Site/Transporter discriminator (gap 2.7)** ([#33](https://github.com/9owlsboston/TagPulse/pull/33), [`ec32ecd`](https://github.com/9owlsboston/TagPulse/commit/ec32ecd)). Sites gain structured address fields and a `kind` discriminator separating Sites from Transporters.
+- [shipped] **Remediation row flips — backend + UI rows marked Done** ([#34](https://github.com/9owlsboston/TagPulse/pull/34), [`c428c72`](https://github.com/9owlsboston/TagPulse/commit/c428c72)). Doc reconciliation per the remediation doc's §7 update rule.
+
+## Sprint 35 — Labels first-class (shipped, ADR 020)
+
+> Goal: ratify [ADR 020](adr/020-labels-first-class.md) and ship the labels catalog + per-entity association surface + deep-object filter. Multi-phase backend ship train.
+
+- [shipped] **Kickoff — ratify ADR 020 + roadmap** ([#36](https://github.com/9owlsboston/TagPulse/pull/36), [`6970854`](https://github.com/9owlsboston/TagPulse/commit/6970854)).
+- [shipped] **Phase A — labels catalog schema** ([#37](https://github.com/9owlsboston/TagPulse/pull/37), [`dc91f3a`](https://github.com/9owlsboston/TagPulse/commit/dc91f3a)).
+- [shipped] **Phase B — labels API** ([#38](https://github.com/9owlsboston/TagPulse/pull/38), [`a6bdde5`](https://github.com/9owlsboston/TagPulse/commit/a6bdde5)).
+- [shipped] **Phase C — labels deep-object filter** ([#39](https://github.com/9owlsboston/TagPulse/pull/39), [`f8bc438`](https://github.com/9owlsboston/TagPulse/commit/f8bc438)).
+- [shipped] **Phase E — labels surface: user guide, operator quickstart, remediation flip** ([#40](https://github.com/9owlsboston/TagPulse/pull/40), [`4b70e31`](https://github.com/9owlsboston/TagPulse/commit/4b70e31)).
+- [shipped → Sprint 39] **Phase B orphan entity_labels cleanup** intentionally deferred; shipped in Sprint 39 (see below).
+
+## Sprint 36 — Auto-deploy backend to dev (shipped) *(SLIP — see note)*
+
+> **Slip note:** the originally planned scope was ADR 021 v2 Configurable Sensing Events (remediation rows 2.3 + 2.9 + UI 1.1 / 3.5) plus the outbound event envelope upgrade. None of that scope shipped under this label — only a one-PR CI change did. The planned scope is now Sprint 41 (see plan below).
+
+- [shipped] **Auto-deploy backend to dev on `push:main`** ([#41](https://github.com/9owlsboston/TagPulse/pull/41), [`67d0281`](https://github.com/9owlsboston/TagPulse/commit/67d0281)). Closes the manual-`azd deploy` gap that let dev drift from `main` after merge.
+- [shipped — direct to main] Three small ops fixes landed outside the PR flow during this window: dev-wake cron range fix ([`ae780fd`](https://github.com/9owlsboston/TagPulse/commit/ae780fd)), pre-push guard blocking direct pushes to main ([`ea11f08`](https://github.com/9owlsboston/TagPulse/commit/ea11f08)), strip `azd` 1.25 update nag + doctor recovery cheat sheet ([`5a6345a`](https://github.com/9owlsboston/TagPulse/commit/5a6345a)).
+
+## Sprint 37 — Category server-filter + UI label parity follow-ups (shipped) *(SLIP — see note)*
+
+> **Slip note:** the originally planned scope was ADR 023 MQTT outbound dispatcher (remediation row 2.5 + UI 3.6 Connections page redesign + row 2.15 per-conn rate-limit + monitor). None of that scope shipped under this label — the work that *did* ship was follow-on label/category UI catch-up and one small backend slice. ADR 023 stays at Proposed; row 2.5 stays Commit.
+
+- [shipped] **Doc flip — remediation row 3.9a → ✅ Done after TagPulse-UI ships label chips** ([#42](https://github.com/9owlsboston/TagPulse/pull/42), [`265746a`](https://github.com/9owlsboston/TagPulse/commit/265746a)). Reconciliation per §7.
+- [shipped] **Backend `GET /assets?category_id=` server-side filter (row 2.8a)** ([#43](https://github.com/9owlsboston/TagPulse/pull/43), [`6f45e21`](https://github.com/9owlsboston/TagPulse/commit/6f45e21)). Promotes Categories filter on the Assets list from client-side to server-side; combines with existing `asset_type`/`status`/`q`/`labels[…]` via AND.
+- [shipped] **Doc flip — remediation row 2.8a → ✅ Done after #43** ([#44](https://github.com/9owlsboston/TagPulse/pull/44), [`b9773be`](https://github.com/9owlsboston/TagPulse/commit/b9773be)).
+
+## Sprint 38 — Remediation row flips after UI catch-up (shipped) *(SLIP — see note)*
+
+> **Slip note:** the originally planned scope was the Bridge/Gateway device-role split (remediation row 1.1) + Connectivity Monitor backend + UI (rows 2.13 + 3.8) + Tags page (rows 1.1 + 3.4) + Bridge OTA toggle (row 2.11). None of that scope shipped — only doc status-flips reconciling rows whose implementing TagPulse-UI PRs had merged. The deferred scope stays Commit on the remediation doc.
+
+- [shipped] **Doc flip — rows 3.9b / 3.9c / 3.9d → ✅ Done after UI ships** ([#45](https://github.com/9owlsboston/TagPulse/pull/45), [`165b8fd`](https://github.com/9owlsboston/TagPulse/commit/165b8fd)).
+- [shipped] **Doc flip — row 3.3a → ✅ Done after TagPulse-UI #44** ([#46](https://github.com/9owlsboston/TagPulse/pull/46), [`1f2570e`](https://github.com/9owlsboston/TagPulse/commit/1f2570e)).
+
+## Sprint 39 — ADR 020 Phase B orphan cleanup (shipped) *(SLIP — see note)*
+
+> **Slip note:** the originally planned scope was ADR 022 Soft Assets (remediation row 2.4) + the Soft Assets column on the Locations table (row 3.2 part 2). That scope was deferred; the work that *did* ship was the lone unshipped clause of ADR 020 (Phase B orphan `entity_labels` cleanup, row 2.2a) carried over from the Sprint 35 ship train. ADR 022 stays at Proposed; row 2.4 stays Commit.
+
+- [shipped] **ADR 020 Phase B — orphan `entity_labels` cleanup on hard-delete entity handlers (row 2.2a)** ([#47](https://github.com/9owlsboston/TagPulse/pull/47), [`26a6a58`](https://github.com/9owlsboston/TagPulse/commit/26a6a58)).
+- [shipped] **Doc flip — remediation row 2.2a → ✅ Done after #47** ([#48](https://github.com/9owlsboston/TagPulse/pull/48), [`369dd49`](https://github.com/9owlsboston/TagPulse/commit/369dd49)).
+
+## Sprint 40 — Vendor-neutrality doc sweep (shipped) *(SLIP — see note)*
+
+> **Slip note:** the originally planned scope was [ADR 024](adr/024-position-estimation.md) Indoor position estimation (remediation row 2.18) — trilateration processor on the ADR 021 v2 sensing-events stack, `asset_positions` hypertable, BYO-positions ingest path. That scope was deferred and now requires ADR 021 v2 to land first (Sprint 41). The work that *did* ship was a forward-only documentation rewording pass. ADR 024 stays at Proposed; row 2.18 stays Commit.
+
+- [shipped] **Repo vendor-neutrality sweep** ([#49](https://github.com/9owlsboston/TagPulse/pull/49), [`1f9595b`](https://github.com/9owlsboston/TagPulse/commit/1f9595b)). Forward-only documentation/docstring rewording pass replacing vendor-specific terminology with TagPulse-native equivalents.
+
+## Methodology drift in Sprints 36–40
+
+Sprints 36–40 above each carry a *(SLIP)* marker because the planned scope for those numbers did not ship under those labels — the labels were applied to follow-on work and doc reconciliation while the original ADR-driven scope (ADR 021 Sensing Events, ADR 023 MQTT, Bridge/Gateway split, ADR 022 Soft Assets, ADR 024 Position Estimation) stayed in **Proposed** status on the remediation doc. The five blocking-tier ADRs are not yet ratified; Sprint 41 onward picks them up in their original sequence:
+
+| Originally planned for | Scope | Now targeted for |
+|---|---|---|
+| Sprint 36 | ADR 021 v2 Configurable Sensing Events + outbound envelope upgrade | Sprint 41 |
+| Sprint 37 | ADR 023 MQTT outbound dispatcher + Connections page redesign + rate-limit + monitor | Sprint 42 |
+| Sprint 38 | Bridge/Gateway split + Connectivity Monitor + Tags page + OTA toggle | Sprint 43 |
+| Sprint 39 | ADR 022 Soft Assets + auto-create policy + Locations Soft Assets column | Sprint 44 |
+| Sprint 40 | ADR 024 Indoor position estimation (depends on ADR 021 v2 landing first) | Sprint 45 |
+
+Going forward, sprint numbers will be allocated by `scripts/start-sprint.sh <NN> <topic-slug>` and tied to one planned workstream each; out-of-band doc flips will land as `docs/...` branches rather than as new sprint labels.
+
+---
+
 ## Backlog (not scheduled)
 - Cloud-to-device commands (reader configuration push via MQTT) (G8)
 - Bulk device operations / jobs (G9)
