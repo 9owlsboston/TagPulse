@@ -40,7 +40,11 @@ emit() {
 echo "==> azd-doctor: env=$ENV_NAME"
 
 # 1. azd env resolves
-if azd_env_resolve "$ENV_NAME" 2>/dev/null; then
+# Don't swallow stderr here: azd_env_resolve calls die() on failure, which
+# exits the whole script (exit, not return), so the `else` branch below is
+# unreachable. Let the underlying error message reach the operator instead
+# of leaving them with a bare `Error 2` from make.
+if azd_env_resolve "$ENV_NAME"; then
   emit green "azd env resolves" "$RESOLVED_AZD_ENV"
 else
   emit red "azd env resolves" "(env '$ENV_NAME' not found)"
