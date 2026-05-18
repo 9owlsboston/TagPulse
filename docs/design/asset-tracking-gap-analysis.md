@@ -166,6 +166,16 @@ A view `asset_current_location` joins the most recent `tag_read` for each
 bound tag. Tag bindings change over time (tags fail, get re-applied) —
 historical bindings preserve provenance.
 
+> **Schema-evolution note (2026-05, post-Sprint 41).** The `asset_type`
+> `VARCHAR(50)` column was implemented in Sprint 13 (migration 018) but is
+> **no longer current.** [ADR 019](../adr/019-categories.md) (Sprint 34)
+> replaced it with a first-class `categories` table + required
+> `assets.category_id` FK; Sprint 41 Phase H (migration
+> [041_drop_assets_asset_type](../../migrations/versions/041_drop_assets_asset_type.py))
+> dropped the column outright. See [docs/data-models.md](../data-models.md)
+> for the current `assets` schema. The proposal above is preserved verbatim
+> as a historical record of the original Sprint-13 design.
+
 ### A4. Zone / site / geofence model
 
 **Problem.** "DockDoor-3" and "zone-A" exist only as freeform strings in
