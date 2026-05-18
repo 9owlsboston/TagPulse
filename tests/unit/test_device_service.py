@@ -44,6 +44,7 @@ class FakeDeviceRepository:
         *,
         status: str | None = None,
         device_type: str | None = None,
+        labels: dict[str, list[str]] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[DeviceResponse]:
@@ -52,6 +53,9 @@ class FakeDeviceRepository:
             results = [d for d in results if d.status == status]
         if device_type is not None:
             results = [d for d in results if d.device_type == device_type]
+        # ``labels`` is accepted but ignored — fakes can't replay the EXISTS
+        # join shape. Repo-level filtering is exercised in
+        # tests/unit/test_label_filter.py.
         return results[offset : offset + limit]
 
     async def update(

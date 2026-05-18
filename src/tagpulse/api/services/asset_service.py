@@ -65,9 +65,7 @@ class AssetService:
         external_location_repo: TimescaleExternalLocationRepository | None = None,
         event_bus: EventBus | None = None,
         asset_location_repo: TimescaleAssetLocationRepository | None = None,
-        telemetry_readings_repo: (
-            TimescaleTelemetryReadingsRepository | None
-        ) = None,
+        telemetry_readings_repo: (TimescaleTelemetryReadingsRepository | None) = None,
         tenant_repo: TimescaleTenantRepository | None = None,
     ) -> None:
         self._assets = asset_repo
@@ -117,9 +115,7 @@ class AssetService:
             return asset
         kinds = SUBJECT_KINDS_CACHE.get(tenant_id)
         if kinds is None:
-            kinds = tuple(
-                await self._tenant_repo.get_telemetry_subject_kinds(tenant_id)
-            )
+            kinds = tuple(await self._tenant_repo.get_telemetry_subject_kinds(tenant_id))
             SUBJECT_KINDS_CACHE.set(tenant_id, kinds)
         if "asset" not in kinds:
             return asset
@@ -142,6 +138,7 @@ class AssetService:
         asset_type: str | None = None,
         status: str | None = None,
         q: str | None = None,
+        labels: dict[str, list[str]] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[AssetResponse]:
@@ -150,6 +147,7 @@ class AssetService:
             asset_type=asset_type,
             status=status,
             q=q,
+            labels=labels,
             limit=limit,
             offset=offset,
         )
@@ -173,9 +171,7 @@ class AssetService:
             )
         return asset
 
-    async def retire_asset(
-        self, tenant_id: UUID, user_id: UUID | None, asset_id: UUID
-    ) -> bool:
+    async def retire_asset(self, tenant_id: UUID, user_id: UUID | None, asset_id: UUID) -> bool:
         deleted = await self._assets.delete(tenant_id, asset_id)
         if deleted:
             await self._audit.log(
@@ -217,9 +213,7 @@ class AssetService:
         *,
         active_only: bool = False,
     ) -> list[AssetTagBindingResponse]:
-        return await self._bindings.list_for_asset(
-            tenant_id, asset_id, active_only=active_only
-        )
+        return await self._bindings.list_for_asset(tenant_id, asset_id, active_only=active_only)
 
     async def unbind_tag(
         self,
@@ -248,12 +242,8 @@ class AssetService:
 
     # -- Admin --
 
-    async def count_other_tenant_collisions(
-        self, tenant_id: UUID, binding_value: str
-    ) -> int:
-        count = await self._bindings.count_other_tenant_collisions(
-            tenant_id, binding_value
-        )
+    async def count_other_tenant_collisions(self, tenant_id: UUID, binding_value: str) -> int:
+        count = await self._bindings.count_other_tenant_collisions(tenant_id, binding_value)
         tag_collisions_global_counter.add(
             1,
             {
@@ -285,9 +275,7 @@ class AssetService:
         # would happily form A→B→A loops which then hang the recursive CTE
         # in ``get_descendants`` (and thus ``GET /assets/{id}/manifest``).
         await self._assert_no_parent_cycle(tenant_id, asset_id, parent_asset_id)
-        result = await self._assets.set_parent(
-            tenant_id, asset_id, parent_asset_id
-        )
+        result = await self._assets.set_parent(tenant_id, asset_id, parent_asset_id)
         if result is None:
             raise AssetNotFoundError(asset_id)
         updated, prior = result
@@ -306,9 +294,7 @@ class AssetService:
                 "prior_parent_asset_id": str(prior) if prior else None,
             },
         )
-        asset_load_counter.add(
-            1, {"tenant_id": str(tenant_id), "op": "load"}
-        )
+        asset_load_counter.add(1, {"tenant_id": str(tenant_id), "op": "load"})
         if self._event_bus is not None:
             await self._event_bus.publish(
                 Topic.ASSET_LOADED,
@@ -349,9 +335,7 @@ class AssetService:
             resource_id=asset_id,
             changes={"prior_parent_asset_id": str(prior)},
         )
-        asset_load_counter.add(
-            1, {"tenant_id": str(tenant_id), "op": "unload"}
-        )
+        asset_load_counter.add(1, {"tenant_id": str(tenant_id), "op": "unload"})
         if self._event_bus is not None:
             await self._event_bus.publish(
                 Topic.ASSET_UNLOADED,
@@ -369,9 +353,7 @@ class AssetService:
             )
         return updated
 
-    async def get_manifest(
-        self, tenant_id: UUID, asset_id: UUID
-    ) -> ManifestResponse:
+    async def get_manifest(self, tenant_id: UUID, asset_id: UUID) -> ManifestResponse:
         """Return the recursive containment tree rooted at `asset_id`."""
         root = await self._assets.get(tenant_id, asset_id)
         if root is None:
@@ -417,9 +399,7 @@ class AssetService:
         if asset is None:
             raise AssetNotFoundError(asset_id)
         position = await self._external.insert(tenant_id, asset_id, payload)
-        external_locations_counter.add(
-            1, {"tenant_id": str(tenant_id), "source": payload.source}
-        )
+        external_locations_counter.add(1, {"tenant_id": str(tenant_id), "source": payload.source})
         await self._audit.log(
             tenant_id=tenant_id,
             user_id=user_id,
@@ -457,9 +437,7 @@ class AssetService:
     ) -> list[ExternalLocationResponse]:
         if self._external is None:
             raise RuntimeError("external_location_repo not configured")
-        return await self._external.list_for_asset(
-            tenant_id, asset_id, limit=limit, offset=offset
-        )
+        return await self._external.list_for_asset(tenant_id, asset_id, limit=limit, offset=offset)
 
     # -- Location & path (Sprint 15 — view + path API) --
 
@@ -468,9 +446,7 @@ class AssetService:
     ) -> AssetCurrentLocation | None:
         if self._asset_location is None:
             raise RuntimeError("asset_location_repo not configured")
-        return await self._asset_location.get_current_location(
-            tenant_id, asset_id
-        )
+        return await self._asset_location.get_current_location(tenant_id, asset_id)
 
     async def list_current_locations(
         self, tenant_id: UUID, *, limit: int = 200, offset: int = 0
@@ -478,9 +454,7 @@ class AssetService:
         if self._asset_location is None:
             raise RuntimeError("asset_location_repo not configured")
         return list(
-            await self._asset_location.list_current_locations(
-                tenant_id, limit=limit, offset=offset
-            )
+            await self._asset_location.list_current_locations(tenant_id, limit=limit, offset=offset)
         )
 
     async def get_asset_path(
@@ -534,14 +508,10 @@ class AssetService:
             if cursor is None:
                 return
             if cursor in seen:
-                raise ValueError(
-                    "load would create a containment cycle"
-                )
+                raise ValueError("load would create a containment cycle")
             seen.add(cursor)
             ancestor = await self._assets.get(tenant_id, cursor)
             if ancestor is None:
                 return  # parent vanished mid-flight; let set_parent decide
             cursor = ancestor.parent_asset_id
-        raise ValueError(
-            "asset containment depth exceeds 64 — refusing to load"
-        )
+        raise ValueError("asset containment depth exceeds 64 — refusing to load")
