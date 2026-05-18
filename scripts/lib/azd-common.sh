@@ -29,12 +29,21 @@
 
 # -----------------------------------------------------------------------------
 # azd wrapper — silences the upgrade nag.
+#
+# NOTE on the explicit `rc` capture below: do NOT collapse this into
+# `if ! out=$(command azd ...); then local rc=$?; ...`. Inside the body of
+# `if ! cmd; then`, bash's `$?` is the *inverted* exit status (always 0,
+# because we entered the then-branch), so `rc` would silently be 0 and every
+# failed azd invocation would be reported as success. Capture rc first, test
+# second. (Bug fixed 2026-05-18: `make doctor ENV=dev` exited 2 with no
+# message because azd_env_resolve thought `azd env select dev` had succeeded.)
 # -----------------------------------------------------------------------------
 AZD_OUTDATED=0
 azd() {
-  local out
-  if ! out=$(command azd "$@" 2>&1); then
-    local rc=$?
+  local out rc
+  out=$(command azd "$@" 2>&1)
+  rc=$?
+  if (( rc != 0 )); then
     printf '%s\n' "$out" >&2
     return $rc
   fi
@@ -43,7 +52,14 @@ azd() {
     out=$(printf '%s' "$out" | grep -vE \
       'out of date|Update available|aka\.ms/install-azd|aka\.ms/azd/upgrade|github\.com/Azure/azure-dev/releases|To update to the latest|^To update, run|^If the install script|^If you installed azd|^curl -fsSL|^$')
   fi
-  [[ -n "$out" ]] && printf '%s\n' "$out"
+  # Note: do NOT end with `[[ -n "$out" ]] && printf …`. When azd succeeds
+  # silently (e.g. `azd env select` in newer azd versions emits no output),
+  # the `&&` short-circuit makes the test the function's exit status, so the
+  # wrapper would return 1 on a successful no-output call.
+  if [[ -n "$out" ]]; then
+    printf '%s\n' "$out"
+  fi
+  return 0
 }
 
 # -----------------------------------------------------------------------------
