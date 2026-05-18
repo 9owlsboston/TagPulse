@@ -126,6 +126,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await event_bus.subscribe(Topic.SUBJECT_ZONE_CHANGED, evaluator.on_subject_zone_changed)
         # Sprint 20: subject-scoped telemetry threshold rules.
         await event_bus.subscribe(Topic.TELEMETRY_RECORDED, evaluator.on_telemetry_recorded)
+        # Sprint 41 Phase D: on_inference rules consuming attribution-settled
+        # events from the OverlappingZones processor.
+        await event_bus.subscribe(
+            Topic.SIGNALING_ATTRIBUTION_SETTLED, evaluator.on_attribution_settled
+        )
 
         # Inventory rule worker — periodic scans for stock.below_threshold and
         # stock.expiring_within rules + daily stock_items_active metering snapshot.

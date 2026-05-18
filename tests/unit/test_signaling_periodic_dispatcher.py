@@ -377,3 +377,148 @@ async def test_start_stop_lifecycle() -> None:
     assert dispatcher._task is not None and not dispatcher._task.done()
     await dispatcher.stop()
     assert dispatcher._task.cancelled() or dispatcher._task.done()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 41 Phase D2: dispatch-by-processor
+# ---------------------------------------------------------------------------
+
+
+def _make_overlapping_periodic_rule(
+    *,
+    tenant_id: UUID | None = None,
+    cadence_minutes: int = 1,
+) -> RuleResponse:
+    rule = _make_periodic_rule(
+        tenant_id=tenant_id,
+        condition_type="signaling.location.periodic",
+        cadence_minutes=cadence_minutes,
+    )
+    rule.processor = "overlapping_zones"
+    rule.condition_config = {
+        "cadence_minutes": cadence_minutes,
+        "processor_config": {"aggregation_window_s": 60},
+    }
+    return rule
+
+
+@pytest.mark.asyncio
+async def test_dispatch_routes_overlapping_zones_rule_to_processor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A periodic rule with ``processor='overlapping_zones'`` must
+    dispatch to the OverlappingZonesProcessor.run_once_for_rule call.
+    Rules with ``processor='isolated_zones'`` or ``None`` must not."""
+
+    overlap_rule = _make_overlapping_periodic_rule()
+    isolated_rule = _make_periodic_rule()  # processor defaults to None
+    dispatcher = PeriodicSignalingDispatcher(
+        session_factory=_fake_session_factory(),  # type: ignore[arg-type]
+        event_bus=_FakeBus(),  # type: ignore[arg-type]
+        usage_meter=_FakeMeter(),  # type: ignore[arg-type]
+    )
+
+    processor_calls: list[RuleResponse] = []
+
+    async def _fake_run(session: Any, rule: RuleResponse) -> int:
+        processor_calls.append(rule)
+        return 0
+
+    monkeypatch.setattr(dispatcher._overlapping_processor, "run_once_for_rule", _fake_run)
+
+    class _FakeRulesService:
+        def __init__(self, session: Any) -> None:
+            pass
+
+        async def get_active_rules_by_condition_types_all_tenants(
+            self, condition_types: list[str]
+        ) -> list[RuleResponse]:
+            return [overlap_rule, isolated_rule]
+
+    monkeypatch.setattr("tagpulse.signaling.periodic_dispatcher.RulesService", _FakeRulesService)
+
+    await dispatcher.run_once()
+
+    # The overlapping rule was dispatched to the processor; the isolated
+    # one was not (it's served by the ingestion-path zone-changed events).
+    assert len(processor_calls) == 1
+    assert processor_calls[0].id == overlap_rule.id
+
+
+@pytest.mark.asyncio
+async def test_dispatch_records_meter_for_both_processors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both processor variants must record a rule_evaluations tick so
+    per-tenant evaluation counts remain comparable across operator
+    choices."""
+
+    overlap_rule = _make_overlapping_periodic_rule()
+    isolated_rule = _make_periodic_rule()
+    meter = _FakeMeter()
+    dispatcher = PeriodicSignalingDispatcher(
+        session_factory=_fake_session_factory(),  # type: ignore[arg-type]
+        event_bus=_FakeBus(),  # type: ignore[arg-type]
+        usage_meter=meter,  # type: ignore[arg-type]
+    )
+
+    async def _fake_run(session: Any, rule: RuleResponse) -> int:
+        return 0
+
+    monkeypatch.setattr(dispatcher._overlapping_processor, "run_once_for_rule", _fake_run)
+
+    class _FakeRulesService:
+        def __init__(self, session: Any) -> None:
+            pass
+
+        async def get_active_rules_by_condition_types_all_tenants(
+            self, condition_types: list[str]
+        ) -> list[RuleResponse]:
+            return [overlap_rule, isolated_rule]
+
+    monkeypatch.setattr("tagpulse.signaling.periodic_dispatcher.RulesService", _FakeRulesService)
+
+    await dispatcher.run_once()
+
+    dims = [d for _, d, _ in meter.records]
+    assert dims.count("rule_evaluations") == 2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_overlapping_processor_error_does_not_break_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A processor error on one rule must not prevent subsequent rules
+    from being evaluated — the dispatcher swallows the exception and
+    continues."""
+
+    bad_rule = _make_overlapping_periodic_rule()
+    good_rule = _make_periodic_rule()
+    dispatcher = PeriodicSignalingDispatcher(
+        session_factory=_fake_session_factory(),  # type: ignore[arg-type]
+        event_bus=_FakeBus(),  # type: ignore[arg-type]
+        usage_meter=_FakeMeter(),  # type: ignore[arg-type]
+    )
+
+    async def _bad_run(session: Any, rule: RuleResponse) -> int:
+        raise RuntimeError("processor blew up")
+
+    monkeypatch.setattr(dispatcher._overlapping_processor, "run_once_for_rule", _bad_run)
+
+    class _FakeRulesService:
+        def __init__(self, session: Any) -> None:
+            pass
+
+        async def get_active_rules_by_condition_types_all_tenants(
+            self, condition_types: list[str]
+        ) -> list[RuleResponse]:
+            return [bad_rule, good_rule]
+
+    monkeypatch.setattr("tagpulse.signaling.periodic_dispatcher.RulesService", _FakeRulesService)
+
+    await dispatcher.run_once()
+
+    # Both rules got their last_fired stamped — the processor error did
+    # not abort the tick.
+    assert bad_rule.id in dispatcher._last_fired
+    assert good_rule.id in dispatcher._last_fired

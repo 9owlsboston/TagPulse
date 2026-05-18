@@ -34,15 +34,10 @@ def _cooldown_active(key: tuple[UUID, UUID, str], now: datetime) -> bool:
     return True
 
 
-def _set_cooldown(
-    key: tuple[UUID, UUID, str], now: datetime, seconds: int
-) -> None:
+def _set_cooldown(key: tuple[UUID, UUID, str], now: datetime, seconds: int) -> None:
     if seconds <= 0:
         return
-    if (
-        key not in _RULE_COOLDOWN_UNTIL
-        and len(_RULE_COOLDOWN_UNTIL) >= _RULE_COOLDOWN_MAX
-    ):
+    if key not in _RULE_COOLDOWN_UNTIL and len(_RULE_COOLDOWN_UNTIL) >= _RULE_COOLDOWN_MAX:
         try:
             oldest = next(iter(_RULE_COOLDOWN_UNTIL))
             _RULE_COOLDOWN_UNTIL.pop(oldest, None)
@@ -81,14 +76,9 @@ class RuleEvaluator:
 
             for rule in rules:
                 self._meter.record(tenant_id, "rule_evaluations", "evaluations")
-                matched = _evaluate_condition(
-                    rule.condition_type, rule.condition_config, payload
-                )
+                matched = _evaluate_condition(rule.condition_type, rule.condition_config, payload)
                 if matched:
-                    message = (
-                        f"Rule '{rule.name}' triggered: "
-                        f"{rule.condition_type} condition met"
-                    )
+                    message = f"Rule '{rule.name}' triggered: {rule.condition_type} condition met"
                     alert = await service.create_alert(
                         tenant_id,
                         rule.id,
@@ -219,9 +209,7 @@ class RuleEvaluator:
                 cooldown_key = (tenant_id, rule.id, subject_id_str)
                 if _cooldown_active(cooldown_key, now):
                     continue
-                cooldown_s = int(
-                    rule.condition_config.get("cooldown_s", 300)
-                )
+                cooldown_s = int(rule.condition_config.get("cooldown_s", 300))
                 _set_cooldown(cooldown_key, now, cooldown_s)
 
                 op = rule.condition_config.get("operator", "")
@@ -246,8 +234,7 @@ class RuleEvaluator:
                 )
                 self._meter.record(tenant_id, "alerts_fired", "events")
                 logger.info(
-                    "Telemetry threshold alert: alert=%s rule=%s "
-                    "subject=%s/%s metric=%s value=%s",
+                    "Telemetry threshold alert: alert=%s rule=%s subject=%s/%s metric=%s value=%s",
                     alert.id,
                     rule.id,
                     subject_kind,
@@ -273,6 +260,135 @@ class RuleEvaluator:
                         },
                     ),
                 )
+            await session.commit()
+
+    async def on_attribution_settled(self, event: Event) -> None:
+        """Evaluate ``signaling.<event_type>.on_inference`` rules.
+
+        Subscribes to :attr:`Topic.SIGNALING_ATTRIBUTION_SETTLED` events
+        emitted by :class:`tagpulse.signaling.overlapping_zones.OverlappingZonesProcessor`.
+        For each matching ``on_inference`` rule whose
+        :class:`tagpulse.models.rule_schemas.SignalingOnInferenceConfig`
+        ``min_confidence`` is satisfied, creates an alert and publishes
+        :attr:`Topic.ALERT_TRIGGERED` on the same output path used by
+        the other rule paths.
+
+        Sprint 41 Phase D2 (ADR-021 v2). The producing OverlappingZones
+        rule's id is in the event payload as ``rule_id``; this consumer
+        does not look it up — the event carries everything we need to
+        match downstream rules and build an alert message.
+
+        Cooldown key matches the convention used by
+        :meth:`on_subject_zone_changed`: ``(tenant_id, rule_id,
+        subject_id_str)`` with ``subject_id_str = asset_id``. Defaults
+        to ``cooldown_s=60`` (one alert per asset per rule per minute)
+        which matches the :class:`SignalingOnInferenceConfig` default.
+        """
+
+        payload = event.payload
+        tenant_id_str = payload.get("tenant_id")
+        if not tenant_id_str:
+            return
+        try:
+            tenant_id = UUID(tenant_id_str)
+        except ValueError:
+            return
+        asset_id_str = payload.get("asset_id")
+        zone_id_str = payload.get("zone_id")
+        if not asset_id_str or not zone_id_str:
+            return
+        try:
+            confidence = float(payload.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            return
+        now = datetime.now(UTC)
+
+        # Match all on_inference condition_types for the three event_types
+        # that produce attribution_settled (location, geolocation; we list
+        # all three so a future temperature processor can fan out the same
+        # way without re-touching this method).
+        on_inference_types = (
+            "signaling.location.on_inference",
+            "signaling.geolocation.on_inference",
+            "signaling.temperature.on_inference",
+        )
+
+        async with self._session_factory() as session:
+            # Resolve asset + zone labels once per event so the alert
+            # message is human-readable for every matching rule. The
+            # asset_id field on the attribution event always identifies
+            # an ``asset``-kind subject — the OverlappingZones processor
+            # resolves through ``asset_tag_bindings`` and only emits
+            # asset_id values.
+            asset_name = await self._lookup_subject_name(session, tenant_id, "asset", asset_id_str)
+            zone_name = await self._lookup_zone_name(session, tenant_id, zone_id_str)
+            asset_label = asset_name or asset_id_str
+            zone_label = zone_name or zone_id_str
+
+            service = RulesService(session)
+            for condition_type in on_inference_types:
+                rules = await service.get_active_rules_by_condition_type(tenant_id, condition_type)
+                for rule in rules:
+                    self._meter.record(tenant_id, "rule_evaluations", "evaluations")
+                    try:
+                        min_conf = float(rule.condition_config.get("min_confidence", 0.0))
+                    except (TypeError, ValueError):
+                        min_conf = 0.0
+                    if confidence < min_conf:
+                        continue
+                    cooldown_key = (tenant_id, rule.id, asset_id_str)
+                    if _cooldown_active(cooldown_key, now):
+                        continue
+                    cooldown_s = int(rule.condition_config.get("cooldown_s", 60))
+                    _set_cooldown(cooldown_key, now, cooldown_s)
+
+                    message = (
+                        f"Rule '{rule.name}' inferred asset "
+                        f"'{asset_label}' ({asset_id_str}) is in zone "
+                        f"'{zone_label}' ({zone_id_str}) "
+                        f"(confidence={confidence:.2f})"
+                    )
+                    alert = await service.create_alert(
+                        tenant_id,
+                        rule.id,
+                        device_id=None,
+                        severity="info",
+                        message=message,
+                        context={
+                            "rule_name": rule.name,
+                            "condition_type": rule.condition_type,
+                            "condition_config": rule.condition_config,
+                            "event_payload": payload,
+                        },
+                    )
+                    self._meter.record(tenant_id, "alerts_fired", "events")
+                    logger.info(
+                        "Attribution alert fired: alert=%s rule=%s "
+                        "asset=%s zone=%s confidence=%.3f",
+                        alert.id,
+                        rule.id,
+                        asset_id_str,
+                        zone_id_str,
+                        confidence,
+                    )
+                    await self._event_bus.publish(
+                        Topic.ALERT_TRIGGERED,
+                        Event(
+                            id=alert.id,
+                            topic=Topic.ALERT_TRIGGERED,
+                            timestamp=alert.triggered_at,
+                            payload={
+                                "alert_id": str(alert.id),
+                                "tenant_id": str(tenant_id),
+                                "rule_id": str(rule.id),
+                                "device_id": None,
+                                "severity": alert.severity,
+                                "message": alert.message,
+                                "action_type": rule.action_type,
+                                "action_config": rule.action_config,
+                            },
+                        ),
+                    )
             await session.commit()
 
     async def _lookup_subject_name(
@@ -321,9 +437,7 @@ class RuleEvaluator:
             zid = UUID(zone_id_str)
         except ValueError:
             return None
-        stmt = select(ZoneModel.name).where(
-            ZoneModel.id == zid, ZoneModel.tenant_id == tenant_id
-        )
+        stmt = select(ZoneModel.name).where(ZoneModel.id == zid, ZoneModel.tenant_id == tenant_id)
         try:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
@@ -361,19 +475,13 @@ class RuleEvaluator:
         ):
             if target_zone is None:
                 continue
-            rules = await service.get_active_rules_by_condition_type(
-                tenant_id, condition_type
-            )
+            rules = await service.get_active_rules_by_condition_type(tenant_id, condition_type)
             for rule in rules:
                 self._meter.record(tenant_id, "rule_evaluations", "evaluations")
                 if rule.condition_config.get("zone_id") != target_zone:
                     continue
                 allowed_kinds = rule.condition_config.get("subject_kinds")
-                if (
-                    allowed_kinds
-                    and subject_kind is not None
-                    and subject_kind not in allowed_kinds
-                ):
+                if allowed_kinds and subject_kind is not None and subject_kind not in allowed_kinds:
                     continue
                 cooldown_key = (tenant_id, rule.id, subject_id_str)
                 if _cooldown_active(cooldown_key, now):
@@ -409,8 +517,7 @@ class RuleEvaluator:
                 )
                 self._meter.record(tenant_id, "alerts_fired", "events")
                 logger.info(
-                    "Zone alert fired: alert=%s rule=%s subject=%s zone=%s "
-                    "verb=%s",
+                    "Zone alert fired: alert=%s rule=%s subject=%s zone=%s verb=%s",
                     alert.id,
                     rule.id,
                     subject_id_str,
@@ -607,9 +714,7 @@ def _eval_rate_change(config: dict[str, Any], payload: dict[str, Any]) -> bool:
     return deviation > change_f
 
 
-def _eval_telemetry_threshold(
-    config: dict[str, Any], payload: dict[str, Any]
-) -> bool:
+def _eval_telemetry_threshold(config: dict[str, Any], payload: dict[str, Any]) -> bool:
     """Evaluate ``telemetry.threshold``: subject_kind/metric_name/op/value.
 
     The event payload is the new ``Topic.TELEMETRY_RECORDED`` shape:

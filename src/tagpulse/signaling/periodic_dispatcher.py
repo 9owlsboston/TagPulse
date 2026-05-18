@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.protocol import EventBus
 from tagpulse.rules import RulesService
+from tagpulse.signaling.overlapping_zones import OverlappingZonesProcessor
 
 if TYPE_CHECKING:
     from tagpulse.models.rule_schemas import RuleResponse
@@ -77,6 +78,15 @@ class PeriodicSignalingDispatcher:
         # than firing immediately on re-enable. Cleared at process
         # restart (see module docstring trade-off).
         self._last_fired: dict[UUID, datetime] = {}
+        # Sprint 41 Phase D2: per-process OverlappingZones processor.
+        # The processor is stateless across rules and re-used on each
+        # tick to avoid the per-call import + class-construction cost.
+        # ``signaling.<event_type>.periodic`` rules with
+        # ``processor='overlapping_zones'`` dispatch through it; rules
+        # with ``processor IS NULL`` or ``'isolated_zones'`` are handled
+        # by the existing ingestion-path emission of
+        # ``subject.zone_changed`` and do not need a periodic processor.
+        self._overlapping_processor = OverlappingZonesProcessor(event_bus)
 
     async def start(self) -> None:
         self._task = asyncio.create_task(self._loop())
@@ -164,22 +174,49 @@ class PeriodicSignalingDispatcher:
         service: RulesService,
         rule: RuleResponse,
     ) -> None:
-        """Phase B shell \u2014 logs the evaluation and records a meter tick.
+        """Dispatch one periodic rule to its configured processor.
 
-        Phase D replaces this body with per-event-type processor logic
-        (IsolatedZones for ``signaling.location.periodic``, the
-        temperature aggregator for ``signaling.temperature.periodic``,
-        etc.) that may call :meth:`RulesService.create_alert` and
-        publish ``Topic.ALERT_TRIGGERED`` \u2014 the same output path used
-        by :class:`InventoryRuleWorker`. The shell keeps the cadence
-        loop testable today.
+        Phase D2 wiring: rules with ``processor='overlapping_zones'``
+        run the :class:`OverlappingZonesProcessor` aggregation cycle
+        and emit ``signaling.attribution_settled`` events. Rules with
+        ``processor='isolated_zones'`` or ``processor IS NULL`` are
+        already served by the existing ingestion-path emission of
+        ``subject.zone_changed`` on every tag-read; the periodic
+        dispatcher logs the tick for observability but does no extra
+        work (the alerts are produced by the existing zone-changed
+        rules pipeline).
+
+        A meter tick is recorded once per dispatched rule regardless of
+        processor so per-tenant evaluation counts remain comparable
+        across processor choices.
         """
 
         self._meter.record(rule.tenant_id, "rule_evaluations", "evaluations")
+        processor = rule.processor or "isolated_zones"
+        if processor == "overlapping_zones":
+            try:
+                emitted = await self._overlapping_processor.run_once_for_rule(session, rule)
+            except Exception:  # pragma: no cover - defensive
+                logger.exception(
+                    "OverlappingZones run failed: rule=%s tenant=%s",
+                    rule.id,
+                    rule.tenant_id,
+                )
+                return
+            logger.info(
+                "PeriodicSignalingDispatcher OverlappingZones rule=%s "
+                "tenant=%s event_type=%s emitted=%d attribution_settled "
+                "events",
+                rule.id,
+                rule.tenant_id,
+                rule.event_type,
+                emitted,
+            )
+            return
         logger.info(
-            "PeriodicSignalingDispatcher evaluating rule=%s tenant=%s "
-            "event_type=%s trigger=%s (Phase B shell \u2014 no processor "
-            "implementation yet)",
+            "PeriodicSignalingDispatcher IsolatedZones tick rule=%s "
+            "tenant=%s event_type=%s trigger=%s (no-op \u2014 served by "
+            "ingestion-path zone-changed events)",
             rule.id,
             rule.tenant_id,
             rule.event_type,
