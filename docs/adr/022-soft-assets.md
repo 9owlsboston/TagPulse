@@ -1,12 +1,12 @@
 # ADR-022: Soft Assets — Auto-Creation Policy
 
 - Status: Proposed (Sprint 33, May 2026)
-- Implements: gap 2.4 in `local reference notes/IMPLEMENTATION-GAPS.md`
+- Implements: gap 2.4 in the external schema/API audit notes (held locally)
 - Related: [reference-design-remediation plan](../design/reference-design-remediation.md), ADR [003 TimescaleDB storage](003-timescaledb-storage.md) (`tag_reads` as event-ledger source-of-truth), [data-models.md §"Where is the tag?"](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table), [design/tracking-modes.md](../design/tracking-modes.md) (the asset-mode / inventory-mode split this fits into)
 
 ## Context
 
-Reference design "Soft Assets": when a read arrives from a Tag that has no
+Reference-design "Soft Assets": when a read arrives from a tag that has no
 asset association, **and** the originating Location has
 `soft_assets_enabled=true`, the platform auto-creates a Soft Asset so no
 telemetry is lost. A Soft Asset converts to a full Asset on first manual
