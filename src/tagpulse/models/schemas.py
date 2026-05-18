@@ -484,6 +484,11 @@ class SiteUpdate(BaseModel):
     Geolocation paired-validation only fires when *both* fields appear
     in the patch payload — the underlying DB CHECK enforces the
     invariant at write time for partial updates.
+
+    Fields backed by NOT-NULL DB columns (``name``, ``kind``,
+    ``default_timezone``) are ``Optional`` only for *omission* from the
+    patch payload. Explicit ``null`` for any of them is rejected at
+    422 so the DB never sees the NULL and returns 500.
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
@@ -511,6 +516,18 @@ class SiteUpdate(BaseModel):
         lon_in = "longitude" in provided
         if lat_in and lon_in and (self.latitude is None) != (self.longitude is None):
             raise ValueError("latitude and longitude must be provided together")
+        return self
+
+    @model_validator(mode="after")
+    def _reject_explicit_null_for_not_null_fields(self) -> "SiteUpdate":
+        # ``name`` / ``kind`` / ``default_timezone`` are NOT NULL in the
+        # ``sites`` table. Optional here means "omit to leave unchanged",
+        # *not* "send null to clear". Reject explicit null at 422 so it
+        # never reaches the DB.
+        provided = self.model_fields_set
+        for field in ("name", "kind", "default_timezone"):
+            if field in provided and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be set to null")
         return self
 
 

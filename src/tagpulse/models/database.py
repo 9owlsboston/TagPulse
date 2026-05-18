@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    CHAR,
     BigInteger,
     DateTime,
     Float,
@@ -459,7 +460,9 @@ class SiteModel(Base):
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)
     region: Mapped[str | None] = mapped_column(String(128), nullable=True)
     postal_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    country: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    # CHAR(2) matches migration 038; regex CHECK enforces exact 2-char shape
+    # so no padding ever occurs.
+    country: Mapped[str | None] = mapped_column(CHAR(2), nullable=True)
     # -- Sprint 34 gap 2.7: geolocation --
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)

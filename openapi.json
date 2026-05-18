@@ -3684,7 +3684,7 @@
         "type": "object"
       },
       "SiteUpdate": {
-        "description": "Patch a site.\n\nAll fields optional. ``kind`` is mutable (a transporter that becomes\npermanently parked can be reclassified as a site, and vice-versa).\n\nGeolocation paired-validation only fires when *both* fields appear\nin the patch payload \u2014 the underlying DB CHECK enforces the\ninvariant at write time for partial updates.",
+        "description": "Patch a site.\n\nAll fields optional. ``kind`` is mutable (a transporter that becomes\npermanently parked can be reclassified as a site, and vice-versa).\n\nGeolocation paired-validation only fires when *both* fields appear\nin the patch payload \u2014 the underlying DB CHECK enforces the\ninvariant at write time for partial updates.\n\nFields backed by NOT-NULL DB columns (``name``, ``kind``,\n``default_timezone``) are ``Optional`` only for *omission* from the\npatch payload. Explicit ``null`` for any of them is rejected at\n422 so the DB never sees the NULL and returns 500.",
         "properties": {
           "address": {
             "anyOf": [
