@@ -15,6 +15,7 @@
 - [Sites & Zones](#sites--zones)
 - [Map](#map)
 - [Inventory](#inventory)
+- [Labels](#labels)
 - [Tenant Settings](#tenant-settings)
 - [Usage & Quotas](#usage--quotas)
 - [User Management](#user-management)
@@ -781,6 +782,127 @@ Without mappings, ingestion still works — the system just treats the tag as op
 ### Case/pallet containment (Sprint 15b)
 
 Use the `parent_stock_item_id` field on `POST /stock-items` (or `PATCH`) to record a case packed into a pallet, or a pallet loaded onto a trailer. The chain is recursive — a pallet's manifest will traverse all the way down to individual cases. The **Map** page's manifest pop-out (see [Map](#map) above) renders this tree.
+
+---
+
+## Labels
+
+> Tenant-scoped catalog. Reads are open to any role; writes are editor/admin; deleting a catalog row is admin-only.
+
+**Labels** are short typed key/value pairs you attach to **assets**, **sites**, **zones**, **devices**, and **categories** so you can group, filter, and report across them without piggy-backing on the free-form `metadata` JSONB.
+
+Use labels for things you want to **filter list views by** — `location=warehouse-a`, `priority=high`, `owner=alice`, `cold-chain=true`. Keep `metadata` for everything else: long blobs, structured nested data, integration-specific payloads.
+
+See [ADR 020](adr/020-labels-first-class.md) for the full design rationale.
+
+### How labels relate to Categories and metadata
+
+| Concept | Cardinality per entity | When to use |
+|---|---|---|
+| **Category** | 0..1 (assets only) | The asset's primary "what kind of thing is this?" classification. Drives required-tags + per-type policy. |
+| **Label** | 0..30 (assets / sites / zones / devices / categories) | Cross-cutting attributes you want to filter or roll-up by. Multiple keys, multiple values per key. |
+| **`metadata` JSONB** | one blob | Bag-of-properties escape hatch — anything that doesn't fit the strict label format (long strings, nested structures, integration payloads). |
+
+### The two-level model: catalog + associations
+
+Labels are split into a **catalog** (what keys can exist) and **associations** (which entity holds which value for which key):
+
+1. **Catalog** — admin/editor creates a label key in the catalog scoped to one `entity_type` (`asset` / `site` / `zone` / `device` / `category`). The same key can exist independently across entity types (e.g. `location` on Assets and `location` on Sites are separate catalog rows).
+2. **Associations** — editor/admin attaches a `(key, value)` pair to a specific entity instance. The value is what makes the row interesting; the same key can take different values on different entities.
+
+This two-step shape gives you autocomplete + spelling consistency (the UI offers the catalog's keys + any previously-used values) without limiting the value vocabulary.
+
+### Format rules
+
+| Field | Rule |
+|---|---|
+| `key` | 3–24 chars; `[A-Za-z0-9_.+$]`; no spaces; case-insensitive uniqueness per `(tenant, entity_type)` so `Location` and `location` collide. |
+| `value` | 1–64 chars; `[A-Za-z0-9._-]`. Matches Kubernetes / AWS / GCP tag-value conventions. |
+| `color` | Optional `#RRGGBB` hex (e.g. `#0d9488`); drives the chip colour in the UI. |
+| **Cap per entity** | **30 associations**. Enforced both API-side (early reject) and DB-side (`BEFORE INSERT` trigger backstop). |
+
+Format violations surface as 422 from the catalog endpoints. The cap surfaces as `409` with `{"message": "...", "cap": 30}`.
+
+### Catalog endpoints
+
+All paths are tenant-scoped via the current session — no `/v1/` prefix, no `{slug}` segment.
+
+| Endpoint | Role | What it does |
+|---|---|---|
+| `GET /labels?entity_type=asset` | viewer+ | List catalog rows; optional `entity_type` filter. |
+| `POST /labels` | editor / admin | Create a catalog row. Body: `{"entity_type": "...", "key": "...", "color": "#..."}` (color optional). |
+| `GET /labels/{id}` | viewer+ | One catalog row. |
+| `PATCH /labels/{id}` | editor / admin | Rename / recolour. `entity_type` is **immutable** — sending it returns 400. |
+| `DELETE /labels/{id}` | admin only | Delete a catalog row. Returns **409** with `{"message": "...", "association_count": N}` if any entity still references it — disassociate first. |
+
+### Per-entity association endpoints
+
+The URL segment is the **plural** form (`assets` / `sites` / `zones` / `devices` / `categories`) — same convention as the rest of the API.
+
+| Endpoint | Role | What it does |
+|---|---|---|
+| `GET /{entity_segment}/{id}/labels` | viewer+ | All labels on this entity. |
+| `POST /{entity_segment}/{id}/labels` | editor / admin | Attach `{"key": "...", "value": "..."}`. Looks up the catalog row by `(tenant, entity_type, lower(key))` — no need to know the synthetic UUID. 404 if the key isn't in the catalog; 409 on duplicate; 409 on cap. |
+| `DELETE /{entity_segment}/{id}/labels/{label_id}` | editor / admin | Detach. |
+
+### Filtering list endpoints by labels
+
+`GET /assets`, `GET /sites`, `GET /zones`, and `GET /devices` accept a **deep-object** `labels` query parameter (same shape Prometheus / Loki / Grafana use, OpenAPI `style: deepObject, explode: true`):
+
+```text
+# Single pair (most common)
+GET /assets?labels[location]=warehouse-a
+
+# Multiple keys → AND across keys
+GET /assets?labels[location]=warehouse-a&labels[priority]=high
+
+# Multiple values for one key → OR within key (comma-separated)
+GET /assets?labels[location]=warehouse-a,warehouse-b
+
+# Combined
+GET /assets?labels[location]=warehouse-a,warehouse-b&labels[priority]=high&labels[owner]=alice,bob
+```
+
+Semantics: **AND across distinct keys**, **OR within values of the same key**. Each key compiles to one correlated `EXISTS` over `entity_labels`, joined back to `labels` for tenant + entity-type scoping.
+
+**Guard rails** (return 400 if exceeded):
+
+- ≤ 5 distinct keys per request.
+- ≤ 20 values per key.
+- Each value still matches the `^[A-Za-z0-9._-]{1,64}$` regex above.
+
+The repeated-parallel form `?label.key=X&label.value=Y` is **not** supported — query-param order isn't guaranteed across all middleware, so positional pairing is fragile.
+
+### Audit events
+
+Every label mutation writes to the audit log under [Audit Log](#audit-log):
+
+- `label.created` — new catalog row.
+- `label.updated` — `key` or `color` changed (no-op PATCHes don't write).
+- `label.deleted` — catalog row removed.
+- `label.associated` — attached to an entity.
+- `label.disassociated` — detached from an entity.
+
+### Example: tagging a high-priority Boston asset
+
+```bash
+# 1. Admin creates two catalog keys for assets
+curl -X POST $API/labels -H "Authorization: Bearer $KEY" \
+  -d '{"entity_type": "asset", "key": "location", "color": "#0ea5e9"}'
+curl -X POST $API/labels -H "Authorization: Bearer $KEY" \
+  -d '{"entity_type": "asset", "key": "priority", "color": "#ef4444"}'
+
+# 2. Editor attaches values to a specific asset
+curl -X POST $API/assets/$ASSET_ID/labels -H "Authorization: Bearer $KEY" \
+  -d '{"key": "location", "value": "warehouse-bos-01"}'
+curl -X POST $API/assets/$ASSET_ID/labels -H "Authorization: Bearer $KEY" \
+  -d '{"key": "priority", "value": "high"}'
+
+# 3. Anyone can filter
+curl -G "$API/assets" -H "Authorization: Bearer $KEY" \
+  --data-urlencode 'labels[location]=warehouse-bos-01' \
+  --data-urlencode 'labels[priority]=high'
+```
 
 ---
 
