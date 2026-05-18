@@ -1,12 +1,31 @@
 """Pydantic schemas for tag read messages, devices, and API responses."""
 
+import re
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 LocationSource = Literal["gps", "fixed", "inferred"]
+
+# -- Sprint 34 (gap 2.8): external_ref must avoid characters that are
+# unsafe in URLs / shell paths / CSV exports. Matches the reference
+# design's IMPLEMENTATION-GAPS.md row 2.8 list. --
+_EXTERNAL_REF_FORBIDDEN_RE = re.compile(r"[.:/?#\\\[\]@,|&!=$'*+;%]")
+
+
+def _validate_external_ref(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    if _EXTERNAL_REF_FORBIDDEN_RE.search(stripped):
+        raise ValueError(
+            "external_ref must not contain any of: . : / ? # \\ [ ] @ , | & ! = $ ' * + ; %"
+        )
+    return stripped
 
 
 # -- Sub-models (Sprint 14) --
@@ -534,7 +553,15 @@ class AssetCreate(BaseModel):
     external_ref: str | None = Field(default=None, max_length=255)
     status: Literal["active", "retired", "lost"] = Field(default="active")
     parent_asset_id: UUID | None = None
+    # -- Sprint 34 (ADR 019): nullable during the compatibility window
+    # while ``asset_type`` is still the source of truth. New writes
+    # should always pass ``category_id``. --
+    category_id: UUID | None = None
     metadata: dict[str, Any] | None = None
+
+    _normalise_external_ref = field_validator("external_ref")(
+        lambda cls, v: _validate_external_ref(v)
+    )
 
 
 class AssetUpdate(BaseModel):
@@ -545,7 +572,14 @@ class AssetUpdate(BaseModel):
     external_ref: str | None = Field(default=None, max_length=255)
     status: Literal["active", "retired", "lost"] | None = None
     parent_asset_id: UUID | None = None
+    # Explicit ``null`` clears the FK (re-points the asset to the
+    # tenant's implicit default category in the API layer).
+    category_id: UUID | None = None
     metadata: dict[str, Any] | None = None
+
+    _normalise_external_ref = field_validator("external_ref")(
+        lambda cls, v: _validate_external_ref(v)
+    )
 
 
 class AssetResponse(BaseModel):
@@ -558,6 +592,7 @@ class AssetResponse(BaseModel):
     asset_type: str
     status: str
     parent_asset_id: UUID | None
+    category_id: UUID | None = None
     metadata: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
@@ -900,3 +935,49 @@ class TagDataMappingUpdate(BaseModel):
     semantic_field: str | None = Field(default=None, min_length=1, max_length=40)
     tag_data_key: str | None = Field(default=None, min_length=1, max_length=64)
     transform: str | None = Field(default=None, max_length=40)
+
+
+# -- Sprint 34 (ADR 019): Categories --
+
+CategoryType = Literal["liquid_container", "reference_tag", "rti_container", "object"]
+
+
+class CategoryCreate(BaseModel):
+    """Create a category."""
+
+    name: str = Field(min_length=1, max_length=255)
+    sku_upc: str | None = Field(default=None, max_length=64)
+    description: str | None = None
+    category_type: CategoryType
+    required_tags: int = Field(default=1, ge=1)
+
+
+class CategoryUpdate(BaseModel):
+    """Patch a category.
+
+    ``category_type`` is intentionally absent — it is immutable after
+    create per ADR 019. Attempts to send it must be rejected by the
+    API layer (Pydantic will silently drop it without ``model_extra``
+    enabled, so we surface a 400 there instead).
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    sku_upc: str | None = Field(default=None, max_length=64)
+    description: str | None = None
+    required_tags: int | None = Field(default=None, ge=1)
+
+
+class CategoryResponse(BaseModel):
+    """Persisted category row."""
+
+    id: UUID
+    tenant_id: UUID
+    name: str
+    sku_upc: str | None
+    description: str | None
+    category_type: CategoryType
+    required_tags: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

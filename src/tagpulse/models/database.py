@@ -13,6 +13,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -518,6 +519,56 @@ class SubjectCurrentZoneModel(Base):
     )
 
 
+class CategoryModel(Base):
+    """Tenant-scoped Category for assets (Sprint 34, ADR 019).
+
+    Every asset *should* belong to exactly one Category. Category
+    declares the sensing-event capability template (``category_type``)
+    and the required-tag count consumed by ADR 021 (Configurable
+    Sensing Events). (The reference design calls these "tags";
+    TagPulse's domain term is "tag" — see ``docs/data-models.md``
+    §"Where is the tag?". The reference design's separate Tag
+    registry concept (gap 2.14) is deferred and TagPulse already has
+    equivalents via ``tag_reads`` + ``asset_tag_bindings``.)
+
+    Invariants:
+
+    - ``UNIQUE(tenant_id, name)`` — enforced by the DB.
+    - ``category_type`` must be one of ``liquid_container`` /
+      ``reference_tag`` / ``rti_container`` / ``object`` — enforced
+      by a DB ``CHECK`` constraint AND a Pydantic ``Literal``.
+    - ``category_type`` is **immutable after create** — enforced in
+      the API layer (``PATCH`` rejects changes), not in the DB.
+    - ``required_tags`` must be ``>= 1`` — DB ``CHECK``.
+    - Cannot be deleted while any asset references it — enforced by
+      the ``ON DELETE RESTRICT`` FK on ``assets.category_id``; the API
+      surfaces a 409 with the count of referencing assets.
+    """
+
+    __tablename__ = "categories"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    sku_upc: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    required_tags: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_categories_tenant_name"),)
+
+
 class AssetModel(Base):
     """Tenant-scoped tracked thing (Sprint 15)."""
 
@@ -534,6 +585,14 @@ class AssetModel(Base):
     parent_asset_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("assets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # -- Sprint 34 (ADR 019): nullable FK to categories. Will become
+    # non-null in a future migration once the UI + clients have
+    # switched off the legacy ``asset_type`` shadow column. --
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("categories.id", ondelete="RESTRICT"),
         nullable=True,
     )
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)

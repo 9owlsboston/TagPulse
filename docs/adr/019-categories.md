@@ -1,6 +1,6 @@
 # ADR-019: Categories as a First-Class Entity
 
-- Status: Proposed (Sprint 33, May 2026)
+- Status: Accepted (Sprint 34, May 2026)
 - Implements: gap 2.1 (and unblocks 2.8) in `local reference notes/IMPLEMENTATION-GAPS.md`
 - Related: [reference-design-remediation plan](../design/reference-design-remediation.md), [data-models.md §assets](../data-models.md), ADR [005 rules engine](005-embedded-rules-engine.md), ADR [021 Configurable Sensing Events](021-configurable-sensing-events.md) (downstream consumer)
 
@@ -13,6 +13,14 @@ exactly one Category, Category declares the sensing-event capability template
 and the required-tag count, and Configurable Sensing Events (ADR 021) scope
 themselves per `(category, event_type)`.
 
+> **Terminology note.** The reference design calls RFID tags "tags"
+> throughout. TagPulse's domain term is **tag** — see
+> [`docs/data-models.md` §"Where is the tag?"](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table)
+> for the why. This ADR uses TagPulse's vocabulary for all
+> TagPulse-owned schema (column names, enum values, API fields) and
+> only keeps the word "tag" when naming an external reference-design
+> concept verbatim (e.g. gap 2.14 "deferred tag registry").
+
 Without Categories:
 
 - Sensing Events (ADR 021) cannot scope correctly — every config would have to
@@ -23,7 +31,7 @@ Without Categories:
 - The reference design's deferred tag registry (gap 2.14, currently deferred) cannot
   enforce the required-tag-count contract.
 
-## Decision (proposed — to be ratified in Sprint 34)
+## Decision
 
 Introduce a new tenant-scoped `categories` table and add a nullable FK
 `assets.category_id`.
@@ -90,12 +98,29 @@ columns Name · SKU/UPC · ID · Description · Type · # required tags.
   compatibility window closes (one release). Document in CHANGELOG.
 - **No cost impact:** Categories are low-cardinality (tens per tenant).
 
-## Open questions for Sprint 34
+## Open questions for Sprint 34 — resolved
 
-- Should `category_type` be DB-enforced (CHECK constraint) or app-enforced
-  (Pydantic enum only)? Lean DB-enforced for safety.
-- Should `required_tags` be inferred from `category_type` (like the
-  reference design) or operator-set? Lean operator-set with a per-type
-  default suggestion in the UI.
-- Cross-tenant import path for category catalogs? Defer until first
-  customer asks.
+- **Should `category_type` be DB-enforced (CHECK constraint) or app-enforced
+  (Pydantic enum only)?** — **DB-enforced.** Migration
+  [`037_categories.py`](../../migrations/versions/037_categories.py) creates
+  `ck_categories_type CHECK (category_type IN (...))`. App-side enum stays
+  too for 4xx error messages.
+- **Should `required_tags` be inferred from `category_type` (like the
+  reference design) or operator-set?** — **Operator-set**, default `1`,
+  validated `>= 1` both in the DB (`ck_categories_required_tags_positive`)
+  and in `CategoryCreate` / `CategoryUpdate`. UI suggests a per-type
+  default; backend doesn't enforce one.
+- **Cross-tenant import path for category catalogs?** — Deferred. Will
+  revisit once a customer asks.
+
+## Deviations from the proposal
+
+- **URL shape.** ADR drafted `/v1/tenants/{slug}/categories`. Shipped as
+  `/categories` with `Depends(get_current_tenant)` to match the
+  established pattern (see `tenant_branding.py`). No path versioning is
+  used in TagPulse today. Documented in the router docstring.
+- **DELETE 409 payload.** ADR said "list of referencing asset IDs".
+  Shipped as `{"message": "...", "asset_count": N}` — the UI uses the
+  count to gate the confirmation flow; listing every referencing asset id
+  could be unbounded. Asset listing is one `GET /assets?category_id=` away
+  if the UI ever needs it.
