@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -11,13 +12,14 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Numeric,
     SmallInteger,
     String,
     Text,
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -267,6 +269,26 @@ class RuleModel(Base):
     action_config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     scope_device_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+    # -- Sprint 41 / ADR-021 v2 Configurable Sensing Events --
+    # ``event_type IS NULL`` is the legacy-rule discriminator; sensing
+    # rules populate all three of (event_type, trigger, processor).
+    event_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    trigger: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    processor: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    confidence_threshold: Mapped[Decimal] = mapped_column(
+        Numeric(3, 2), nullable=False, server_default="0.0"
+    )
+    category_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(UUID(as_uuid=True)),
+        nullable=False,
+        server_default="{}",
+    )
+    asset_label_filters: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    zone_label_filters: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    site_label_filters: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    integration_ids: Mapped[list[uuid.UUID] | None] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

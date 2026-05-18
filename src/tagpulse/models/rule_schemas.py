@@ -31,9 +31,7 @@ class TelemetryThresholdCondition(BaseModel):
     telemetry stream introduced in Sprint 18.
     """
 
-    subject_kind: str = Field(
-        pattern=r"^(device|asset|lot|stock_item|zone)$"
-    )
+    subject_kind: str = Field(pattern=r"^(device|asset|lot|stock_item|zone)$")
     metric_name: str = Field(min_length=1)
     operator: str = Field(pattern=r"^(gt|lt|gte|lte|eq)$")
     value: float
@@ -120,8 +118,66 @@ _RULE_CONDITION_PATTERN = (
     r"^(threshold|absence|rate_change|"
     r"stock\.below_threshold|stock\.expiring_within|stock\.unexpected_in_zone|"
     r"zone\.entered|zone\.exited|zone\.dwell_exceeded|"
-    r"telemetry\.threshold)$"
+    r"telemetry\.threshold|"
+    # -- Sprint 41 / ADR-021 v2 Configurable Sensing Events --
+    # The regex lists each valid (event_type, trigger) pair explicitly
+    # so impossible combinations (e.g. ``sensing.temperature.on_entry``)
+    # are rejected at parse time. Keep in sync with
+    # ``SENSING_VALID_PAIRS`` below — the two are the same truth in
+    # different shapes (one for Pydantic field validation, one for the
+    # API / evaluator).
+    r"sensing\.location\.(on_change|periodic|on_inactivity|on_inference)|"
+    r"sensing\.geolocation\.(on_change|periodic|on_inactivity)|"
+    r"sensing\.temperature\.(on_change|periodic|on_inactivity)|"
+    r"sensing\.geofencing\.(on_entry|on_exit)"
+    r")$"
 )
+
+
+# -- Sensing-event taxonomy (ADR-021 v2) --
+#
+# Authoritative map of which ``trigger`` values are legal for each
+# ``event_type``. The regex above is generated from the same truth; if
+# you add a pair, update both.
+#
+# - ``location`` / ``geolocation`` / ``temperature`` are subject-bound
+#   metric streams; entry/exit are spatial primitives that don't apply.
+# - ``geofencing`` is a pure spatial primitive; ``periodic`` /
+#   ``on_inactivity`` / ``on_inference`` don't apply.
+SENSING_VALID_PAIRS: dict[str, frozenset[str]] = {
+    "location": frozenset({"on_change", "periodic", "on_inactivity", "on_inference"}),
+    "geolocation": frozenset({"on_change", "periodic", "on_inactivity"}),
+    "temperature": frozenset({"on_change", "periodic", "on_inactivity"}),
+    "geofencing": frozenset({"on_entry", "on_exit"}),
+}
+
+# Two processor implementations per ADR-021. IsolatedZones is the
+# pre-Sprint-41 implicit behaviour made explicit; OverlappingZones is
+# new in Sprint 41 Phase D.
+SENSING_PROCESSORS: tuple[str, ...] = ("isolated_zones", "overlapping_zones")
+
+
+def split_sensing_condition_type(condition_type: str) -> tuple[str, str] | None:
+    """Decompose ``sensing.<event_type>.<trigger>`` into its parts.
+
+    Returns ``None`` for any string that is not a well-formed sensing
+    condition_type (the caller can treat ``None`` as "legacy rule, no
+    sensing-event taxonomy applies"). When a tuple is returned, the
+    ``(event_type, trigger)`` pair is guaranteed to be one of the 12
+    valid combinations in :data:`SENSING_VALID_PAIRS` — the
+    :data:`_RULE_CONDITION_PATTERN` regex has already rejected
+    ill-formed inputs before they reach this helper.
+    """
+
+    if not condition_type.startswith("sensing."):
+        return None
+    parts = condition_type.split(".")
+    if len(parts) != 3:
+        return None
+    _, event_type, trigger = parts
+    if trigger not in SENSING_VALID_PAIRS.get(event_type, frozenset()):
+        return None
+    return event_type, trigger
 
 
 # -- Rules --
@@ -145,13 +201,9 @@ class RuleUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
-    condition_type: str | None = Field(
-        default=None, pattern=_RULE_CONDITION_PATTERN
-    )
+    condition_type: str | None = Field(default=None, pattern=_RULE_CONDITION_PATTERN)
     condition_config: dict[str, Any] | None = None
-    action_type: str | None = Field(
-        default=None, pattern=r"^(webhook|email|notification)$"
-    )
+    action_type: str | None = Field(default=None, pattern=r"^(webhook|email|notification)$")
     action_config: dict[str, Any] | None = None
     scope_device_id: UUID | None = None
     enabled: bool | None = None

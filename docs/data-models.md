@@ -218,17 +218,27 @@ User-defined automation rules evaluated against incoming telemetry.
 | `tenant_id` | UUID | FK → tenants.id, NOT NULL, indexed | |
 | `name` | VARCHAR(255) | NOT NULL | |
 | `description` | TEXT | NULLABLE | |
-| `condition_type` | VARCHAR(50) | NOT NULL | `threshold`, `absence`, `rate_change` |
+| `condition_type` | VARCHAR(50) | NOT NULL | 10 legacy values (`threshold`, `absence`, `rate_change`, `stock.*`, `zone.*`, `telemetry.threshold`) + 12 sensing values (`sensing.<event_type>.<trigger>`) per ADR-021 v2 |
 | `condition_config` | JSONB | NOT NULL | Type-specific parameters (see below) |
 | `action_type` | VARCHAR(50) | NOT NULL | `webhook`, `email`, `notification` |
 | `action_config` | JSONB | NOT NULL | Type-specific parameters |
 | `scope_device_id` | UUID | NULLABLE | Restrict to single device |
 | `enabled` | BOOLEAN | NOT NULL, default `true` | |
+| `event_type` | VARCHAR(32) | NULLABLE | ADR-021 v2: `location` / `geolocation` / `temperature` / `geofencing`. NULL = legacy rule. |
+| `trigger` | VARCHAR(32) | NULLABLE | ADR-021 v2: `on_change` / `periodic` / `on_inactivity` / `on_inference` / `on_entry` / `on_exit`. Valid pairs constrained by `SENSING_VALID_PAIRS` (Pydantic + regex). |
+| `processor` | VARCHAR(32) | NULLABLE | ADR-021 v2: `isolated_zones` / `overlapping_zones`. |
+| `confidence_threshold` | NUMERIC(3,2) | NOT NULL, default `0.0` | ADR-021 v2: `0.0` (All) / `0.5` / `0.75`. |
+| `category_ids` | UUID[] | NOT NULL, default `'{}'` | ADR-021 v2: empty = all categories. |
+| `asset_label_filters` | JSONB | NULLABLE | ADR-021 v2: `[{key, value_in: [...]}]` AND-ed; per ADR-020 evaluation. |
+| `zone_label_filters` | JSONB | NULLABLE | ADR-021 v2: same shape as `asset_label_filters`. |
+| `site_label_filters` | JSONB | NULLABLE | ADR-021 v2: same shape as `asset_label_filters`. |
+| `integration_ids` | UUID[] | NULLABLE | ADR-021 v2: empty/NULL = broadcast (legacy); populated = per-rule routing. |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
 | `updated_at` | TIMESTAMPTZ | NOT NULL, auto-updated | |
 
 **RLS:** Yes (migration 007)
-**Migration:** 006
+**Migration:** 006 (initial), 040 (Sprint 41 sensing-event columns + `idx_rules_sensing_active` partial index)
+**Partial index:** `idx_rules_sensing_active ON rules (tenant_id, event_type, trigger) WHERE enabled = true AND event_type IS NOT NULL` — keeps the sensing-event evaluator hot path narrow.
 
 #### Condition config shapes
 
@@ -245,6 +255,18 @@ User-defined automation rules evaluated against incoming telemetry.
 **rate_change:**
 ```json
 { "window_minutes": 60, "change_percent": 25.0 }
+```
+
+**sensing.\*.periodic** (cadence config; processor-specific config in `processor_config` per ADR-021 v2):
+```json
+{
+  "cadence_minutes": 60,
+  "processor_config": {
+    "aggregation_window_s": 60,
+    "min_rssi_dbm": -80,
+    "aging_weight": 0.5
+  }
+}
 ```
 
 ---
