@@ -3373,11 +3373,70 @@
             ],
             "title": "Address"
           },
+          "city": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
           "default_timezone": {
             "default": "UTC",
             "maxLength": 64,
             "title": "Default Timezone",
             "type": "string"
+          },
+          "kind": {
+            "default": "site",
+            "enum": [
+              "site",
+              "transporter"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": -90.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "maximum": 180.0,
+                "minimum": -180.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
           },
           "metadata": {
             "anyOf": [
@@ -3396,6 +3455,54 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "postal_code": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Postal Code"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "street_line1": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Street Line1"
+          },
+          "street_line2": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Street Line2"
           }
         },
         "required": [
@@ -3418,6 +3525,28 @@
             ],
             "title": "Address"
           },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -3431,6 +3560,36 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "site",
+              "transporter"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
           },
           "metadata": {
             "anyOf": [
@@ -3448,6 +3607,50 @@
             "title": "Name",
             "type": "string"
           },
+          "postal_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Postal Code"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "street_line1": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Street Line1"
+          },
+          "street_line2": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Street Line2"
+          },
           "tenant_id": {
             "format": "uuid",
             "title": "Tenant Id",
@@ -3463,7 +3666,16 @@
           "id",
           "tenant_id",
           "name",
+          "kind",
           "address",
+          "street_line1",
+          "street_line2",
+          "city",
+          "region",
+          "postal_code",
+          "country",
+          "latitude",
+          "longitude",
           "default_timezone",
           "created_at",
           "updated_at"
@@ -3472,7 +3684,7 @@
         "type": "object"
       },
       "SiteUpdate": {
-        "description": "Patch a site.",
+        "description": "Patch a site.\n\nAll fields optional. ``kind`` is mutable (a transporter that becomes\npermanently parked can be reclassified as a site, and vice-versa).\n\nGeolocation paired-validation only fires when *both* fields appear\nin the patch payload \u2014 the underlying DB CHECK enforces the\ninvariant at write time for partial updates.\n\nFields backed by NOT-NULL DB columns (``name``, ``kind``,\n``default_timezone``) are ``Optional`` only for *omission* from the\npatch payload. Explicit ``null`` for any of them is rejected at\n422 so the DB never sees the NULL and returns 500.",
         "properties": {
           "address": {
             "anyOf": [
@@ -3485,6 +3697,30 @@
             ],
             "title": "Address"
           },
+          "city": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
           "default_timezone": {
             "anyOf": [
               {
@@ -3496,6 +3732,47 @@
               }
             ],
             "title": "Default Timezone"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "site",
+                  "transporter"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": -90.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "maximum": 180.0,
+                "minimum": -180.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
           },
           "metadata": {
             "anyOf": [
@@ -3521,6 +3798,54 @@
               }
             ],
             "title": "Name"
+          },
+          "postal_code": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Postal Code"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "street_line1": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Street Line1"
+          },
+          "street_line2": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Street Line2"
           }
         },
         "title": "SiteUpdate",

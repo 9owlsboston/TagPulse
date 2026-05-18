@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    CHAR,
     BigInteger,
     DateTime,
     Float,
@@ -434,7 +435,15 @@ class UserModel(Base):
 
 
 class SiteModel(Base):
-    """Physical location grouping (Sprint 15) — building/yard/warehouse."""
+    """Physical location grouping (Sprint 15) — building/yard/warehouse.
+
+    Sprint 34 (gap 2.7) adds ``kind`` (``site`` | ``transporter``),
+    ``latitude`` / ``longitude`` (paired, range-CHECKed), and a
+    structured-address breakout. The legacy free-form ``address``
+    column is retained this release as a compatibility shadow; the
+    application layer is free to populate it from the structured
+    fields.
+    """
 
     __tablename__ = "sites"
 
@@ -443,7 +452,20 @@ class SiteModel(Base):
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default="site")
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # -- Sprint 34 gap 2.7: structured address --
+    street_line1: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    street_line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    region: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # CHAR(2) matches migration 038; regex CHECK enforces exact 2-char shape
+    # so no padding ever occurs.
+    country: Mapped[str | None] = mapped_column(CHAR(2), nullable=True)
+    # -- Sprint 34 gap 2.7: geolocation --
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     default_timezone: Mapped[str] = mapped_column(String(64), nullable=False, server_default="UTC")
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
