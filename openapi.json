@@ -3373,15 +3373,53 @@
             "title": "Action Type",
             "type": "string"
           },
+          "asset_label_filters": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Label Filters"
+          },
+          "category_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Category Ids",
+            "type": "array"
+          },
           "condition_config": {
             "additionalProperties": true,
             "title": "Condition Config",
             "type": "object"
           },
           "condition_type": {
-            "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone|zone\\.entered|zone\\.exited|zone\\.dwell_exceeded|telemetry\\.threshold)$",
+            "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone|zone\\.entered|zone\\.exited|zone\\.dwell_exceeded|telemetry\\.threshold|signaling\\.location\\.(on_change|periodic|on_inactivity|on_inference)|signaling\\.geolocation\\.(on_change|periodic|on_inactivity)|signaling\\.temperature\\.(on_change|periodic|on_inactivity)|signaling\\.geofencing\\.(on_entry|on_exit))$",
             "title": "Condition Type",
             "type": "string"
+          },
+          "confidence_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "0.0",
+            "title": "Confidence Threshold"
           },
           "description": {
             "anyOf": [
@@ -3399,11 +3437,50 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "event_type": {
+            "anyOf": [
+              {
+                "pattern": "^(location|geolocation|temperature|geofencing)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Type"
+          },
+          "integration_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integration Ids"
+          },
           "name": {
             "maxLength": 255,
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "processor": {
+            "anyOf": [
+              {
+                "pattern": "^(isolated_zones|overlapping_zones)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processor"
           },
           "scope_device_id": {
             "anyOf": [
@@ -3416,6 +3493,48 @@
               }
             ],
             "title": "Scope Device Id"
+          },
+          "site_label_filters": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Label Filters"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "pattern": "^(on_change|periodic|on_inactivity|on_inference|on_entry|on_exit)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger"
+          },
+          "zone_label_filters": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone Label Filters"
           }
         },
         "required": [
@@ -3440,6 +3559,29 @@
             "title": "Action Type",
             "type": "string"
           },
+          "asset_label_filters": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Label Filters"
+          },
+          "category_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Category Ids",
+            "type": "array"
+          },
           "condition_config": {
             "additionalProperties": true,
             "title": "Condition Config",
@@ -3447,6 +3589,12 @@
           },
           "condition_type": {
             "title": "Condition Type",
+            "type": "string"
+          },
+          "confidence_threshold": {
+            "default": "0.0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Confidence Threshold",
             "type": "string"
           },
           "created_at": {
@@ -3469,14 +3617,60 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "event_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Type"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
           },
+          "integration_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integration Ids"
+          },
+          "kind": {
+            "default": "legacy",
+            "enum": [
+              "legacy",
+              "signaling"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "processor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processor"
           },
           "scope_device_id": {
             "anyOf": [
@@ -3490,15 +3684,56 @@
             ],
             "title": "Scope Device Id"
           },
+          "site_label_filters": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Label Filters"
+          },
           "tenant_id": {
             "format": "uuid",
             "title": "Tenant Id",
             "type": "string"
           },
+          "trigger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "zone_label_filters": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone Label Filters"
           }
         },
         "required": [
@@ -3545,6 +3780,36 @@
             ],
             "title": "Action Type"
           },
+          "asset_label_filters": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Label Filters"
+          },
+          "category_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Ids"
+          },
           "condition_config": {
             "anyOf": [
               {
@@ -3560,7 +3825,7 @@
           "condition_type": {
             "anyOf": [
               {
-                "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone|zone\\.entered|zone\\.exited|zone\\.dwell_exceeded|telemetry\\.threshold)$",
+                "pattern": "^(threshold|absence|rate_change|stock\\.below_threshold|stock\\.expiring_within|stock\\.unexpected_in_zone|zone\\.entered|zone\\.exited|zone\\.dwell_exceeded|telemetry\\.threshold|signaling\\.location\\.(on_change|periodic|on_inactivity|on_inference)|signaling\\.geolocation\\.(on_change|periodic|on_inactivity)|signaling\\.temperature\\.(on_change|periodic|on_inactivity)|signaling\\.geofencing\\.(on_entry|on_exit))$",
                 "type": "string"
               },
               {
@@ -3568,6 +3833,23 @@
               }
             ],
             "title": "Condition Type"
+          },
+          "confidence_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence Threshold"
           },
           "description": {
             "anyOf": [
@@ -3591,6 +3873,33 @@
             ],
             "title": "Enabled"
           },
+          "event_type": {
+            "anyOf": [
+              {
+                "pattern": "^(location|geolocation|temperature|geofencing)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Type"
+          },
+          "integration_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integration Ids"
+          },
           "name": {
             "anyOf": [
               {
@@ -3604,6 +3913,18 @@
             ],
             "title": "Name"
           },
+          "processor": {
+            "anyOf": [
+              {
+                "pattern": "^(isolated_zones|overlapping_zones)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processor"
+          },
           "scope_device_id": {
             "anyOf": [
               {
@@ -3615,6 +3936,48 @@
               }
             ],
             "title": "Scope Device Id"
+          },
+          "site_label_filters": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Label Filters"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "pattern": "^(on_change|periodic|on_inactivity|on_inference|on_entry|on_exit)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger"
+          },
+          "zone_label_filters": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone Label Filters"
           }
         },
         "title": "RuleUpdate",
@@ -10876,6 +11239,28 @@
               "title": "Enabled Only",
               "type": "boolean"
             }
+          },
+          {
+            "description": "Sprint 41 Phase B1: filter by rule discriminator. 'signaling' = rules with event_type populated; 'legacy' = rules with event_type NULL. Omit for all rules (backwards-compatible).",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "legacy",
+                    "signaling"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 41 Phase B1: filter by rule discriminator. 'signaling' = rules with event_type populated; 'legacy' = rules with event_type NULL. Omit for all rules (backwards-compatible).",
+              "title": "Kind"
+            }
           }
         ],
         "responses": {
@@ -10917,6 +11302,20 @@
       "post": {
         "description": "Create a new rule.",
         "operationId": "create_rule_rules_post",
+        "parameters": [
+          {
+            "description": "Sprint 41 Phase B2: admin-only bypass of the per-scope active signaling-rule cap. Recorded in the audit log.",
+            "in": "query",
+            "name": "override",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Sprint 41 Phase B2: admin-only bypass of the per-scope active signaling-rule cap. Recorded in the audit log.",
+              "title": "Override",
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -11060,6 +11459,18 @@
               "format": "uuid",
               "title": "Rule Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Sprint 41 Phase B2: admin-only bypass of the per-scope active signaling-rule cap. Recorded in the audit log.",
+            "in": "query",
+            "name": "override",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Sprint 41 Phase B2: admin-only bypass of the per-scope active signaling-rule cap. Recorded in the audit log.",
+              "title": "Override",
+              "type": "boolean"
             }
           }
         ],

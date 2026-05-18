@@ -66,9 +66,21 @@ class WebhookDispatcher:
             # so multiple subscribed integrations share one DB lookup.
             # Non-ALERT_TRIGGERED topics (raw tag reads, telemetry, etc.)
             # retain the pre-Phase-C payload shape unchanged.
+            #
+            # Phase E2: the same rule lookup also resolves the per-rule
+            # ``integration_ids`` allow-list. When non-empty, it
+            # *replaces* the global broadcast (per ADR 021 open question
+            # #3 — replace, not augment). Empty / null preserves the
+            # legacy broadcast behaviour.
             envelope_fields: dict[str, Any] = {}
+            integration_filter: frozenset[uuid.UUID] | None = None
             if event.topic == Topic.ALERT_TRIGGERED:
-                envelope_fields = await self._build_alert_envelope(session, event.payload)
+                envelope_fields, integration_filter = await self._resolve_alert_rule_context(
+                    session, event.payload
+                )
+
+            if integration_filter is not None:
+                integrations = [i for i in integrations if i.id in integration_filter]
 
             for integration in integrations:
                 if integration.type != "webhook":
@@ -109,43 +121,57 @@ class WebhookDispatcher:
 
             await session.commit()
 
-    async def _build_alert_envelope(
+    async def _resolve_alert_rule_context(
         self,
         session: AsyncSession,
         payload: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Resolve the source rule and build the five-field signaling envelope.
+    ) -> tuple[dict[str, Any], frozenset[uuid.UUID] | None]:
+        """Resolve the source rule and return ``(envelope_fields, integration_filter)``.
 
-        Per ADR-021 v2 Phase C: returns the additive ``confidence`` /
-        ``keySet`` / ``eventConfigurationId`` / ``categoryId`` / ``labels``
-        fields. Legacy rules (``event_type IS NULL``) get safe defaults
-        (1.0 / [] / rule_id / null / []). Returns an empty dict if the
-        payload has no ``rule_id`` or it doesn't parse — the dispatcher
-        then falls back to the pre-Phase-C envelope shape.
+        Per ADR-021 v2 Phase C: ``envelope_fields`` carries the additive
+        ``confidence`` / ``keySet`` / ``eventConfigurationId`` /
+        ``categoryId`` / ``labels`` keys. Legacy rules
+        (``event_type IS NULL``) get safe defaults
+        (1.0 / [] / rule_id / null / []). Returns ``{}`` if the payload
+        has no ``rule_id`` or it doesn't parse — the dispatcher then
+        falls back to the pre-Phase-C envelope shape.
 
         ``category_id`` and ``labels`` are not resolved from the matched
         entity in Phase C — that work lands in Phase D once the
         OverlappingZones processor populates the matched-entity ID on
         the published payload. For Phase C they stay at the safe-default
         ``None`` / ``[]`` for both legacy and signaling paths.
+
+        Per ADR-021 v2 Phase E2: ``integration_filter`` is the per-rule
+        ``integration_ids`` allow-list (``frozenset`` of integration
+        UUIDs) when the rule has a non-empty list. ``None`` means
+        "broadcast" — every enabled integration subscribed to the event
+        type receives the event (legacy behaviour). Empty list and null
+        both broadcast.
         """
         rule_id_str = payload.get("rule_id")
         if not rule_id_str:
-            return {}
+            return {}, None
         try:
             rule_uuid = uuid.UUID(rule_id_str)
         except (ValueError, TypeError):
-            return {}
+            return {}, None
         rule_row = await session.get(RuleModel, rule_uuid)
         event_type = rule_row.event_type if rule_row is not None else None
         confidence_threshold = rule_row.confidence_threshold if rule_row is not None else None
-        return dict(
+        envelope_fields = dict(
             build_envelope(
                 rule_id=rule_uuid,
                 event_type=event_type,
                 confidence_threshold=confidence_threshold,
             )
         )
+
+        integration_filter: frozenset[uuid.UUID] | None = None
+        if rule_row is not None and rule_row.integration_ids:
+            integration_filter = frozenset(rule_row.integration_ids)
+
+        return envelope_fields, integration_filter
 
     async def _deliver(
         self,
