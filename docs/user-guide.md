@@ -640,6 +640,8 @@ Use `Site.metadata` for facility-wide attributes that apply to **everything in t
 | **`geofence`** | A polygon drawn on the map (GeoJSON `Polygon`). | Outdoor yards, loading lots, anywhere with GPS-equipped tags or external locators. |
 | **`virtual`** | Admin-defined logical grouping (no readers, no polygon). | Cross-cutting categories like "Cold storage" or "Hazmat". |
 
+> **What about local `(x, y)` coordinates inside a warehouse?** A common question: "Our warehouse uses a 400×600 m XY grid, not lat/lon. How do I model that?" Today, model each aisle or sub-area as a **`reader_bound`** zone — pick the fixed readers that cover it and let TagPulse infer zone membership from `tag_reads.reader_id`. No coordinates are needed at all, and the upcoming OverlappingZones processor (Sprint 41 Phase D) is designed for exactly this: a tag heard by readers belonging to multiple overlapping zones is confidently attributed to each. **True indoor `(x, y)` position estimation** — sub-meter trilateration with `(asset, x, y, confidence)` written to an `asset_positions` table, plus a per-site `coord_system` definition (units, extent, origin, rotation) — is a separate roadmap item ([ADR 024](adr/024-position-estimation.md), Sprint 45). Until that ships, the answer for warehouse customers is: reader-bound zones at the granularity you want to see in alerts and dashboards.
+
 ### Creating a zone
 
 1. Pick a site, click **Add Zone**.

@@ -169,6 +169,37 @@ The existing rules-engine machinery is reused. Three additions:
   }
   ```
 
+#### `signaling.attribution_settled` payload — coordinate-system-agnostic
+
+The processor emits one event per `(asset, zone)` pair it confidently
+resolved within the aggregation window. Shape:
+
+```jsonc
+{
+  "tenant_id": "<uuid>",
+  "asset_id": "<uuid>",
+  "zone_id": "<uuid>",
+  "site_id": "<uuid>",                // resolved from the zone
+  "confidence": 0.87,                  // 0.00..1.00
+  "window_start": "<iso-8601>",        // aggregation_window_s boundary
+  "window_end": "<iso-8601>",
+  "contributing_reads": 42,            // tag_reads count in the window
+  "contributing_readers": ["<uuid>", "<uuid>"],
+  "rule_id": "<uuid>"                  // the rule that ran this evaluation
+}
+```
+
+The payload carries **zone identity + confidence**, not raw
+coordinates. There are no `latitude` / `longitude` / `x` / `y` /
+`position_*` fields — the OverlappingZones processor operates on zone
+**membership** (reader-bound OR lat/lon geofence containment), and a
+zone-shaped result is what its downstream `on_inference` consumers
+need. Per-asset `(x, y, confidence)` fixes are emitted by a separate
+processor (`trilateration`) into the `asset_positions` hypertable — see
+[ADR 024](024-position-estimation.md) (Sprint 45). The two outputs
+coexist: zone-attribution evidence is for routing and alerting;
+position fixes are for map overlays and distance-based queries.
+
 ### API surface
 
 Sprint 41 ships these as **`/rules?kind=signaling`** rather than the
