@@ -5,7 +5,7 @@ from __future__ import annotations
 import builtins
 import time
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -20,6 +20,7 @@ from tagpulse.geo import (
 from tagpulse.models.database import SiteModel, ZoneModel
 from tagpulse.models.schemas import (
     SiteCreate,
+    SiteKind,
     SiteResponse,
     SiteUpdate,
     ZoneCreate,
@@ -68,7 +69,17 @@ def _site_to_response(row: SiteModel) -> SiteResponse:
         id=row.id,
         tenant_id=row.tenant_id,
         name=row.name,
+        # DB CHECK ck_sites_kind guarantees one of the SiteKind literals.
+        kind=cast(SiteKind, row.kind),
         address=row.address,
+        street_line1=row.street_line1,
+        street_line2=row.street_line2,
+        city=row.city,
+        region=row.region,
+        postal_code=row.postal_code,
+        country=row.country,
+        latitude=row.latitude,
+        longitude=row.longitude,
         default_timezone=row.default_timezone,
         metadata=row.metadata_,
         created_at=row.created_at,
@@ -84,9 +95,7 @@ def _zone_to_response(row: ZoneModel) -> ZoneResponse:
         name=row.name,
         kind=row.kind,
         fixed_reader_ids=(
-            [uuid.UUID(str(r)) for r in row.fixed_reader_ids]
-            if row.fixed_reader_ids
-            else None
+            [uuid.UUID(str(r)) for r in row.fixed_reader_ids] if row.fixed_reader_ids else None
         ),
         polygon_geojson=row.polygon_geojson,
         bbox_min_lat=row.bbox_min_lat,
@@ -105,14 +114,21 @@ class TimescaleSiteRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(
-        self, tenant_id: uuid.UUID, site: SiteCreate
-    ) -> SiteResponse:
+    async def create(self, tenant_id: uuid.UUID, site: SiteCreate) -> SiteResponse:
         row = SiteModel(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
             name=site.name,
+            kind=site.kind,
             address=site.address,
+            street_line1=site.street_line1,
+            street_line2=site.street_line2,
+            city=site.city,
+            region=site.region,
+            postal_code=site.postal_code,
+            country=site.country,
+            latitude=site.latitude,
+            longitude=site.longitude,
             default_timezone=site.default_timezone,
             metadata_=site.metadata,
         )
@@ -120,17 +136,11 @@ class TimescaleSiteRepository:
         try:
             await self._session.flush()
         except IntegrityError as exc:
-            raise ValueError(
-                f"Site name '{site.name}' already exists for this tenant"
-            ) from exc
+            raise ValueError(f"Site name '{site.name}' already exists for this tenant") from exc
         return _site_to_response(row)
 
-    async def get(
-        self, tenant_id: uuid.UUID, site_id: uuid.UUID
-    ) -> SiteResponse | None:
-        stmt = select(SiteModel).where(
-            SiteModel.id == site_id, SiteModel.tenant_id == tenant_id
-        )
+    async def get(self, tenant_id: uuid.UUID, site_id: uuid.UUID) -> SiteResponse | None:
+        stmt = select(SiteModel).where(SiteModel.id == site_id, SiteModel.tenant_id == tenant_id)
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
         return _site_to_response(row) if row else None
@@ -154,9 +164,7 @@ class TimescaleSiteRepository:
         site_id: uuid.UUID,
         patch: SiteUpdate,
     ) -> SiteResponse | None:
-        stmt = select(SiteModel).where(
-            SiteModel.id == site_id, SiteModel.tenant_id == tenant_id
-        )
+        stmt = select(SiteModel).where(SiteModel.id == site_id, SiteModel.tenant_id == tenant_id)
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
         if row is None:
@@ -170,9 +178,7 @@ class TimescaleSiteRepository:
         return _site_to_response(row)
 
     async def delete(self, tenant_id: uuid.UUID, site_id: uuid.UUID) -> bool:
-        stmt = select(SiteModel).where(
-            SiteModel.id == site_id, SiteModel.tenant_id == tenant_id
-        )
+        stmt = select(SiteModel).where(SiteModel.id == site_id, SiteModel.tenant_id == tenant_id)
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
         if row is None:
@@ -188,9 +194,7 @@ class TimescaleZoneRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(
-        self, tenant_id: uuid.UUID, zone: ZoneCreate
-    ) -> ZoneResponse:
+    async def create(self, tenant_id: uuid.UUID, zone: ZoneCreate) -> ZoneResponse:
         bbox = _bbox_for(zone.polygon_geojson)
         row = ZoneModel(
             id=uuid.uuid4(),
@@ -199,9 +203,7 @@ class TimescaleZoneRepository:
             name=zone.name,
             kind=zone.kind,
             fixed_reader_ids=(
-                [str(r) for r in zone.fixed_reader_ids]
-                if zone.fixed_reader_ids
-                else None
+                [str(r) for r in zone.fixed_reader_ids] if zone.fixed_reader_ids else None
             ),
             polygon_geojson=zone.polygon_geojson,
             bbox_min_lat=bbox[0] if bbox else None,
@@ -214,18 +216,12 @@ class TimescaleZoneRepository:
         try:
             await self._session.flush()
         except IntegrityError as exc:
-            raise ValueError(
-                f"Zone '{zone.name}' already exists in this site"
-            ) from exc
+            raise ValueError(f"Zone '{zone.name}' already exists in this site") from exc
         _geofence_cache_invalidate(tenant_id)
         return _zone_to_response(row)
 
-    async def get(
-        self, tenant_id: uuid.UUID, zone_id: uuid.UUID
-    ) -> ZoneResponse | None:
-        stmt = select(ZoneModel).where(
-            ZoneModel.id == zone_id, ZoneModel.tenant_id == tenant_id
-        )
+    async def get(self, tenant_id: uuid.UUID, zone_id: uuid.UUID) -> ZoneResponse | None:
+        stmt = select(ZoneModel).where(ZoneModel.id == zone_id, ZoneModel.tenant_id == tenant_id)
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
         return _zone_to_response(row) if row else None
@@ -251,9 +247,7 @@ class TimescaleZoneRepository:
         zone_id: uuid.UUID,
         patch: ZoneUpdate,
     ) -> ZoneResponse | None:
-        stmt = select(ZoneModel).where(
-            ZoneModel.id == zone_id, ZoneModel.tenant_id == tenant_id
-        )
+        stmt = select(ZoneModel).where(ZoneModel.id == zone_id, ZoneModel.tenant_id == tenant_id)
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
         if row is None:
@@ -262,9 +256,7 @@ class TimescaleZoneRepository:
         if "metadata" in patch_data:
             patch_data["metadata_"] = patch_data.pop("metadata")
         if "fixed_reader_ids" in patch_data and patch_data["fixed_reader_ids"]:
-            patch_data["fixed_reader_ids"] = [
-                str(r) for r in patch_data["fixed_reader_ids"]
-            ]
+            patch_data["fixed_reader_ids"] = [str(r) for r in patch_data["fixed_reader_ids"]]
         if "polygon_geojson" in patch_data:
             bbox = _bbox_for(patch_data["polygon_geojson"])
             patch_data["bbox_min_lat"] = bbox[0] if bbox else None
@@ -278,9 +270,7 @@ class TimescaleZoneRepository:
         return _zone_to_response(row)
 
     async def delete(self, tenant_id: uuid.UUID, zone_id: uuid.UUID) -> bool:
-        stmt = select(ZoneModel).where(
-            ZoneModel.id == zone_id, ZoneModel.tenant_id == tenant_id
-        )
+        stmt = select(ZoneModel).where(ZoneModel.id == zone_id, ZoneModel.tenant_id == tenant_id)
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
         if row is None:

@@ -24,7 +24,16 @@ def _site(tenant_id: UUID, **overrides: Any) -> SiteResponse:
         id=uuid4(),
         tenant_id=tenant_id,
         name="Site A",
+        kind="site",
         address=None,
+        street_line1=None,
+        street_line2=None,
+        city=None,
+        region=None,
+        postal_code=None,
+        country=None,
+        latitude=None,
+        longitude=None,
         default_timezone="UTC",
         metadata=None,
         created_at=datetime.now(UTC),
@@ -64,9 +73,7 @@ class _FakeSiteRepo:
         self.calls.append(("get", site_id))
         return self.next_response
 
-    async def list(
-        self, tenant_id: UUID, *, limit: int, offset: int
-    ) -> list[SiteResponse]:
+    async def list(self, tenant_id: UUID, *, limit: int, offset: int) -> list[SiteResponse]:
         self.calls.append(("list", (limit, offset)))
         return self.next_response or []
 
@@ -88,9 +95,7 @@ class _FakeZoneRepo:
 
     async def create(self, tenant_id: UUID, payload: ZoneCreate) -> ZoneResponse:
         self.calls.append(("create", payload))
-        return self.next_response or _zone(
-            tenant_id, payload.site_id, name=payload.name
-        )
+        return self.next_response or _zone(tenant_id, payload.site_id, name=payload.name)
 
     async def get(self, tenant_id: UUID, zone_id: UUID) -> ZoneResponse | None:
         self.calls.append(("get", zone_id))
@@ -117,9 +122,7 @@ class _FakeZoneRepo:
         self.calls.append(("delete", zone_id))
         return bool(self.next_response)
 
-    async def get_zone_for_reader(
-        self, tenant_id: UUID, device_id: UUID
-    ) -> ZoneResponse | None:
+    async def get_zone_for_reader(self, tenant_id: UUID, device_id: UUID) -> ZoneResponse | None:
         self.calls.append(("get_zone_for_reader", device_id))
         return self.next_response
 
@@ -184,9 +187,7 @@ async def test_update_site_returns_none_when_missing() -> None:
     svc, site_repo, _, audit = _service()
     site_repo.next_response = None
 
-    result = await svc.update_site(
-        uuid4(), uuid4(), uuid4(), SiteUpdate(name="renamed")
-    )
+    result = await svc.update_site(uuid4(), uuid4(), uuid4(), SiteUpdate(name="renamed"))
 
     assert result is None
     assert audit.entries == []
