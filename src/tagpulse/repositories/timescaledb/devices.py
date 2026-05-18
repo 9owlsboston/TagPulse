@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.api.label_filter import apply_label_filter
 from tagpulse.models.database import DeviceModel
 from tagpulse.models.schemas import DeviceCreate, DeviceResponse, DeviceUpdate
 
@@ -44,17 +45,23 @@ class TimescaleDeviceRepository:
         *,
         status: str | None = None,
         device_type: str | None = None,
+        labels: dict[str, list[str]] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[DeviceResponse]:
-        stmt = select(DeviceModel).where(
-            DeviceModel.tenant_id == tenant_id
-        ).order_by(DeviceModel.created_at.desc())
+        stmt = select(DeviceModel).where(DeviceModel.tenant_id == tenant_id)
         if status is not None:
             stmt = stmt.where(DeviceModel.status == status)
         if device_type is not None:
             stmt = stmt.where(DeviceModel.device_type == device_type)
-        stmt = stmt.limit(limit).offset(offset)
+        stmt = apply_label_filter(
+            stmt,
+            tenant_id=tenant_id,
+            entity_type="device",
+            entity_id_col=DeviceModel.id,
+            labels=labels,
+        )
+        stmt = stmt.order_by(DeviceModel.created_at.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_to_response(row) for row in result.scalars()]
 

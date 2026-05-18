@@ -8,9 +8,10 @@ Permissions:
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from tagpulse.api.dependencies import get_asset_service, get_site_zone_service
+from tagpulse.api.label_filter import LabelFilterError, parse_label_filter
 from tagpulse.api.services.asset_service import AssetService
 from tagpulse.api.services.sites_zones_service import SiteZoneService
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
@@ -44,12 +45,17 @@ async def create_site(
 
 @router.get("/sites", response_model=list[SiteResponse])
 async def list_sites(
+    request: Request,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
     service: SiteZoneService = Depends(get_site_zone_service),
 ) -> list[SiteResponse]:
-    return await service.list_sites(user.tenant_id, limit=limit, offset=offset)
+    try:
+        labels = parse_label_filter(request.query_params)
+    except LabelFilterError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return await service.list_sites(user.tenant_id, labels=labels, limit=limit, offset=offset)
 
 
 @router.get("/sites/{site_id}", response_model=SiteResponse)
@@ -110,14 +116,19 @@ async def create_zone(
 
 @router.get("/zones", response_model=list[ZoneResponse])
 async def list_zones(
+    request: Request,
     site_id: UUID | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
     service: SiteZoneService = Depends(get_site_zone_service),
 ) -> list[ZoneResponse]:
+    try:
+        labels = parse_label_filter(request.query_params)
+    except LabelFilterError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     return await service.list_zones(
-        user.tenant_id, site_id=site_id, limit=limit, offset=offset
+        user.tenant_id, site_id=site_id, labels=labels, limit=limit, offset=offset
     )
 
 
