@@ -28,6 +28,7 @@ from tagpulse.models.schemas import (
     ZoneResponse,
     ZoneUpdate,
 )
+from tagpulse.repositories.timescaledb.labels import TimescaleLabelRepository
 
 # Sprint 17a §4.1: tenant-level cache of all geofence zones (TTL 30s).
 # Zones change rarely, so caching the *full* geofence list per tenant lets the
@@ -191,6 +192,11 @@ class TimescaleSiteRepository:
         row = result.scalar_one_or_none()
         if row is None:
             return False
+        # ADR-020 Phase B: drop orphan entity_labels rows before the
+        # site row goes away. Without this, count_associations() on
+        # the parent label keeps inflating and DELETE /labels/{id}
+        # would block forever with an unresolvable 409.
+        await TimescaleLabelRepository(self._session).delete_for_entity(tenant_id, "site", site_id)
         await self._session.delete(row)
         await self._session.flush()
         return True
@@ -291,6 +297,9 @@ class TimescaleZoneRepository:
         row = result.scalar_one_or_none()
         if row is None:
             return False
+        # ADR-020 Phase B: drop orphan entity_labels rows before the
+        # zone row goes away (see Site.delete for the same pattern).
+        await TimescaleLabelRepository(self._session).delete_for_entity(tenant_id, "zone", zone_id)
         await self._session.delete(row)
         await self._session.flush()
         _geofence_cache_invalidate(tenant_id)

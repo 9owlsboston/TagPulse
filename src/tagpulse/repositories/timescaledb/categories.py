@@ -17,6 +17,7 @@ from tagpulse.models.schemas import (
     CategoryResponse,
     CategoryUpdate,
 )
+from tagpulse.repositories.timescaledb.labels import TimescaleLabelRepository
 
 
 def _to_response(row: CategoryModel) -> CategoryResponse:
@@ -134,6 +135,14 @@ class TimescaleCategoryRepository:
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         if row is None:
             return False
+        # ADR-020 Phase B: drop orphan entity_labels rows before the
+        # category row goes away. The asset-FK guard above does not
+        # cover labels (no FK from entity_labels to categories — it
+        # is polymorphic), so labels would otherwise survive the
+        # delete and inflate count_associations() permanently.
+        await TimescaleLabelRepository(self._session).delete_for_entity(
+            tenant_id, "category", category_id
+        )
         await self._session.delete(row)
         await self._session.flush()
         return True
