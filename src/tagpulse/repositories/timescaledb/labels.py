@@ -13,7 +13,9 @@ Two related concerns live here:
   ``entity_id`` (no FK), composite PK ``(label_id, entity_id)``,
   30-per-entity cap enforced by the ``trg_enforce_label_cap``
   trigger. Methods: ``list_for_entity``, ``associate``,
-  ``disassociate``.
+  ``disassociate``, ``delete_for_entity`` (Phase B orphan cleanup
+  invoked by hard-delete entity repos — see ``sites_zones.py``
+  and ``categories.py``).
 
 The split repository / route pattern mirrors
 ``tagpulse.repositories.timescaledb.categories`` — domain
@@ -421,3 +423,44 @@ class TimescaleLabelRepository:
         await self._session.delete(row)
         await self._session.flush()
         return True
+
+    async def delete_for_entity(
+        self,
+        tenant_id: uuid.UUID,
+        entity_type: str,
+        entity_id: uuid.UUID,
+    ) -> int:
+        """ADR-020 Phase B orphan cleanup.
+
+        Delete every ``entity_labels`` row that points at ``entity_id``
+        for the given ``entity_type`` within this tenant. Returns the
+        number of rows deleted (0 if the entity had no labels).
+
+        Called from the hard-delete handlers of entity types that do
+        not soft-delete (sites, zones, categories). Soft-delete
+        entities (assets → ``status='retired'``, devices → POST
+        ``/decommission``) keep their labels by design — labels follow
+        the entity through its lifecycle.
+
+        The tenant scope comes from the parent ``labels`` row (the
+        association table has no ``tenant_id`` column of its own); a
+        bare ``DELETE FROM entity_labels WHERE entity_id = …`` would
+        cross tenants if two tenants ever collided on a UUID (in
+        practice impossible, but the JOIN keeps the predicate honest
+        and matches the rest of this module's tenant-scoping pattern).
+        """
+        stmt = (
+            select(EntityLabelModel)
+            .join(LabelModel, EntityLabelModel.label_id == LabelModel.id)
+            .where(
+                LabelModel.tenant_id == tenant_id,
+                LabelModel.entity_type == entity_type,
+                EntityLabelModel.entity_id == entity_id,
+            )
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        for row in rows:
+            await self._session.delete(row)
+        if rows:
+            await self._session.flush()
+        return len(rows)

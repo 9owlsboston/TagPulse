@@ -6,14 +6,17 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 
 from tagpulse.repositories.timescaledb.labels import (
     LabelCapExceededError,
     LabelInUseError,
     LabelKeyConflictError,
+    TimescaleLabelRepository,
     _pg_sqlstate,
 )
 
@@ -107,3 +110,118 @@ def test_exception_hierarchy(exc_cls: type[Exception], expected_base: type[Excep
     re-parent these to ``Exception`` (which would defeat the catch
     blocks in routes)."""
     assert issubclass(exc_cls, expected_base)
+
+
+# ---------------------------------------------------------------------------
+# ADR-020 Phase B: orphan entity_labels cleanup
+# ---------------------------------------------------------------------------
+
+
+class _CapturingSession:
+    """Async session double that records executed statements and
+    delete()'d rows. Mirrors the pattern in
+    ``tests/unit/test_assets_repository_filters.py``."""
+
+    def __init__(self, rows: list[Any] | None = None) -> None:
+        self.executed: list[Any] = []
+        self.deleted: list[Any] = []
+        self.flushes = 0
+        self._rows = rows or []
+
+    async def execute(self, stmt: Any) -> Any:
+        self.executed.append(stmt)
+        captured_rows = self._rows
+
+        class _Result:
+            def scalars(self) -> Any:
+                class _Scalars:
+                    def all(self) -> list[Any]:
+                        return captured_rows
+
+                return _Scalars()
+
+        return _Result()
+
+    async def delete(self, row: Any) -> None:
+        self.deleted.append(row)
+
+    async def flush(self) -> None:
+        self.flushes += 1
+
+
+def _compiled_sql(stmt: Any) -> str:
+    return str(
+        stmt.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": False},
+        )
+    ).lower()
+
+
+class TestDeleteForEntity:
+    """ADR-020 Phase B: when an entity is hard-deleted, the
+    repository's ``delete_for_entity`` cascades the
+    ``entity_labels`` rows that pointed at it. Without this, the
+    parent label's ``count_associations`` would forever count the
+    orphan rows and block ``DELETE /labels/{id}`` with a 409 the
+    operator cannot resolve."""
+
+    @pytest.mark.asyncio
+    async def test_select_is_tenant_scoped_via_labels_join(self) -> None:
+        """Tenant scoping comes from the parent ``labels`` table —
+        the association table has no ``tenant_id`` column. The
+        SELECT must JOIN labels and filter on ``labels.tenant_id``."""
+        session = _CapturingSession()
+        repo = TimescaleLabelRepository(session)  # type: ignore[arg-type]
+        await repo.delete_for_entity(uuid.uuid4(), "site", uuid.uuid4())
+        assert len(session.executed) == 1
+        sql = _compiled_sql(session.executed[0])
+        assert "join labels" in sql
+        assert "labels.tenant_id" in sql
+        assert "labels.entity_type" in sql
+        assert "entity_labels.entity_id" in sql
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_no_orphans(self) -> None:
+        """Empty result → returns 0 and skips the flush. Cheap
+        path: most entity deletes have no labels."""
+        session = _CapturingSession(rows=[])
+        repo = TimescaleLabelRepository(session)  # type: ignore[arg-type]
+        n = await repo.delete_for_entity(uuid.uuid4(), "zone", uuid.uuid4())
+        assert n == 0
+        assert session.deleted == []
+        assert session.flushes == 0
+
+    @pytest.mark.asyncio
+    async def test_deletes_each_row_and_flushes_once(self) -> None:
+        """Returned count matches rows touched, each row is
+        passed to session.delete, and we flush exactly once even
+        with multiple rows."""
+        rows = [object(), object(), object()]
+        session = _CapturingSession(rows=rows)
+        repo = TimescaleLabelRepository(session)  # type: ignore[arg-type]
+        n = await repo.delete_for_entity(uuid.uuid4(), "category", uuid.uuid4())
+        assert n == 3
+        assert session.deleted == rows
+        assert session.flushes == 1
+
+    @pytest.mark.asyncio
+    async def test_predicates_bind_entity_type_and_id(self) -> None:
+        """The entity_type literal and entity_id parameter must
+        both appear in the compiled WHERE clause — a regression
+        here (e.g. dropping one of the predicates) would let one
+        entity's delete sweep another entity's labels or another
+        entity_type's labels."""
+        session = _CapturingSession()
+        repo = TimescaleLabelRepository(session)  # type: ignore[arg-type]
+        eid = uuid.uuid4()
+        await repo.delete_for_entity(uuid.uuid4(), "device", eid)
+        stmt = session.executed[0]
+        sql = str(
+            stmt.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        assert "'device'" in sql.lower()
+        assert str(eid) in sql
