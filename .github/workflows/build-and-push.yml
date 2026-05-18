@@ -122,10 +122,19 @@ jobs:
       # (https://docs.github.com/rest/repos/attestations#create-an-attestation),
       # so we skip provenance unless the repository is public. Re-enabled
       # automatically if/when the repo is flipped to public.
+      #
+      # NOTE on `subject-digest`: we source it from buildx's metadata file
+      # (`containerimage.digest`) rather than `steps.push.outputs.digest`
+      # because `docker/build-push-action@v6` returns the LOCAL image id
+      # (not the remote manifest digest) when `load: true` is combined
+      # with `push: true` — and the Sprint 26 D2 tools-image smoke needs
+      # `load: true`. Using the wrong digest produced a 404 in the
+      # attestation step when it tried to fetch the manifest at GHCR.
+      # See docker/build-push-action#1015.
       - name: Attest build provenance (GHCR)
         if: github.event_name != 'pull_request' && !github.event.repository.private
         uses: actions/attest-build-provenance@v1
         with:
           subject-name: ghcr.io/9owlsboston/tagpulse-${{ matrix.component }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ fromJSON(steps.push.outputs.metadata)['containerimage.digest'] }}
           push-to-registry: true
