@@ -44,6 +44,9 @@ param appEnvironment string = 'production'
 @description('Sprint 25 A2 -- extra CORS allow-origins (comma-separated) for the api. The Static Web App default hostname is auto-appended; only add custom domains or dev origins here.')
 param corsOriginsExtra string = 'http://localhost:5173'
 
+@description('Optional override for the api CORS allow-origin regex. When empty (default) a regex is auto-derived from the SWA defaultHostname that matches the production hostname AND its preview-slot URLs. Set explicitly via the CORS_ORIGIN_REGEX env var only if you need to broaden/narrow it.')
+param corsOriginRegexOverride string = ''
+
 @description('Optional short suffix appended to the Key Vault name to dodge soft-delete name reservations after a prior teardown. Empty = clean name.')
 param keyVaultNameSuffix string = ''
 
@@ -234,6 +237,13 @@ module apiApp 'modules/container-app.bicep' = {
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     appEnvironment: appEnvironment
     corsOrigins: '${corsOriginsExtra},https://${ui.outputs.defaultHostname}'
+    // Auto-derive an allow-origin regex from the SWA hostname so preview
+    // slot URLs (https://<basename>-<num>[.<region>].<tier>.azurestaticapps.net)
+    // pass CORS without pre-enumerating every PR slot. The production
+    // hostname is also matched by the regex; the explicit allow_origins
+    // entry above is the belt-and-braces for clients that don't honour
+    // allow_origin_regex (none in practice, but cheap).
+    corsOriginRegex: empty(corsOriginRegexOverride) ? '^https://${split(ui.outputs.defaultHostname, '.')[0]}(-\\d+)?(\\.[a-z0-9-]+)?\\.${replace(substring(ui.outputs.defaultHostname, length(split(ui.outputs.defaultHostname, '.')[0]) + 1, length(ui.outputs.defaultHostname) - length(split(ui.outputs.defaultHostname, '.')[0]) - 1), '.', '\\.')}$' : corsOriginRegexOverride
     tags: union(tags, { 'azd-service-name': 'api' })
   }
 }

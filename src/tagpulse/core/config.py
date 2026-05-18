@@ -7,9 +7,10 @@ to start with the dev defaults still in place. The dev workflow
 unaffected because ``environment`` defaults to ``dev``.
 """
 
+import re
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 # Sentinel values used by the strict-mode validator. Any deployment that
@@ -52,6 +53,14 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     cors_allow_methods: str = "GET,POST,PATCH,PUT,DELETE,OPTIONS"
     cors_allow_headers: str = "Authorization,Content-Type,X-Tenant-ID,X-Request-ID,X-API-Key"
+    # cors_origin_regex is forwarded to Starlette CORSMiddleware as
+    # ``allow_origin_regex``. Required to allow Azure Static Web App preview
+    # slot URLs (e.g. ``<basename>-42.centralus.7.azurestaticapps.net``) which
+    # cannot be enumerated ahead of time in ``cors_origins``. Empty string
+    # means "no regex" — only the explicit ``cors_origins`` allow-list
+    # applies. CORSMiddleware ORs the two, so a request matching EITHER
+    # passes the preflight.
+    cors_origin_regex: str = ""
     # Sprint 25 A2: CORS preflight max-age. The SPA fires an OPTIONS preflight
     # before the first call from any new tab; caching it for 600s shaves
     # 60-80ms off the first-paint-to-login-button time on cold tabs. Default 0
@@ -111,6 +120,22 @@ class Settings(BaseSettings):
     workers_inline: bool = True
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @field_validator("cors_origin_regex")
+    @classmethod
+    def _validate_cors_origin_regex(cls, v: str) -> str:
+        """Compile-check the regex at boot so a typo fails fast.
+
+        Starlette CORSMiddleware lazily compiles ``allow_origin_regex`` on
+        the first preflight, which would surface as a 500 mid-request
+        instead of a clear startup error. Validate here in all environments.
+        """
+        if v:
+            try:
+                re.compile(v)
+            except re.error as exc:
+                raise ValueError(f"cors_origin_regex is not a valid regex: {exc}") from exc
+        return v
 
     @model_validator(mode="after")
     def _enforce_strict_mode(self) -> "Settings":

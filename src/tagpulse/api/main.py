@@ -288,6 +288,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+    # allow_origin_regex covers Azure Static Web App preview slot URLs that
+    # are allocated per-PR and cannot be pre-enumerated. Empty string in
+    # Settings becomes None here so Starlette's default "no regex" applies.
+    allow_origin_regex=settings.cors_origin_regex or None,
     allow_credentials=True,
     allow_methods=[m.strip() for m in settings.cors_allow_methods.split(",") if m.strip()],
     allow_headers=[h.strip() for h in settings.cors_allow_headers.split(",") if h.strip()],

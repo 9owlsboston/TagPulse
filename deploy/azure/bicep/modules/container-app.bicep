@@ -73,6 +73,9 @@ param appEnvironment string = 'production'
 @description('Comma-separated CORS allow-origins list (read by Settings.cors_origins). Only takes effect when enableIngress=true.')
 param corsOrigins string = 'http://localhost:5173'
 
+@description('Optional CORS allow-origin regex (read by Settings.cors_origin_regex). Required to allow Azure Static Web App preview-slot URLs which cannot be enumerated in corsOrigins. Empty string = no regex.')
+param corsOriginRegex string = ''
+
 @description('Common tags.')
 param tags object = {}
 
@@ -178,6 +181,7 @@ resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'OTEL_SERVICE_NAME', value: appName }
             { name: 'OTEL_RESOURCE_ATTRIBUTES', value: 'service.namespace=tagpulse,deployment.environment=production' }
             { name: 'CORS_ORIGINS', value: corsOrigins }
+            { name: 'CORS_ORIGIN_REGEX', value: corsOriginRegex }
           ]
           probes: enableIngress ? [
             {
