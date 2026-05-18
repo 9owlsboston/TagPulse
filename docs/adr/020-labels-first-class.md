@@ -1,8 +1,8 @@
 # ADR-020: Labels as a First-Class Entity
 
-- Status: Proposed (Sprint 33, May 2026)
+- Status: **Accepted (Sprint 35, May 2026)** — ratified at the start of the implementing sprint; the Open Questions section is closed inline below.
 - Implements: gap 2.2 in `local reference notes/IMPLEMENTATION-GAPS.md`
-- Related: [reference-design-remediation plan](../design/reference-design-remediation.md), [data-models.md](../data-models.md) (`metadata` JSONB on every tenant table), ADR [019 Categories](019-categories.md) (sibling catalog pattern), ADR [021 Configurable Sensing Events](021-configurable-sensing-events.md) (downstream consumer — Label filters in event scoping)
+- Related: [reference-design-remediation plan](../design/reference-design-remediation.md), [data-models.md](../data-models.md) (`metadata` JSONB on every tenant table), ADR [019 Categories](019-categories.md) (sibling catalog pattern; implementation template), ADR [021 Configurable Sensing Events](021-configurable-sensing-events.md) (downstream consumer — Label filters in event scoping), ADR [023 Outbound Connections](023-outbound-connections-mqtt-kafka.md) (downstream consumer — envelope `labels[]` field, gap 2.9)
 
 ## Context
 
@@ -22,7 +22,7 @@ Every TagPulse entity (assets, sites, zones, devices, …) carries a free-form
 Reference design treats Labels as an account-scoped catalog with strict
 format rules, a per-entity cap of 30, and per-label audit fields.
 
-## Decision (proposed — to be ratified in Sprint 35)
+## Decision
 
 Introduce a Labels catalog + association junction table. Coexist with
 `metadata` JSONB rather than replace it.
@@ -50,7 +50,16 @@ CREATE TABLE entity_labels (
     PRIMARY KEY (label_id, entity_id)
 );
 
--- Enforce 30-per-entity cap via deferred trigger (or app-layer).
+-- Enforce 30-per-entity cap via a BEFORE INSERT trigger as a backstop;
+-- the API layer also enforces the cap with an early reject so the trigger
+-- only fires on bypass paths (direct SQL, future bulk-associate jobs).
+CREATE FUNCTION enforce_label_cap() RETURNS TRIGGER AS $$
+BEGIN
+  IF (SELECT count(*) FROM entity_labels WHERE entity_id = NEW.entity_id) >= 30 THEN
+    RAISE EXCEPTION 'label cap exceeded' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
 -- RLS via JOIN to labels.tenant_id.
 ```
 
@@ -115,11 +124,111 @@ pages where Labels apply. `metadata` editor stays available behind an
   small.
 - **API surface growth:** +9 endpoints. Acceptable cost for the capability.
 
-## Open questions for Sprint 35
+## Open questions — closed at Sprint 35 ratification
 
-- Should `entity_type` be DB enum or a free string with app-layer validation?
-  Lean enum (matches Categories `category_type` choice in ADR 019).
-- Pre-seed common keys (`location`, `owner`, `priority`) per tenant on
-  signup? Defer until UX feedback says it's needed.
-- Cross-entity label propagation (asset inherits its site's labels)?
-  Out-of-scope for this ADR; document as a follow-up.
+- **Q1: `entity_type` as DB enum vs free string?** → **CHECK constraint with a
+  literal list** (`'asset','site','zone','device','category'`). Matches the
+  Categories `category_type` precedent in ADR 019. Avoids enum-add-value
+  migrations later; the list grows by re-issuing the CHECK.
+- **Q2: Pre-seed common keys (`location`, `owner`, `priority`) per tenant on
+  signup?** → **Defer.** No UX signal yet that this is friction; re-evaluate
+  after one cycle of operator feedback once the chip UI ships.
+- **Q3: Cross-entity label propagation (asset inherits its site's labels)?**
+  → **Out of scope.** Will land as its own follow-up ADR if a customer asks.
+  The shape of `entity_labels` doesn't preclude it (we'd add a
+  `propagation_policy` enum on the catalog row).
+
+## API path deviation from the original draft
+
+The draft above shows `/v1/tenants/{slug}/...` paths. **The TagPulse codebase
+does not version routes** and threads tenant scope through
+`get_current_tenant` (Categories in ADR 019 already deviated the same way;
+see its route docstring). Final shipped paths:
+
+```
+GET    /labels?entity_type=asset              (viewer+)
+POST   /labels                                (editor/admin)
+GET    /labels/{id}                           (viewer+)
+PATCH  /labels/{id}                           (editor/admin; rename/recolour)
+DELETE /labels/{id}                           (admin; 409 + association_count payload)
+GET    /{entity_type}/{id}/labels             (viewer+)
+POST   /{entity_type}/{id}/labels             (editor/admin; 409 on cap, 400 on bad value)
+DELETE /{entity_type}/{id}/labels/{label_id}  (editor/admin)
+```
+
+The per-entity `/search` endpoint from the draft is **collapsed into a
+filter on the existing list endpoints** — see next section. This keeps the
+API shape consistent (one list endpoint per entity type with growing
+filter surface) and avoids a parallel `/search` per entity.
+
+## Filter encoding — `?labels[...]=...` deep-object
+
+Extend `GET /assets`, `GET /sites`, `GET /zones`, `GET /devices` with a
+single `labels` query parameter using **OpenAPI `style: deepObject,
+explode: true`** encoding. Same shape as Prometheus/Loki/Grafana label
+selectors; operators recognize it.
+
+**Single pair (most common)**
+
+```
+GET /assets?labels[location]=warehouse-a
+```
+
+**Multiple keys → AND across keys**
+
+```
+GET /assets?labels[location]=warehouse-a&labels[priority]=high
+```
+
+**Multiple values for one key → OR within key (comma-separated)**
+
+```
+GET /assets?labels[location]=warehouse-a,warehouse-b
+```
+
+**Combined**
+
+```
+GET /assets?labels[location]=warehouse-a,warehouse-b&labels[priority]=high&labels[owner]=alice,bob
+```
+
+Semantics: AND across distinct keys; OR within values of the same key.
+The single-pair form is the degenerate case.
+
+**Guard rails (return 400 if exceeded):**
+
+- ≤ 5 distinct keys per request.
+- ≤ 20 values per key.
+- Each value still matches the `^[A-Za-z0-9_.]{1,64}$` regex from the
+  schema validators below.
+
+**Rejected alternative — repeated parallel params** (`?label.key=X&label.value=Y&label.key=Z&label.value=W`):
+query-param order isn't guaranteed across all middleware/proxies, so
+positional pairing is fragile. Don't use.
+
+**SQL shape — one correlated `EXISTS` per key**
+
+```sql
+SELECT a.* FROM assets a
+WHERE a.tenant_id = current_setting('app.current_tenant_id')::uuid
+  AND EXISTS (
+    SELECT 1 FROM entity_labels el JOIN labels l ON el.label_id = l.id
+    WHERE el.entity_id = a.id
+      AND l.tenant_id = a.tenant_id          -- RLS join, enforced by policy too
+      AND l.entity_type = 'asset'
+      AND l.key = 'location'
+      AND el.value IN ('warehouse-a','warehouse-b')
+  )
+  AND EXISTS (
+    SELECT 1 FROM entity_labels el JOIN labels l ON el.label_id = l.id
+    WHERE el.entity_id = a.id
+      AND l.tenant_id = a.tenant_id
+      AND l.entity_type = 'asset'
+      AND l.key = 'priority'
+      AND el.value IN ('high')
+  );
+```
+
+Index-friendly: each `EXISTS` is a fast probe via `entity_labels(label_id,
+entity_id)` PK + `labels(tenant_id, entity_type, lower(key))` unique
+index.
