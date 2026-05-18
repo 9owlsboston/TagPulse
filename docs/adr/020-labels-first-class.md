@@ -31,22 +31,22 @@ Introduce a Labels catalog + association junction table. Coexist with
 CREATE TABLE labels (
     id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL REFERENCES tenants(id),
-    entity_type VARCHAR(32) NOT NULL,    -- asset | site | zone | device
+    entity_type VARCHAR(32) NOT NULL,    -- asset | site | zone | device | category
     key VARCHAR(24) NOT NULL,            -- 3-24 chars, [A-Za-z0-9_.+$], no spaces
     color VARCHAR(7),                    -- '#RRGGBB' optional
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_by UUID REFERENCES users(id),
+    created_by UUID,                     -- opaque JWT user id; no FK (no `users` table in TagPulse, see migration 015)
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_by UUID REFERENCES users(id),
-    UNIQUE (tenant_id, entity_type, lower(key))
+    updated_by UUID,
+    UNIQUE (tenant_id, entity_type, lower(key))    -- functional unique index in migration 039
 );
 
 CREATE TABLE entity_labels (
-    label_id UUID NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
-    entity_id UUID NOT NULL,              -- polymorphic; matches labels.entity_type
-    value VARCHAR(64) NOT NULL,           -- alphanumeric + _ + .
+    label_id UUID NOT NULL REFERENCES labels(id) ON DELETE RESTRICT,   -- 409 + association_count on catalog DELETE; matches Categories pattern
+    entity_id UUID NOT NULL,              -- polymorphic (no FK); cleanup happens in entity-delete handlers
+    value VARCHAR(64) NOT NULL,           -- alphanumeric + _ . - (hyphen allowed; matches k8s / AWS / GCP tag value conventions)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_by UUID REFERENCES users(id),
+    created_by UUID,
     PRIMARY KEY (label_id, entity_id)
 );
 
@@ -67,19 +67,26 @@ Validation rules:
 
 - Key: 3–24 chars; `[A-Za-z0-9_.+$]`; no spaces; case-insensitive uniqueness
   per `(tenant, entity_type)`.
-- Value: ≤64 chars; `[A-Za-z0-9_.]`.
+- Value: 1–64 chars; `[A-Za-z0-9._-]` (hyphen added to the original draft
+  so `warehouse-a` style values validate; matches k8s / AWS / GCP tag
+  value conventions).
 - Cap: max 30 labels associated to any single entity (enforced in API layer
-  with a `BEFORE INSERT` trigger as a backstop).
+  with a `BEFORE INSERT` trigger as a backstop; SQLSTATE `23514` surfaces
+  as a 409 in the API).
 - Deleting an entity-label association is API-level disassociation only; the
   catalog row stays until explicitly deleted via the catalog endpoint.
+- Deleting a catalog row while any entity association still references it
+  returns **409 + `association_count`** (matches the Categories pattern
+  from ADR 019). Operators must disassociate first. `ON DELETE RESTRICT`
+  is the DB backstop.
 
-API surface:
+API surface (original draft — **superseded by §"API path deviation" below**):
 
 ```
 GET    /v1/tenants/{slug}/labels?entity_type=asset      (list catalog)
 POST   /v1/tenants/{slug}/labels                        (create catalog row)
 PATCH  /v1/tenants/{slug}/labels/{id}                   (rename / recolour)
-DELETE /v1/tenants/{slug}/labels/{id}                   (delete; cascades to entity_labels)
+DELETE /v1/tenants/{slug}/labels/{id}                   (delete; 409 if in use)
 
 POST   /v1/tenants/{slug}/{entity_type}/{id}/labels     (associate {key, value})
 DELETE /v1/tenants/{slug}/{entity_type}/{id}/labels/{label_id}
@@ -199,8 +206,8 @@ The single-pair form is the degenerate case.
 
 - ≤ 5 distinct keys per request.
 - ≤ 20 values per key.
-- Each value still matches the `^[A-Za-z0-9_.]{1,64}$` regex from the
-  schema validators below.
+- Each value still matches the `^[A-Za-z0-9._-]{1,64}$` regex from the
+  schema validators above.
 
 **Rejected alternative — repeated parallel params** (`?label.key=X&label.value=Y&label.key=Z&label.value=W`):
 query-param order isn't guaranteed across all middleware/proxies, so

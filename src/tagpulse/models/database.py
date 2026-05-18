@@ -591,6 +591,96 @@ class CategoryModel(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_categories_tenant_name"),)
 
 
+class LabelModel(Base):
+    """Tenant-scoped label catalog row (Sprint 35, ADR 020).
+
+    A label is a *(key)* slot scoped to one ``entity_type``. The same
+    key can mean different things on different entity kinds — e.g.
+    ``location`` on a Site is a physical address; ``location`` on an
+    Asset is "which Site is it at right now". That's why the
+    catalog's uniqueness is ``(tenant_id, entity_type, lower(key))``
+    (functional unique index — see migration 039).
+
+    Invariants:
+
+    - ``entity_type`` must be one of ``asset`` / ``site`` / ``zone``
+      / ``device`` / ``category`` — DB ``CHECK`` constraint.
+    - ``key`` matches ``^[A-Za-z0-9_.+$]{3,24}$`` — DB ``CHECK``.
+    - ``color`` is optional but, if set, matches ``^#[0-9A-Fa-f]{6}$``
+      — DB ``CHECK``.
+    - Cannot be deleted while any ``entity_labels`` row references
+      it — enforced by the ``ON DELETE RESTRICT`` FK on
+      ``entity_labels.label_id``; the API surfaces a 409 with the
+      association count.
+    - ``created_by`` / ``updated_by`` are opaque JWT user ids (no FK,
+      same as ``audit_logs.user_id``).
+    """
+
+    __tablename__ = "labels"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    key: Mapped[str] = mapped_column(String(24), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    # NOTE: case-insensitive UNIQUE(tenant_id, entity_type, lower(key))
+    # is a functional index created in migration 039 — it cannot be
+    # expressed via UniqueConstraint() and so is intentionally absent
+    # from __table_args__. ORM-level uniqueness checks should use the
+    # repository's ``find_by_key()`` helper, not assume the column
+    # constraint will catch it.
+
+
+class EntityLabelModel(Base):
+    """Polymorphic label-to-entity association (Sprint 35, ADR 020).
+
+    ``entity_id`` has **no FK** — it points at one of ``assets`` /
+    ``sites`` / ``zones`` / ``devices`` / ``categories`` depending on
+    the parent label's ``entity_type``. Orphan rows are cleaned up
+    by the entity-delete handlers in their respective routers, not
+    by a database CASCADE.
+
+    Invariants:
+
+    - Composite primary key ``(label_id, entity_id)`` prevents
+      double-association of the same label to the same entity.
+    - ``value`` matches ``^[A-Za-z0-9._-]{1,64}$`` — DB ``CHECK``.
+    - 30-per-entity cap enforced by the ``trg_enforce_label_cap``
+      BEFORE INSERT trigger; the API layer also early-rejects on the
+      31st insert. SQLSTATE ``23514`` surfaces as a 409 in the API.
+    """
+
+    __tablename__ = "entity_labels"
+
+    label_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("labels.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, index=True
+    )
+    value: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class AssetModel(Base):
     """Tenant-scoped tracked thing (Sprint 15)."""
 
