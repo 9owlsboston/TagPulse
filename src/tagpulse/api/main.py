@@ -53,6 +53,7 @@ from tagpulse.integrations.webhook import WebhookDispatcher
 from tagpulse.repositories.timescaledb.session import async_session_factory
 from tagpulse.rules.delivery import AlertDeliveryService
 from tagpulse.rules.evaluator import RuleEvaluator
+from tagpulse.signaling.periodic_dispatcher import PeriodicSignalingDispatcher
 from tagpulse.workers.dwell_worker import DwellTracker, DwellWorker
 from tagpulse.workers.inventory_rule_worker import InventoryRuleWorker
 
@@ -108,6 +109,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     inventory_worker: InventoryRuleWorker | None = None
     dwell_worker: DwellWorker | None = None
     dwell_tracker: DwellTracker | None = None
+    periodic_signaling_dispatcher: PeriodicSignalingDispatcher | None = None
     alert_delivery: AlertDeliveryService | None = None
     analytics_modules: list[AnalyticsModule] = []
     webhook_dispatcher: WebhookDispatcher | None = None
@@ -151,6 +153,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await dwell_worker.start()
         app.state.dwell_tracker = dwell_tracker
         app.state.dwell_worker = dwell_worker
+
+        # Sprint 41 Phase B3 / ADR-021 v2: PeriodicSignalingDispatcher.
+        # Wakes on its loop tick and evaluates ``signaling.*.periodic``
+        # rules whose configured ``cadence_minutes`` has elapsed.
+        # Phase B ships the dispatcher shell; per-event-type processor
+        # logic lands in Phase D.
+        periodic_signaling_dispatcher = PeriodicSignalingDispatcher(
+            session_factory=async_session_factory,
+            event_bus=event_bus,
+            usage_meter=usage_meter,
+        )
+        await periodic_signaling_dispatcher.start()
+        app.state.periodic_signaling_dispatcher = periodic_signaling_dispatcher
 
         # Alert delivery — subscribes to alert triggered events
         alert_delivery = AlertDeliveryService()
@@ -202,6 +217,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await dwell_worker.stop()
     if inventory_worker is not None:
         await inventory_worker.stop()
+    if periodic_signaling_dispatcher is not None:
+        await periodic_signaling_dispatcher.stop()
     await usage_meter.stop()
     for module in analytics_modules:
         await module.stop()

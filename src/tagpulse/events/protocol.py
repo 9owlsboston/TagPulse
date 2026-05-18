@@ -30,6 +30,12 @@ class Topic(StrEnum):
     # legacy device-scoped path keeps using ``Topic.TAG_READ_CREATED`` so the
     # Sprint 14 contract is unchanged.
     TELEMETRY_RECORDED = "telemetry.recorded"
+    # Sprint 41 / ADR-021 v2 Configurable Signaling Events. Published by the
+    # OverlappingZones processor when its aggregation window resolves a
+    # confident (asset, zone) attribution. Consumed by the rules engine to
+    # evaluate ``signaling.location.on_inference`` rules. In-process per
+    # ADR-010; no external bus dependency.
+    SIGNALING_ATTRIBUTION_SETTLED = "signaling.attribution_settled"
 
 
 @dataclasses.dataclass(frozen=True)
