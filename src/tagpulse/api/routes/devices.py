@@ -3,12 +3,13 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.api.dependencies import get_device_service
+from tagpulse.api.label_filter import LabelFilterError, parse_label_filter
 from tagpulse.api.services.device_service import DeviceNotFoundError, DeviceService
 from tagpulse.core.audit import AuditLogger
 from tagpulse.core.otel_metrics import (
@@ -35,6 +36,7 @@ async def register_device(
 
 @router.get("", response_model=list[DeviceResponse])
 async def list_devices(
+    request: Request,
     status: str | None = Query(default=None),
     device_type: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=1000),
@@ -43,8 +45,17 @@ async def list_devices(
     service: DeviceService = Depends(get_device_service),
 ) -> list[DeviceResponse]:
     """List devices with optional filters."""
+    try:
+        labels = parse_label_filter(request.query_params)
+    except LabelFilterError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     return await service.list_devices(
-        user.tenant_id, status=status, device_type=device_type, limit=limit, offset=offset
+        user.tenant_id,
+        status=status,
+        device_type=device_type,
+        labels=labels,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -200,9 +211,7 @@ async def attach_device_cert(
     try:
         cert = x509.load_pem_x509_certificate(body.cert_pem.encode("utf-8"))
     except ValueError as exc:
-        raise HTTPException(
-            status_code=422, detail=f"invalid PEM: {exc}"
-        ) from exc
+        raise HTTPException(status_code=422, detail=f"invalid PEM: {exc}") from exc
 
     der = cert.public_bytes(serialization.Encoding.DER)
     thumbprint = hashlib.sha256(der).hexdigest()

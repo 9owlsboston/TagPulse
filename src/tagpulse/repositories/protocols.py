@@ -98,6 +98,7 @@ class DeviceRepository(Protocol):
         *,
         status: str | None = None,
         device_type: str | None = None,
+        labels: dict[str, list[str]] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[DeviceResponse]: ...
@@ -106,9 +107,7 @@ class DeviceRepository(Protocol):
         self, tenant_id: UUID, device_id: UUID, patch: DeviceUpdate
     ) -> DeviceResponse | None: ...
 
-    async def decommission(
-        self, tenant_id: UUID, device_id: UUID
-    ) -> DeviceResponse | None: ...
+    async def decommission(self, tenant_id: UUID, device_id: UUID) -> DeviceResponse | None: ...
 
     async def update_status(
         self,

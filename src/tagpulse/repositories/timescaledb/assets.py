@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.api.label_filter import apply_label_filter
 from tagpulse.models.database import AssetModel, AssetTagBindingModel
 from tagpulse.models.schemas import (
     AssetCreate,
@@ -93,6 +94,7 @@ class TimescaleAssetRepository:
         asset_type: str | None = None,
         status: str | None = None,
         q: str | None = None,
+        labels: dict[str, list[str]] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[AssetResponse]:
@@ -104,6 +106,13 @@ class TimescaleAssetRepository:
         if q:
             like = f"%{q}%"
             stmt = stmt.where((AssetModel.name.ilike(like)) | (AssetModel.external_ref.ilike(like)))
+        stmt = apply_label_filter(
+            stmt,
+            tenant_id=tenant_id,
+            entity_type="asset",
+            entity_id_col=AssetModel.id,
+            labels=labels,
+        )
         stmt = stmt.order_by(AssetModel.created_at.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_asset_to_response(r) for r in result.scalars()]

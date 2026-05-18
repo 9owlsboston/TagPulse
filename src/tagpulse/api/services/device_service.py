@@ -39,7 +39,9 @@ class DeviceService:
         result = await self._repo.create(tenant_id, device)
         logger.info(
             "Device registered: id=%s name=%s type=%s",
-            result.id, result.name, result.device_type,
+            result.id,
+            result.name,
+            result.device_type,
         )
         if self._event_bus:
             await self._event_bus.publish(
@@ -58,7 +60,10 @@ class DeviceService:
             )
         if self._audit:
             await self._audit.log(
-                tenant_id, "created", "device", result.id,
+                tenant_id,
+                "created",
+                "device",
+                result.id,
                 {"name": result.name, "device_type": result.device_type},
             )
         return result
@@ -76,12 +81,18 @@ class DeviceService:
         *,
         status: str | None = None,
         device_type: str | None = None,
+        labels: dict[str, list[str]] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[DeviceResponse]:
         """List devices with optional filters."""
         return await self._repo.list(
-            tenant_id, status=status, device_type=device_type, limit=limit, offset=offset
+            tenant_id,
+            status=status,
+            device_type=device_type,
+            labels=labels,
+            limit=limit,
+            offset=offset,
         )
 
     async def update(self, tenant_id: UUID, device_id: UUID, patch: DeviceUpdate) -> DeviceResponse:
@@ -92,7 +103,10 @@ class DeviceService:
         logger.info("Device updated: id=%s", device_id)
         if self._audit:
             await self._audit.log(
-                tenant_id, "updated", "device", device_id,
+                tenant_id,
+                "updated",
+                "device",
+                device_id,
                 patch.model_dump(exclude_unset=True),
             )
         return result
@@ -118,7 +132,10 @@ class DeviceService:
             )
         if self._audit:
             await self._audit.log(
-                tenant_id, "decommissioned", "device", device_id,
+                tenant_id,
+                "decommissioned",
+                "device",
+                device_id,
             )
         return result
 
@@ -132,7 +149,8 @@ class DeviceService:
     ) -> DeviceResponse:
         """Update device connection state and firmware."""
         result = await self._repo.update_status(
-            tenant_id, device_id,
+            tenant_id,
+            device_id,
             connection_state=connection_state,
             firmware_version=firmware_version,
         )
