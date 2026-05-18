@@ -1,7 +1,7 @@
 # ADR-019: Categories as a First-Class Entity
 
 - Status: Accepted (Sprint 34, May 2026)
-- Implements: gap 2.1 (and unblocks 2.8) in `local reference notes/IMPLEMENTATION-GAPS.md`
+- Implements: gap 2.1 (and unblocks 2.8) in the external schema/API audit notes (held locally)
 - Related: [reference-design-remediation plan](../design/reference-design-remediation.md), [data-models.md §assets](../data-models.md), ADR [005 rules engine](005-embedded-rules-engine.md), ADR [021 Configurable Sensing Events](021-configurable-sensing-events.md) (downstream consumer)
 
 ## Context
@@ -13,13 +13,11 @@ exactly one Category, Category declares the sensing-event capability template
 and the required-tag count, and Configurable Sensing Events (ADR 021) scope
 themselves per `(category, event_type)`.
 
-> **Terminology note.** The reference design calls RFID tags "tags"
-> throughout. TagPulse's domain term is **tag** — see
-> [`docs/data-models.md` §"Where is the tag?"](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table)
-> for the why. This ADR uses TagPulse's vocabulary for all
-> TagPulse-owned schema (column names, enum values, API fields) and
-> only keeps the word "tag" when naming an external reference-design
-> concept verbatim (e.g. gap 2.14 "deferred tag registry").
+> **Terminology note.** TagPulse's domain term for an RFID transponder
+> is **tag** — see [`docs/data-models.md` §"Where is the tag?"](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table)
+> for the why. All TagPulse-owned schema (column names, enum values,
+> API fields) uses this vocabulary, regardless of what any external
+> reference design happens to call it.
 
 Without Categories:
 
@@ -28,8 +26,8 @@ Without Categories:
 - The UI cannot offer a meaningful filter on Asset lists beyond free-text
   type.
 - The outbound event envelope (gap 2.9) cannot carry `categoryId`.
-- The reference design's deferred tag registry (gap 2.14, currently deferred) cannot
-  enforce the required-tag-count contract.
+- The deferred tag-registry concept (gap 2.14) cannot enforce the
+  required-tag-count contract.
 
 ## Decision
 

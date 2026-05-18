@@ -556,7 +556,7 @@ Physical locations or mobile carriers (Sprint 15; Sprint 34 added kind + geoloca
 
 First-class tenant-scoped categorisation for `assets` (Sprint 34, [ADR-019](adr/019-categories.md)). Replaces the free-form `assets.asset_type` string. Carries behavioural metadata (`category_type`, `required_tags`) that downstream Sensing Events (ADR 021) scope themselves against. Cannot be deleted while any asset references it (`FK ON DELETE RESTRICT`).
 
-> **Terminology.** The reference design calls RFID tags "tags" so its equivalent column is `required_tags`. TagPulse uses **`required_tags`** — see [§"Where is the tag?"](#where-is-the-tag-and-why-theres-no-tags-table).
+> **Terminology.** TagPulse uses **`required_tags`** rather than any vendor-specific term — see [§"Where is the tag?"](#where-is-the-tag-and-why-theres-no-tags-table) for the why.
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|

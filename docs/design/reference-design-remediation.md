@@ -4,20 +4,24 @@
 - Status: Proposed
 - Owner: backend + UI joint
 - Related:
-  - Audit inputs (unversioned, sibling repo): `local reference notes/IMPLEMENTATION-GAPS.md`, `local reference notes/UI-LOOK-AND-FEEL-GAPS.md`
+  - Audit inputs: external gap-audit notes (schema/API + UI/IA) — held locally as a learning aid, not committed to this repo
   - ADRs created by this plan: [019 Categories](../adr/019-categories.md), [020 Labels first-class](../adr/020-labels-first-class.md), [021 Configurable Sensing Events](../adr/021-configurable-sensing-events.md), [022 Soft Assets](../adr/022-soft-assets.md), [023 Outbound Connections MQTT/Kafka](../adr/023-outbound-connections-mqtt-kafka.md), [024 Indoor Position Estimation](../adr/024-position-estimation.md)
 
 ---
 
 ## 1 — Purpose
 
-Two gap audits exist against the external IoT cloud-platform reference design (which
-TagPulse uses as its visual + behavioural reference, not as a clone target):
+TagPulse is a learning project for Azure IoT (Container Apps, Key Vault,
+TimescaleDB, MQTT, Functions, etc.). To stress-test the architecture against
+realistic operator expectations, two gap audits exist against an external IoT
+cloud-platform reference design (treated strictly as a visual + behavioural
+learning input, not as a clone target — TagPulse does not implement any one
+vendor's proprietary surface):
 
 | Audit | Scope | Where |
 |---|---|---|
-| `IMPLEMENTATION-GAPS.md` | Schema, services, APIs, payload envelopes | `local reference notes/` (unversioned) |
-| `UI-LOOK-AND-FEEL-GAPS.md` | TagPulse-UI IA, theming, page layouts, form patterns | `local reference notes/` (unversioned) |
+| Schema/API audit | Schema, services, APIs, payload envelopes | held locally, not in this repo |
+| UI/IA audit | TagPulse-UI IA, theming, page layouts, form patterns | held locally, not in this repo |
 
 Together they enumerate ~25 distinct gaps tagged 🔴 (5) / 🟠 (12) / 🟡 (8).
 **This document is the scope-lock**: which gaps we commit to, which we defer,
@@ -81,9 +85,9 @@ branding backend slice which lands here in Sprint 33.
 | 2.11 | Bridge OTA toggle + gateway-driven push | 🟡 | **Commit** | 38 | Lands with Bridge/Gateway split; minimal — just `devices.configuration.ota_upgrade_enabled` + edge contract field. |
 | 2.12 | Bridge Survey tool | 🟡 | **Drop** | — | Highly specific to BLE relay deployments; TagPulse's RFID-reader primary use case doesn't need it. Document as out-of-scope. |
 | 2.13 | Connectivity Monitor (uptime % / disconnections / avg) | 🟠 | **Commit** | 38 | Lands with Bridge/Gateway split. Single analytics module over existing `device_health` + `last_seen` data. |
-| 2.14 | deferred tag registry (batch CSV 6 000, reel-range, transfer) | 🟡 | **Defer** | backlog | TagPulse intentionally has no `tags` table (see [data-models.md](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table)). A read-only Tags page can be served from `asset_tag_bindings` + `tag_reads` without a new entity — that's a UI ticket, not a backend one. |
+| 2.14 | Tag registry (batch CSV 6 000, reel-range, transfer) | 🟡 | **Defer** | backlog | TagPulse intentionally has no `tags` table (see [data-models.md](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table)). A read-only Tags page can be served from `asset_tag_bindings` + `tag_reads` without a new entity — that's a UI ticket, not a backend one. |
 | 2.15 | Connections Import/Export JSON + per-conn rate-limit + Monitor | 🟠 | **Commit (rate-limit + monitor only)** | 37 | Import/Export deferred — low value vs. cost. |
-| 2.16 | Auto-association by reel range | 🟡 | **Drop** | — | Depends on tag-registry (2.14, deferred). Drop entirely; manual association is sufficient. |
+| 2.16 | Auto-association by reel range | 🟡 | **Drop** | — | Depends on the deferred tag registry (2.14). Drop entirely; manual association is sufficient. |
 | 2.17 | First-party Python SDK on PyPI | 🟡 | **Defer** | backlog | The generated OpenAPI client serves SDK needs today. |
 | 2.18 | Indoor position estimation (multi-reader triangulation in grid zones) | 🟠 | **Commit** | 40 | ADR 024. Surfaced post-audit by SME review of football-field-size deployments with a 400×600 XY grid of fixed readers. Five of seven prerequisites already in place (`tag_reads.signal_strength`/`reader_antenna`/`sensor_data`/`tag_data`, reader-side `telemetry_readings subject_kind='device'`). Adds `devices.position_x/y/z`, `sites.coord_system JSONB`, new `asset_positions` hypertable, third `processor='trilateration'` value on the ADR 021 v2 enum, one reference algorithm (`weighted_centroid_log_distance`), pluggable algorithm interface, BYO-precomputed-positions ingest path for customers running Zebra/Impinj/Mojix/RFcode RTLS. Adds `devices/{device_id}/status` MQTT topic for reader-level periodic status (reader temp, RSSI baseline, position update for mobile readers). |
 
@@ -161,13 +165,13 @@ So that future audits don't refile these as gaps:
 
 | Item | Why excluded |
 |---|---|
-| 1:1 visual-perfect parity with the reference UI | Different audience (operator-heavy, multi-mode); TagPulse keeps draggable dashboard, Map page, Polygon zones, Path replay, Bulk Reassign Zone, `<ApiHealthGate>`, `<RoleGuard>`, CSV Import, mTLS for MQTT, RLS multi-tenancy — see [§7 of IMPLEMENTATION-GAPS.md](local reference notes/IMPLEMENTATION-GAPS.md) and [§9 of UI-LOOK-AND-FEEL-GAPS.md](local reference notes/UI-LOOK-AND-FEEL-GAPS.md). |
+| 1:1 visual-perfect parity with the reference UI | Different audience (operator-heavy, multi-mode); TagPulse keeps draggable dashboard, Map page, Polygon zones, Path replay, Bulk Reassign Zone, `<ApiHealthGate>`, `<RoleGuard>`, CSV Import, mTLS for MQTT, RLS multi-tenancy — see the corresponding sections of the local schema/API and UI/IA audit notes. |
 | First-class `tags` table | Intentional per [data-models.md](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table). Read-only page from bindings is sufficient. |
 | Kafka + Pub-Sub dispatchers | Marginal use case. Re-evaluate when a customer asks. |
 | Per-catalog security keys + JWT exchange | Existing tenant/user/device token model satisfies our threat model. |
 | Bridge OTA full firmware-push pipeline | Toggle field only; the actual firmware-distribution mechanism stays an edge-side concern. |
 | Bridge Survey tool | RFID-reader use case doesn't need it. |
-| Tag batch CSV (up to 6 000) + reel-range ops + cross-account transfer | Depends on the dropped deferred tag registry. |
+| Tag batch CSV (up to 6 000) + reel-range ops + cross-account transfer | Depends on the deferred tag registry. |
 | Compliance Status panel on Gateways list | RFID readers don't have the bridge-firmware compliance concept. |
 | Developer Portal landing page | Out-of-scope for a single-product SaaS at this stage. |
 | Bell-icon notifications | Nice-to-have, deferred indefinitely. |
@@ -205,6 +209,13 @@ When a subsequent sprint implements one of the committed gaps:
 When a deferred or dropped gap is re-litigated (e.g. customer ask):
 re-open the row, change the decision, and link the new ADR.
 
-The audits in `local reference notes/` are **read-only snapshots** as of
+The local audit notes are treated as **read-only snapshots** as of
 2026-05-17. Don't re-edit them — produce a new dated audit if the
 reference design itself evolves.
+
+Vendor neutrality: TagPulse is positioned as an independent Azure IoT
+learning project. Audits and ADRs in this repo refer to an unnamed
+"external reference design". Do not introduce vendor or product brand
+names in committed docs, code, or commit messages — keep proprietary
+vocabulary (tag-naming conventions, page-naming conventions, etc.) inside
+the local audit notes only.
