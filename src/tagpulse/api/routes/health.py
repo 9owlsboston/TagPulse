@@ -139,8 +139,11 @@ def _config_snapshot() -> dict[str, Any]:
         # SWA hostname is wired into the deployed api revision without
         # shelling into the container. The most common post-deploy failure
         # mode is "SPA loads but every fetch is blocked by CORS".
+        # ``allow_origin_regex`` surfaces the SWA preview-slot pattern so
+        # operators can spot a missing/typo'd regex without exec'ing in.
         "cors": {
             "allow_origins": [o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+            "allow_origin_regex": settings.cors_origin_regex or None,
         },
     }
 

@@ -20,6 +20,7 @@ param mqttPassword = readEnvironmentVariable('AZURE_MQTT_PASSWORD')
 param staticWebAppLocation = 'centralus'
 param appEnvironment = readEnvironmentVariable('TAGPULSE_ENVIRONMENT', 'production')
 param corsOriginsExtra = readEnvironmentVariable('CORS_ORIGINS_EXTRA', 'http://localhost:5173')
+param corsOriginRegexOverride = readEnvironmentVariable('CORS_ORIGIN_REGEX', '')
 param keyVaultNameSuffix = readEnvironmentVariable('AZURE_KV_NAME_SUFFIX', '')
 param useImagePlaceholders = bool(readEnvironmentVariable('AZURE_USE_IMAGE_PLACEHOLDERS', 'false'))
 // Sprint 23 Phase B -- both off by default. Set both to true once you've run
