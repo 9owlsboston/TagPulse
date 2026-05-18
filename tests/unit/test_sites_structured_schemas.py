@@ -151,3 +151,34 @@ class TestSiteUpdateCountry:
     def test_country_invalid_rejected(self) -> None:
         with pytest.raises(ValidationError):
             SiteUpdate(country="DEU")
+
+
+class TestSiteUpdateRejectsExplicitNullForNotNullFields:
+    """Patch payloads must not send explicit ``null`` for NOT-NULL DB columns.
+
+    ``Optional`` on ``SiteUpdate`` means "omit to leave unchanged", not
+    "send null to clear". The DB has ``NOT NULL`` on ``name`` / ``kind``
+    / ``default_timezone``; rejecting at the schema layer keeps the
+    error a 422 instead of leaking as a 500.
+    """
+
+    @pytest.mark.parametrize("field", ["name", "kind", "default_timezone"])
+    def test_explicit_null_rejected(self, field: str) -> None:
+        with pytest.raises(ValidationError):
+            SiteUpdate(**{field: None})
+
+    def test_omission_still_allowed(self) -> None:
+        # No fields set at all — empty patch is fine.
+        patch = SiteUpdate()
+        assert "name" not in patch.model_fields_set
+        assert "kind" not in patch.model_fields_set
+        assert "default_timezone" not in patch.model_fields_set
+
+    def test_nullable_fields_still_clearable(self) -> None:
+        # ``address`` and structured-address columns are nullable in the DB;
+        # explicit null must still be allowed to clear them.
+        patch = SiteUpdate(address=None, city=None, country=None)
+        assert "address" in patch.model_fields_set
+        assert patch.address is None
+        assert patch.city is None
+        assert patch.country is None
