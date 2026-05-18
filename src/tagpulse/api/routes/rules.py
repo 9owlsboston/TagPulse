@@ -1,10 +1,12 @@
 """Rules & Alerts API routes."""
 
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.core.audit import AuditLogger
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.rule_schemas import (
     AlertResponse,
@@ -13,10 +15,63 @@ from tagpulse.models.rule_schemas import (
     RuleUpdate,
 )
 from tagpulse.repositories.timescaledb.session import get_session
-from tagpulse.rules import RulesService
+from tagpulse.rules import RulesService, SignalingScopeCapExceededError
 from tagpulse.rules.templates import get_template, get_templates
 
 router = APIRouter(tags=["rules"])
+
+
+# Sprint 41 Phase B2: shared 409 message format. The detail body has
+# the structured fields the UI needs to render "Cap reached for X / Y"
+# without parsing prose.
+def _cap_exceeded_to_http(
+    exc: SignalingScopeCapExceededError,
+) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "error": "signaling_scope_cap_exceeded",
+            "event_type": exc.event_type,
+            "category_id": str(exc.category_id) if exc.category_id else None,
+            "current_count": exc.current_count,
+            "cap": exc.cap,
+            "override_hint": (
+                "Admin callers can bypass with ?override=true; the override is "
+                "recorded in the audit log."
+            ),
+        },
+    )
+
+
+async def _record_cap_override(
+    session: AsyncSession,
+    *,
+    user: AuthenticatedUser,
+    rule_id: UUID,
+    event_type: str,
+    category_ids: list[UUID],
+) -> None:
+    """Audit-log entry written when an admin uses ``?override=true``.
+
+    Phase B writes one row per override; the changes blob captures the
+    full scope so operators can later trace which categories were
+    affected. ``resource_id`` is the rule id (or the placeholder UUID
+    for create-time overrides where the rule hasn't been persisted
+    yet — callers pass the just-created rule id).
+    """
+
+    audit = AuditLogger(session=session)
+    await audit.log(
+        tenant_id=user.tenant_id,
+        user_id=user.user_id,
+        action="signaling.cap_override",
+        resource_type="rule",
+        resource_id=rule_id,
+        changes={
+            "event_type": event_type,
+            "category_ids": [str(c) for c in category_ids],
+        },
+    )
 
 
 # -- Rule templates (Sprint 20) --
@@ -53,23 +108,56 @@ async def get_rule_template(
 @router.post("/rules", response_model=RuleResponse, status_code=201)
 async def create_rule(
     body: RuleCreate,
+    override: bool = Query(
+        default=False,
+        description=(
+            "Sprint 41 Phase B2: admin-only bypass of the per-scope active "
+            "signaling-rule cap. Recorded in the audit log."
+        ),
+    ),
     user: AuthenticatedUser = require_role("admin", "editor"),
     session: AsyncSession = Depends(get_session),
 ) -> RuleResponse:
     """Create a new rule."""
+    if override and user.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="override=true requires admin role",
+        ) from None
     service = RulesService(session)
-    return await service.create_rule(user.tenant_id, body)
+    try:
+        response = await service.create_rule(user.tenant_id, body, allow_cap_override=override)
+    except SignalingScopeCapExceededError as exc:
+        raise _cap_exceeded_to_http(exc) from exc
+    if override and body.event_type is not None:
+        await _record_cap_override(
+            session,
+            user=user,
+            rule_id=response.id,
+            event_type=body.event_type,
+            category_ids=list(body.category_ids),
+        )
+    return response
 
 
 @router.get("/rules", response_model=list[RuleResponse])
 async def list_rules(
     enabled_only: bool = Query(default=False),
+    kind: Literal["legacy", "signaling"] | None = Query(
+        default=None,
+        description=(
+            "Sprint 41 Phase B1: filter by rule discriminator. "
+            "'signaling' = rules with event_type populated; "
+            "'legacy' = rules with event_type NULL. "
+            "Omit for all rules (backwards-compatible)."
+        ),
+    ),
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
     session: AsyncSession = Depends(get_session),
 ) -> list[RuleResponse]:
     """List all rules for the tenant."""
     service = RulesService(session)
-    return await service.list_rules(user.tenant_id, enabled_only=enabled_only)
+    return await service.list_rules(user.tenant_id, enabled_only=enabled_only, kind=kind)
 
 
 @router.get("/rules/{rule_id}", response_model=RuleResponse)
@@ -90,14 +178,39 @@ async def get_rule(
 async def update_rule(
     rule_id: UUID,
     body: RuleUpdate,
+    override: bool = Query(
+        default=False,
+        description=(
+            "Sprint 41 Phase B2: admin-only bypass of the per-scope active "
+            "signaling-rule cap. Recorded in the audit log."
+        ),
+    ),
     user: AuthenticatedUser = require_role("admin", "editor"),
     session: AsyncSession = Depends(get_session),
 ) -> RuleResponse:
     """Update a rule (partial update)."""
+    if override and user.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="override=true requires admin role",
+        ) from None
     service = RulesService(session)
-    result = await service.update_rule(user.tenant_id, rule_id, body)
+    try:
+        result = await service.update_rule(
+            user.tenant_id, rule_id, body, allow_cap_override=override
+        )
+    except SignalingScopeCapExceededError as exc:
+        raise _cap_exceeded_to_http(exc) from exc
     if result is None:
         raise HTTPException(status_code=404, detail="Rule not found") from None
+    if override and result.event_type is not None:
+        await _record_cap_override(
+            session,
+            user=user,
+            rule_id=result.id,
+            event_type=result.event_type,
+            category_ids=list(result.category_ids),
+        )
     return result
 
 
@@ -149,6 +262,4 @@ async def acknowledge_alert(
     service = RulesService(session)
     acked = await service.acknowledge_alert(user.tenant_id, alert_id)
     if not acked:
-        raise HTTPException(
-            status_code=404, detail="Alert not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Alert not found") from None

@@ -53,7 +53,7 @@ CREATE TABLE assets (
     tenant_id     UUID NOT NULL REFERENCES tenants(id),
     external_ref  VARCHAR(255) NULL,         -- ERP/WMS asset code
     name          VARCHAR(255) NOT NULL,
-    asset_type    VARCHAR(50)  NOT NULL,     -- 'pallet' | 'tool' | 'container' | …
+    category_id   UUID         NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
     status        VARCHAR(20)  NOT NULL DEFAULT 'active',  -- 'active' | 'retired' | 'lost'
     metadata      JSONB        NULL,
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
@@ -61,16 +61,17 @@ CREATE TABLE assets (
     UNIQUE (tenant_id, external_ref)
 );
 
-CREATE INDEX ix_assets_tenant_type ON assets (tenant_id, asset_type);
+CREATE INDEX ix_assets_tenant_category ON assets (tenant_id, category_id);
 
 ALTER TABLE assets ENABLE ROW LEVEL SECURITY;
 CREATE POLICY assets_tenant_isolation ON assets
   USING (tenant_id = current_setting('app.current_tenant')::uuid);
 ```
 
-`asset_type` is free-form per tenant (no enum table for now); UI offers a typeahead from existing values.
+Every asset belongs to exactly one Category (see [ADR-019](../adr/019-categories.md)).
+The legacy free-form `asset_type` column was dropped in Sprint 41 Phase H (migration `041`).
 
-> **No `quantity` column — by design.** Each `assets` row represents one physical thing; counts of alike assets come from `SELECT count(*) … GROUP BY asset_type`. If you need quantity-of-alike-units (e.g., "how many of SKU X are in Cold-Storage"), that's *inventory mode* — use `stock_items` instead. Rationale and FAQ in [tracking-modes.md §2.1](tracking-modes.md).
+> **No `quantity` column — by design.** Each `assets` row represents one physical thing; counts of alike assets come from `SELECT count(*) … GROUP BY category_id`. If you need quantity-of-alike-units (e.g., "how many of SKU X are in Cold-Storage"), that's *inventory mode* — use `stock_items` instead. Rationale and FAQ in [tracking-modes.md §2.1](tracking-modes.md).
 
 ### 3.2 Tag bindings
 
@@ -236,7 +237,7 @@ A read with no asset binding is **not** an error — most reads will lack one un
 
 ```python
 class AssetRepository:
-    async def list(self, *, asset_type: str | None, status: str | None, q: str | None,
+    async def list(self, *, category_id: UUID | None, status: str | None, q: str | None,
                    limit: int, offset: int) -> list[Asset]: ...
     async def get(self, asset_id: UUID) -> Asset | None: ...
     async def get_by_tag(self, tag_id: str) -> Asset | None: ...   # active binding

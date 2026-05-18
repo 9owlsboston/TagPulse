@@ -27,9 +27,9 @@ def _asset(tenant_id: UUID, **overrides: Any) -> AssetResponse:
         tenant_id=tenant_id,
         external_ref=None,
         name="A",
-        asset_type="pallet",
         status="active",
         parent_asset_id=None,
+        category_id=uuid4(),
         metadata=None,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
@@ -60,7 +60,6 @@ class _FakeAssetRepo:
             tenant_id,
             id=a.id,
             name=a.name,
-            asset_type=a.asset_type,
             parent_asset_id=parent_asset_id,
         )
         self.assets[asset_id] = updated
@@ -110,12 +109,16 @@ class _FakeAudit:
         self.entries: list[dict[str, Any]] = []
 
     async def log(  # type: ignore[no-untyped-def]
-        self, tenant_id, action, resource_type, resource_id, changes=None,
-        *, user_id=None,
+        self,
+        tenant_id,
+        action,
+        resource_type,
+        resource_id,
+        changes=None,
+        *,
+        user_id=None,
     ):
-        self.entries.append(
-            {"action": action, "resource_id": resource_id, "changes": changes}
-        )
+        self.entries.append({"action": action, "resource_id": resource_id, "changes": changes})
 
 
 @pytest.fixture
@@ -127,9 +130,7 @@ async def bus() -> AsyncEventBus:
 
 def _build(
     bus: AsyncEventBus,
-) -> tuple[
-    AssetService, _FakeAssetRepo, _FakeExternalRepo, _FakeAudit
-]:
+) -> tuple[AssetService, _FakeAssetRepo, _FakeExternalRepo, _FakeAudit]:
     a = _FakeAssetRepo()
     ext = _FakeExternalRepo()
     audit = _FakeAudit()
@@ -150,7 +151,7 @@ def _build(
 async def test_load_attaches_and_emits_event(bus: AsyncEventBus) -> None:
     svc, repo, _, audit = _build(bus)
     tenant = uuid4()
-    truck = _asset(tenant, asset_type="truck")
+    truck = _asset(tenant)
     pallet = _asset(tenant)
     repo.assets[truck.id] = truck
     repo.assets[pallet.id] = pallet
@@ -171,7 +172,7 @@ async def test_load_attaches_and_emits_event(bus: AsyncEventBus) -> None:
 async def test_load_idempotent(bus: AsyncEventBus) -> None:
     svc, repo, _, audit = _build(bus)
     tenant = uuid4()
-    truck = _asset(tenant, asset_type="truck")
+    truck = _asset(tenant)
     pallet = _asset(tenant, parent_asset_id=truck.id)
     repo.assets[truck.id] = truck
     repo.assets[pallet.id] = pallet
@@ -246,7 +247,7 @@ async def test_unload_idempotent(bus: AsyncEventBus) -> None:
 async def test_get_manifest_builds_tree(bus: AsyncEventBus) -> None:
     svc, repo, _, _ = _build(bus)
     tenant = uuid4()
-    truck = _asset(tenant, asset_type="truck")
+    truck = _asset(tenant)
     pallet1 = _asset(tenant, parent_asset_id=truck.id, name="P1")
     pallet2 = _asset(tenant, parent_asset_id=truck.id, name="P2")
     case1 = _asset(tenant, parent_asset_id=pallet1.id, name="C1")
@@ -284,8 +285,11 @@ async def test_record_external_position_emits_event_and_audits(
     await bus.subscribe(Topic.EXTERNAL_LOCATION_RECORDED, lambda e: events.append(e))
 
     payload = ExternalLocationCreate(
-        latitude=42.36, longitude=-71.06, recorded_at=datetime.now(UTC),
-        source="samsara", speed_kph=88.0,
+        latitude=42.36,
+        longitude=-71.06,
+        recorded_at=datetime.now(UTC),
+        source="samsara",
+        speed_kph=88.0,
     )
     out = await svc.record_external_position(tenant, uuid4(), asset.id, payload)
     await bus.drain(timeout=1.0)
@@ -300,7 +304,10 @@ async def test_record_external_position_emits_event_and_audits(
 async def test_record_external_position_missing_asset(bus: AsyncEventBus) -> None:
     svc, _, _, _ = _build(bus)
     payload = ExternalLocationCreate(
-        latitude=0, longitude=0, recorded_at=datetime.now(UTC), source="x",
+        latitude=0,
+        longitude=0,
+        recorded_at=datetime.now(UTC),
+        source="x",
     )
     with pytest.raises(AssetNotFoundError):
         await svc.record_external_position(uuid4(), uuid4(), uuid4(), payload)
@@ -308,10 +315,6 @@ async def test_record_external_position_missing_asset(bus: AsyncEventBus) -> Non
 
 def test_external_position_validates_lat_lon() -> None:
     with pytest.raises(ValueError):
-        ExternalLocationCreate(
-            latitude=91, longitude=0, recorded_at=datetime.now(UTC), source="x"
-        )
+        ExternalLocationCreate(latitude=91, longitude=0, recorded_at=datetime.now(UTC), source="x")
     with pytest.raises(ValueError):
-        ExternalLocationCreate(
-            latitude=0, longitude=181, recorded_at=datetime.now(UTC), source="x"
-        )
+        ExternalLocationCreate(latitude=0, longitude=181, recorded_at=datetime.now(UTC), source="x")

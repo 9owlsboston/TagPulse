@@ -70,8 +70,36 @@ def fetch_devices(client: httpx.Client, tenant_id: str, count: int) -> list[dict
     return devices[:count]
 
 
+def ensure_pallet_category(client: httpx.Client, tenant_id: str) -> str:
+    """Find or create a ``Sim-Pallet`` category and return its UUID.
+
+    Sprint 41 Phase H made ``category_id`` a required field on
+    ``AssetCreate`` (ADR 019 close-out). The simulator now provisions a
+    dedicated category up-front instead of relying on the legacy
+    ``asset_type`` shadow column.
+    """
+    headers = _headers(tenant_id)
+    resp = client.get(f"{API_URL}/categories", headers=headers, params={"limit": 1000})
+    resp.raise_for_status()
+    for cat in resp.json():
+        if cat["name"] == "Sim-Pallet":
+            return str(cat["id"])
+    create = client.post(
+        f"{API_URL}/categories",
+        headers=headers,
+        json={
+            "name": "Sim-Pallet",
+            "category_type": "rti_container",
+            "required_tags": 1,
+        },
+    )
+    create.raise_for_status()
+    return str(create.json()["id"])
+
+
 def ensure_assets(client: httpx.Client, tenant_id: str, count: int) -> list[dict[str, Any]]:
     headers = _headers(tenant_id)
+    category_id = ensure_pallet_category(client, tenant_id)
     resp = client.get(f"{API_URL}/assets", headers=headers, params={"limit": 1000})
     resp.raise_for_status()
     existing = {a["name"]: a for a in resp.json()}
@@ -88,7 +116,7 @@ def ensure_assets(client: httpx.Client, tenant_id: str, count: int) -> list[dict
             headers=headers,
             json={
                 "name": name,
-                "asset_type": "pallet",
+                "category_id": category_id,
                 "metadata": {"simulated": True},
             },
         )

@@ -1,6 +1,6 @@
 # ADR-019: Categories as a First-Class Entity
 
-- Status: Accepted (Sprint 34, May 2026)
+- Status: **Completed** (Sprint 41 close-out, [PR #54](https://github.com/9owlsboston/TagPulse/pull/54) — accepted Sprint 34, May 2026; compatibility window closed Sprint 41, Phase H)
 - Implements: gap 2.1 (and unblocks 2.8) in the external schema/API audit notes (held locally)
 - Related: [reference-design-remediation plan](../design/reference-design-remediation.md), [data-models.md §assets](../data-models.md), ADR [005 rules engine](005-embedded-rules-engine.md), ADR [021 Configurable Sensing Events](021-configurable-sensing-events.md) (downstream consumer)
 
@@ -58,10 +58,12 @@ Rules:
   in API layer, not DB).
 - `categories` cannot be deleted while any asset references them (FK is
   `ON DELETE RESTRICT`; API returns 409 with a list of referencing asset IDs).
-- During migration, every existing `assets.asset_type` string becomes a
-  default `category_type='object'` row per tenant; `assets.category_id` is
-  back-filled. `assets.asset_type` stays in place for one release as a
-  compatibility shadow, then is dropped.
+- During migration, every existing `assets.asset_type` string became a
+  default `category_type='object'` row per tenant; `assets.category_id` was
+  back-filled (Sprint 34, migration `037`). `assets.asset_type` stayed in
+  place for one release as a compatibility shadow and was **dropped in
+  Sprint 41 Phase H** (migration `041`), at which point `category_id` was
+  promoted to `NOT NULL`.
 
 API surface:
 

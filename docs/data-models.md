@@ -218,17 +218,27 @@ User-defined automation rules evaluated against incoming telemetry.
 | `tenant_id` | UUID | FK → tenants.id, NOT NULL, indexed | |
 | `name` | VARCHAR(255) | NOT NULL | |
 | `description` | TEXT | NULLABLE | |
-| `condition_type` | VARCHAR(50) | NOT NULL | `threshold`, `absence`, `rate_change` |
+| `condition_type` | VARCHAR(50) | NOT NULL | 10 legacy values (`threshold`, `absence`, `rate_change`, `stock.*`, `zone.*`, `telemetry.threshold`) + 12 signaling values (`signaling.<event_type>.<trigger>`) per ADR-021 v2 |
 | `condition_config` | JSONB | NOT NULL | Type-specific parameters (see below) |
 | `action_type` | VARCHAR(50) | NOT NULL | `webhook`, `email`, `notification` |
 | `action_config` | JSONB | NOT NULL | Type-specific parameters |
 | `scope_device_id` | UUID | NULLABLE | Restrict to single device |
 | `enabled` | BOOLEAN | NOT NULL, default `true` | |
+| `event_type` | VARCHAR(32) | NULLABLE | ADR-021 v2: `location` / `geolocation` / `temperature` / `geofencing`. NULL = legacy rule. |
+| `trigger` | VARCHAR(32) | NULLABLE | ADR-021 v2: `on_change` / `periodic` / `on_inactivity` / `on_inference` / `on_entry` / `on_exit`. Valid pairs constrained by `SIGNALING_VALID_PAIRS` (Pydantic + regex). |
+| `processor` | VARCHAR(32) | NULLABLE | ADR-021 v2: `isolated_zones` / `overlapping_zones`. |
+| `confidence_threshold` | NUMERIC(3,2) | NOT NULL, default `0.0` | ADR-021 v2: `0.0` (All) / `0.5` / `0.75`. |
+| `category_ids` | UUID[] | NOT NULL, default `'{}'` | ADR-021 v2: empty = all categories. |
+| `asset_label_filters` | JSONB | NULLABLE | ADR-021 v2: `[{key, value_in: [...]}]` AND-ed; per ADR-020 evaluation. |
+| `zone_label_filters` | JSONB | NULLABLE | ADR-021 v2: same shape as `asset_label_filters`. |
+| `site_label_filters` | JSONB | NULLABLE | ADR-021 v2: same shape as `asset_label_filters`. |
+| `integration_ids` | UUID[] | NULLABLE | ADR-021 v2: empty/NULL = broadcast (legacy); populated = per-rule routing. |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
 | `updated_at` | TIMESTAMPTZ | NOT NULL, auto-updated | |
 
 **RLS:** Yes (migration 007)
-**Migration:** 006
+**Migration:** 006 (initial), 040 (Sprint 41 signaling-event columns + `idx_rules_signaling_active` partial index)
+**Partial index:** `idx_rules_signaling_active ON rules (tenant_id, event_type, trigger) WHERE enabled = true AND event_type IS NOT NULL` — keeps the signaling-event evaluator hot path narrow.
 
 #### Condition config shapes
 
@@ -245,6 +255,18 @@ User-defined automation rules evaluated against incoming telemetry.
 **rate_change:**
 ```json
 { "window_minutes": 60, "change_percent": 25.0 }
+```
+
+**signaling.\*.periodic** (cadence config; processor-specific config in `processor_config` per ADR-021 v2):
+```json
+{
+  "cadence_minutes": 60,
+  "processor_config": {
+    "aggregation_window_s": 60,
+    "min_rssi_dbm": -80,
+    "aging_weight": 0.5
+  }
+}
 ```
 
 ---
@@ -487,8 +509,7 @@ The physical thing being tracked, distinct from the reader. See [design/assets-a
 | `tenant_id` | UUID | FK → tenants.id, NOT NULL | |
 | `external_ref` | VARCHAR(255) | NULLABLE | ERP / WMS asset code. URL-unsafe characters rejected at the API layer (see [ADR-019](adr/019-categories.md), gap 2.8). |
 | `name` | VARCHAR(255) | NOT NULL | |
-| `asset_type` | VARCHAR(50) | NOT NULL | Free-form per tenant (e.g. `pallet`, `tool`). **Deprecated by [ADR-019](adr/019-categories.md);** kept this release as a compatibility shadow alongside `category_id`. Drops in a future migration once UI + clients have switched. |
-| `category_id` | UUID | FK → categories.id, ON DELETE RESTRICT, NULLABLE | Sprint 34. Backfilled by name match from `asset_type`. See [ADR-019](adr/019-categories.md). |
+| `category_id` | UUID | FK → categories.id, ON DELETE RESTRICT, NOT NULL | Sprint 34 (added nullable); promoted to `NOT NULL` and the legacy `asset_type` shadow column was dropped in Sprint 41 Phase H (migration `041`, [ADR-019](adr/019-categories.md) close-out). |
 | `status` | VARCHAR(20) | NOT NULL, default `'active'` | `active` \| `retired` \| `lost` |
 | `metadata` | JSONB | NULLABLE | |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
@@ -496,7 +517,7 @@ The physical thing being tracked, distinct from the reader. See [design/assets-a
 
 **Unique constraint:** `(tenant_id, external_ref)`
 **RLS:** Yes
-**Migration:** 017 (base table); 037 adds `category_id`
+**Migration:** 017 (base table); 037 adds `category_id`; 041 promotes `category_id` to `NOT NULL` and drops `asset_type`
 
 ---
 
@@ -554,7 +575,7 @@ Physical locations or mobile carriers (Sprint 15; Sprint 34 added kind + geoloca
 
 ### categories
 
-First-class tenant-scoped categorisation for `assets` (Sprint 34, [ADR-019](adr/019-categories.md)). Replaces the free-form `assets.asset_type` string. Carries behavioural metadata (`category_type`, `required_tags`) that downstream Sensing Events (ADR 021) scope themselves against. Cannot be deleted while any asset references it (`FK ON DELETE RESTRICT`).
+First-class tenant-scoped categorisation for `assets` (Sprint 34, [ADR-019](adr/019-categories.md)). Replaces the free-form `assets.asset_type` string. Carries behavioural metadata (`category_type`, `required_tags`) that downstream Signaling Events (ADR 021) scope themselves against. Cannot be deleted while any asset references it (`FK ON DELETE RESTRICT`).
 
 > **Terminology.** TagPulse uses **`required_tags`** rather than any vendor-specific term — see [§"Where is the tag?"](#where-is-the-tag-and-why-theres-no-tags-table) for the why.
 

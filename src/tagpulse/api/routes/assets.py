@@ -47,14 +47,12 @@ async def create_asset(
 @router.get("", response_model=list[AssetResponse])
 async def list_assets(
     request: Request,
-    asset_type: str | None = Query(default=None),
     status: str | None = Query(default=None),
     category_id: UUID | None = Query(
         default=None,
         description=(
-            "Sprint 37 — server-side filter on the ``assets.category_id`` FK "
-            "(ADR 019). Combines with ``asset_type``/``status``/``q``/"
-            "``labels[…]`` via AND."
+            "Sprint 37 \u2014 server-side filter on the ``assets.category_id`` FK "
+            "(ADR 019). Combines with ``status``/``q``/``labels[\u2026]`` via AND."
         ),
     ),
     q: str | None = Query(default=None),
@@ -63,13 +61,26 @@ async def list_assets(
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
     service: AssetService = Depends(get_asset_service),
 ) -> list[AssetResponse]:
+    # -- Sprint 41 Phase H (ADR 019 close-out): the legacy
+    # ``?asset_type=`` query parameter was removed when ``assets.asset_type``
+    # was dropped. Surface an explicit 400 with a migration hint for one
+    # release so clients see a useful error rather than a silent
+    # whatever-pagination behaviour. Drop this guard in Sprint 42. --
+    if "asset_type" in request.query_params:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The ?asset_type= query parameter was removed in Sprint 41 "
+                "(ADR 019 close-out). Use ?category_id=<uuid> instead \u2014 "
+                "list categories at GET /v1/tenants/{slug}/categories."
+            ),
+        )
     try:
         labels = parse_label_filter(request.query_params)
     except LabelFilterError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return await service.list_assets(
         user.tenant_id,
-        asset_type=asset_type,
         status=status,
         category_id=category_id,
         q=q,

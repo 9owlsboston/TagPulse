@@ -123,7 +123,7 @@ Two-step: create the asset, then add bindings (one per call). You can repeat ste
 curl -X POST "$API/assets" \
   -H "X-API-Key: $KEY" -H "X-Tenant-ID: $TID" \
   -H "Content-Type: application/json" \
-  -d '{"external_ref": "Sim-Pallet-03", "asset_type": "pallet"}'
+  -d '{"external_ref": "Sim-Pallet-03", "name": "Sim-Pallet-03", "category_id": "<pallet-category-uuid>"}'
 
 # 2) Add a binding (repeat any time you swap tags)
 curl -X POST "$API/assets/$AID/bindings" \

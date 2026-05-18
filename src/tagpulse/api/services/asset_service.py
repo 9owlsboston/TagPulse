@@ -89,7 +89,7 @@ class AssetService:
             action="asset.created",
             resource_type="asset",
             resource_id=asset.id,
-            changes={"name": asset.name, "asset_type": asset.asset_type},
+            changes={"name": asset.name, "category_id": str(asset.category_id)},
         )
         return asset
 
@@ -135,7 +135,6 @@ class AssetService:
         self,
         tenant_id: UUID,
         *,
-        asset_type: str | None = None,
         status: str | None = None,
         category_id: UUID | None = None,
         q: str | None = None,
@@ -145,7 +144,6 @@ class AssetService:
     ) -> list[AssetResponse]:
         return await self._assets.list(
             tenant_id,
-            asset_type=asset_type,
             status=status,
             category_id=category_id,
             q=q,
@@ -367,7 +365,6 @@ class AssetService:
             entries[asset.id] = ManifestEntry(
                 asset_id=asset.id,
                 name=asset.name,
-                asset_type=asset.asset_type,
                 parent_asset_id=asset.parent_asset_id,
                 depth=depth,
                 children=[],
@@ -381,7 +378,6 @@ class AssetService:
         return ManifestResponse(
             asset_id=root.id,
             name=root.name,
-            asset_type=root.asset_type,
             children=children_of_root,
         )
 

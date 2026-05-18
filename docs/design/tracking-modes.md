@@ -42,7 +42,7 @@ This question comes up often enough to anchor it here.
 
 **It doesn't, and it won't.** The two modes are split precisely so that quantity-of-alike-things lives in the *inventory* layer, not the *asset* layer.
 
-- In **asset mode**, each row in `assets` is one physical thing (Forklift-12, Pallet-A47). Counting alike assets is a query: `SELECT count(*) FROM assets WHERE asset_type = 'forklift'`. There is no aggregate quantity to store.
+- In **asset mode**, each row in `assets` is one physical thing (Forklift-12, Pallet-A47). Counting alike assets is a query: `SELECT count(*) FROM assets WHERE category_id = '<forklift-category>'`. There is no aggregate quantity to store.
 - In **inventory mode**, `products` is the SKU/catalog row and `stock_items` is one row per tagged unit. On-hand quantity is **derived** by counting `stock_items` with the matching `product_id` and a "present" location state — it is never stored as a column.
 - For **un-serialized bulk goods** (a bin of 500 unmarked widgets, a tank of fluid), neither model fits. That's the **Kit / BOM / bulk-aggregate** backlog item; if it lands, it gets its own entity, not a `quantity` column on `assets`.
 

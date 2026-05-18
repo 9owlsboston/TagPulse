@@ -79,13 +79,11 @@ async def test_list_category_id_combines_with_other_filters() -> None:
     repo = TimescaleAssetRepository(session)  # type: ignore[arg-type]
     await repo.list(
         uuid.uuid4(),
-        asset_type="pallet",
         status="active",
         category_id=uuid.uuid4(),
         q="forklift",
     )
     sql = _compiled_sql(session.captured)
-    assert "assets.asset_type =" in sql
     assert "assets.status =" in sql
     assert "assets.category_id =" in sql
     # Substring search emits an ILIKE on name OR external_ref.

@@ -9,6 +9,7 @@
 - [Telemetry](#telemetry)
 - [Telemetry Models](#telemetry-models)
 - [Rules](#rules)
+- [Signaling Events](#signaling-events)
 - [Alerts](#alerts)
 - [Integrations](#integrations)
 - [Assets](#assets)
@@ -519,6 +520,210 @@ Click **Create Rule** to open the multi-step wizard.
 
 ---
 
+## Signaling Events
+
+Signaling Events ([ADR 021](adr/021-configurable-sensing-events.md)) are
+a richer rule kind layered on top of the existing **Rules** surface.
+They model **what kind of thing changed** (`event_type`) separately from
+**how you want to be notified** (`trigger`), with optional Category /
+Label scoping and per-rule webhook routing. Existing legacy rules
+(threshold / absence / rate-change / telemetry-threshold / zone-entered /
+zone-exited / zone-dwell / stock-expiring-within) continue to work
+unchanged and are now editable under the **Legacy rule** sub-tab of the
+Rules page.
+
+### What's new vs. legacy rules
+
+| Legacy rule | Signaling Event |
+|---|---|
+| Single `condition_type` mixes domain + trigger | `event_type` + `trigger` are explicit, only valid pairs accepted |
+| Scope: one device or all devices | Scope: one or more **Categories**, optionally filtered by Asset / Zone / Site **Labels** |
+| Action fans out over the global integration list | Per-rule `integration_ids[]` allow-list **replaces** the broadcast when set |
+| Webhook payload: alert fields only | Adds `confidence`, `keySet[]`, `eventConfigurationId`, `categoryId`, `labels[]` (legacy rules also get these — with safe defaults) |
+| Cap: none | Default **5 active rules per `(event_type, category_id)`** scope (admin can override) |
+
+### The 13-pair event-type × trigger matrix
+
+The UI rejects impossible pairs before submit — only these 13
+combinations are valid:
+
+| `event_type` | Valid triggers |
+|---|---|
+| `location` | `on_change`, `periodic`, `on_inactivity`, `on_inference` |
+| `geolocation` | `on_change`, `periodic`, `on_inactivity` |
+| `temperature` | `on_change`, `periodic`, `on_inactivity` |
+| `geofencing` | `on_entry`, `on_exit` |
+
+`on_inference` is only legal for `location` — it fires when the
+**OverlappingZones** processor (see ADR 021 §"Processor implementation")
+settles on a `(asset, zone)` attribution above the rule's
+`min_confidence` threshold. `geofencing` triggers (`on_entry` / `on_exit`)
+target a specific `zone_id` and reuse the existing zone-change
+subscription.
+
+### Creating a Signaling Event
+
+Navigate to **Rules** → click **Create Rule** → the **Signaling Event**
+tab is the default for new rules. The modal walks four steps:
+
+1. **Event Type** — pick one of the four event types.
+2. **Trigger** — the trigger dropdown only shows valid triggers for the
+   chosen event type (impossible pairs hidden, not greyed).
+3. **Configuration** — per-trigger form: `cadence_minutes` for periodic,
+   `min_delta` + `cooldown_s` for on_change, `inactivity_minutes` for
+   on_inactivity, `zone_id` for on_entry / on_exit, `min_confidence` for
+   on_inference. The OverlappingZones processor adds an optional
+   `aggregation_window_s` selector ({30, 60, 300, 1800}).
+4. **Scope** (optional) — pin to one or more **Categories**, filter by
+   Asset / Zone / Site **Labels**, restrict outbound delivery to a
+   subset of enabled webhook **Integrations**.
+
+The **Legacy rule** sub-tab keeps the original 10 legacy
+`condition_type` values available for editing existing rules.
+
+### Four curl recipes
+
+The four recipes below cover one trigger per event type and POST to
+the unified `/v1/tenants/{slug}/rules` endpoint (the parallel
+`/sensing-events` URL from the original reference layout was
+intentionally not adopted — see [ADR 021 v2.1 §Decision history](adr/021-configurable-sensing-events.md#decision-history)).
+Substitute `$TENANT_SLUG`, `$API_TOKEN`, `$CATEGORY_ID`, and
+`$ZONE_ID` with the values from your tenant.
+
+**1. Location `on_change` — alert when an asset moves between zones.**
+Fires on every `attribution_changed` event for any asset in the
+specified Category. Useful for high-value assets that should rarely
+leave their assigned zone.
+
+```bash
+curl -X POST "https://api.example.com/v1/tenants/$TENANT_SLUG/rules" \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "High-value asset zone change",
+    "kind": "signaling",
+    "event_type": "location",
+    "trigger": "on_change",
+    "condition_type": "signaling.location.on_change",
+    "condition_config": {"cooldown_s": 300, "min_delta": 0.0},
+    "category_ids": ["'"$CATEGORY_ID"'"],
+    "action_type": "webhook",
+    "action_config": {},
+    "enabled": true
+  }'
+```
+
+**2. Temperature `periodic` — daily cold-chain digest.**
+Wakes once per `cadence_minutes` (1440 = once per day) and emits a
+summary alert with the configured digest payload. The PeriodicSignalingDispatcher
+loop tick (see Phase B in [ADR 021](adr/021-configurable-sensing-events.md))
+runs every 60 s; cadence accounting is per-rule in memory.
+
+```bash
+curl -X POST "https://api.example.com/v1/tenants/$TENANT_SLUG/rules" \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Cold chain daily summary",
+    "kind": "signaling",
+    "event_type": "temperature",
+    "trigger": "periodic",
+    "condition_type": "signaling.temperature.periodic",
+    "condition_config": {"cadence_minutes": 1440},
+    "category_ids": ["'"$CATEGORY_ID"'"],
+    "action_type": "webhook",
+    "action_config": {},
+    "enabled": true
+  }'
+```
+
+**3. Geofencing `on_entry` — alert when an asset enters a restricted zone.**
+Reuses the existing zone-change subscription path; the new `signaling`
+discriminator + Phase C envelope mean the outbound webhook carries the
+five additive fields (`confidence`, `keySet=["asset_id", "zone_id"]`,
+etc.) without changing the historical alert fields. `subject_kinds` is
+optional — omit to apply to every tracked subject in the zone.
+
+```bash
+curl -X POST "https://api.example.com/v1/tenants/$TENANT_SLUG/rules" \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Asset entered restricted zone",
+    "kind": "signaling",
+    "event_type": "geofencing",
+    "trigger": "on_entry",
+    "condition_type": "signaling.geofencing.on_entry",
+    "condition_config": {
+      "zone_id": "'"$ZONE_ID"'",
+      "subject_kinds": ["asset"],
+      "cooldown_s": 60
+    },
+    "action_type": "webhook",
+    "action_config": {},
+    "enabled": true
+  }'
+```
+
+**4. Geolocation `on_inactivity` — alert when a GPS asset goes dark.**
+Fires when the gap since the subject's last `geolocation`-bearing read
+exceeds `inactivity_minutes`. Useful for vehicles or pallets that should
+report at least hourly; the example uses 60 minutes with a 5-minute
+re-fire cooldown.
+
+```bash
+curl -X POST "https://api.example.com/v1/tenants/$TENANT_SLUG/rules" \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "GPS asset silent > 60 min",
+    "kind": "signaling",
+    "event_type": "geolocation",
+    "trigger": "on_inactivity",
+    "condition_type": "signaling.geolocation.on_inactivity",
+    "condition_config": {"inactivity_minutes": 60, "cooldown_s": 300},
+    "category_ids": ["'"$CATEGORY_ID"'"],
+    "action_type": "webhook",
+    "action_config": {},
+    "enabled": true
+  }'
+```
+
+### Listing signaling rules
+
+`GET /v1/tenants/$TENANT_SLUG/rules?kind=signaling` filters to
+signaling rules only; `?kind=legacy` filters to legacy rules; omitting
+the query parameter returns all rules (backwards-compatible). The
+`RuleResponse.kind` field on every list-item is computed from
+`event_type` — `null` → `"legacy"`, otherwise `"signaling"` — so client
+code can branch on the discriminator without re-parsing
+`condition_type`.
+
+### Cap enforcement & admin override
+
+The default per-scope cap is **5 active signaling rules per
+`(event_type, category_id)` tuple** (broadcast-scope rules — those with
+empty `category_ids[]` — share their own cap bucket). The 6th rule
+returns HTTP `409 Conflict` with `{"error": "signaling_scope_cap_exceeded",
+"event_type", "category_id", "current_count", "cap", "override_hint"}`.
+Admin users can pass `?override=true` to bypass the cap — each override
+writes one row to `audit_logs` with `action="signaling.cap_override"`
+for compliance. Non-admin tokens passing `?override=true` get
+HTTP `403 Forbidden` before any DB work.
+
+### Per-rule webhook routing
+
+When a signaling (or legacy) rule sets `integration_ids: ["<uuid>", ...]`,
+the WebhookDispatcher delivers the resulting alert **only** to
+integrations in that allow-list (intersected with the subscription set
+for the event type). When the column is empty / null, the dispatcher
+falls back to the legacy broadcast over every enabled integration
+subscribed to the event. This is the *replace, not augment* semantic
+pinned in [ADR 021 v2 §Open question #3](adr/021-configurable-sensing-events.md#decision-history)
+and verified by `tests/unit/test_webhook_per_rule_routing.py`.
+
+---
+
 ## Alerts
 
 Navigate to **Alerts** to see all triggered alerts.
@@ -639,6 +844,8 @@ Use `Site.metadata` for facility-wide attributes that apply to **everything in t
 | **`reader_bound`** | Implicit — defined by which fixed readers see the tag. Pick the reader IDs that bound the zone. | Indoor warehouse zones where readers cover the floor. No GPS needed. |
 | **`geofence`** | A polygon drawn on the map (GeoJSON `Polygon`). | Outdoor yards, loading lots, anywhere with GPS-equipped tags or external locators. |
 | **`virtual`** | Admin-defined logical grouping (no readers, no polygon). | Cross-cutting categories like "Cold storage" or "Hazmat". |
+
+> **What about local `(x, y)` coordinates inside a warehouse?** A common question: "Our warehouse uses a 400×600 m XY grid, not lat/lon. How do I model that?" Today, model each aisle or sub-area as a **`reader_bound`** zone — pick the fixed readers that cover it and let TagPulse infer zone membership from `tag_reads.reader_id`. No coordinates are needed at all, and the upcoming OverlappingZones processor (Sprint 41 Phase D) is designed for exactly this: a tag heard by readers belonging to multiple overlapping zones is confidently attributed to each. **True indoor `(x, y)` position estimation** — sub-meter trilateration with `(asset, x, y, confidence)` written to an `asset_positions` table, plus a per-site `coord_system` definition (units, extent, origin, rotation) — is a separate roadmap item ([ADR 024](adr/024-position-estimation.md), Sprint 45). Until that ships, the answer for warehouse customers is: reader-bound zones at the granularity you want to see in alerts and dashboards.
 
 ### Creating a zone
 

@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -11,13 +12,14 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Numeric,
     SmallInteger,
     String,
     Text,
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -267,6 +269,26 @@ class RuleModel(Base):
     action_config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     scope_device_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+    # -- Sprint 41 / ADR-021 v2 Configurable Signaling Events --
+    # ``event_type IS NULL`` is the legacy-rule discriminator; signaling
+    # rules populate all three of (event_type, trigger, processor).
+    event_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    trigger: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    processor: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    confidence_threshold: Mapped[Decimal] = mapped_column(
+        Numeric(3, 2), nullable=False, server_default="0.0"
+    )
+    category_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(UUID(as_uuid=True)),
+        nullable=False,
+        server_default="{}",
+    )
+    asset_label_filters: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    zone_label_filters: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    site_label_filters: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    integration_ids: Mapped[list[uuid.UUID] | None] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -545,9 +567,9 @@ class CategoryModel(Base):
     """Tenant-scoped Category for assets (Sprint 34, ADR 019).
 
     Every asset *should* belong to exactly one Category. Category
-    declares the sensing-event capability template (``category_type``)
+    declares the signaling-event capability template (``category_type``)
     and the required-tag count consumed by ADR 021 (Configurable
-    Sensing Events). (A separate tag-registry entity is deferred —
+    Signaling Events). (A separate tag-registry entity is deferred —
     TagPulse already has equivalents via ``tag_reads`` +
     ``asset_tag_bindings``; see ``docs/data-models.md`` §"Where is the
     tag?".)
@@ -689,20 +711,20 @@ class AssetModel(Base):
     )
     external_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    asset_type: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
     parent_asset_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("assets.id", ondelete="SET NULL"),
         nullable=True,
     )
-    # -- Sprint 34 (ADR 019): nullable FK to categories. Will become
-    # non-null in a future migration once the UI + clients have
-    # switched off the legacy ``asset_type`` shadow column. --
-    category_id: Mapped[uuid.UUID | None] = mapped_column(
+    # -- Sprint 34 (ADR 019) introduced this FK as nullable alongside
+    # the legacy ``asset_type`` shadow column. Sprint 41 Phase H
+    # (migration 041) dropped the shadow and promoted this column to
+    # ``NOT NULL`` \u2014 every asset must point at a Category. --
+    category_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("categories.id", ondelete="RESTRICT"),
-        nullable=True,
+        nullable=False,
     )
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
