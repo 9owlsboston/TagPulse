@@ -1058,6 +1058,66 @@ Sprints 36–40 above each carry a *(SLIP)* marker because the planned scope for
 
 Going forward, sprint numbers will be allocated by `scripts/start-sprint.sh <NN> <topic-slug>` and tied to one planned workstream each; out-of-band doc flips will land as `docs/...` branches rather than as new sprint labels.
 
+## Sprint 41 — Configurable Sensing Events (ADR 021 v2)
+
+> Design: [ADR-021 v2](adr/021-configurable-sensing-events.md), [reference-design-remediation plan](design/reference-design-remediation.md) (rows 2.3 backend, 2.9 envelope, 1.1 sidebar group, 3.5 modal)
+> Goal: ratify ADR 021 v2 Proposed → Accepted and ship the full Configurable Sensing Events surface in one sprint per the ADR's "single-PR delivery, single migration" decision: extend `rules` with the additive scoping/processor/confidence columns, add the new `sensing.<event_type>.<trigger>` condition kinds across all four event types (Location / Geolocation / Temperature / Geofencing), the OverlappingZones processor module, the periodic-cadence dispatcher, the upgraded outbound webhook envelope (which fires for legacy rules too with safe defaults — closes gap 2.9), and the consolidated "Sensing Events & Data" UI surface in TagPulse-UI. Sprint workstream PR is opened by `scripts/start-sprint.sh 41 sensing-events` per the canonical convention; this section is the planning lock so the implementation PR has scope to point at.
+
+### Phase A — Schema migration
+
+- [planned] **A1 — Alembic migration** extending `rules` per [ADR 021 §"Schema"](adr/021-configurable-sensing-events.md): additive nullable columns (`event_type`, `trigger`, `processor` VARCHAR(32); `confidence_threshold` NUMERIC(3,2) DEFAULT 0.0; `category_ids` UUID[] DEFAULT '{}'; `asset_label_filters` / `zone_label_filters` / `site_label_filters` JSONB; `integration_ids` UUID[]). Legacy rows untouched — NULL `event_type` is the implicit `kind=legacy` discriminator. Idempotent; reruns are a no-op.
+- [planned] **A2 — Partial index** `idx_rules_sensing_active ON rules (tenant_id, event_type, trigger) WHERE enabled = true AND event_type IS NOT NULL` so the new evaluator paths probe a small slice rather than full-scanning `rules`.
+- [planned] **A3 — Extend `_RULE_CONDITION_PATTERN`** regex with the 12 new `sensing.*.*` values from [ADR 021 §"New condition_type values"](adr/021-configurable-sensing-events.md). VARCHAR + pattern stays (per ADR open question #1 — easier to extend than Postgres ENUM); the 10 legacy `condition_type` values are untouched.
+- [planned] **A4 — Pydantic schemas.** Two-level discriminated union on `event_type` then `trigger` (per ADR open question #2 — keeps per-branch schema small and error messages targeted). Reject invalid pairs (e.g. `temperature × on_entry` — entry/exit are spatial primitives only) at schema validation, not at the evaluator.
+- [planned] **A5 — Conformance test** asserting the migration is idempotent and the new index is created with the expected predicate.
+
+### Phase B — Evaluator + service
+
+- [planned] **B1 — `RuleService` `kind=` filter** (`sensing` = `event_type IS NOT NULL`, `legacy` = `IS NULL`). API responses expose computed `kind` for clarity; the discriminator stays implicit at the column level (per ADR Consequences §"trade-offs").
+- [planned] **B2 — Default-cap enforcement** at the `POST` / `PATCH` / `activate` handlers: 5 active rows per `(tenant_id, event_type, unnest(category_ids))`. Hard reject with HTTP 409 (per ADR open question #4); admin-only `?override=true` flag bypasses with an audit-log entry. Enforced in the API layer not the DB so errors are friendly and per-tenant relaxation is cheap.
+- [planned] **B3 — `PeriodicSensingDispatcher`** worker (new module `tagpulse/sensing/periodic_dispatcher.py`). Cadence stored in `condition_config.cadence_minutes` (1 ≤ N ≤ 1440). Wakes on a cadence tick, evaluates `sensing.*.periodic` rules, reuses the existing rules-engine output path (alerts row + integration dispatch).
+- [planned] **B4 — `sensing.attribution_settled` event-bus topic** (in-process per ADR 010). Emitted by the OverlappingZones processor when its aggregation window resolves; `sensing.*.on_inference` rules subscribe.
+- [planned] **B5 — Unit tests** for: every valid `(event_type, trigger)` pair in the discriminated union; one invalid pair per `event_type` rejected at schema-validation; cap enforcement at 5 / 6 / admin-override; periodic dispatcher cadence accuracy; on_inference subscription via the event bus.
+
+### Phase C — Outbound envelope upgrade (closes gap 2.9)
+
+- [planned] **C1 — `tagpulse/integrations/sensing_envelope.py`** module that builds the reference-shaped payload: `confidence`, `keySet[]`, `eventConfigurationId` (= `rules.id`), `categoryId` (resolved from the matched entity), `labels[]` (propagated from the matched entity).
+- [planned] **C2 — Wire into the dispatcher** so the envelope fires for **all rules**, not just sensing. Legacy rules get safe defaults (`confidence=1.0`, `keySet=[]`, `categoryId=null`, `labels=[]`). Additive — existing webhook consumers see the same payload they get today, plus the five new fields. No behaviour change for legacy rules' historical fields.
+- [planned] **C3 — Conformance test** asserting (a) webhook payloads for legacy rules retain every historical field unchanged and gain the five new fields with safe defaults; (b) sensing-rule payloads include populated `confidence` + `keySet[]` + non-null `eventConfigurationId`.
+
+### Phase D — Processor implementations
+
+- [planned] **D1 — IsolatedZones (made explicit).** No algorithm change — the existing implicit single-zone attribution behaviour. New `tagpulse/sensing/isolated_zones.py` codifies it. Default `processor` when NULL and `event_type IN (location, geofencing)`.
+- [planned] **D2 — OverlappingZones (genuinely new).** New `tagpulse/sensing/overlapping_zones.py` module per [ADR 021 §"Processor implementation"](adr/021-configurable-sensing-events.md). Runs aggregation window over `tag_reads` matching `(asset, [overlapping zones])`, applies RSSI floor + time-error filter, weights by aging weight, emits one `sensing.attribution_settled` event per zone the asset confidently occupies. Config in `condition_config.processor_config` JSONB (`aggregation_window_s` enum `30 | 60 | 300 | 1800` per ADR open question #5, `min_rssi_dbm`, `zone_bleed_filter`, `aging_weight`, `time_error_filter`).
+- [planned] **D3 — Integration tests** with synthetic multi-reader read streams covering single-zone attribution (IsolatedZones), genuine overlap (OverlappingZones picks both), and bleed rejection (one zone's reads filtered out by `zone_bleed_filter`).
+
+### Phase E — API surface
+
+- [planned] **E1 — `/v1/tenants/{slug}/sensing-events` namespace** (`GET` list / `POST` create / `GET` / `PATCH` / `DELETE` / `POST /{id}/duplicate` / `POST /{id}/activate` / `POST /{id}/deactivate`) per [ADR 021 §"API surface"](adr/021-configurable-sensing-events.md) — UX-only alias of `RuleService` with `kind=sensing` filter. Reuses RBAC, RLS, audit, validation paths so operators see "Sensing Events" not "Rules with event_type set".
+- [planned] **E2 — Per-rule integration routing.** Empty/null `integration_ids` = broadcast (legacy behaviour preserved); non-empty = replace the global broadcast (per ADR open question #3 — replace, not augment).
+- [planned] **E3 — OpenAPI regeneration** so the TagPulse-UI client picks up the new endpoints + schemas.
+
+### Phase F — UI (TagPulse-UI repo, separate PR)
+
+- [planned] **F1 — "Sensing Events & Data" sidebar group** consolidating Telemetry / Telemetry Models / Rules / Alerts under one section per the "Unify Telemetry/Models/Rules/Alerts" UI gap 1.1 row in [reference-design-remediation.md](design/reference-design-remediation.md).
+- [planned] **F2 — "Add Sensing Event" modal** per [UI gap 3.5](design/reference-design-remediation.md) and the reference layout — Event Name → Event Type → Category × Labels scoping → Trigger → Confidence → Retention → Connections → Advanced. Form posts to `/v1/tenants/{slug}/sensing-events`.
+- [planned] **F3 — "Legacy rule" sub-tab** keeps the existing rules form editable for the 10 legacy condition types per [ADR 021 §"UI"](adr/021-configurable-sensing-events.md). New rule creation defaults to the Sensing Event flow.
+- [planned] **F4 — vitest coverage** of the new modal's discriminated-union form: every valid `(event_type, trigger)` combo + at least one invalid pair per `event_type` rejected client-side before submit.
+
+### Phase G — Documentation + roadmap reconciliation
+
+- [planned] **G1 — Ratify [ADR 021](adr/021-configurable-sensing-events.md)** Proposed → **Accepted**. Update its revision history with the Sprint 41 merge SHA.
+- [planned] **G2 — Flip remediation rows** [2.3](design/reference-design-remediation.md) (Configurable Sensing Events backend) + [2.9](design/reference-design-remediation.md) (Outbound event envelope) + the [§3.2 1.1](design/reference-design-remediation.md) "Unify Telemetry/Models/Rules/Alerts" row + [3.5](design/reference-design-remediation.md) ("Sensing Events modal") to **✅ Done** with the implementing merge SHAs, per the doc's own §7 "Updating this document" rule.
+- [planned] **G3 — User-guide section "Configurable Sensing Events"** walking through one rule per event type — Location `on_change`, Temperature `periodic`, Geofencing `on_entry`, Geolocation `on_inactivity` — with the four matching curl recipes.
+- [planned] **G4 — CHANGELOG `## Unreleased`** entry summarising the ADR 021 v2 ratification and the five new additive envelope fields.
+
+### Out of scope (deferred)
+
+- **ADR 023 MQTT outbound dispatcher** — Sprint 42 per the Methodology-drift table above.
+- **ADR 024 Indoor position estimation** — depends on this sprint's `processor` enum being live (Sprint 45 will add a third value `trilateration` per [ADR 024](adr/024-position-estimation.md)).
+- **Backfilling `category_ids` / `*_label_filters` onto legacy rules** — the columns accept it but no UI flow exposes it. Out-of-scope until a customer asks.
+- **Postgres ENUM migration for `condition_type`** — open question #1 in the ADR; lean keep VARCHAR + pattern.
+
 ---
 
 ## Backlog (not scheduled)
