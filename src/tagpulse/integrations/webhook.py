@@ -15,9 +15,10 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tagpulse.core.usage_meter import UsageMeter
-from tagpulse.events.protocol import Event
+from tagpulse.events.protocol import Event, Topic
 from tagpulse.integrations.service import IntegrationService
-from tagpulse.models.database import IntegrationDeliveryModel
+from tagpulse.integrations.signaling_envelope import build_envelope
+from tagpulse.models.database import IntegrationDeliveryModel, RuleModel
 
 logger = logging.getLogger(__name__)
 
@@ -57,25 +58,35 @@ class WebhookDispatcher:
 
         async with self._session_factory() as session:
             service = IntegrationService(session)
-            integrations = await service.get_enabled_for_event(
-                tenant_id, event_type
-            )
+            integrations = await service.get_enabled_for_event(tenant_id, event_type)
+
+            # Phase C / ADR-021 v2: for rule-fired events, fetch the
+            # source rule once per tick and build the five-field
+            # signaling envelope. Resolved here (not per-integration)
+            # so multiple subscribed integrations share one DB lookup.
+            # Non-ALERT_TRIGGERED topics (raw tag reads, telemetry, etc.)
+            # retain the pre-Phase-C payload shape unchanged.
+            envelope_fields: dict[str, Any] = {}
+            if event.topic == Topic.ALERT_TRIGGERED:
+                envelope_fields = await self._build_alert_envelope(session, event.payload)
 
             for integration in integrations:
                 if integration.type != "webhook":
                     continue
 
                 # Apply filters — skip if event doesn't match
-                if not _passes_filters(
-                    integration.filters, event.payload
-                ):
+                if not _passes_filters(integration.filters, event.payload):
                     continue
 
-                # Build enriched payload envelope
+                # Build enriched payload envelope. ``envelope_fields`` is
+                # spread above ``enrichments`` so a (rare) consumer
+                # enrichment with a conflicting key takes precedence —
+                # matches the existing "enrichments wins" precedent.
                 enriched_payload = {
                     "messageSource": event_type,
                     "tenantId": str(tenant_id),
                     "enqueuedTime": datetime.now(UTC).isoformat(),
+                    **envelope_fields,
                     "enrichments": integration.enrichments or {},
                     "data": event.payload,
                 }
@@ -97,6 +108,44 @@ class WebhookDispatcher:
                     row.last_triggered = datetime.now(UTC)
 
             await session.commit()
+
+    async def _build_alert_envelope(
+        self,
+        session: AsyncSession,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Resolve the source rule and build the five-field signaling envelope.
+
+        Per ADR-021 v2 Phase C: returns the additive ``confidence`` /
+        ``keySet`` / ``eventConfigurationId`` / ``categoryId`` / ``labels``
+        fields. Legacy rules (``event_type IS NULL``) get safe defaults
+        (1.0 / [] / rule_id / null / []). Returns an empty dict if the
+        payload has no ``rule_id`` or it doesn't parse — the dispatcher
+        then falls back to the pre-Phase-C envelope shape.
+
+        ``category_id`` and ``labels`` are not resolved from the matched
+        entity in Phase C — that work lands in Phase D once the
+        OverlappingZones processor populates the matched-entity ID on
+        the published payload. For Phase C they stay at the safe-default
+        ``None`` / ``[]`` for both legacy and signaling paths.
+        """
+        rule_id_str = payload.get("rule_id")
+        if not rule_id_str:
+            return {}
+        try:
+            rule_uuid = uuid.UUID(rule_id_str)
+        except (ValueError, TypeError):
+            return {}
+        rule_row = await session.get(RuleModel, rule_uuid)
+        event_type = rule_row.event_type if rule_row is not None else None
+        confidence_threshold = rule_row.confidence_threshold if rule_row is not None else None
+        return dict(
+            build_envelope(
+                rule_id=rule_uuid,
+                event_type=event_type,
+                confidence_threshold=confidence_threshold,
+            )
+        )
 
     async def _deliver(
         self,
@@ -125,9 +174,7 @@ class WebhookDispatcher:
         # HMAC signing
         secret = config.get("secret")
         if secret:
-            signature = hmac.new(
-                secret.encode(), body.encode(), hashlib.sha256
-            ).hexdigest()
+            signature = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
             headers["X-TagPulse-Signature"] = signature
 
         headers["Content-Type"] = "application/json"
@@ -167,9 +214,7 @@ class WebhookDispatcher:
                 await asyncio.sleep(delay)
 
             try:
-                response = await self._client.post(
-                    url, content=body, headers=headers
-                )
+                response = await self._client.post(url, content=body, headers=headers)
                 delivery.response_code = response.status_code
                 if 200 <= response.status_code < 300:
                     delivery.status = "delivered"
