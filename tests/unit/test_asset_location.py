@@ -29,9 +29,9 @@ def _asset(tenant_id: UUID) -> AssetResponse:
         tenant_id=tenant_id,
         external_ref=None,
         name="Pallet-9",
-        asset_type="pallet",
         status="active",
         parent_asset_id=None,
+        category_id=uuid4(),
         metadata=None,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
@@ -221,7 +221,6 @@ async def test_get_assets_in_zone_passes_pagination() -> None:
         AssetInZoneSummary(
             asset_id=uuid4(),
             name="Pallet-A",
-            asset_type="pallet",
             last_seen_at=datetime.now(UTC),
             binding_value="E280-AAAA",
             binding_kind="epc",

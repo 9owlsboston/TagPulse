@@ -30,7 +30,6 @@ def _asset_to_response(row: AssetModel) -> AssetResponse:
         tenant_id=row.tenant_id,
         external_ref=row.external_ref,
         name=row.name,
-        asset_type=row.asset_type,
         status=row.status,
         parent_asset_id=row.parent_asset_id,
         category_id=row.category_id,
@@ -65,7 +64,6 @@ class TimescaleAssetRepository:
             tenant_id=tenant_id,
             external_ref=asset.external_ref,
             name=asset.name,
-            asset_type=asset.asset_type,
             status=asset.status,
             parent_asset_id=asset.parent_asset_id,
             category_id=asset.category_id,
@@ -91,7 +89,6 @@ class TimescaleAssetRepository:
         self,
         tenant_id: uuid.UUID,
         *,
-        asset_type: str | None = None,
         status: str | None = None,
         category_id: uuid.UUID | None = None,
         q: str | None = None,
@@ -100,8 +97,6 @@ class TimescaleAssetRepository:
         offset: int = 0,
     ) -> list[AssetResponse]:
         stmt = select(AssetModel).where(AssetModel.tenant_id == tenant_id)
-        if asset_type is not None:
-            stmt = stmt.where(AssetModel.asset_type == asset_type)
         if status is not None:
             stmt = stmt.where(AssetModel.status == status)
         if category_id is not None:
@@ -189,7 +184,7 @@ class TimescaleAssetRepository:
         stmt = text(
             """
             WITH RECURSIVE descendants AS (
-                SELECT id, tenant_id, external_ref, name, asset_type, status,
+                SELECT id, tenant_id, external_ref, name, status,
                        parent_asset_id, category_id, metadata, created_at, updated_at,
                        1 AS depth
                 FROM assets
@@ -197,7 +192,7 @@ class TimescaleAssetRepository:
                   AND parent_asset_id = :root_id
                   AND status != 'retired'
                 UNION ALL
-                SELECT a.id, a.tenant_id, a.external_ref, a.name, a.asset_type,
+                SELECT a.id, a.tenant_id, a.external_ref, a.name,
                        a.status, a.parent_asset_id, a.category_id, a.metadata, a.created_at,
                        a.updated_at, d.depth + 1
                 FROM assets a
@@ -219,7 +214,6 @@ class TimescaleAssetRepository:
                         tenant_id=r["tenant_id"],
                         external_ref=r["external_ref"],
                         name=r["name"],
-                        asset_type=r["asset_type"],
                         status=r["status"],
                         parent_asset_id=r["parent_asset_id"],
                         category_id=r["category_id"],

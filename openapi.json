@@ -135,25 +135,12 @@
         "type": "object"
       },
       "AssetCreate": {
-        "description": "Create an asset.",
+        "description": "Create an asset.\n\nSprint 41 Phase H (ADR 019 close-out): ``category_id`` is now\n**required** \u2014 every asset must point at a Category. The legacy\n``asset_type`` String field has been dropped.",
         "properties": {
-          "asset_type": {
-            "maxLength": 50,
-            "minLength": 1,
-            "title": "Asset Type",
-            "type": "string"
-          },
           "category_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Category Id"
+            "format": "uuid",
+            "title": "Category Id",
+            "type": "string"
           },
           "external_ref": {
             "anyOf": [
@@ -210,7 +197,7 @@
         },
         "required": [
           "name",
-          "asset_type"
+          "category_id"
         ],
         "title": "AssetCreate",
         "type": "object"
@@ -284,10 +271,6 @@
             "title": "Asset Id",
             "type": "string"
           },
-          "asset_type": {
-            "title": "Asset Type",
-            "type": "string"
-          },
           "binding_kind": {
             "title": "Binding Kind",
             "type": "string"
@@ -309,7 +292,6 @@
         "required": [
           "asset_id",
           "name",
-          "asset_type",
           "last_seen_at",
           "binding_value",
           "binding_kind"
@@ -425,21 +407,10 @@
       "AssetResponse": {
         "description": "Persisted asset row.",
         "properties": {
-          "asset_type": {
-            "title": "Asset Type",
-            "type": "string"
-          },
           "category_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Category Id"
+            "format": "uuid",
+            "title": "Category Id",
+            "type": "string"
           },
           "created_at": {
             "format": "date-time",
@@ -524,9 +495,9 @@
           "tenant_id",
           "external_ref",
           "name",
-          "asset_type",
           "status",
           "parent_asset_id",
+          "category_id",
           "created_at",
           "updated_at"
         ],
@@ -661,19 +632,6 @@
       "AssetUpdate": {
         "description": "Patch an asset.",
         "properties": {
-          "asset_type": {
-            "anyOf": [
-              {
-                "maxLength": 50,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Asset Type"
-          },
           "category_id": {
             "anyOf": [
               {
@@ -2802,10 +2760,6 @@
             "title": "Asset Id",
             "type": "string"
           },
-          "asset_type": {
-            "title": "Asset Type",
-            "type": "string"
-          },
           "children": {
             "items": {
               "$ref": "#/components/schemas/ManifestEntry"
@@ -2837,7 +2791,6 @@
         "required": [
           "asset_id",
           "name",
-          "asset_type",
           "parent_asset_id",
           "depth"
         ],
@@ -2850,10 +2803,6 @@
           "asset_id": {
             "format": "uuid",
             "title": "Asset Id",
-            "type": "string"
-          },
-          "asset_type": {
-            "title": "Asset Type",
             "type": "string"
           },
           "children": {
@@ -2870,8 +2819,7 @@
         },
         "required": [
           "asset_id",
-          "name",
-          "asset_type"
+          "name"
         ],
         "title": "ManifestResponse",
         "type": "object"
@@ -7574,22 +7522,6 @@
         "parameters": [
           {
             "in": "query",
-            "name": "asset_type",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Asset Type"
-            }
-          },
-          {
-            "in": "query",
             "name": "status",
             "required": false,
             "schema": {
@@ -7605,7 +7537,7 @@
             }
           },
           {
-            "description": "Sprint 37 \u2014 server-side filter on the ``assets.category_id`` FK (ADR 019). Combines with ``asset_type``/``status``/``q``/``labels[\u2026]`` via AND.",
+            "description": "Sprint 37 \u2014 server-side filter on the ``assets.category_id`` FK (ADR 019). Combines with ``status``/``q``/``labels[\u2026]`` via AND.",
             "in": "query",
             "name": "category_id",
             "required": false,
@@ -7619,7 +7551,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Sprint 37 \u2014 server-side filter on the ``assets.category_id`` FK (ADR 019). Combines with ``asset_type``/``status``/``q``/``labels[\u2026]`` via AND.",
+              "description": "Sprint 37 \u2014 server-side filter on the ``assets.category_id`` FK (ADR 019). Combines with ``status``/``q``/``labels[\u2026]`` via AND.",
               "title": "Category Id"
             }
           },

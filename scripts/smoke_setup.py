@@ -592,6 +592,28 @@ def ensure_assets_with_bindings(
     """
     headers = _api_headers(tenant_id, api_key)
 
+    # Find or create the ``Sim-Pallet`` category. Sprint 41 Phase H
+    # made ``category_id`` required on ``AssetCreate`` (ADR 019).
+    cat_resp = client.get(f"{API_URL}/categories", headers=headers, params={"limit": 1000})
+    cat_resp.raise_for_status()
+    category_id: str | None = None
+    for cat in cat_resp.json():
+        if cat["name"] == "Sim-Pallet":
+            category_id = str(cat["id"])
+            break
+    if category_id is None:
+        created_cat = client.post(
+            f"{API_URL}/categories",
+            headers=headers,
+            json={
+                "name": "Sim-Pallet",
+                "category_type": "rti_container",
+                "required_tags": 1,
+            },
+        )
+        created_cat.raise_for_status()
+        category_id = str(created_cat.json()["id"])
+
     # Existing assets by name.
     resp = client.get(f"{API_URL}/assets", headers=headers, params={"limit": 1000})
     resp.raise_for_status()
@@ -610,7 +632,7 @@ def ensure_assets_with_bindings(
                 headers=headers,
                 json={
                     "name": name,
-                    "asset_type": "pallet",
+                    "category_id": category_id,
                     "metadata": {"simulated": True, "smoke_setup": True},
                 },
             )

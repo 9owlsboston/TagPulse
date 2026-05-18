@@ -340,13 +340,18 @@ messages, easier to relax per-tenant).
   blocked (2.3 backend, 2.9 envelope, §3.2 1.1 sidebar consolidation,
   3.5 Sensing-Events modal) are flipped to ✅ Done in the same Phase G
   pass. Phase H (drop the deprecated `assets.asset_type` shadow column
-  to close ADR [019](019-categories.md)) is the last in-flight Sprint 41
-  item and is the only piece that still gates ADR 019's final close-out;
-  it is deferred to a follow-up sprint because the column drop is a
-  breaking API change (removes `?asset_type=`, `AssetCreate.asset_type`,
-  `AssetUpdate.asset_type`, `AssetResponse.asset_type`) that deserves
-  its own release-note pass — the planning is preserved verbatim in
-  [`docs/roadmap.md`](../roadmap.md) Sprint 41 Phase H. The Sprint 41
+  to close ADR [019](019-categories.md)) shipped in the same Sprint 41
+  PR as the original plan: migration `041_drop_assets_asset_type`
+  backfills any residual NULL `category_id` rows from a per-tenant
+  `_uncategorized` Category, promotes the FK to `NOT NULL`, and drops
+  the column + `ix_assets_tenant_type` index. The breaking API change
+  (removes `?asset_type=`, `AssetCreate.asset_type`,
+  `AssetUpdate.asset_type`, `AssetResponse.asset_type`,
+  `ManifestEntry.asset_type`, `AssetInZoneSummary.asset_type`) is
+  documented in the Unreleased CHANGELOG entry with a one-release
+  HTTP 400 hint at `/assets?asset_type=` pointing clients at
+  `?category_id=`. Phase G5 (ADR 019 → **Completed**) is paired with
+  Phase H and lands in the same commit. The Sprint 41
   taxonomy decision (signaling > sensing) is now load-bearing across
   the codebase: schema columns (`event_type`, `trigger`, `processor`),
   service classes (`SignalingScopeCapExceededError`,

@@ -40,7 +40,7 @@ class TestParseLabelFilterEmpty:
         assert parse_label_filter(_qp()) is None
 
     def test_ignores_unrelated_params(self) -> None:
-        qp = _qp(("asset_type", "tote"), ("status", "active"), ("limit", "50"))
+        qp = _qp(("category_id", "deadbeef"), ("status", "active"), ("limit", "50"))
         assert parse_label_filter(qp) is None
 
 

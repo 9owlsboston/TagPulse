@@ -215,7 +215,6 @@ class TimescaleAssetLocationRepository:
         SELECT
             a.id      AS asset_id,
             a.name    AS name,
-            a.asset_type,
             lr.last_seen_at,
             lr.binding_value,
             lr.binding_kind
@@ -248,7 +247,6 @@ class TimescaleAssetLocationRepository:
             acl.latitude,
             acl.longitude,
             a.name        AS name,
-            a.asset_type  AS asset_type,
             b.binding_value,
             b.binding_kind
         FROM asset_current_location acl
@@ -318,7 +316,6 @@ class TimescaleAssetLocationRepository:
                 AssetInZoneSummary(
                     asset_id=row.asset_id,
                     name=row.name,
-                    asset_type=row.asset_type,
                     last_seen_at=row.last_seen_at,
                     binding_value=row.binding_value,
                     binding_kind=row.binding_kind,
@@ -357,7 +354,6 @@ class TimescaleAssetLocationRepository:
                 AssetInZoneSummary(
                     asset_id=row.asset_id,
                     name=row.name,
-                    asset_type=row.asset_type,
                     last_seen_at=row.last_seen_at,
                     binding_value=row.binding_value,
                     binding_kind=row.binding_kind,

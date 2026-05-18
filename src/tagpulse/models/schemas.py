@@ -647,17 +647,18 @@ class SubjectZoneChanged(BaseModel):
 
 
 class AssetCreate(BaseModel):
-    """Create an asset."""
+    """Create an asset.
+
+    Sprint 41 Phase H (ADR 019 close-out): ``category_id`` is now
+    **required** — every asset must point at a Category. The legacy
+    ``asset_type`` String field has been dropped.
+    """
 
     name: str = Field(min_length=1, max_length=255)
-    asset_type: str = Field(min_length=1, max_length=50)
     external_ref: str | None = Field(default=None, max_length=255)
     status: Literal["active", "retired", "lost"] = Field(default="active")
     parent_asset_id: UUID | None = None
-    # -- Sprint 34 (ADR 019): nullable during the compatibility window
-    # while ``asset_type`` is still the source of truth. New writes
-    # should always pass ``category_id``. --
-    category_id: UUID | None = None
+    category_id: UUID
     metadata: dict[str, Any] | None = None
 
     _normalise_external_ref = field_validator("external_ref")(
@@ -669,12 +670,12 @@ class AssetUpdate(BaseModel):
     """Patch an asset."""
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    asset_type: str | None = Field(default=None, min_length=1, max_length=50)
     external_ref: str | None = Field(default=None, max_length=255)
     status: Literal["active", "retired", "lost"] | None = None
     parent_asset_id: UUID | None = None
-    # Explicit ``null`` clears the FK (re-points the asset to the
-    # tenant's implicit default category in the API layer).
+    # Repoints the asset to a different Category. Setting it to
+    # ``null`` is rejected at the API layer — every asset must keep a
+    # Category FK after Sprint 41 Phase H.
     category_id: UUID | None = None
     metadata: dict[str, Any] | None = None
 
@@ -690,10 +691,9 @@ class AssetResponse(BaseModel):
     tenant_id: UUID
     external_ref: str | None
     name: str
-    asset_type: str
     status: str
     parent_asset_id: UUID | None
-    category_id: UUID | None = None
+    category_id: UUID
     metadata: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
@@ -794,7 +794,6 @@ class ManifestEntry(BaseModel):
 
     asset_id: UUID
     name: str
-    asset_type: str
     parent_asset_id: UUID | None
     depth: int
     children: list["ManifestEntry"] = Field(default_factory=list)
@@ -805,7 +804,6 @@ class ManifestResponse(BaseModel):
 
     asset_id: UUID
     name: str
-    asset_type: str
     children: list[ManifestEntry] = Field(default_factory=list)
 
 
@@ -855,7 +853,6 @@ class AssetInZoneSummary(BaseModel):
 
     asset_id: UUID
     name: str
-    asset_type: str
     last_seen_at: datetime
     binding_value: str
     binding_kind: str

@@ -24,9 +24,9 @@ def _asset(tenant_id: UUID, **overrides: Any) -> AssetResponse:
         tenant_id=tenant_id,
         external_ref=None,
         name="Pallet-1",
-        asset_type="pallet",
         status="active",
         parent_asset_id=None,
+        category_id=uuid4(),
         metadata=None,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
@@ -57,7 +57,7 @@ class _FakeAssetRepo:
 
     async def create(self, tenant_id: UUID, payload: AssetCreate) -> AssetResponse:
         return self.next_response or _asset(
-            tenant_id, name=payload.name, asset_type=payload.asset_type
+            tenant_id, name=payload.name, category_id=payload.category_id
         )
 
     async def get(self, tenant_id: UUID, asset_id: UUID) -> AssetResponse | None:
@@ -67,7 +67,6 @@ class _FakeAssetRepo:
         self,
         tenant_id,
         *,
-        asset_type=None,
         status=None,
         category_id=None,
         q=None,
@@ -77,7 +76,6 @@ class _FakeAssetRepo:
     ):
         self.last_list_kwargs = {
             "tenant_id": tenant_id,
-            "asset_type": asset_type,
             "status": status,
             "category_id": category_id,
             "q": q,
@@ -166,10 +164,11 @@ def _service() -> tuple[AssetService, _FakeAssetRepo, _FakeBindingRepo, _FakeAud
 @pytest.mark.asyncio
 async def test_create_asset_writes_audit() -> None:
     svc, _, _, audit = _service()
-    out = await svc.create_asset(uuid4(), uuid4(), AssetCreate(name="Bin-A", asset_type="bin"))
+    cid = uuid4()
+    out = await svc.create_asset(uuid4(), uuid4(), AssetCreate(name="Bin-A", category_id=cid))
     assert out.name == "Bin-A"
     assert audit.entries[-1]["action"] == "asset.created"
-    assert audit.entries[-1]["changes"]["asset_type"] == "bin"
+    assert audit.entries[-1]["changes"]["category_id"] == str(cid)
 
 
 @pytest.mark.asyncio
@@ -256,7 +255,6 @@ async def test_list_assets_forwards_category_id_to_repo() -> None:
     assert asset_repo.last_list_kwargs is not None
     assert asset_repo.last_list_kwargs["category_id"] == cid
     # Other filters left at their defaults — kwarg threading is additive.
-    assert asset_repo.last_list_kwargs["asset_type"] is None
     assert asset_repo.last_list_kwargs["status"] is None
 
 

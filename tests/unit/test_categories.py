@@ -99,17 +99,21 @@ class TestCategoryResponse:
 
 
 class TestAssetSchemasCategoryId:
-    """Sprint 34: AssetCreate / AssetUpdate gain category_id."""
+    """Sprint 34 / Sprint 41 Phase H: AssetCreate / AssetUpdate carry
+    ``category_id`` as the sole Category pointer."""
 
-    def test_category_id_optional_on_create(self) -> None:
-        body = AssetCreate(name="Drum-42", asset_type="drum")
-        assert body.category_id is None
+    def test_category_id_required_on_create(self) -> None:
+        from uuid import uuid4
+
+        cid = uuid4()
+        body = AssetCreate(name="Drum-42", category_id=cid)
+        assert body.category_id == cid
 
     def test_category_id_round_trip(self) -> None:
         from uuid import uuid4
 
         cid = uuid4()
-        body = AssetCreate(name="Drum-42", asset_type="drum", category_id=cid)
+        body = AssetCreate(name="Drum-42", category_id=cid)
         assert body.category_id == cid
 
     def test_category_id_optional_on_update(self) -> None:
@@ -121,19 +125,27 @@ class TestAssetExternalRefValidator:
     """Gap 2.8: external_ref must reject URL-unsafe characters."""
 
     def test_empty_string_normalises_to_none(self) -> None:
-        body = AssetCreate(name="X", asset_type="drum", external_ref="")
+        from uuid import uuid4
+
+        body = AssetCreate(name="X", category_id=uuid4(), external_ref="")
         assert body.external_ref is None
 
     def test_whitespace_only_normalises_to_none(self) -> None:
-        body = AssetCreate(name="X", asset_type="drum", external_ref="   ")
+        from uuid import uuid4
+
+        body = AssetCreate(name="X", category_id=uuid4(), external_ref="   ")
         assert body.external_ref is None
 
     def test_safe_value_accepted(self) -> None:
-        body = AssetCreate(name="X", asset_type="drum", external_ref="ACME-DRUM-42")
+        from uuid import uuid4
+
+        body = AssetCreate(name="X", category_id=uuid4(), external_ref="ACME-DRUM-42")
         assert body.external_ref == "ACME-DRUM-42"
 
     def test_safe_value_with_underscore_and_hyphen_accepted(self) -> None:
-        body = AssetCreate(name="X", asset_type="drum", external_ref="acme_drum-42_v2")
+        from uuid import uuid4
+
+        body = AssetCreate(name="X", category_id=uuid4(), external_ref="acme_drum-42_v2")
         assert body.external_ref == "acme_drum-42_v2"
 
     @pytest.mark.parametrize(
@@ -162,8 +174,10 @@ class TestAssetExternalRefValidator:
         ],
     )
     def test_each_forbidden_char_rejected_on_create(self, bad_char: str) -> None:
+        from uuid import uuid4
+
         with pytest.raises(ValidationError):
-            AssetCreate(name="X", asset_type="drum", external_ref=f"acme{bad_char}drum")
+            AssetCreate(name="X", category_id=uuid4(), external_ref=f"acme{bad_char}drum")
 
     @pytest.mark.parametrize(
         "bad_char",

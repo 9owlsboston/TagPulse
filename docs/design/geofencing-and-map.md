@@ -111,7 +111,7 @@ condition:
   type: zone.entered
   zone_id: <UUID>
   asset_filter:           # optional
-    asset_type: pallet
+    category_id: <pallet-category-uuid>
   cooldown_s: 60          # don't re-fire within window
 
 # zone.exited (mirror)
@@ -126,7 +126,7 @@ condition:
   zone_id: <UUID>
   threshold_minutes: 30
   asset_filter:
-    asset_type: container
+    category_id: <container-category-uuid>
 ```
 
 ### 5.2 Producers

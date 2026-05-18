@@ -154,9 +154,7 @@ class _FakeTenantRepo:
         self._kinds = kinds
         self.calls = 0
 
-    async def get_telemetry_subject_kinds(
-        self, tenant_id: UUID
-    ) -> list[str]:
+    async def get_telemetry_subject_kinds(self, tenant_id: UUID) -> list[str]:
         self.calls += 1
         return list(self._kinds)
 
@@ -166,9 +164,7 @@ class _FakeReadingsRepo:
         self._latest = latest
         self.calls = 0
 
-    async def latest_per_metric(
-        self, **kwargs: Any
-    ) -> list[LatestTelemetryEntry]:
+    async def latest_per_metric(self, **kwargs: Any) -> list[LatestTelemetryEntry]:
         self.calls += 1
         return list(self._latest)
 
@@ -178,11 +174,11 @@ def _make_asset(tenant_id: UUID, asset_id: UUID) -> AssetResponse:
         id=asset_id,
         tenant_id=tenant_id,
         name="A1",
-        asset_type="pallet",
         status="active",
         owner=None,
         external_ref=None,
         parent_asset_id=None,
+        category_id=uuid4(),
         metadata=None,
         current_zone_id=None,
         latest_telemetry=None,
@@ -278,9 +274,7 @@ async def test_get_asset_skips_cache_when_kind_not_opted_in() -> None:
         telemetry_readings_repo=readings,  # type: ignore[arg-type]
         tenant_repo=tenant_repo,  # type: ignore[arg-type]
     )
-    fetched = await svc.get_asset(
-        tenant, asset_id, with_latest_telemetry=True
-    )
+    fetched = await svc.get_asset(tenant, asset_id, with_latest_telemetry=True)
     assert fetched is not None
     assert fetched.latest_telemetry is None
     assert readings.calls == 0

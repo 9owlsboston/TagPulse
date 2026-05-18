@@ -711,20 +711,20 @@ class AssetModel(Base):
     )
     external_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    asset_type: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
     parent_asset_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("assets.id", ondelete="SET NULL"),
         nullable=True,
     )
-    # -- Sprint 34 (ADR 019): nullable FK to categories. Will become
-    # non-null in a future migration once the UI + clients have
-    # switched off the legacy ``asset_type`` shadow column. --
-    category_id: Mapped[uuid.UUID | None] = mapped_column(
+    # -- Sprint 34 (ADR 019) introduced this FK as nullable alongside
+    # the legacy ``asset_type`` shadow column. Sprint 41 Phase H
+    # (migration 041) dropped the shadow and promoted this column to
+    # ``NOT NULL`` \u2014 every asset must point at a Category. --
+    category_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("categories.id", ondelete="RESTRICT"),
-        nullable=True,
+        nullable=False,
     )
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

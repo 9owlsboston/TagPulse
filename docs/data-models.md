@@ -509,8 +509,7 @@ The physical thing being tracked, distinct from the reader. See [design/assets-a
 | `tenant_id` | UUID | FK → tenants.id, NOT NULL | |
 | `external_ref` | VARCHAR(255) | NULLABLE | ERP / WMS asset code. URL-unsafe characters rejected at the API layer (see [ADR-019](adr/019-categories.md), gap 2.8). |
 | `name` | VARCHAR(255) | NOT NULL | |
-| `asset_type` | VARCHAR(50) | NOT NULL | Free-form per tenant (e.g. `pallet`, `tool`). **Deprecated by [ADR-019](adr/019-categories.md);** kept this release as a compatibility shadow alongside `category_id`. Drops in a future migration once UI + clients have switched. |
-| `category_id` | UUID | FK → categories.id, ON DELETE RESTRICT, NULLABLE | Sprint 34. Backfilled by name match from `asset_type`. See [ADR-019](adr/019-categories.md). |
+| `category_id` | UUID | FK → categories.id, ON DELETE RESTRICT, NOT NULL | Sprint 34 (added nullable); promoted to `NOT NULL` and the legacy `asset_type` shadow column was dropped in Sprint 41 Phase H (migration `041`, [ADR-019](adr/019-categories.md) close-out). |
 | `status` | VARCHAR(20) | NOT NULL, default `'active'` | `active` \| `retired` \| `lost` |
 | `metadata` | JSONB | NULLABLE | |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
@@ -518,7 +517,7 @@ The physical thing being tracked, distinct from the reader. See [design/assets-a
 
 **Unique constraint:** `(tenant_id, external_ref)`
 **RLS:** Yes
-**Migration:** 017 (base table); 037 adds `category_id`
+**Migration:** 017 (base table); 037 adds `category_id`; 041 promotes `category_id` to `NOT NULL` and drops `asset_type`
 
 ---
 
