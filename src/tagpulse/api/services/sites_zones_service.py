@@ -55,9 +55,14 @@ class SiteZoneService:
         return await self._sites.get(tenant_id, site_id)
 
     async def list_sites(
-        self, tenant_id: UUID, *, limit: int = 100, offset: int = 0
+        self,
+        tenant_id: UUID,
+        *,
+        labels: dict[str, list[str]] | None = None,
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[SiteResponse]:
-        return await self._sites.list(tenant_id, limit=limit, offset=offset)
+        return await self._sites.list(tenant_id, labels=labels, limit=limit, offset=offset)
 
     async def update_site(
         self,
@@ -78,9 +83,7 @@ class SiteZoneService:
             )
         return site
 
-    async def delete_site(
-        self, tenant_id: UUID, user_id: UUID | None, site_id: UUID
-    ) -> bool:
+    async def delete_site(self, tenant_id: UUID, user_id: UUID | None, site_id: UUID) -> bool:
         deleted = await self._sites.delete(tenant_id, site_id)
         if deleted:
             await self._audit.log(
@@ -116,11 +119,12 @@ class SiteZoneService:
         tenant_id: UUID,
         *,
         site_id: UUID | None = None,
+        labels: dict[str, list[str]] | None = None,
         limit: int = 200,
         offset: int = 0,
     ) -> list[ZoneResponse]:
         return await self._zones.list(
-            tenant_id, site_id=site_id, limit=limit, offset=offset
+            tenant_id, site_id=site_id, labels=labels, limit=limit, offset=offset
         )
 
     async def update_zone(
@@ -142,9 +146,7 @@ class SiteZoneService:
             )
         return zone
 
-    async def delete_zone(
-        self, tenant_id: UUID, user_id: UUID | None, zone_id: UUID
-    ) -> bool:
+    async def delete_zone(self, tenant_id: UUID, user_id: UUID | None, zone_id: UUID) -> bool:
         deleted = await self._zones.delete(tenant_id, zone_id)
         if deleted:
             await self._audit.log(
@@ -156,7 +158,5 @@ class SiteZoneService:
             )
         return deleted
 
-    async def get_zone_for_reader(
-        self, tenant_id: UUID, device_id: UUID
-    ) -> ZoneResponse | None:
+    async def get_zone_for_reader(self, tenant_id: UUID, device_id: UUID) -> ZoneResponse | None:
         return await self._zones.get_zone_for_reader(tenant_id, device_id)

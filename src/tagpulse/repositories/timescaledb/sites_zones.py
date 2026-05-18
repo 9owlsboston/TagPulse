@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.api.label_filter import apply_label_filter
 from tagpulse.geo import (
     PolygonValidationError,
     bbox_contains,
@@ -146,15 +147,22 @@ class TimescaleSiteRepository:
         return _site_to_response(row) if row else None
 
     async def list(
-        self, tenant_id: uuid.UUID, *, limit: int = 100, offset: int = 0
+        self,
+        tenant_id: uuid.UUID,
+        *,
+        labels: dict[str, list[str]] | None = None,
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[SiteResponse]:
-        stmt = (
-            select(SiteModel)
-            .where(SiteModel.tenant_id == tenant_id)
-            .order_by(SiteModel.created_at.desc())
-            .limit(limit)
-            .offset(offset)
+        stmt = select(SiteModel).where(SiteModel.tenant_id == tenant_id)
+        stmt = apply_label_filter(
+            stmt,
+            tenant_id=tenant_id,
+            entity_type="site",
+            entity_id_col=SiteModel.id,
+            labels=labels,
         )
+        stmt = stmt.order_by(SiteModel.created_at.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_site_to_response(row) for row in result.scalars()]
 
@@ -231,12 +239,20 @@ class TimescaleZoneRepository:
         tenant_id: uuid.UUID,
         *,
         site_id: uuid.UUID | None = None,
+        labels: dict[str, list[str]] | None = None,
         limit: int = 200,
         offset: int = 0,
     ) -> list[ZoneResponse]:
         stmt = select(ZoneModel).where(ZoneModel.tenant_id == tenant_id)
         if site_id is not None:
             stmt = stmt.where(ZoneModel.site_id == site_id)
+        stmt = apply_label_filter(
+            stmt,
+            tenant_id=tenant_id,
+            entity_type="zone",
+            entity_id_col=ZoneModel.id,
+            labels=labels,
+        )
         stmt = stmt.order_by(ZoneModel.created_at.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_zone_to_response(row) for row in result.scalars()]

@@ -73,8 +73,15 @@ class _FakeSiteRepo:
         self.calls.append(("get", site_id))
         return self.next_response
 
-    async def list(self, tenant_id: UUID, *, limit: int, offset: int) -> list[SiteResponse]:
-        self.calls.append(("list", (limit, offset)))
+    async def list(
+        self,
+        tenant_id: UUID,
+        *,
+        labels: dict[str, list[str]] | None = None,
+        limit: int,
+        offset: int,
+    ) -> list[SiteResponse]:
+        self.calls.append(("list", (labels, limit, offset)))
         return self.next_response or []
 
     async def update(
@@ -106,10 +113,11 @@ class _FakeZoneRepo:
         tenant_id: UUID,
         *,
         site_id: UUID | None,
+        labels: dict[str, list[str]] | None = None,
         limit: int,
         offset: int,
     ) -> list[ZoneResponse]:
-        self.calls.append(("list", (site_id, limit, offset)))
+        self.calls.append(("list", (site_id, labels, limit, offset)))
         return self.next_response or []
 
     async def update(
