@@ -36,9 +36,9 @@ pin a sprint slot. The five 🔴 gaps drive sprint sequencing because they
 unblock downstream UI work:
 
 ```
-Sprint 33 (kickoff)        ──> this doc + 5 ADR stubs + UI quick-wins track
-Sprint 34 (categories)     ──> ADR 019 lands; assets.category_id; UI Categories page
-Sprint 35 (labels)         ──> ADR 020 lands; labels catalog; label chips replace metadata JSON
+Sprint 33 (kickoff)        ──> this doc + 5 ADR stubs + UI quick-wins track  [✅ shipped]
+Sprint 34 (categories)     ──> ADR 019 lands; assets.category_id; UI Categories page  [✅ shipped]
+Sprint 35 (labels)         ──> ADR 020 lands; labels catalog; label chips replace metadata JSON  [🟡 in flight, kickoff [#36](https://github.com/9owlsboston/TagPulse/pull/36)]
 Sprint 36 (sensing events) ──> ADR 021 lands; sensing_event_configs; new modal
 Sprint 37 (connections)    ──> ADR 023 lands; MQTT dispatcher; Connections page redesign
 Sprint 38 (edge)           ──> Bridge/Gateway split; Connectivity Monitor; OTA toggle
