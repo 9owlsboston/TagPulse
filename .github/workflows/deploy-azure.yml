@@ -1,8 +1,14 @@
 # Sprint 22 C4 — Continuous deployment to Azure Container Apps.
+# Sprint 36 — added auto-deploy to `dev` after every successful main build.
 #
 # Trigger:
 #   - push of a `v*` tag                  → deploys to `production` GitHub Environment
 #   - workflow_dispatch (env input)       → dev | staging | production
+#   - workflow_run after build-and-push    → deploys to `dev` (only when the
+#     completes on main                     upstream build succeeded on main).
+#                                          This closes the gap that left
+#                                          sprints 34/35 un-deployed for a week
+#                                          (see PR #41 / Sprint 36 changelog).
 #
 # Reuses the images already published by build-and-push.yml — no rebuild.
 #
@@ -49,35 +55,67 @@ on:
         description: 'Image tag to deploy (full sha-<40hex>, short sha-<7hex>, v* tag, or empty to use this workflow''s commit SHA)'
         required: false
         type: string
+  # Sprint 36 — auto-deploy to dev whenever build-and-push succeeds on main.
+  # Using workflow_run (not push:branches:[main]) guarantees the ACR images
+  # this workflow rolls out already exist before the verify step runs.
+  workflow_run:
+    workflows: ["build-and-push"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
   id-token: write
 
+# Auto-deploys land in `dev`; tag pushes go to `production`; manual dispatch
+# picks. Concurrency is scoped per-env so a dev rollout cannot cancel a
+# production rollout (or vice-versa).
 concurrency:
-  group: deploy-azure-${{ inputs.environment || 'production' }}
+  group: deploy-azure-${{ inputs.environment || (github.event_name == 'workflow_run' && 'dev') || 'production' }}
   cancel-in-progress: false
 
 jobs:
   deploy:
+    # Skip workflow_run invocations from failed builds. Tag pushes and manual
+    # dispatches have no workflow_run payload, so the second clause lets them
+    # through unconditionally.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    # Tag pushes always go to production; manual dispatch picks the env.
+    # Tag pushes always go to production; manual dispatch picks the env;
+    # workflow_run (auto-deploy after build) targets dev.
     # Each Environment scopes its own AZURE_* variables and (for production)
     # gates manual approval.
-    environment: ${{ inputs.environment || 'production' }}
+    environment: ${{ inputs.environment || (github.event_name == 'workflow_run' && 'dev') || 'production' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # workflow_run defaults to checking out the default branch HEAD at
+          # trigger time, not the commit that produced the image we're about
+          # to deploy. Pin to the triggering SHA so the scripts/* helpers in
+          # later steps match the deployed code.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Resolve image tag (requested)
         id: requested
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
+          TRIGGER_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           # Sprint 32: this step records what the operator asked for; the
           # actual tag used by later steps comes from "Expand image tag",
           # which can resolve a short SHA prefix to the full tag in ACR.
-          if [ -n "${{ inputs.image_tag }}" ]; then
-            echo "tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          # Sprint 36: on workflow_run (auto-deploy), use the SHA of the
+          # commit that produced the image — github.sha on a workflow_run
+          # event points at the default-branch HEAD at trigger time, not
+          # the head of the triggering build.
+          if [ -n "${INPUT_TAG}" ]; then
+            echo "tag=${INPUT_TAG}" >> "$GITHUB_OUTPUT"
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "tag=sha-${TRIGGER_SHA}" >> "$GITHUB_OUTPUT"
           else
             echo "tag=sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
           fi
