@@ -96,6 +96,20 @@ jobs:
           # smoke without pulling anything back from the registry. Coexists
           # with `push: true` on non-PR builds.
           load: true
+          # PR #56 follow-up — disable buildx's default embedded SLSA
+          # provenance attestation. With `load: true` + `push: true`,
+          # buildx produces an OCI image **index** that wraps the image
+          # manifest + an attestation manifest, but only the flat image
+          # manifest is actually pushed to the registry (load mode forces
+          # single-manifest output to the docker daemon). That left the
+          # index digest reported by both `outputs.digest` and
+          # `outputs.metadata['containerimage.digest']` un-fetchable at
+          # GHCR (404), breaking `actions/attest-build-provenance@v1`
+          # below. Setting `provenance: false` makes buildx emit a flat
+          # single manifest whose digest matches what's pushed — and we
+          # still get SLSA provenance via the attest-build-provenance
+          # step, so no supply-chain signal is lost.
+          provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Sprint 25 A1 — bake build identity into the image so /health/live
@@ -124,12 +138,14 @@ jobs:
       # automatically if/when the repo is flipped to public.
       #
       # NOTE on `subject-digest`: we source it from buildx's metadata file
-      # (`containerimage.digest`) rather than `steps.push.outputs.digest`
-      # because `docker/build-push-action@v6` returns the LOCAL image id
-      # (not the remote manifest digest) when `load: true` is combined
-      # with `push: true` — and the Sprint 26 D2 tools-image smoke needs
-      # `load: true`. Using the wrong digest produced a 404 in the
-      # attestation step when it tried to fetch the manifest at GHCR.
+      # (`containerimage.digest`) rather than `steps.push.outputs.digest`.
+      # With `load: true` + `push: true`, `outputs.digest` is the local
+      # image id (not the remote manifest digest). And without the
+      # `provenance: false` setting on the build step above, the
+      # metadata `containerimage.digest` would point at an OCI index
+      # that buildx generates but doesn't push under `load: true`,
+      # which is also a 404 at GHCR. With both in place, the metadata
+      # digest equals the actual pushed manifest digest.
       # See docker/build-push-action#1015.
       - name: Attest build provenance (GHCR)
         if: github.event_name != 'pull_request' && !github.event.repository.private
