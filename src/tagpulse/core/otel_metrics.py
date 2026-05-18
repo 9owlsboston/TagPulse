@@ -294,3 +294,16 @@ mqtt_subscriber_last_message_age_seconds = meter.create_observable_gauge(
     ),
     unit="s",
 )
+
+
+# -- Labels (Sprint 35, ADR 020) --
+labels_associations_total = meter.create_counter(
+    "tagpulse_labels_associations_total",
+    description=(
+        "Label-to-entity associations created via POST "
+        "/{entity_type}/{entity_id}/labels. Attributes: tenant_id, "
+        "entity_type. Use the counter to spot tenants approaching the "
+        "30-per-entity cap or to track tag-driven inventory growth."
+    ),
+    unit="associations",
+)

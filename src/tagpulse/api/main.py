@@ -24,6 +24,7 @@ from tagpulse.api.routes.ingestion import router as ingestion_router
 from tagpulse.api.routes.integrations import router as integrations_router
 from tagpulse.api.routes.inventory import router as inventory_router
 from tagpulse.api.routes.inventory_imports import router as inventory_imports_router
+from tagpulse.api.routes.labels import router as labels_router
 from tagpulse.api.routes.metrics import router as metrics_router
 from tagpulse.api.routes.provisioning import router as provisioning_router
 from tagpulse.api.routes.query import router as query_router
@@ -378,3 +379,4 @@ app.include_router(inventory_imports_router)
 app.include_router(tenant_config_router)
 app.include_router(tenant_branding_router)
 app.include_router(categories_router)
+app.include_router(labels_router)

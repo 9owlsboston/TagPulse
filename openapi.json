@@ -2158,6 +2158,267 @@
         "title": "IntegrationUpdate",
         "type": "object"
       },
+      "LabelAssociationCreate": {
+        "description": "Associate a labeled value to an entity.\n\nPer ADR 020 \u00a7\"API path deviation\", the caller identifies the\nlabel by ``key`` (scoped to the URL's entity_type); the\nrepository looks up the catalog row. A 404 is returned if no\nmatching catalog row exists \u2014 there is no auto-create.",
+        "properties": {
+          "key": {
+            "maxLength": 24,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9_.+$]{3,24}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]{1,64}$",
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "title": "LabelAssociationCreate",
+        "type": "object"
+      },
+      "LabelAssociationResponse": {
+        "description": "A label-value pair associated to a specific entity.\n\nJoins the ``entity_labels`` row with its parent ``labels`` row so\nthe client gets the displayable ``key`` / ``color`` along with the\npolymorphic ``entity_id`` and the stored ``value``.",
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "entity_id": {
+            "format": "uuid",
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_type": {
+            "enum": [
+              "asset",
+              "site",
+              "zone",
+              "device",
+              "category"
+            ],
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label_id": {
+            "format": "uuid",
+            "title": "Label Id",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label_id",
+          "entity_id",
+          "entity_type",
+          "key",
+          "value",
+          "color",
+          "created_by",
+          "created_at"
+        ],
+        "title": "LabelAssociationResponse",
+        "type": "object"
+      },
+      "LabelCreate": {
+        "description": "Create a label catalog row.",
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9A-Fa-f]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "entity_type": {
+            "enum": [
+              "asset",
+              "site",
+              "zone",
+              "device",
+              "category"
+            ],
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "key": {
+            "maxLength": 24,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9_.+$]{3,24}$",
+            "title": "Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_type",
+          "key"
+        ],
+        "title": "LabelCreate",
+        "type": "object"
+      },
+      "LabelResponse": {
+        "description": "Persisted label catalog row.",
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "entity_type": {
+            "enum": [
+              "asset",
+              "site",
+              "zone",
+              "device",
+              "category"
+            ],
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "entity_type",
+          "key",
+          "color",
+          "created_by",
+          "updated_by",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LabelResponse",
+        "type": "object"
+      },
+      "LabelUpdate": {
+        "description": "Patch a label catalog row.\n\n``entity_type`` is intentionally absent \u2014 it is immutable after\ncreate per ADR 020. The router separately rejects any smuggled\nattempt with a 400. Pydantic drops unknown fields by default so\na benign omission is silent; the explicit router guard surfaces\nthe policy.",
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9A-Fa-f]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "maxLength": 24,
+                "minLength": 3,
+                "pattern": "^[A-Za-z0-9_.+$]{3,24}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key"
+          }
+        },
+        "title": "LabelUpdate",
+        "type": "object"
+      },
       "LatestTelemetryEntry": {
         "description": "Most-recent reading for a single metric on a subject.\n\nEmbedded on ``GET /assets/{id}`` and ``GET /lots/{id}`` (capped at\nthe 5 most-recently-written metrics per subject) so callers do not\nhave to issue a follow-up ``/telemetry/readings?...&limit=1`` for\neach metric they want to display.",
         "properties": {
@@ -9450,6 +9711,286 @@
         ]
       }
     },
+    "/labels": {
+      "get": {
+        "description": "List the calling tenant's label catalog rows.",
+        "operationId": "list_labels_labels_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "entity_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "asset",
+                    "site",
+                    "zone",
+                    "device",
+                    "category"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LabelResponse"
+                  },
+                  "title": "Response List Labels Labels Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List Labels",
+        "tags": [
+          "labels"
+        ]
+      },
+      "post": {
+        "description": "Create a new label catalog row. ``entity_type`` is fixed here\nand cannot be changed later.",
+        "operationId": "create_label_labels_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Create Label",
+        "tags": [
+          "labels"
+        ]
+      }
+    },
+    "/labels/{label_id}": {
+      "delete": {
+        "description": "Delete a label. Admin only. 409 if any entity still references\nit; payload includes ``association_count`` so the UI can render\na guarded confirmation flow (\"This label is in use on N items.\nDetach them first.\").",
+        "operationId": "delete_label_labels__label_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "label_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Label Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Delete Label",
+        "tags": [
+          "labels"
+        ]
+      },
+      "get": {
+        "description": "Get one label by id.",
+        "operationId": "get_label_labels__label_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "label_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Label Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Label",
+        "tags": [
+          "labels"
+        ]
+      },
+      "patch": {
+        "description": "Partial update. ``entity_type`` is immutable per ADR 020.\n\nPydantic drops unknown fields by default; the explicit check\nagainst the raw payload defends against future schema changes\nthat might inadvertently re-add the field.",
+        "operationId": "update_label_labels__label_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "label_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Label Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Update Label",
+        "tags": [
+          "labels"
+        ]
+      }
+    },
     "/lots": {
       "get": {
         "description": "Cross-product lot list. Used by the UI Lot Expiry Queue page.",
@@ -13795,6 +14336,195 @@
         "summary": "List Assets In Zone",
         "tags": [
           "sites-zones"
+        ]
+      }
+    },
+    "/{entity_segment}/{entity_id}/labels": {
+      "get": {
+        "description": "List all label-value pairs attached to one entity.",
+        "operationId": "list_entity_labels__entity_segment___entity_id__labels_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_segment",
+            "required": true,
+            "schema": {
+              "title": "Entity Segment",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LabelAssociationResponse"
+                  },
+                  "title": "Response List Entity Labels  Entity Segment   Entity Id  Labels Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List Entity Labels",
+        "tags": [
+          "labels"
+        ]
+      },
+      "post": {
+        "description": "Attach a label-value pair to an entity. The label is identified\nby ``key`` (scoped to the URL's entity_type); a 404 is returned\nif no matching catalog row exists. 409 on cap (30) or duplicate\nassociation.",
+        "operationId": "associate_label__entity_segment___entity_id__labels_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_segment",
+            "required": true,
+            "schema": {
+              "title": "Entity Segment",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelAssociationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelAssociationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Associate Label",
+        "tags": [
+          "labels"
+        ]
+      }
+    },
+    "/{entity_segment}/{entity_id}/labels/{label_id}": {
+      "delete": {
+        "description": "Remove a label-value pair from an entity.",
+        "operationId": "disassociate_label__entity_segment___entity_id__labels__label_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_segment",
+            "required": true,
+            "schema": {
+              "title": "Entity Segment",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "label_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Label Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Disassociate Label",
+        "tags": [
+          "labels"
         ]
       }
     }

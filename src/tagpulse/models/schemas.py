@@ -1082,3 +1082,86 @@ class CategoryResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# -- Sprint 35 (ADR 020): Labels first-class --
+
+LabelEntityType = Literal["asset", "site", "zone", "device", "category"]
+
+# Patterns mirror the DB CHECK constraints created in migration 039.
+# Keep these in lockstep with ``migrations/versions/039_labels_catalog.py``;
+# if you change one you must change the other or seed will start failing
+# with SQLSTATE 23514. ``$`` inside the key char-class is a literal ``$``
+# (no anchor semantics inside ``[]``).
+_LABEL_KEY_PATTERN = r"^[A-Za-z0-9_.+$]{3,24}$"
+_LABEL_VALUE_PATTERN = r"^[A-Za-z0-9._-]{1,64}$"
+_LABEL_COLOR_PATTERN = r"^#[0-9A-Fa-f]{6}$"
+
+
+class LabelCreate(BaseModel):
+    """Create a label catalog row."""
+
+    entity_type: LabelEntityType
+    key: str = Field(min_length=3, max_length=24, pattern=_LABEL_KEY_PATTERN)
+    color: str | None = Field(default=None, pattern=_LABEL_COLOR_PATTERN)
+
+
+class LabelUpdate(BaseModel):
+    """Patch a label catalog row.
+
+    ``entity_type`` is intentionally absent — it is immutable after
+    create per ADR 020. The router separately rejects any smuggled
+    attempt with a 400. Pydantic drops unknown fields by default so
+    a benign omission is silent; the explicit router guard surfaces
+    the policy.
+    """
+
+    key: str | None = Field(default=None, min_length=3, max_length=24, pattern=_LABEL_KEY_PATTERN)
+    color: str | None = Field(default=None, pattern=_LABEL_COLOR_PATTERN)
+
+
+class LabelResponse(BaseModel):
+    """Persisted label catalog row."""
+
+    id: UUID
+    tenant_id: UUID
+    entity_type: LabelEntityType
+    key: str
+    color: str | None
+    created_by: UUID | None
+    updated_by: UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LabelAssociationCreate(BaseModel):
+    """Associate a labeled value to an entity.
+
+    Per ADR 020 §"API path deviation", the caller identifies the
+    label by ``key`` (scoped to the URL's entity_type); the
+    repository looks up the catalog row. A 404 is returned if no
+    matching catalog row exists — there is no auto-create.
+    """
+
+    key: str = Field(min_length=3, max_length=24, pattern=_LABEL_KEY_PATTERN)
+    value: str = Field(min_length=1, max_length=64, pattern=_LABEL_VALUE_PATTERN)
+
+
+class LabelAssociationResponse(BaseModel):
+    """A label-value pair associated to a specific entity.
+
+    Joins the ``entity_labels`` row with its parent ``labels`` row so
+    the client gets the displayable ``key`` / ``color`` along with the
+    polymorphic ``entity_id`` and the stored ``value``.
+    """
+
+    label_id: UUID
+    entity_id: UUID
+    entity_type: LabelEntityType
+    key: str
+    value: str
+    color: str | None
+    created_by: UUID | None
+    created_at: datetime
