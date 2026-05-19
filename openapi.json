@@ -408,9 +408,16 @@
         "description": "Persisted asset row.",
         "properties": {
           "category_id": {
-            "format": "uuid",
-            "title": "Category Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
           },
           "created_at": {
             "format": "date-time",
@@ -7537,7 +7544,7 @@
             }
           },
           {
-            "description": "Sprint 37 \u2014 server-side filter on the ``assets.category_id`` FK (ADR 019). Combines with ``status``/``q``/``labels[\u2026]`` via AND.",
+            "description": "Sprint 37 \u2014 server-side filter on the ``assets.category_id`` FK (ADR 019). Combines with ``status``/``q``/``labels[\u2026]`` via AND. Kept for backwards compatibility; prefer ``?category_ids=`` (Sprint 42 \u2014 multi-select). When both are supplied the union is used (OR across categories).",
             "in": "query",
             "name": "category_id",
             "required": false,
@@ -7551,8 +7558,30 @@
                   "type": "null"
                 }
               ],
-              "description": "Sprint 37 \u2014 server-side filter on the ``assets.category_id`` FK (ADR 019). Combines with ``status``/``q``/``labels[\u2026]`` via AND.",
+              "description": "Sprint 37 \u2014 server-side filter on the ``assets.category_id`` FK (ADR 019). Combines with ``status``/``q``/``labels[\u2026]`` via AND. Kept for backwards compatibility; prefer ``?category_ids=`` (Sprint 42 \u2014 multi-select). When both are supplied the union is used (OR across categories).",
               "title": "Category Id"
+            }
+          },
+          {
+            "description": "Sprint 42 \u2014 server-side multi-category filter on ``assets.category_id``. Pass multiple values as repeated query params (``?category_ids=A&category_ids=B``) for OR semantics across categories. Combines with ``status``/``q``/``labels[\u2026]`` via AND. Supersedes singular ``?category_id=``; the union of both is used when supplied together.",
+            "in": "query",
+            "name": "category_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 42 \u2014 server-side multi-category filter on ``assets.category_id``. Pass multiple values as repeated query params (``?category_ids=A&category_ids=B``) for OR semantics across categories. Combines with ``status``/``q``/``labels[\u2026]`` via AND. Supersedes singular ``?category_id=``; the union of both is used when supplied together.",
+              "title": "Category Ids"
             }
           },
           {

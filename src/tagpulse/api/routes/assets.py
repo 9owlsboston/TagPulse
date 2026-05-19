@@ -52,7 +52,21 @@ async def list_assets(
         default=None,
         description=(
             "Sprint 37 \u2014 server-side filter on the ``assets.category_id`` FK "
-            "(ADR 019). Combines with ``status``/``q``/``labels[\u2026]`` via AND."
+            "(ADR 019). Combines with ``status``/``q``/``labels[\u2026]`` via AND. "
+            "Kept for backwards compatibility; prefer ``?category_ids=`` "
+            "(Sprint 42 \u2014 multi-select). When both are supplied the union "
+            "is used (OR across categories)."
+        ),
+    ),
+    category_ids: list[UUID] | None = Query(
+        default=None,
+        description=(
+            "Sprint 42 \u2014 server-side multi-category filter on "
+            "``assets.category_id``. Pass multiple values as repeated query "
+            "params (``?category_ids=A&category_ids=B``) for OR semantics across "
+            "categories. Combines with ``status``/``q``/``labels[\u2026]`` via "
+            "AND. Supersedes singular ``?category_id=``; the union of both is "
+            "used when supplied together."
         ),
     ),
     q: str | None = Query(default=None),
@@ -83,6 +97,7 @@ async def list_assets(
         user.tenant_id,
         status=status,
         category_id=category_id,
+        category_ids=category_ids,
         q=q,
         labels=labels,
         limit=limit,

@@ -68,7 +68,7 @@ class _FakeAssetRepo:
         tenant_id,
         *,
         status=None,
-        category_id=None,
+        category_ids=None,
         q=None,
         labels=None,
         limit=100,
@@ -77,7 +77,7 @@ class _FakeAssetRepo:
         self.last_list_kwargs = {
             "tenant_id": tenant_id,
             "status": status,
-            "category_id": category_id,
+            "category_ids": category_ids,
             "q": q,
             "labels": labels,
             "limit": limit,
@@ -244,26 +244,69 @@ async def test_get_active_binding_delegates() -> None:
 # (row 3.3a in docs/design/reference-design-remediation.md). The route
 # layer accepts ``?category_id=<uuid>``; the service must pass it through
 # to the repo unchanged so the SQL where clause can apply it.
+#
+# Sprint 42 generalises this to multi-category: the repo now takes
+# ``category_ids: list[UUID] | None`` and the service collapses
+# (legacy ``category_id``, new ``category_ids``) into a single dedup-ed
+# list. These tests pin both that legacy callers (singular) still work
+# and that the new plural kwarg flows through correctly.
 
 
 @pytest.mark.asyncio
-async def test_list_assets_forwards_category_id_to_repo() -> None:
+async def test_list_assets_forwards_legacy_category_id_to_repo() -> None:
+    """Legacy singular kwarg should arrive at the repo as a single-element
+    list (service collapses)."""
     svc, asset_repo, _, _ = _service()
     tenant = uuid4()
     cid = uuid4()
     await svc.list_assets(tenant, category_id=cid)
     assert asset_repo.last_list_kwargs is not None
-    assert asset_repo.last_list_kwargs["category_id"] == cid
+    assert asset_repo.last_list_kwargs["category_ids"] == [cid]
     # Other filters left at their defaults — kwarg threading is additive.
     assert asset_repo.last_list_kwargs["status"] is None
 
 
 @pytest.mark.asyncio
-async def test_list_assets_category_id_defaults_to_none() -> None:
+async def test_list_assets_forwards_category_ids_to_repo() -> None:
+    """Sprint 42: plural kwarg flows through verbatim (preserving order
+    and deduplicating)."""
+    svc, asset_repo, _, _ = _service()
+    tenant = uuid4()
+    cids = [uuid4(), uuid4()]
+    await svc.list_assets(tenant, category_ids=cids)
+    assert asset_repo.last_list_kwargs is not None
+    assert asset_repo.last_list_kwargs["category_ids"] == cids
+
+
+@pytest.mark.asyncio
+async def test_list_assets_merges_legacy_and_plural_uniquely() -> None:
+    """When both kwargs are supplied the service unions them and dedupes
+    so a client that accidentally sends the same id twice doesn't blow up
+    the ``IN`` list."""
+    svc, asset_repo, _, _ = _service()
+    a, b = uuid4(), uuid4()
+    await svc.list_assets(uuid4(), category_id=a, category_ids=[a, b])
+    assert asset_repo.last_list_kwargs is not None
+    assert asset_repo.last_list_kwargs["category_ids"] == [a, b]
+
+
+@pytest.mark.asyncio
+async def test_list_assets_category_filter_defaults_to_none() -> None:
+    """No kwargs ⇒ ``category_ids=None`` so the repo skips the predicate."""
     svc, asset_repo, _, _ = _service()
     await svc.list_assets(uuid4())
     assert asset_repo.last_list_kwargs is not None
-    assert asset_repo.last_list_kwargs["category_id"] is None
+    assert asset_repo.last_list_kwargs["category_ids"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_assets_empty_category_ids_treated_as_none() -> None:
+    """An explicit empty list should not produce ``IN ()`` (invalid SQL)
+    — the service maps it to ``None`` and the repo skips the predicate."""
+    svc, asset_repo, _, _ = _service()
+    await svc.list_assets(uuid4(), category_ids=[])
+    assert asset_repo.last_list_kwargs is not None
+    assert asset_repo.last_list_kwargs["category_ids"] is None
 
 
 # ---- Audit mitigation tests (Phase A-C) ------------------------------
