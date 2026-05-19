@@ -90,7 +90,7 @@ class TimescaleAssetRepository:
         tenant_id: uuid.UUID,
         *,
         status: str | None = None,
-        category_id: uuid.UUID | None = None,
+        category_ids: list[uuid.UUID] | None = None,
         q: str | None = None,
         labels: dict[str, list[str]] | None = None,
         limit: int = 100,
@@ -99,8 +99,13 @@ class TimescaleAssetRepository:
         stmt = select(AssetModel).where(AssetModel.tenant_id == tenant_id)
         if status is not None:
             stmt = stmt.where(AssetModel.status == status)
-        if category_id is not None:
-            stmt = stmt.where(AssetModel.category_id == category_id)
+        if category_ids:
+            # Sprint 42: ``?category_ids=A&category_ids=B`` => OR across the
+            # supplied categories (``IN`` predicate). The service layer
+            # collapses legacy ``?category_id=`` into a single-element list
+            # so the repo keeps one code path. Empty list is treated as
+            # "no filter" (caller passes ``None`` for that intent).
+            stmt = stmt.where(AssetModel.category_id.in_(category_ids))
         if q:
             like = f"%{q}%"
             stmt = stmt.where((AssetModel.name.ilike(like)) | (AssetModel.external_ref.ilike(like)))

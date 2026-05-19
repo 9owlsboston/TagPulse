@@ -137,15 +137,31 @@ class AssetService:
         *,
         status: str | None = None,
         category_id: UUID | None = None,
+        category_ids: list[UUID] | None = None,
         q: str | None = None,
         labels: dict[str, list[str]] | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[AssetResponse]:
+        # Sprint 42: collapse the (legacy ``category_id``, new ``category_ids``)
+        # pair into a single deduplicated list before reaching the repo.
+        # Empty list => no filter (same as ``None``) so the repo can keep a
+        # single code path.
+        effective: list[UUID] | None
+        if category_ids or category_id is not None:
+            seen: set[UUID] = set()
+            effective = []
+            for cid in (*(category_ids or ()), *((category_id,) if category_id else ())):
+                if cid in seen:
+                    continue
+                seen.add(cid)
+                effective.append(cid)
+        else:
+            effective = None
         return await self._assets.list(
             tenant_id,
             status=status,
-            category_id=category_id,
+            category_ids=effective,
             q=q,
             labels=labels,
             limit=limit,
