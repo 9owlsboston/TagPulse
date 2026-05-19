@@ -2,7 +2,7 @@
 
 > Physical / deployed view. For the logical design (services, domains, event flows) see [architecture.md](architecture.md).
 > Source of truth: [`deploy/azure/bicep/`](../deploy/azure/bicep/). When in doubt, the Bicep wins; this doc summarizes it.
-> Last verified: Sprint 28 (May 2026). Naming pattern: `tp${env}-*` where `env ∈ { dev, staging, prod }`.
+> Last verified: Sprint 28 (May 2026). Naming pattern: `tagpulse-${env}-rg` for the resource group; workload resources use `tp${env}-*` where `env ∈ { dev, staging, prod }`.
 
 ---
 
@@ -51,8 +51,8 @@ flowchart TB
   worker -->|"secret resolution + tools-job reads"| kv
   api_public -->|"image pull"| acr
   worker -->|"image pull"| acr
-  uami --- acr
-  uami --- kv
+  uami -.- acr
+  uami -.- kv
   api_public -->|"traces / metrics / logs"| ai
   worker -->|"traces / metrics / logs"| ai
   ai --> law
@@ -70,10 +70,10 @@ flowchart TB
   nsgPe --- pe_acr
 ```
 
-Directed arrows represent runtime data/control flow. Undirected links (`---`) represent infrastructure associations (network placement/binding, private-link topology, and RBAC role-assignment relationships such as UAMI ↔ ACR/KV).
+Directed arrows represent runtime data/control flow. Solid undirected links (`---`) represent infrastructure associations (network placement/binding + private-link topology). Dotted undirected links (`-.-`) represent RBAC role-assignment relationships (UAMI ↔ ACR/KV).
 `${env}` is a naming placeholder (`dev`, `staging`, `prod`).
 UAMI RBAC shown above maps to `AcrPull` on ACR and `Key Vault Secrets User` on KV (see §2 `Microsoft.Authorization/roleAssignments`).
-`tp${env}-aca-nsg` protects the `aca-infra` subnet (ACA control-plane + workload boundary); `tp${env}-pe-nsg` is attached to the private-endpoint subnet (empty by design because private endpoints bypass NSG filtering).
+`tp${env}-aca-nsg` protects the `aca-infra` subnet (ACA control-plane + workload boundary); `tp${env}-pe-nsg` is attached to the private-endpoint subnet (empty by design because private endpoints bypass NSG filtering — see the PE entries in §2 and subnet notes in §3).
 
 The api Container App is the only resource with public ingress. Postgres, Key Vault, and ACR are reachable only via private endpoints inside the VNet. Mosquitto runs as a single Azure Container Instance with a public IP (port **1883, plaintext + username/password** today; mTLS on 8883 is the [ADR-012](adr/012-mtls-for-mqtt.md) workstream and has not shipped). Devices connect directly; the worker reads from it across the public FQDN.
 
