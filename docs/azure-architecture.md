@@ -2,46 +2,78 @@
 
 > Physical / deployed view. For the logical design (services, domains, event flows) see [architecture.md](architecture.md).
 > Source of truth: [`deploy/azure/bicep/`](../deploy/azure/bicep/). When in doubt, the Bicep wins; this doc summarizes it.
-> Last verified: Sprint 28 (May 2026). Naming pattern: `tp${env}-*` where `env ∈ { dev, staging, prod }`.
+> Last verified: Sprint 28 (May 2026). Naming pattern: `tagpulse-${env}-rg` for the resource group; workload resources use `tp${env}-*` where `env ∈ { dev, staging, prod }`.
 
 ---
 
 ## 1. At a glance
 
-```
-                         ┌──────────────────────────────────────┐
-                         │        Public internet (laptops,     │
-                         │        devices, browsers, CI)        │
-                         └──────────────────────────────────────┘
-                                 │             │             │
-                            HTTPS│        WSS  │        HTTPS│
-                                 │  (devices)  │  (browsers) │
-                                 ▼             ▼             ▼
-                       ┌───────────────────┐ ┌──────────────────┐
-                       │  api  (Container  │ │  TagPulse-UI     │
-                       │  App, public      │ │  (Static Web App)│
-                       │  ingress)         │ │                  │
-                       └───────────────────┘ └──────────────────┘
-                                 │
-                                 │  HTTP
-                                 ▼
-            ┌────────────────────────────────────────────┐
-            │   Container Apps Environment (VNet-int)    │
-            │   ─────────────────────────────────────    │
-            │     api    worker    migrations-job        │
-            │            tools-job (manual trigger)      │
-            └────────────────────────────────────────────┘
-                       │             │             │
-                MQTT ──┘   asyncpg ──┘    KV SDK ──┘
-                       ▼             ▼             ▼
-              ┌───────────────┐ ┌──────────┐ ┌──────────┐
-              │  Mosquitto    │ │  PG Flex │ │ KeyVault │
-              │  (ACI)        │ │ (private)│ │ (private)│
-              └───────────────┘ └──────────┘ └──────────┘
+```mermaid
+flowchart TB
+  internet["🌐 Public internet<br/>(devices, browsers, operators, CI)"]
+  static_ui["🟦 Azure Static Web App<br/>tp${env}-ui"]
+  api_public["🟦 Azure Container App (api)<br/>tp${env}-api (public ingress)"]
+  mqtt_broker["🟦 Azure Container Instances<br/>tp${env}-mqtt (Mosquitto)"]
 
-                  Cross-cutting: ACR (private) · App Insights · Log Analytics ·
-                                 Managed Identity · Static Web App
+  subgraph azure["☁️ Microsoft Azure / tagpulse-${env}-rg"]
+    subgraph vnet["🟦 Virtual Network<br/>tp${env}-vnet"]
+      nsgAca["🟦 NSG<br/>tp${env}-aca-nsg"]
+      nsgPe["🟦 NSG<br/>tp${env}-pe-nsg"]
+
+      subgraph aca["🟦 Container Apps Environment<br/>tp${env}-aca-env"]
+        worker["🟦 Container App<br/>tp${env}-worker"]
+        jobs["🟦 Jobs<br/>tp${env}-migrations<br/>tools-job-${env}"]
+      end
+
+      pe_kv["🟦 Private Endpoint<br/>tp${env}-kv-pe"]
+      pe_pg["🟦 Private Endpoint<br/>tp${env}-pg-pe"]
+      pe_acr["🟦 Private Endpoint<br/>tp${env}-acr-pe"]
+      dns["🟦 Private DNS Zones<br/>vaultcore · postgres · azurecr"]
+    end
+
+    pg["🟦 Azure Database for PostgreSQL Flexible Server<br/>tp${env}-pg"]
+    kv["🟦 Azure Key Vault<br/>tp${env}-kv"]
+    acr["🟦 Azure Container Registry<br/>tp${env}acr"]
+    uami["🟦 User Assigned Managed Identity<br/>tp${env}-uami"]
+    ai["🟦 Application Insights<br/>tp${env}-ai"]
+    law["🟦 Log Analytics Workspace<br/>tp${env}-law"]
+  end
+
+  internet -->|"HTTPS"| api_public
+  internet -->|"WSS / MQTT clients"| mqtt_broker
+  internet -->|"HTTPS"| static_ui
+  static_ui -->|"HTTPS API calls"| api_public
+  api_public -->|"HTTP (internal)"| worker
+  worker -->|"MQTT subscribe/publish"| mqtt_broker
+  api_public -->|"asyncpg via PE"| pg
+  worker -->|"asyncpg via PE"| pg
+  api_public -->|"secret resolution (startup)"| kv
+  worker -->|"secret resolution + tools-job reads"| kv
+  api_public -->|"image pull"| acr
+  worker -->|"image pull"| acr
+  uami -.- acr
+  uami -.- kv
+  api_public -->|"traces / metrics / logs"| ai
+  worker -->|"traces / metrics / logs"| ai
+  ai --> law
+  aca --> law
+  mqtt_broker --> law
+  pe_pg --- pg
+  pe_kv --- kv
+  pe_acr --- acr
+  dns --- pe_pg
+  dns --- pe_kv
+  dns --- pe_acr
+  nsgAca --- aca
+  nsgPe --- pe_pg
+  nsgPe --- pe_kv
+  nsgPe --- pe_acr
 ```
+
+Directed arrows represent runtime data/control flow. Solid undirected links (`---`) represent infrastructure associations (network placement/binding + private-link topology). Dotted undirected links (`-.-`) represent RBAC role-assignment relationships (UAMI ↔ ACR/KV).
+`${env}` is a naming placeholder (`dev`, `staging`, `prod`).
+UAMI RBAC shown above maps to `AcrPull` on ACR and `Key Vault Secrets User` on KV (see §2 `Microsoft.Authorization/roleAssignments`).
+`tp${env}-aca-nsg` protects the `aca-infra` subnet (ACA control-plane + workload boundary); `tp${env}-pe-nsg` is attached to the private-endpoint subnet (empty by design because private endpoints bypass NSG filtering — see the PE entries in §2 and subnet notes in §3).
 
 The api Container App is the only resource with public ingress. Postgres, Key Vault, and ACR are reachable only via private endpoints inside the VNet. Mosquitto runs as a single Azure Container Instance with a public IP (port **1883, plaintext + username/password** today; mTLS on 8883 is the [ADR-012](adr/012-mtls-for-mqtt.md) workstream and has not shipped). Devices connect directly; the worker reads from it across the public FQDN.
 
