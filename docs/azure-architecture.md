@@ -11,9 +11,9 @@
 ```mermaid
 flowchart TB
   internet["🌐 Public internet<br/>(devices, browsers, operators, CI)"]
-  ui["🟦 Azure Static Web App<br/>tp${env}-ui"]
+  static_ui["🟦 Azure Static Web App<br/>tp${env}-ui"]
   api_public["🟦 Azure Container App (api)<br/>public ingress"]
-  mqtt["🟦 Azure Container Instances<br/>tp${env}-mqtt (Mosquitto)"]
+  mqtt_broker["🟦 Azure Container Instances<br/>tp${env}-mqtt (Mosquitto)"]
 
   subgraph azure["☁️ Microsoft Azure / tagpulse-${env}-rg"]
     subgraph vnet["🟦 Virtual Network<br/>tp${env}-vnet"]
@@ -38,12 +38,11 @@ flowchart TB
   end
 
   internet -->|"HTTPS"| api_public
-  internet -->|"WSS / MQTT clients"| mqtt
-  internet -->|"HTTPS"| ui
-  ui -->|"HTTPS API calls"| api_public
+  internet -->|"WSS / MQTT clients"| mqtt_broker
+  internet -->|"HTTPS"| static_ui
+  static_ui -->|"HTTPS API calls"| api_public
   api_public -->|"HTTP (internal)"| worker
-  worker -->|"MQTT subscribe/publish"| mqtt
-  jobs -->|"Runs inside ACA env"| worker
+  worker -->|"MQTT subscribe/publish"| mqtt_broker
   api_public -->|"asyncpg via PE"| pg
   worker -->|"asyncpg via PE"| pg
   api_public -->|"secret resolution (startup)"| kv
@@ -56,7 +55,7 @@ flowchart TB
   worker -->|"traces / metrics / logs"| ai
   ai --> law
   aca --> law
-  mqtt --> law
+  mqtt_broker --> law
   pe --- pg
   pe --- kv
   pe --- acr
@@ -64,6 +63,8 @@ flowchart TB
   nsgAca --- aca
   nsgPe --- pe
 ```
+
+Directed arrows represent runtime data/control flow. Undirected links (`---`) represent infrastructure associations (network placement/binding and private-link topology).
 
 The api Container App is the only resource with public ingress. Postgres, Key Vault, and ACR are reachable only via private endpoints inside the VNet. Mosquitto runs as a single Azure Container Instance with a public IP (port **1883, plaintext + username/password** today; mTLS on 8883 is the [ADR-012](adr/012-mtls-for-mqtt.md) workstream and has not shipped). Devices connect directly; the worker reads from it across the public FQDN.
 
