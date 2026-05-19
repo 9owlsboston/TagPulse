@@ -8,39 +8,61 @@
 
 ## 1. At a glance
 
-```
-                         ┌──────────────────────────────────────┐
-                         │        Public internet (laptops,     │
-                         │        devices, browsers, CI)        │
-                         └──────────────────────────────────────┘
-                                 │             │             │
-                            HTTPS│        WSS  │        HTTPS│
-                                 │  (devices)  │  (browsers) │
-                                 ▼             ▼             ▼
-                       ┌───────────────────┐ ┌──────────────────┐
-                       │  api  (Container  │ │  TagPulse-UI     │
-                       │  App, public      │ │  (Static Web App)│
-                       │  ingress)         │ │                  │
-                       └───────────────────┘ └──────────────────┘
-                                 │
-                                 │  HTTP
-                                 ▼
-            ┌────────────────────────────────────────────┐
-            │   Container Apps Environment (VNet-int)    │
-            │   ─────────────────────────────────────    │
-            │     api    worker    migrations-job        │
-            │            tools-job (manual trigger)      │
-            └────────────────────────────────────────────┘
-                       │             │             │
-                MQTT ──┘   asyncpg ──┘    KV SDK ──┘
-                       ▼             ▼             ▼
-              ┌───────────────┐ ┌──────────┐ ┌──────────┐
-              │  Mosquitto    │ │  PG Flex │ │ KeyVault │
-              │  (ACI)        │ │ (private)│ │ (private)│
-              └───────────────┘ └──────────┘ └──────────┘
+```mermaid
+flowchart TB
+  internet["🌐 Public internet<br/>(devices, browsers, operators, CI)"]
+  ui["🟦 Azure Static Web App<br/>tp${env}-ui"]
+  api_public["🟦 Azure Container App (api)<br/>public ingress"]
+  mqtt["🟦 Azure Container Instances<br/>tp${env}-mqtt (Mosquitto)"]
 
-                  Cross-cutting: ACR (private) · App Insights · Log Analytics ·
-                                 Managed Identity · Static Web App
+  subgraph azure["☁️ Microsoft Azure / tagpulse-${env}-rg"]
+    subgraph vnet["🟦 Virtual Network<br/>tp${env}-vnet"]
+      nsgAca["🟦 NSG<br/>tp${env}-aca-nsg"]
+      nsgPe["🟦 NSG<br/>tp${env}-pe-nsg"]
+
+      subgraph aca["🟦 Container Apps Environment<br/>tp${env}-aca-env"]
+        worker["🟦 Container App<br/>tp${env}-worker"]
+        jobs["🟦 Jobs<br/>tp${env}-migrations<br/>tools-job-${env}"]
+      end
+
+      pe["🟦 Private Endpoints<br/>tp${env}-kv-pe · tp${env}-pg-pe · tp${env}-acr-pe"]
+      dns["🟦 Private DNS Zones<br/>vaultcore · postgres · azurecr"]
+    end
+
+    pg["🟦 Azure Database for PostgreSQL Flexible Server<br/>tp${env}-pg"]
+    kv["🟦 Azure Key Vault<br/>tp${env}-kv"]
+    acr["🟦 Azure Container Registry<br/>tp${env}acr"]
+    uami["🟦 User Assigned Managed Identity<br/>tp${env}-uami"]
+    ai["🟦 Application Insights<br/>tp${env}-ai"]
+    law["🟦 Log Analytics Workspace<br/>tp${env}-law"]
+  end
+
+  internet -->|"HTTPS"| api_public
+  internet -->|"WSS / MQTT clients"| mqtt
+  internet -->|"HTTPS"| ui
+  ui -->|"HTTPS API calls"| api_public
+  api_public -->|"HTTP (internal)"| worker
+  worker -->|"MQTT subscribe/publish"| mqtt
+  jobs -->|"Runs inside ACA env"| worker
+  api_public -->|"asyncpg via PE"| pg
+  worker -->|"asyncpg via PE"| pg
+  api_public -->|"secret resolution (startup)"| kv
+  worker -->|"secret resolution + tools-job reads"| kv
+  api_public -->|"image pull"| acr
+  worker -->|"image pull"| acr
+  uami -->|"AcrPull"| acr
+  uami -->|"Key Vault Secrets User"| kv
+  api_public -->|"traces / metrics / logs"| ai
+  worker -->|"traces / metrics / logs"| ai
+  ai --> law
+  aca --> law
+  mqtt --> law
+  pe --- pg
+  pe --- kv
+  pe --- acr
+  dns --- pe
+  nsgAca --- aca
+  nsgPe --- pe
 ```
 
 The api Container App is the only resource with public ingress. Postgres, Key Vault, and ACR are reachable only via private endpoints inside the VNet. Mosquitto runs as a single Azure Container Instance with a public IP (port **1883, plaintext + username/password** today; mTLS on 8883 is the [ADR-012](adr/012-mtls-for-mqtt.md) workstream and has not shipped). Devices connect directly; the worker reads from it across the public FQDN.
