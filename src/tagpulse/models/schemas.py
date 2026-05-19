@@ -693,7 +693,14 @@ class AssetResponse(BaseModel):
     name: str
     status: str
     parent_asset_id: UUID | None
-    category_id: UUID
+    # Sprint 42 — category_id is a nullable FK in the DB (assets created
+    # before categories existed, or assets the operator chose to leave
+    # uncategorised, both return NULL). Sprint 41 Phase H tightened this
+    # to `UUID` (non-null) when it dropped `asset_type`, which would 500
+    # at response-serialisation time for any uncategorised row. Restore
+    # the nullability marker to match the DB and the AssetUpdate "clear"
+    # semantics (PATCH with category_id: null).
+    category_id: UUID | None
     metadata: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime

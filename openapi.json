@@ -408,9 +408,16 @@
         "description": "Persisted asset row.",
         "properties": {
           "category_id": {
-            "format": "uuid",
-            "title": "Category Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
           },
           "created_at": {
             "format": "date-time",
