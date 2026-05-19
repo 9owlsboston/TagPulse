@@ -60,3 +60,5 @@ deploy/azure/bicep/main.json
 # Local-only; the GHA cron in D2 maintains the canonical log via its run logs.
 deploy/azure/.audit/
 .secrets/
+# draw.io desktop auto-backup files (hidden dot-prefix, e.g. .$filename.drawio.bkp)
+docs/assets/.*.bkp
