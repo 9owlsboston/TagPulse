@@ -6,7 +6,7 @@ All notable changes to TagPulse will be documented in this file.
 
 ### Added
 
-- Updated `docs/azure-architecture.md` with an Azure-icon Mermaid "At a glance" diagram that now shows explicit resource connections/flows and additional deployed resources (NSGs, private endpoints/DNS, UAMI, ACR, App Insights, Log Analytics).
+- Updated `docs/azure-architecture.md` with an Azure-iconography Mermaid "At a glance" diagram that now shows explicit resource connections/flows and additional deployed resources (NSGs, private endpoints/DNS, UAMI, ACR, App Insights, Log Analytics).
 
 - Added an Excalidraw source diagram for deployed Azure resources at `docs/assets/azure-deployed-resources.excalidraw`, linked from `docs/azure-architecture.md`.
 

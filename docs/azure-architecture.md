@@ -49,8 +49,8 @@ flowchart TB
   worker -->|"secret resolution + tools-job reads"| kv
   api_public -->|"image pull"| acr
   worker -->|"image pull"| acr
-  uami -->|"AcrPull"| acr
-  uami -->|"Key Vault Secrets User"| kv
+  uami --- acr
+  uami --- kv
   api_public -->|"traces / metrics / logs"| ai
   worker -->|"traces / metrics / logs"| ai
   ai --> law
@@ -64,7 +64,8 @@ flowchart TB
   nsgPe --- pe
 ```
 
-Directed arrows represent runtime data/control flow. Undirected links (`---`) represent infrastructure associations (network placement/binding and private-link topology).
+Directed arrows represent runtime data/control flow. Undirected links (`---`) represent infrastructure associations (network placement/binding, private-link topology, and RBAC role-assignment relationships such as UAMI ↔ ACR/KV).
+`${env}` is a naming placeholder (`dev`, `staging`, `prod`).
 
 The api Container App is the only resource with public ingress. Postgres, Key Vault, and ACR are reachable only via private endpoints inside the VNet. Mosquitto runs as a single Azure Container Instance with a public IP (port **1883, plaintext + username/password** today; mTLS on 8883 is the [ADR-012](adr/012-mtls-for-mqtt.md) workstream and has not shipped). Devices connect directly; the worker reads from it across the public FQDN.
 
