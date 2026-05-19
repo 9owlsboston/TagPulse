@@ -12,7 +12,7 @@
 flowchart TB
   internet["🌐 Public internet<br/>(devices, browsers, operators, CI)"]
   static_ui["🟦 Azure Static Web App<br/>tp${env}-ui"]
-  api_public["🟦 Azure Container App (api)<br/>public ingress"]
+  api_public["🟦 Azure Container App (api)<br/>tp${env}-api (public ingress)"]
   mqtt_broker["🟦 Azure Container Instances<br/>tp${env}-mqtt (Mosquitto)"]
 
   subgraph azure["☁️ Microsoft Azure / tagpulse-${env}-rg"]
@@ -25,7 +25,9 @@ flowchart TB
         jobs["🟦 Jobs<br/>tp${env}-migrations<br/>tools-job-${env}"]
       end
 
-      pe["🟦 Private Endpoints<br/>tp${env}-kv-pe · tp${env}-pg-pe · tp${env}-acr-pe"]
+      pe_kv["🟦 Private Endpoint<br/>tp${env}-kv-pe"]
+      pe_pg["🟦 Private Endpoint<br/>tp${env}-pg-pe"]
+      pe_acr["🟦 Private Endpoint<br/>tp${env}-acr-pe"]
       dns["🟦 Private DNS Zones<br/>vaultcore · postgres · azurecr"]
     end
 
@@ -56,12 +58,16 @@ flowchart TB
   ai --> law
   aca --> law
   mqtt_broker --> law
-  pe --- pg
-  pe --- kv
-  pe --- acr
-  dns --- pe
+  pe_pg --- pg
+  pe_kv --- kv
+  pe_acr --- acr
+  dns --- pe_pg
+  dns --- pe_kv
+  dns --- pe_acr
   nsgAca --- aca
-  nsgPe --- pe
+  nsgPe --- pe_pg
+  nsgPe --- pe_kv
+  nsgPe --- pe_acr
 ```
 
 Directed arrows represent runtime data/control flow. Undirected links (`---`) represent infrastructure associations (network placement/binding, private-link topology, and RBAC role-assignment relationships such as UAMI ↔ ACR/KV).
