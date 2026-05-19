@@ -72,6 +72,8 @@ flowchart TB
 
 Directed arrows represent runtime data/control flow. Undirected links (`---`) represent infrastructure associations (network placement/binding, private-link topology, and RBAC role-assignment relationships such as UAMI ↔ ACR/KV).
 `${env}` is a naming placeholder (`dev`, `staging`, `prod`).
+UAMI RBAC shown above maps to `AcrPull` on ACR and `Key Vault Secrets User` on KV (see §2 `Microsoft.Authorization/roleAssignments`).
+`tp${env}-aca-nsg` protects the `aca-infra` subnet (ACA control-plane + workload boundary); `tp${env}-pe-nsg` is attached to the private-endpoint subnet (empty by design because private endpoints bypass NSG filtering).
 
 The api Container App is the only resource with public ingress. Postgres, Key Vault, and ACR are reachable only via private endpoints inside the VNet. Mosquitto runs as a single Azure Container Instance with a public IP (port **1883, plaintext + username/password** today; mTLS on 8883 is the [ADR-012](adr/012-mtls-for-mqtt.md) workstream and has not shipped). Devices connect directly; the worker reads from it across the public FQDN.
 
