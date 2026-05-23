@@ -26,3 +26,5 @@
 | 022 | [Soft Assets — auto-creation policy](022-soft-assets.md) | proposed | 2026-05-17 |
 | 023 | [Outbound Connections — add MQTT dispatcher (Kafka/Pub-Sub deferred)](023-outbound-connections-mqtt-kafka.md) | proposed | 2026-05-17 |
 | 024 | [Indoor position estimation — trilateration processor + `asset_positions` hypertable](024-position-estimation.md) | proposed | 2026-05-17 |
+| 025 | [Edge wire format v2 — JSON-over-MQTT with snap-based presence](025-edge-wire-format-v2.md) | proposed | 2026-05-23 |
+| 026 | [Server-side presence model — `tag_presence` + synchronous reconciler](026-presence-model.md) | proposed | 2026-05-23 |

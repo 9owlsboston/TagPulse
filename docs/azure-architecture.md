@@ -78,7 +78,7 @@ UAMI RBAC shown above maps to `AcrPull` on ACR and `Key Vault Secrets User` on K
 The api Container App is the only resource with public ingress. Postgres, Key Vault, and ACR are reachable only via private endpoints inside the VNet. Mosquitto runs as a single Azure Container Instance with a public IP (port **1883, plaintext + username/password** today; mTLS on 8883 is the [ADR-012](adr/012-mtls-for-mqtt.md) workstream and has not shipped). Devices connect directly; the worker reads from it across the public FQDN.
 
 Excalidraw source for this deployed-resource view: [`docs/assets/azure-deployed-resources.excalidraw`](assets/azure-deployed-resources.excalidraw).
-Draw.io source (with Azure icons via `mxgraph.azure2`): [`docs/assets/azure-deployed-resources.drawio`](assets/azure-deployed-resources.drawio) — opens in [diagrams.net](https://app.diagrams.net), draw.io desktop, or the GitHub file viewer. PNG export: [`docs/assets/azure-deployed-resources.png`](assets/azure-deployed-resources.png).
+Draw.io source (with Azure icons via `mxgraph.azure2`): [`docs/assets/azure-deployed-resources.drawio`](assets/azure-deployed-resources.drawio) — opens in [diagrams.net](https://app.diagrams.net), draw.io desktop, or the GitHub file viewer. PNG export: [`docs/assets/azure-architecture.png`](assets/azure-architecture.png) (rethemed to the Azure Architecture Center palette).
 
 ---
 
