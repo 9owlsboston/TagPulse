@@ -1,12 +1,12 @@
-"""Sprint 41 Phase H regression: ``?asset_type=`` returns HTTP 400.
+"""Sprint 49 Phase B1: ``?asset_type=`` is silently ignored.
 
-The ``asset_type`` query parameter was removed when the column was
-dropped (migration ``041_drop_assets_asset_type``). For one release the
-route surfaces an explicit 400 with a migration hint that points
-clients at ``?category_id=``. This test pins that behaviour so we can
-notice if somebody quietly drops the guard before Sprint 42, *and* so
-the hint string never accidentally regresses to a generic 422 from
-FastAPI's "unknown query param? doesn't matter" default.
+The Sprint 41 Phase H 400 migration-hint guard was a one-release
+courtesy after the column drop. Sprint 49 removes the guard \u2014 the
+column has been gone since migration ``041_drop_assets_asset_type``,
+no UI surface still sends the param, and the deprecation window has
+long expired. This test pins the new behaviour (unknown param is
+ignored, route returns 200) so a future refactor can't accidentally
+reinstate the 400.
 """
 
 from __future__ import annotations
@@ -23,9 +23,6 @@ from tagpulse.core.user_auth import AuthenticatedUser, get_current_user
 
 
 class _StubAssetService:
-    """Minimal stand-in — list_assets must succeed when *no* asset_type
-    is supplied so we can also assert the happy path stays 200."""
-
     async def list_assets(self, *args: object, **kwargs: object) -> list[object]:
         return []
 
@@ -49,26 +46,19 @@ def client() -> TestClient:
     return TestClient(app)
 
 
-def test_asset_type_query_returns_400_with_migration_hint(
-    client: TestClient,
-) -> None:
-    """Sentinel value — any presence of the key trips the guard."""
+def test_asset_type_query_is_silently_ignored(client: TestClient) -> None:
+    """Unknown query param \u2192 200, no filter applied."""
     response = client.get("/v1/assets", params={"asset_type": "pallet"})
-    assert response.status_code == 400
-    detail = response.json()["detail"]
-    assert "asset_type" in detail
-    assert "category_id" in detail
-    assert "Sprint 41" in detail
+    assert response.status_code == 200
+    assert response.json() == []
 
 
-def test_asset_type_empty_value_still_returns_400(client: TestClient) -> None:
-    """Membership test is on the key only, not the value."""
+def test_asset_type_empty_value_is_silently_ignored(client: TestClient) -> None:
     response = client.get("/v1/assets?asset_type=")
-    assert response.status_code == 400
+    assert response.status_code == 200
 
 
 def test_list_assets_without_asset_type_still_works(client: TestClient) -> None:
-    """Sanity check that the guard doesn't fire on unrelated requests."""
     response = client.get("/v1/assets")
     assert response.status_code == 200
     assert response.json() == []
