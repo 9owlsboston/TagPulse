@@ -6,6 +6,8 @@ All notable changes to TagPulse will be documented in this file.
 
 ### Added
 
+- **Sprint 46 (proposed) — draft edge wire format v2 spec for WM partner readers.** New design doc [docs/design/edge-wire-format-v2.md](docs/design/edge-wire-format-v2.md) capturing the flat per-tag JSON delta protocol (three-state discriminator `t ∈ {0=snap, 1=add, 2=sub}`, per-reader `seq` cycle counter, short field names, integer enums) for the WM-firmware RFID readers, plus the server-side two-table model (existing `tag_reads` + new `tag_presence`) and snap-window reconciliation algorithm. Document is **explicitly marked DRAFT v0.2** — pre-review, non-binding, with §8 listing 10 open questions to confirm with WM and §9 listing 8 unresolved concerns + 5 deferred items. No code, schema, ADR, or roadmap entry yet — those land in the Sprint 46 implementation PR after WM sign-off and ADR 025 / ADR 026 ratification. `docs/design/edge-wire-format-v2.md`.
+
 - Updated `docs/azure-architecture.md` with an Azure-iconography Mermaid "At a glance" diagram that now shows explicit resource connections/flows and additional deployed resources (NSGs, private endpoints/DNS, UAMI, ACR, App Insights, Log Analytics).
 
 - Added an Excalidraw source diagram for deployed Azure resources at `docs/assets/azure-deployed-resources.excalidraw`, linked from `docs/azure-architecture.md`.
