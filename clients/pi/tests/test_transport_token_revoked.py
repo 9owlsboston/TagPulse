@@ -24,7 +24,7 @@ def _config() -> EdgeConfig:
         broker_host="localhost",
         broker_port=1883,
         username="u",
-        password="p",
+        password="p",  # noqa: S106 # test fixture
     )
 
 

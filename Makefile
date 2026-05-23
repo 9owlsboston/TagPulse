@@ -5,7 +5,7 @@
 ENV ?= dev
 
 lint:        ## Run linter
-	ruff check src tests
+	ruff check src tests clients/pi
 
 typecheck:   ## Run type checker
 	mypy src
@@ -21,8 +21,8 @@ migration-check:  ## Sprint 19: round-trip alembic upgrade head -> downgrade -1 
 	pytest tests/integration/test_migration_round_trip.py -v --tb=short
 
 format:      ## Auto-format code
-	ruff format src tests
-	ruff check --fix src tests
+	ruff format src tests clients/pi
+	ruff check --fix src tests clients/pi
 
 check: lint typecheck test  ## Run all quality gates
 
