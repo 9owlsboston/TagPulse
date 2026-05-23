@@ -54,9 +54,9 @@ One JSON object per MQTT publish. Flat — no nesting except `null`-allowed valu
 | `epc` | string | uppercase hex | 8 .. 124 hex chars (32–496 bits) | snap, add, sub | Electronic Product Code. No `0x` prefix, no whitespace. Server validates length is even. |
 | `rssi` | integer | int16 | -127 .. 0 (dBm) | snap, add | Mean signal strength across `cnt` reads. Integer dBm — fractional precision dropped for bandwidth. |
 | `cnt` | integer | uint16 | 1 .. 65535 | snap, add | Raw reads aggregated into this message during the cycle. |
-| `tmp` | number | float32, 2 dp | -40.00 .. +85.00 (°C) | optional | Mean tag-die temperature. **Omit field entirely if no temp sensor** (do not send `null` — saves 6 B per message). |
-| `hum` | number | float32, 1 dp | 0.0 .. 100.0 (%RH) | optional | Mean tag humidity. Same rule as `tmp`. |
-| `empty` | boolean | `true` | only valid value | conditional | **Only valid on `t=0` (snap) when the field is empty.** Single-message snap with `empty:true` and no `epc`/`rssi`/`cnt`. See §3.4. |
+| `tmp` | number | float32, 2 dp | -40.00 .. +85.00 (°C) | optional | Mean tag-die temperature for this cycle: `Σ(per-read temp) / cnt`. Same averaging window as `rssi`. **Omit field entirely if the reader has no temp sensor or no temp reading was available this cycle** (do not send `null` — saves 6 B per message). |
+| `hum` | number | float32, 1 dp | 0.0 .. 100.0 (%RH) | optional | Mean tag humidity for this cycle: `Σ(per-read humidity) / cnt`. Same rule as `tmp`. |
+| `empty` | boolean | `true` | only valid value | conditional | **Presence-set signal only.** Valid solely on `t=0` (snap) when the reader's RF field has zero EPCs. Single-message snap with `empty:true` and no `epc`/`rssi`/`cnt`. Do NOT use to indicate missing `tmp`/`hum` — omit those fields instead (see above). See §3.4. |
 
 **Reserved field names (forward compatibility):** `v` (envelope version), `hb` (heartbeat-specific), `err` (error-specific), `cfg` (config echo). Senders MUST NOT use these in v2.0.
 
@@ -115,6 +115,14 @@ If the reader has zero EPCs in field at snapshot time:
 ```
 
 One message, `empty:true`, no `epc` / `rssi` / `cnt`. This is the only way the server can distinguish "reader sees nothing" from "reader is dead." Without it, an empty-field snapshot would emit zero messages — indistinguishable from a no-op cycle — and the server would never mark previously-present EPCs as gone.
+
+**Scope of `empty:true`:** strictly a *presence-set* signal — "my RF field has zero EPCs right now." It is **not** a general-purpose "this message omits optional fields" marker. In particular:
+
+- Missing `tmp` / `hum` on a normal `add` or `snap` message → just omit the fields (§2.2). Do **not** set `empty:true`.
+- A snap message that has EPCs but no environmental sensor data → carries `epc` / `rssi` / `cnt` as normal, omits `tmp` / `hum`, **no** `empty` field.
+- `empty:true` together with any `epc` / `rssi` / `cnt` field → server rejects (DLQ `reason="empty_with_payload"`).
+
+This is load-bearing: the server's reconciliation algorithm (§4.2) treats `empty:true` as "mark every currently-`present` EPC for this reader as `gone`." Setting it for any reason other than a truly empty RF field would wipe the presence set.
 
 ### 3.5 Sub for never-seen EPC
 
@@ -347,6 +355,8 @@ Cycle 13300: snapshot. EPC is not in snap set. Reconciliation marks it `gone`, e
 | JWT `device_id` ≠ resolved `device_id` from `sn` | Reject + audit log | Yes | `...{reason="sn_jwt_mismatch"}` |
 | `ts` drift > 5 min from server clock | Reject | Yes | `...{reason="clock_skew"}` |
 | Missing `lat` / `lon` / `an` on `t=0` / `t=1` | Reject | Yes | `...{reason="missing_required_field"}` |
+| `empty:true` with any `epc` / `rssi` / `cnt` field present | Reject | Yes | `...{reason="empty_with_payload"}` |
+| `empty:true` on `t=1` or `t=2` (only valid on `t=0`) | Reject | Yes | `...{reason="empty_wrong_type"}` |
 | `t=2` for never-seen EPC | Log debug + counter only; do not reject | No | `tagpulse_mqtt_wm_sub_no_presence_total` |
 | `seq` gap on `t=1` / `t=2` | Discard message; mark suspect | No | `tagpulse_mqtt_wm_gap_total{sn}` |
 | `seq` rollback / reset to 0 | Mark suspect; wait for snap | No | `tagpulse_mqtt_wm_reboot_total{sn}` |
@@ -383,7 +393,7 @@ All rejection paths route through the existing `_record_rejection` + `_persist_m
 
 5. **Empty-field snapshot (`empty:true`) — does firmware support it?** Easy to do but easy to forget in firmware. Without it, the server cannot distinguish "reader sees nothing" from "reader is dead."
 
-6. **`tmp` / `hum` aggregation window.** Is `tmp` / `hum` averaged over `cnt` reads within this cycle, or over a longer window (e.g., last 60 s)? Recommend: average over the `cnt` reads in this cycle, consistent with `rssi`.
+6. ~~**`tmp` / `hum` aggregation window.**~~ **RESOLVED (WM, 2026-05-23):** `tmp` = `Σ(per-read temp) / cnt`, `hum` = `Σ(per-read humidity) / cnt`, averaged over the `cnt` reads in this cycle — consistent with `rssi`. Recorded in §2.2.
 
 7. **Clock source on reader.** NTP-synced? GNSS-derived? If clock can drift > 5 min, the §6 `clock_skew` rejection will fire spuriously. Need to know firmware's clock reliability before locking the rejection threshold.
 
@@ -392,6 +402,8 @@ All rejection paths route through the existing `_record_rejection` + `_persist_m
 9. **Multi-antenna semantics.** If the same EPC is read on antenna 1 *and* antenna 2 in the same cycle, does the reader emit one message (which antenna in `an`?) or two? Recommend: one message, with `an` = strongest-RSSI antenna. Document explicitly.
 
 10. **Behavior at exactly the wrap boundary.** `seq` wraps `2^32 - 1 → 0`. Server treats this as reboot (§3.6). At 1 cycle/s that's a ~136-year horizon — practical only across reader replacements. Acceptable; flag in docs.
+
+11. **Sensor-error vs. no-sensor disambiguation.** §2.2 says omit `tmp` / `hum` both when the reader has no sensor *and* when this cycle had no successful sensor read. Does firmware need to distinguish these on the wire (e.g., for diagnostic dashboards showing "sensor configured but failing")? If yes, recommend an optional `sensor_err` string field in v2.1 (`"tmp_timeout"`, `"hum_out_of_range"`, etc.) rather than overloading `empty`. If no (current default), no spec change needed.
 
 ---
 
@@ -451,10 +463,11 @@ These are the open / uncomfortable items, listed explicitly so they don't get lo
 - [ ] WM has answered §8 Q1 (`sn` type)
 - [ ] WM has confirmed §8 Q4 (snap-on-reconnect supported in firmware)
 - [ ] WM has confirmed §8 Q5 (empty-field snap supported in firmware)
-- [ ] WM has confirmed §8 Q6 (`tmp` / `hum` aggregation window)
+- [x] WM has confirmed §8 Q6 (`tmp` / `hum` aggregation window) — 2026-05-23, total/cnt per cycle
 - [ ] WM has provided clock-source answer for §8 Q7
 - [ ] WM has provided expected message-rate ceiling for §8 Q8
 - [ ] WM has confirmed §8 Q9 (multi-antenna emission rule)
+- [ ] WM has answered §8 Q11 (need on-wire sensor-error vs. no-sensor disambiguation?)
 - [ ] Internal review: §9.2 #1 single-subscriber-replica trade-off accepted
 - [ ] Internal review: §9.2 #3 `tag_presence` growth policy accepted as backlog
 - [ ] ADR 025 + ADR 026 drafted and reviewed
