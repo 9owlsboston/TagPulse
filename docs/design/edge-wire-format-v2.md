@@ -55,7 +55,7 @@ Shape 3 — Mixed fleet (the realistic deployment):
     Server cannot tell them apart — both produce identical v2 bytes.
 ```
 
-**Why this matters for the spec.** Several v2 features (snap-on-reconnect, `empty:true`, NTP clock, rate limiting, snap window terminator, offline buffering, dedup) require *some* producer-side state and intelligence. v2 assigns those responsibilities to **"the producer,"** not to "the reader." Whoever terminates MQTT — embedded firmware or Pi gateway — owns them.
+**Why this matters for the spec.** Several v2 features (snap-on-reconnect, empty-cycle snap with `epcs:[]`, NTP clock, rate limiting, offline buffering, dedup) require *some* producer-side state and intelligence. v2 assigns those responsibilities to **"the producer,"** not to "the reader." Whoever terminates MQTT — embedded firmware or Pi gateway — owns them.
 
 **The Pi-gateway reference implementation** (`clients/pi/tagpulse_edge/`) already handles all producer-side responsibilities: cycle aggregation from a per-read input stream, diff state, MQTT QoS 1, reconnect with backoff, NTP-grade clocking, SQLite ring-buffer offline storage, ENTER/EXIT dedup, heartbeat. For Shape 2 / Shape 3 deployments it is the reference, and the v2 spec is its *output* contract.
 
@@ -73,50 +73,73 @@ One JSON object per MQTT publish. Flat — no nesting except `null`-allowed valu
 
 ### 2.2 Fields
 
+A v2 message has an **envelope** of top-level keys. For `t=0` (snap) the envelope carries an `epcs[]` array of **per-EPC entries** — one entry per (EPC, antenna) observation in the current cycle. For `t=1` (add) and `t=2` (sub), the per-EPC fields are flattened into the envelope — each add/sub message describes exactly one EPC observation. This keeps every wire message self-contained and atomic at the MQTT layer (§3.2).
+
 **Presence conventions** (apply to the "Required on" column below):
 
-- **Required** — the JSON key MUST appear in every message of the listed type(s). Receivers reject if missing.
+- **Required** — the JSON key MUST appear in every message / entry of the listed type(s). Receivers reject if missing.
 - **Optional** — the JSON key is **omitted entirely** when the value is absent. Senders MUST NOT emit `"key":null` for optional fields; receivers reject explicit `null` on optional sensor fields (`tmp`, `hum`) with DLQ `reason="explicit_null"`. See §6.
 - **Nullable** — applies only to `lat` / `lon`. The key MUST appear, and `null` is the valid "no GNSS fix" value. (We keep these required-but-nullable rather than optional so a missing-key message is unambiguously malformed, not "no fix.")
-- **Conditional** — see the row's own notes (`empty` is the only example).
 
 Examples:
 
 ```jsonc
-// Reader with temp sensor, this cycle had a successful reading:
-{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,
- "epc":"E2801160AAAA","rssi":-48,"cnt":2,"tmp":23.45,"hum":41.2}
+// t=0 snap with 3 observations (one EPC seen on two antennas):
+{"t":0,"sn":123,"ts":1716489732001,"lat":41.40338,"lon":2.17403,
+ "epcs":[
+   {"an":1,"epc":"E2801160AAAA","rssi":-48,"cnt":2,"tmp":23.45,"hum":41.2},
+   {"an":1,"epc":"E2801160BBBB","rssi":-52,"cnt":1},
+   {"an":2,"epc":"E2801160AAAA","rssi":-61,"cnt":1}
+ ]}
 
-// Reader with NO temp sensor (or sensor failed this cycle) — tmp/hum keys absent:
-{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,
- "epc":"E2801160AAAA","rssi":-48,"cnt":2}
+// t=0 snap, empty RF field — empty array, no special flag:
+{"t":0,"sn":123,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"epcs":[]}
+
+// t=1 add — one message per appearing EPC, self-contained:
+{"t":1,"sn":123,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,
+ "epc":"E2801160CCCC","rssi":-50,"cnt":1,"tmp":23.5,"hum":41.0}
+
+// t=2 sub — one message per departing EPC, minimal:
+{"t":2,"sn":123,"ts":1716489732001,"epc":"E2801160FFFF"}
 
 // Reader with no GNSS fix — lat/lon present and explicitly null:
-{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":null,"lon":null,"an":1,
- "epc":"E2801160AAAA","rssi":-48,"cnt":2}
+{"t":0,"sn":123,"ts":1716489732001,"lat":null,"lon":null,"epcs":[]}
 
 // MALFORMED — explicit null on an optional field (rejected, DLQ reason=explicit_null):
-{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,
- "epc":"E2801160AAAA","rssi":-48,"cnt":2,"tmp":null}
+{"t":1,"sn":123,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,
+ "epc":"E2801160CCCC","rssi":-50,"cnt":1,"tmp":null}
 ```
+
+**Envelope fields** (top-level keys):
 
 | Field | JSON type | Wire encoding | Range / format | Required on | Notes |
 |---|---|---|---|---|---|
 | `t` | integer | uint8 | `0` = snap, `1` = add, `2` = sub | **all** | Message type discriminator. Integer enum, not string. Reserved: `3` = heartbeat (v2.1), `4` = error (v2.1). |
-| `sn` | integer **or** string | uint32 OR ASCII string ≤ 32 chars | depends on reader serial format | **all** | Reader identifier. Integer if reader serials are numeric; string if hardware-stamped. Locked per deployment in §8 Q1. |
-| `seq` | integer | uint32 | 0 .. 4 294 967 295 | **all** | Per-reader monotonic cycle counter. Bumps **once per cycle**, shared across all messages in that cycle. Wrap is treated as reboot. |
-| `ts` | integer | uint64 | Unix epoch milliseconds, UTC | **all** | Cycle timestamp. All messages with same `seq` share one `ts`. Server-side reject if drift > 5 minutes (configurable). |
-| `lat` | number \| null | float64, 5 dp | -90.0 .. +90.0 | snap, add | Reader latitude (WGS84). `null` if no GNSS fix. MAY be omitted on `sub`. |
-| `lon` | number \| null | float64, 5 dp | -180.0 .. +180.0 | snap, add | Reader longitude. Same rules as `lat`. |
-| `an` | integer | uint8 | 0 .. 255 (0 = unknown/muxed) | snap, add | Antenna port number. MAY be omitted on `sub`. |
-| `epc` | string | uppercase hex | 8 .. 124 hex chars (32–496 bits) | snap, add, sub | Electronic Product Code. No `0x` prefix, no whitespace. Server validates length is even. |
-| `rssi` | integer | int16 | -127 .. 0 (dBm) | snap, add | Mean signal strength across `cnt` reads. Integer dBm — fractional precision dropped for bandwidth. |
-| `cnt` | integer | uint16 | 1 .. 65535 | snap, add | Raw reads aggregated into this message during the cycle. |
-| `tmp` | number | float32, 2 dp | -40.00 .. +85.00 (°C) | optional | Mean tag-die temperature for this cycle: `Σ(per-read temp) / cnt`. Same averaging window as `rssi`. **Omit field entirely if the reader has no temp sensor or no temp reading was available this cycle** (do not send `null` — saves 6 B per message). |
-| `hum` | number | float32, 1 dp | 0.0 .. 100.0 (%RH) | optional | Mean tag humidity for this cycle: `Σ(per-read humidity) / cnt`. Same rule as `tmp`. |
-| `empty` | boolean | `true` | only valid value | conditional | **Presence-set signal only.** Valid solely on `t=0` (snap) when the reader's RF field has zero EPCs. Single-message snap with `empty:true` and no `epc`/`rssi`/`cnt`. Do NOT use to indicate missing `tmp`/`hum` — omit those fields instead (see above). See §3.4. |
+| `sn` | integer | uint32 | numeric reader serial | **all** | Reader identifier. Resolves to `device_id` per §4.5. String form reserved for future deployments — see §8 Q1. |
+| `ts` | integer | uint64 | Unix epoch milliseconds, UTC | **all** | Message timestamp. Server-side reject if drift > 5 minutes (configurable per §6, §8 Q7). |
+| `lat` | number \| null | float64, 5 dp | -90.0 .. +90.0 | t=0, t=1 | Reader latitude (WGS84). `null` if no GNSS fix. MAY be omitted on `t=2`. |
+| `lon` | number \| null | float64, 5 dp | -180.0 .. +180.0 | t=0, t=1 | Reader longitude. Same rules as `lat`. |
+| `epcs` | array | JSON array | 0 .. ~5000 entries (see §7) | **t=0 only** | EPC observations for this cycle. Each entry has the per-EPC fields below. **Empty array (`[]`) means RF field is empty** — server reconciles to all-gone per §4.2. Forbidden on t=1, t=2. |
+| `epc` | string | uppercase hex | 8 .. 124 hex chars | t=1, t=2 | EPC for this add/sub. Top-level on t=1/t=2 only; inside `epcs[]` entries on t=0. |
+| `an` | integer | uint8 | 0 .. 255 (0 = unknown/muxed) | t=1 | Antenna port. MAY be omitted on `t=2`. Inside `epcs[]` entries on t=0. |
+| `rssi` | integer | int16 | -127 .. 0 (dBm) | t=1 | See per-EPC table for definition. Inside `epcs[]` entries on t=0. |
+| `cnt` | integer | uint16 | 1 .. 65535 | t=1 | See per-EPC table. Inside `epcs[]` entries on t=0. |
+| `tmp`, `hum` | number | see per-EPC | see per-EPC | optional on t=1 | See per-EPC table. Inside `epcs[]` entries on t=0. |
 
-**Reserved field names (forward compatibility):** `v` (envelope version), `hb` (heartbeat-specific), `err` (error-specific), `cfg` (config echo). Senders MUST NOT use these in v2.0.
+**Per-EPC entry fields** (objects inside `epcs[]` on t=0; flattened into the envelope on t=1):
+
+| Field | JSON type | Wire encoding | Range / format | Required | Notes |
+|---|---|---|---|---|---|
+| `an` | integer | uint8 | 0 .. 255 | yes | Antenna port that observed this EPC. |
+| `epc` | string | uppercase hex | 8 .. 124 hex chars (32–496 bits) | yes | Electronic Product Code. No `0x` prefix, no whitespace. Server validates length is even. |
+| `rssi` | integer | int16 | -127 .. 0 (dBm) | yes | Mean signal strength across `cnt` reads at this antenna in this cycle. Integer dBm — fractional precision dropped. |
+| `cnt` | integer | uint16 | 1 .. 65535 | yes | Raw reads aggregated into this entry during the cycle. |
+| `tmp` | number | float32, 2 dp | -40.00 .. +85.00 (°C) | optional | Mean tag-die temperature: `Σ(per-read temp) / cnt`. **Omit entirely if no successful sensor read was available this cycle** (do not send `null`). See §8 Q11 for the wire-is-lossy rationale. |
+| `hum` | number | float32, 1 dp | 0.0 .. 100.0 (%RH) | optional | Mean tag humidity: `Σ(per-read humidity) / cnt`. Same rule as `tmp`. |
+
+**Multi-antenna observation.** If the same EPC is read on more than one antenna in the same cycle, t=0 contains **multiple `epcs[]` entries with the same `epc` and different `an`** (see example above). Server reconciliation keys on `(sn, epc)` and merges them. For t=1, the producer emits one message per (EPC, antenna) pair newly appearing this cycle. See §8 Q9.
+
+**Reserved field names (forward compatibility):** `v` (envelope version), `hb` (heartbeat-specific), `err` (error-specific), `cfg` (config echo), `seq` (former per-cycle counter, removed in the v2.0 KISS pass — see §8 "Removed in KISS pass"). Senders MUST NOT use these in v2.0.
 
 ### 2.3 Field name justification
 
@@ -139,81 +162,86 @@ Typical message saves ~45 B vs. long names. At 100 messages/min × 50 readers ×
 
 ### 3.1 The cycle model
 
-A *cycle* is one RFID inventory round on the reader, identified by `(sn, seq)`. The reader runs cycles continuously (typical: every 1–10 s). Each cycle decides what to publish based on **diff against the previous cycle**:
+A *cycle* is one RFID inventory round on the producer (typical: every 1–10 s). Each cycle decides what to publish based on **diff against the previous cycle**:
 
 | Tag state this cycle | Tag state last cycle | Message emitted |
 |---|---|---|
 | Present | Present | **nothing** (steady state) |
-| Present | Absent | one `t=1` (add) |
-| Absent | Present | one `t=2` (sub) |
-| Present | (no prior — boot) | full `snap` (see §3.3) |
+| Present | Absent | one `t=1` (add) per (EPC, antenna) |
+| Absent | Present | one `t=2` (sub) per EPC |
+| Present | (no prior — boot) | full `t=0` snap (see §3.3) |
 
-A "no-change" cycle emits **zero messages**. The reader does NOT send keep-alive on quiet cycles — keep-alive is the periodic snapshot (§3.3).
+A "no-change" cycle emits **zero messages**. The producer does NOT send keep-alive on quiet cycles — keep-alive is the periodic snapshot (§3.3).
 
-### 3.2 Atomicity within a cycle
+There is no per-cycle counter on the wire. Cycles are not addressable as such — each message stands alone, identified by its `(sn, ts)` and (for snap) its `epcs[]` payload. The server has no need to glue messages across a cycle boundary because no v2 message ever spans one.
 
-All messages with the same `(sn, seq)` are one atomic set. The reader SHOULD publish them back-to-back, but the server does not require them to be contiguous in MQTT delivery order (other readers' messages may interleave). The server groups by `(sn, seq)` regardless of arrival order.
+### 3.2 Message atomicity
+
+Every v2 message is **self-contained**: a complete observation that the server can process in isolation without buffering or cross-message stitching.
+
+- A `t=0` snap is one MQTT message carrying the full per-cycle EPC set inside `epcs[]`. Reconciliation (§4.2) runs on message receipt. MQTT QoS 1 (§7) guarantees the message is delivered at least once; partial-snap states are not representable on the wire.
+- A `t=1` add is one MQTT message describing one (EPC, antenna) appearance.
+- A `t=2` sub is one MQTT message describing one EPC departure.
+
+Messages from different producers (or from the same producer at different times) may interleave arbitrarily in MQTT delivery order; the server tolerates any ordering. There is no "cycle in progress" state on the server.
 
 ### 3.3 Snapshot triggers
 
-The reader MUST emit a snapshot under any of these conditions, whichever occurs first:
+The producer MUST emit a snapshot under any of these conditions, whichever occurs first:
 
 1. **Time-based:** every 300 s (5 min) of wall-clock time since the last snapshot.
 2. **Cycle-based:** every 100 cycles since the last snapshot.
-3. **Event-based:** as the **first messages of any new MQTT session** — after boot, reconnect, or any session-resume — before any `t=1` / `t=2` deltas.
+3. **Event-based:** as the **first message of any new MQTT session** — after boot, reconnect, or any session-resume — before any `t=1` / `t=2` deltas.
 
-Snapshot cadence (300 s / 100 cycles) is the default; SHOULD be server-configurable in v2.1 via a separate config topic.
+Each trigger produces exactly one `t=0` MQTT message containing the current full EPC set (possibly an empty array — see §3.4). Snapshot cadence (300 s / 100 cycles) is the default; SHOULD be server-configurable in v2.1 via a separate config topic.
 
 ### 3.4 Empty snapshot
 
-If the reader has zero EPCs in field at snapshot time:
+If the producer has zero EPCs in field at snapshot time, it emits a snap with an empty array:
 
 ```json
-{"t":0,"sn":123,"seq":48000,"ts":1716489731123,"lat":41.40338,"lon":2.17403,"an":1,"empty":true}
+{"t":0,"sn":123,"ts":1716489731123,"lat":41.40338,"lon":2.17403,"epcs":[]}
 ```
 
-One message, `empty:true`, no `epc` / `rssi` / `cnt`. This is the only way the server can distinguish "reader sees nothing" from "reader is dead." Without it, an empty-field snapshot would emit zero messages — indistinguishable from a no-op cycle — and the server would never mark previously-present EPCs as gone.
+This is the only way the server can distinguish "producer sees nothing" from "producer is dead." Without it, an empty-field snapshot would emit no MQTT message at all and previously-present EPCs would never be marked gone.
 
-**Scope of `empty:true`:** strictly a *presence-set* signal — "my RF field has zero EPCs right now." It is **not** a general-purpose "this message omits optional fields" marker. In particular:
-
-- Missing `tmp` / `hum` on a normal `add` or `snap` message → just omit the fields (§2.2). Do **not** set `empty:true`.
-- A snap message that has EPCs but no environmental sensor data → carries `epc` / `rssi` / `cnt` as normal, omits `tmp` / `hum`, **no** `empty` field.
-- `empty:true` together with any `epc` / `rssi` / `cnt` field → server rejects (DLQ `reason="empty_with_payload"`).
-
-This is load-bearing: the server's reconciliation algorithm (§4.2) treats `empty:true` as "mark every currently-`present` EPC for this reader as `gone`." Setting it for any reason other than a truly empty RF field would wipe the presence set.
+**`epcs:[]` is structurally unambiguous.** Earlier drafts used an `empty:true` boolean flag; v2.0 dropped it in favor of the empty array, which is impossible to confuse with anything else: the snap-reconciliation algorithm (§4.2) treats *any* `t=0` as the complete-truth declaration for that producer at that instant, so an empty array reconciles every currently-`present` EPC for this producer to `gone`. There is no "presence flag" to misset.
 
 ### 3.5 Sub for never-seen EPC
 
 If the server receives a `t=2` (sub) for an `(sn, epc)` it has no `present` row for: log + counter, do not raise an error. This is normal during a sync window — a `sub` arrived for an EPC the server lost via a missed `add`. The next snapshot will reconcile.
 
-### 3.6 Sequence number semantics
+### 3.6 Reboot and out-of-order handling
+
+With no per-cycle counter on the wire, the server has nothing to gap-detect against — gaps in t=1/t=2 streams are invisible by design, and the periodic snap (§3.3) is the recovery mechanism. The server's posture toward producer-side anomalies:
 
 | Server observation | Meaning | Action |
 |---|---|---|
-| `seq == last_seq + 1` | Normal forward progress | Process message normally |
-| `seq == last_seq` | Same cycle, additional message | Group with current cycle |
-| `seq > last_seq + 1` and `t != 0` | Gap (missed cycle) | Discard message, increment `gap_total`, mark presence for `sn` as *suspect* until next snap completes |
-| `seq > last_seq + 1` and `t == 0` | Gap *and* recovery in one — fine | Process snapshot, reconcile (§4.2), clear suspect flag |
-| `seq < last_seq` | Reader reboot or counter wrap | Treat as new session; mark presence for `sn` as *suspect*; wait for snapshot |
-| `seq == 0` | Cold boot | Same as reboot |
+| `t=0` arrives | Producer is asserting full truth about its current field | Run reconciliation per §4.2 unconditionally — this is the recovery primitive |
+| `t=1` / `t=2` arrives for a known producer | Normal delta | Apply per §4.3 |
+| `t=1` / `t=2` arrives for an unknown / never-seen `sn` | Producer started mid-stream | Apply best-effort; the producer's next snap (which §3.3 guarantees as the first message of every session) will reconcile any incidental drift |
+| `ts` jumps backwards or producer goes silent then resumes | Reboot, clock fix, link recovery — opaque on the wire | No special handling. Wait for the next snap, which §3.3 mandates as the first message of every new session. Snap reconciles |
 
-The *suspect* flag means: presence rows for this reader are still queryable for dashboard purposes, but tagged "may be stale, awaiting reconciliation." Cleared on next complete snapshot.
+Producer reboot is therefore **not a distinct server-side concept**: it's just "a producer that hasn't published in a while now publishes a snap." The snap-on-reconnect rule (§3.3 trigger 3) is what makes this safe — without it, a rebooted producer streaming only `t=1` deltas would never resynchronize the server's view.
 
-### 3.7 `t=0` vs `t=1` — wire-shape twins, semantic opposites
+A `t=2` sub for an EPC the server has no `present` row for is handled per §3.5 — log + counter, no error.
 
-`t=0` (snap) and `t=1` (add) messages are **nearly identical on the wire** — same required fields (`sn`, `seq`, `ts`, `lat`, `lon`, `an`, `epc`, `rssi`, `cnt`), same encoding, same size. The **only** wire difference is the value of the `t` discriminator. The semantic difference is large and load-bearing:
+### 3.7 `t=0` vs `t=1` — different shapes, opposite semantics
+
+`t=0` (snap) and `t=1` (add) describe overlapping facts ("this EPC is at this antenna right now") but with very different scopes:
 
 | Property | `t=0` (snap) | `t=1` (add) |
 |---|---|---|
-| **Meaning of message presence** | "EPC X is in my field right now" | "EPC X just appeared (wasn't here last cycle)" |
-| **Meaning of message absence within the cycle** | "Any EPC not listed in this cycle's snap is **gone** — wipe it from presence" | Silent — says nothing about other EPCs |
-| **Triggers reconciliation?** | **Yes** — closes a snap window, runs the diff in §4.2, may emit `tag_disappeared` for EPCs not present | **No** — point update only |
-| **Cycle is atomic in?** | The **full set** of `t=0` messages for one `(sn, seq)`. Server buffers until complete (§3.6) | This single message |
+| **Wire shape** | Envelope + `epcs[]` array of N entries | Envelope with EPC fields flattened — describes exactly one (EPC, antenna) |
+| **Meaning of being in the message** | "This is my complete EPC set right now" | "This EPC just appeared (wasn't here last cycle)" |
+| **Meaning of an EPC being *absent* from the message** | "Not in my `epcs[]` → currently **gone** — wipe from presence" | Silent — says nothing about other EPCs |
+| **Triggers reconciliation?** | **Yes** — runs the diff in §4.2 on receipt; may emit `tag_disappeared` for EPCs no longer listed | **No** — point update only |
+| **Atomic in?** | One MQTT message (whole `epcs[]` arrives or doesn't — QoS 1 ensures delivery) | One MQTT message (one EPC) |
 | **Emitted on every cycle?** | No — only on snap triggers (§3.3) or empty field (§3.4) | Only when an EPC transitions absent → present |
 
-The takeaway: **a missing `t=1` for an EPC is benign** (next snap reconciles within snap cadence), but **a missing message from a `t=0` set is dangerous** (server treats the absent EPC as gone and fires `tag_disappeared`). This asymmetry is why §3.3's snap-on-reconnect rule and §3.4's `empty:true` requirement are load-bearing for the self-heal property: the snap message set is the *complete-truth declaration*, and any incompleteness propagates as false "gone" events.
+The takeaway: **a missing `t=1` for an EPC is benign** (next snap reconciles within snap cadence), but **a missing `t=0` message is dangerous** (the next snap *is* what brings the server back into sync). MQTT QoS 1 + `clean_session=false` (§7) is what makes snap delivery reliable enough to depend on; the snap-on-reconnect rule (§3.3 trigger 3) is what bounds the worst-case staleness.
 
-Common confusion: "if every cycle was a snap, we'd never need `t=1`/`t=2`." True — and that's exactly the **snap-only profile** in §3.8. The point of `t=1`/`t=2` is bandwidth, not correctness; the point of `t=0` is correctness, not bandwidth.
+Common confusion: "if every cycle was a snap, we'd never need `t=1`/`t=2`." True — and that's exactly the **snap-only profile** in §3.8. The point of `t=1`/`t=2` is bandwidth; the point of `t=0` is correctness.
 
 ### 3.8 Producer profiles — what the MQTT producer needs to support
 
@@ -231,11 +259,11 @@ Three producer profiles are first-class on this protocol. "Producer" here means 
 
 - Emits `t=0` snap **every cycle** (no `t=1`, no `t=2`)
 - Each cycle is a complete declaration of current field
-- Server reconciles every cycle (§4.2), not just on snap triggers — `last_seq` advances on every snap
-- `empty:true` (§3.4) still required when field is empty
+- Server reconciles on every snap (§4.2)
+- Empty cycles still emit `{"epcs":[]}` per §3.4
 - Bandwidth: ~N× higher than Profile A in steady state (where N = EPC count); acceptable for short-range / low-EPC-count deployments (e.g., handheld scanners, single-pallet zones)
 - No producer state beyond "what's in my field right now this cycle"
-- **Server treats Profile B identically to Profile A** — there is no profile flag on the wire. A producer that only ever sends `t=0` is just a producer whose snap cadence is "every cycle." The §3.6 sequence rules still apply (`t=0` with gap is fine).
+- **Server treats Profile B identically to Profile A** — there is no profile flag on the wire. A producer that only ever sends `t=0` is just a producer whose snap cadence is "every cycle."
 - Target producer: minimal Pi-gateway configs, low-end / handheld / battery reader firmware
 
 **Profile C — Legacy / v1 streaming.** Existing producers staying on the v1 wire format indefinitely.
@@ -268,12 +296,12 @@ epc           VARCHAR(124) NOT NULL  -- uppercase hex
 first_seen    TIMESTAMPTZ NOT NULL
 last_seen     TIMESTAMPTZ NOT NULL
 status        VARCHAR(16) NOT NULL   -- 'present' | 'gone'
-suspect       BOOLEAN NOT NULL DEFAULT FALSE
-last_seq      BIGINT NOT NULL
 last_rssi     SMALLINT
 last_antenna  SMALLINT
 PRIMARY KEY (tenant_id, device_id, epc)
 ```
+
+No `last_seq` / `suspect` columns: there is no per-cycle counter on the wire (§3.1) and no buffered-snap state to be suspicious about — reconciliation either runs (snap arrived) or it doesn't (server falls back on the next snap, bounded by snap cadence).
 
 Indexes:
 
@@ -284,25 +312,28 @@ RLS enabled per repo convention (no session GUC; explicit `WHERE tenant_id = :te
 
 ### 4.2 Snapshot reconciliation algorithm
 
-When the server has collected all messages for a snapshot `(sn, seq)` — detected by either (a) the snap window timeout (10 s after the last snap message for this seq) or (b) the next `seq > current_seq` arrives:
+Reconciliation runs **synchronously on receipt of every `t=0` message** — no buffering window, no cross-message stitching. The snap message itself carries the complete EPC set (§3.4); the server treats it as the authoritative current state for this producer at `ts`:
 
 ```
-snap_epcs := { msg.epc for msg in window where msg.t == 0 }
+snap_epcs := { entry.epc for entry in msg.epcs }    -- may be empty
 present_epcs := SELECT epc FROM tag_presence
                 WHERE tenant_id=? AND device_id=? AND status='present'
 
 to_mark_present := snap_epcs
 to_mark_gone    := present_epcs - snap_epcs
 
-UPSERT tag_presence ... status='present', last_seen=ts, last_seq=seq, suspect=FALSE
-  for each epc in to_mark_present
+UPSERT tag_presence ... status='present', last_seen=ts,
+                        last_rssi=entry.rssi, last_antenna=entry.an
+  for each entry in msg.epcs                       -- on conflict by (sn, epc) prefer max(rssi)
 
 UPDATE tag_presence SET status='gone', last_seen=ts
   WHERE (tenant_id, device_id, epc) in to_mark_gone
 
-EMIT signaling.tag_appeared    for each (gone → present) transition
-EMIT signaling.tag_disappeared for each (present → gone) transition
+EMIT signaling.tag_appeared    for each (gone | absent) → present transition
+EMIT signaling.tag_disappeared for each present → gone transition
 ```
+
+Multi-antenna entries for the same EPC inside one `epcs[]` collapse to one `present` row via the upsert's `ON CONFLICT` clause (highest `rssi` wins for `last_rssi` / `last_antenna`; presence itself is binary).
 
 Two new event-bus topics added to `src/tagpulse/events/protocol.py`:
 
@@ -324,7 +355,7 @@ if isinstance(raw, dict) and isinstance(raw.get("t"), int):
 
 Then dispatch on `t`:
 
-- `t == 0` → buffer into snap window for `(sn, seq)`; insert `tag_reads` row; await window close.
+- `t == 0` → run reconciliation per §4.2 immediately; insert one `tag_reads` row per entry in `epcs[]`.
 - `t == 1` → upsert `tag_presence` (`present`, bump `last_seen`); insert `tag_reads` row; emit `tag_appeared` if transition.
 - `t == 2` → update `tag_presence` (`gone`, set `last_seen`); no `tag_reads` row; emit `tag_disappeared`.
 - unknown `t` → reject, DLQ with `reason='unknown_type'`.
@@ -336,11 +367,11 @@ Then dispatch on `t`:
 | `sn` → lookup `devices.id` | `device_id` | `device_id` |
 | `ts` | `timestamp` | `last_seen`, `first_seen` (on insert) |
 | `lat`, `lon` | `location.latitude`, `location.longitude`; `location.source = "reader_gnss"` | — |
-| `an` | `reader_antenna` | `last_antenna` |
-| `epc` | `tag_id` AND `identity.epc_hex` | `epc` |
-| `rssi` | `signal_strength` (cast to float) | `last_rssi` |
+| `an` (envelope or entry) | `reader_antenna` | `last_antenna` |
+| `epc` (envelope or entry) | `tag_id` AND `identity.epc_hex` | `epc` |
+| `rssi` (envelope or entry) | `signal_strength` (cast to float) | `last_rssi` |
 | `cnt`, `tmp`, `hum` | `sensor_data` JSONB: `{"read_count":cnt,"avg_temp_c":tmp,"avg_humidity_pct":hum}` | — |
-| `seq` | (not stored on `tag_reads`) | `last_seq` |
+| `epcs[]` (t=0 only) | one `TagReadCreate` per entry | drives §4.2 reconciliation |
 | `t` | (not stored; determines code path) | (determines `status` column) |
 
 ### 4.5 SN → device_id resolution
@@ -358,30 +389,30 @@ Failure → reject, DLQ with `reason='device_not_found'`. The MQTT JWT's `device
 
 ### 5.1 Steady-state cycle (nothing changed)
 
-Reader cycle at `seq=12345`, 50 EPCs in field, all present last cycle:
+50 EPCs in field, all present last cycle, no new arrivals or departures:
 
 **Wire:** *(zero messages)*
 
-**Server state:** unchanged. `tag_presence` rows for these EPCs retain prior `last_seen` (a few seconds stale, acceptable). `last_seq` for this reader stays at the last *transmitted* cycle, not 12345.
+**Server state:** unchanged. `tag_presence` rows for these EPCs retain prior `last_seen` (a few seconds stale, acceptable). The producer's next periodic snap will refresh `last_seen` on all rows.
 
 ### 5.2 Cycle with 5 new tags and 3 departures
 
-Reader cycle at `seq=12346`, 50 EPCs from prior cycle, 3 gone, 5 newly present (52 in field this cycle):
+50 EPCs from prior cycle, 3 gone, 5 newly present (52 in field this cycle):
 
 **Wire (8 messages):**
 
 ```json
-{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,"epc":"E2801160AAAA","rssi":-48,"cnt":2}
-{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,"epc":"E2801160BBBB","rssi":-52,"cnt":3}
-{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":2,"epc":"E2801160CCCC","rssi":-44,"cnt":4}
-{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":2,"epc":"E2801160DDDD","rssi":-51,"cnt":2}
-{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,"epc":"E2801160EEEE","rssi":-60,"cnt":1}
-{"t":2,"sn":123,"seq":12346,"ts":1716489732001,"epc":"E2801160FFFF"}
-{"t":2,"sn":123,"seq":12346,"ts":1716489732001,"epc":"E2801160GGGG"}
-{"t":2,"sn":123,"seq":12346,"ts":1716489732001,"epc":"E2801160HHHH"}
+{"t":1,"sn":123,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,"epc":"E2801160AAAA","rssi":-48,"cnt":2}
+{"t":1,"sn":123,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,"epc":"E2801160BBBB","rssi":-52,"cnt":3}
+{"t":1,"sn":123,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":2,"epc":"E2801160CCCC","rssi":-44,"cnt":4}
+{"t":1,"sn":123,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":2,"epc":"E2801160DDDD","rssi":-51,"cnt":2}
+{"t":1,"sn":123,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,"epc":"E2801160EEEE","rssi":-60,"cnt":1}
+{"t":2,"sn":123,"ts":1716489732001,"epc":"E2801160FFFF"}
+{"t":2,"sn":123,"ts":1716489732001,"epc":"E2801160GGGG"}
+{"t":2,"sn":123,"ts":1716489732001,"epc":"E2801160HHHH"}
 ```
 
-Total wire: ~720 B for an 8-message cycle (vs. ~9 KB if we re-sent all 52 every cycle).
+Total wire: ~700 B for the 8 messages (vs. ~9 KB if every cycle re-sent all 52 EPCs).
 
 **Server effect:**
 
@@ -391,64 +422,65 @@ Total wire: ~720 B for an 8-message cycle (vs. ~9 KB if we re-sent all 52 every 
 - 5 `signaling.tag_appeared` events emitted.
 - 3 `signaling.tag_disappeared` events emitted.
 
-### 5.3 Periodic snapshot (cycle 12500, 52 EPCs in field)
+### 5.3 Periodic snapshot (52 EPCs in field)
 
-Five minutes have elapsed since the last snapshot. Reader emits 52 `t=0` messages all sharing `seq=12500, ts=...`:
+Five minutes have elapsed since the last snapshot. Producer emits **one** `t=0` message carrying all 52 entries in `epcs[]`:
 
-**Wire:** 52 messages × ~190 B = ~10 KB.
+```json
+{"t":0,"sn":123,"ts":1716489862001,"lat":41.40338,"lon":2.17403,
+ "epcs":[
+   {"an":1,"epc":"E2801160AAAA","rssi":-48,"cnt":3,"tmp":23.45,"hum":41.2},
+   {"an":1,"epc":"E2801160BBBB","rssi":-52,"cnt":2},
+   {"an":2,"epc":"E2801160CCCC","rssi":-44,"cnt":4,"tmp":23.49,"hum":41.0},
+   ... 49 more entries ...
+ ]}
+```
+
+**Wire:** one MQTT message, ~5–6 KB (52 entries × ~100 B/entry inside `epcs[]`).
 
 **Server effect:**
 
-- Server opens snap window on first message.
-- Buffers all 52 EPCs.
-- Window closes when message 53 (next `seq`) arrives OR after 10 s timeout.
-- Reconciliation: compares the 52 EPCs against current `present` rows for this reader. If they match: bump `last_seen`, no events. If a `tag_presence` row was `present` but the EPC is not in the snap: mark `gone`, emit `tag_disappeared`. (This is how dropped `sub` messages from prior cycles get healed.)
-- Also: 52 `tag_reads` rows inserted (for the time-series audit trail).
+- Reconciliation runs immediately on receipt (no buffering, no window).
+- Compares the 52 EPCs against current `present` rows for this `(tenant, device)`. Matches bump `last_seen`, no events. Rows that were `present` but absent from the snap are marked `gone`, fire `signaling.tag_disappeared` \u2014 this is how dropped `sub` messages from prior cycles get healed.
+- 52 `tag_reads` rows inserted (one per entry, for the time-series audit trail).
 
-### 5.4 Empty snapshot (reader field empty)
+### 5.4 Empty snapshot (field empty)
 
 ```json
-{"t":0,"sn":123,"seq":12600,"ts":1716490031000,"lat":41.40338,"lon":2.17403,"an":1,"empty":true}
+{"t":0,"sn":123,"ts":1716490031000,"lat":41.40338,"lon":2.17403,"epcs":[]}
 ```
 
 **Server effect:**
 
-- Snap window opens with empty snap set.
-- Window closes on next `seq` or timeout.
-- Reconciliation: every currently-`present` row for this reader → marked `gone`, `last_seen = ts`. Fan-out of `tag_disappeared` events.
+- Reconciliation runs immediately. `snap_epcs` is empty.
+- Every currently-`present` row for this `(tenant, device)` is marked `gone`, `last_seen = ts`. Fan-out of `tag_disappeared` events.
 
-### 5.5 Reader reboot
+### 5.5 Producer reboot
 
-Reader power-cycles at cycle 13000. After boot, `seq` resets to 0 (or is restored from flash). MQTT session reconnects. **First** messages after reconnect are a full snapshot:
+Producer power-cycles. MQTT session reconnects. Per \u00a73.3 trigger 3, the **first** message of the new session is a snap:
 
 ```json
-{"t":0,"sn":123,"seq":0,"ts":1716490200000,"lat":41.40338,"lon":2.17403,"an":1,"epc":"E2801160AAAA","rssi":-48,"cnt":1}
-... 49 more ...
+{"t":0,"sn":123,"ts":1716490200000,"lat":41.40338,"lon":2.17403,
+ "epcs":[
+   {"an":1,"epc":"E2801160AAAA","rssi":-48,"cnt":1},
+   ... 49 more ...
+ ]}
 ```
 
 **Server effect:**
 
-- `seq=0` with prior `last_seq=12999` → reboot detected → mark presence for `sn` as `suspect`.
-- Snap window opens, collects EPCs.
-- Reconciliation: anything `present` not in snap → `gone`. Anything in snap not `present` → insert `present`. Suspect flag cleared.
+- Reboot is opaque on the wire (\u00a73.6) \u2014 server has no `last_seq` to compare. None needed.
+- Reconciliation runs immediately on the snap: anything `present` not in `epcs[]` \u2192 `gone`. Anything in `epcs[]` not `present` \u2192 insert `present`.
+- Subsequent `t=1` / `t=2` deltas from the reborn producer are applied normally.
 
 ### 5.6 Subscriber outage and recovery
 
-Subscriber pod restarts during reader cycle 13050. Mosquitto buffers messages (QoS 1, `clean_session=false`). Subscriber reconnects, broker replays buffered messages. Some messages from cycles 13050–13055 are received out of order. Cycle 13100 is a scheduled snap.
+Subscriber pod restarts. Mosquitto buffers messages for the duration (QoS 1, `clean_session=false`, \u00a77). Subscriber reconnects, broker replays buffered messages.
 
 **Server effect:**
 
-- Replayed messages process normally. Per-cycle grouping by `seq` makes order irrelevant within a cycle.
-- If any `t=1` / `t=2` arrives with `seq > last_seq + 1`: discard, mark suspect.
-- Snap at 13100 reconciles whatever drift occurred. Self-heal.
-
-### 5.7 Lost `sub` (the failure snap exists to fix)
-
-Reader cycle 13200: EPC `E2801160AAAA` leaves the field. Reader sends `t=2` for it. Message is lost (QoS 1 should prevent this but assume firmware bug or session timeout). Server never sees the sub. `tag_presence` shows EPC as still `present`.
-
-For the next 5 minutes (or 100 cycles), the server is wrong — dashboards show the EPC at this reader when it isn't there.
-
-Cycle 13300: snapshot. EPC is not in snap set. Reconciliation marks it `gone`, emits `tag_disappeared`. **Server self-heals.** Maximum incorrect-state window: snapshot cadence (5 min default).
+- Replayed messages process individually. Each is self-contained (\u00a73.2) so out-of-order arrival is harmless: an `add` for an EPC that's already `present` is a no-op upsert; a `sub` for an unknown EPC is logged per \u00a73.5.
+- If any `t=1` / `t=2` was lost entirely (e.g., broker buffer overflow at QoS 1's edge), the producer's next periodic snap (within snap cadence, default 5 min) reconciles. Self-heal.\n\n### 5.7 Lost `sub` (the failure snap exists to fix)\n\nProducer publishes a `t=2` for `E2801160AAAA`. Message is lost (QoS 1 should prevent this but assume a transient session-loss edge case). Server never sees the sub. `tag_presence` shows the EPC as still `present`.\n\nFor the next 5 minutes (or 100 cycles), the server is wrong \u2014 dashboards show the EPC at this reader when it isn't there.\n\nNext scheduled snap arrives. The EPC is not in `epcs[]`. Reconciliation marks it `gone`, emits `tag_disappeared`. **Server self-heals.** Maximum incorrect-state window: snapshot cadence (5 min default).
 
 ---
 
@@ -462,14 +494,13 @@ Cycle 13300: snapshot. EPC is not in snap set. Reconciliation marks it `gone`, e
 | `sn` not registered for tenant | Reject | Yes | `...{reason="device_not_found"}` |
 | JWT `device_id` ≠ resolved `device_id` from `sn` | Reject + audit log | Yes | `...{reason="sn_jwt_mismatch"}` |
 | `ts` drift > 5 min from server clock | Reject | Yes | `...{reason="clock_skew"}` |
-| Missing `lat` / `lon` / `an` on `t=0` / `t=1` | Reject | Yes | `...{reason="missing_required_field"}` |
-| `empty:true` with any `epc` / `rssi` / `cnt` field present | Reject | Yes | `...{reason="empty_with_payload"}` |
-| `empty:true` on `t=1` or `t=2` (only valid on `t=0`) | Reject | Yes | `...{reason="empty_wrong_type"}` |
+| Missing `lat` / `lon` on `t=0` / `t=1` (omitted key, not `null`) | Reject | Yes | `...{reason="missing_required_field"}` |
+| `epcs` field present on `t=1` / `t=2` (forbidden) | Reject | Yes | `...{reason="epcs_wrong_type"}` |
+| `epcs` field missing on `t=0` (must be at least `[]`) | Reject | Yes | `...{reason="missing_required_field"}` |
+| `epcs[]` entry missing `an` / `epc` / `rssi` / `cnt` | Reject whole message | Yes | `...{reason="invalid_snap_entry"}` |
+| `epcs[]` length above soft cap (default 5000) | Process + log warning | No | `tagpulse_mqtt_wm_snap_large_total{sn}` |
 | Explicit `null` on optional sensor field (`tmp`, `hum`) | Reject | Yes | `...{reason="explicit_null"}` |
 | `t=2` for never-seen EPC | Log debug + counter only; do not reject | No | `tagpulse_mqtt_wm_sub_no_presence_total` |
-| `seq` gap on `t=1` / `t=2` | Discard message; mark suspect | No | `tagpulse_mqtt_wm_gap_total{sn}` |
-| `seq` rollback / reset to 0 | Mark suspect; wait for snap | No | `tagpulse_mqtt_wm_reboot_total{sn}` |
-| Snap window timeout (no closing message in 10 s) | Process partial snap with what was received | No | `tagpulse_mqtt_wm_snap_timeout_total{sn}` |
 
 All rejection paths route through the existing `_record_rejection` + `_persist_mqtt_drop` infrastructure (Sprint 28 C3). New counters added to `src/tagpulse/core/otel_metrics.py`.
 
@@ -486,7 +517,7 @@ All rejection paths route through the existing `_record_rejection` + `_persist_m
 | **Keep-alive** | 60 s | Reasonable for cellular; broker drops dead sessions within ~90 s. |
 | **TLS** | Required (`mqtts://` on 8883) | Per Sprint 17b cert scaffolding. Reader uses `client.tls_set(ca_certs=tls_ca, cert_reqs=ssl.CERT_REQUIRED)`. mTLS rollout per Sprint 17c. |
 | **Payload encoding** | UTF-8 JSON, no BOM | Whitespace SHOULD be omitted. |
-| **Recommended max payload** | 1 KB per message | Broker hard limit is 256 KB; we don't expect anywhere near it. |
+| **Recommended max payload** | ~10 KB per message (snap-driven); 1 KB typical for t=1/t=2 | Broker hard limit is 256 KB. A snap with ~100 entries × ~100 B = ~10 KB, well within limits. Soft-warn (no reject) at 5000 entries per §6. |
 
 ---
 
@@ -502,10 +533,8 @@ These are decisions about the v2 wire bytes themselves. Co-designed with WM as p
 |---|---|---|---|
 | Q1 | `sn` type — integer or string? | **Integer** (uint32). Producers stamp a numeric reader ID. Strings remain reserved in §2.2 for future deployments with alphanumeric serials but are not used in v2.0. | TagPulse + WM, 2026-05-23 |
 | Q6 | `tmp` / `hum` aggregation window | `Σ(per-read value) / cnt` per cycle — same window as `rssi`. Recorded in §2.2. | WM, 2026-05-23 |
-| Q9 | Multi-antenna emission | **One message per (EPC, antenna) pair per cycle.** If EPC X is read on antennas 1 and 2 in the same cycle, the producer emits two messages with the same `seq` / `ts`, different `an`, and each `rssi` reflects that antenna's reads. Rationale: location triangulation downstream needs per-antenna RSSI, and aggregating across antennas would lose that signal. Server-side reconciliation (§4.2) keys on `(sn, epc)` not `(sn, an, epc)` — duplicate per-antenna messages within a snap are merged. | TagPulse + WM, 2026-05-23 |
-| Q10 | `seq` wrap behavior | Server treats `2^32 − 1 → 0` as reboot per §3.6. At 1 cycle/s that's a ~136-year horizon — practical only across reader replacements. Documented; no producer action needed. | TagPulse, 2026-05-23 |
+| Q9 | Multi-antenna emission | **One entry per (EPC, antenna) pair per cycle.** If EPC X is read on antennas 1 and 2 in the same cycle, the producer emits two `epcs[]` entries (on t=0) or two `t=1` messages with the same `ts`, different `an`, and each `rssi` reflects that antenna's reads. Rationale: location triangulation downstream needs per-antenna RSSI, and aggregating across antennas would lose that signal. Server-side reconciliation (§4.2) keys on `(sn, epc)` not `(sn, an, epc)` — multi-entry duplicates within a snap are merged. | TagPulse + WM, 2026-05-23 |
 | Q11 | Sensor-error vs. no-sensor on the wire | **Omit `tmp` / `hum` in both cases.** The v2 wire is intentionally lossy here — it carries the value when the producer has one to emit and stays silent otherwise. Diagnostic detail (per-EPC sensor-read failure rate, capability inference) is producer-local concern, exposed via producer-side metrics, not on the cellular wire. Rationale: passive RFID sensor tags fail reads for many physics-driven reasons (collision, attenuation, tag-side timeout) that aren't binary "sensor broken" signals — overloading the wire with a `sensor_err` enum would invite false-positive ops noise. Revisit in v2.1 if dashboards need it; for now, the producer keeps a local rolling counter. | TagPulse, 2026-05-23 |
-| Q12 | Snap terminator (`{"end":true}`) | **Not in v2.0.** Server keeps the snap-window close on next-seq OR 10 s timeout (§9.2 #2). Reconsider in v2.1 only if production telemetry shows the timeout path causing user-visible flapping. The cost (one extra ~50 B message per snap) isn't justified pre-evidence; the failure modes documented in §9.2 #2 are tolerable for v2.0. | TagPulse, 2026-05-23 |
 
 ### 8.2 Resolved — producer-side responsibilities
 
@@ -513,21 +542,30 @@ These are concerns about producer state and behavior, not about wire bytes. Unde
 
 | # | Question | Resolution | Authority |
 |---|---|---|---|
-| Q2 | `seq` persistence across reboot | Producer-defined. Both flash-backed (monotonic) and reset-to-0 are acceptable to the server (§3.6) — wrap and reset are both treated as reboot, with a snap as the first message. Pi-gateway reference impl: SQLite-backed, monotonic. | TagPulse, 2026-05-23 |
 | Q3 | Snapshot cadence defaults | **300 s OR 100 cycles, whichever comes first**, as v2.0 default for both Shape 1 and Shape 2 producers. Per-device configurable via producer config (Pi-gateway: `clients/pi/tagpulse_edge/config.py`; reader-direct: vendor config). Server-side config push deferred to v2.1. | TagPulse, 2026-05-23 |
 | Q4 | Snap on reconnect | **Required of all producers.** Pi-gateway reference impl emits a snap as the first message of every new MQTT session (already in `transport.py`). Reader-direct producers MUST do the same — if a reader-direct SKU can't, it falls back to Profile B (snap-every-cycle, §3.8), which makes reconnect-snap automatic. No "reconnect without snap" path is permitted in v2. | TagPulse, 2026-05-23 |
-| Q5 | Empty-field snap (`empty:true`) | **Required of all producers.** Pi-gateway reference impl detects empty cycle from input stream and emits the conditional `empty:true` snap. Reader-direct producers MUST do the same. Without it, the server cannot distinguish "field empty" from "producer dead" (§3.4). | TagPulse, 2026-05-23 |
+| Q5 | Empty-field snap | **Required of all producers.** Pi-gateway reference impl detects empty cycle from input stream and emits the `"epcs":[]` snap. Reader-direct producers MUST do the same. Without it, the server cannot distinguish "field empty" from "producer dead" (§3.4). | TagPulse, 2026-05-23 |
 | Q7 | Clock source | Producer MUST emit `ts` within ±5 min of true UTC (§6 `clock_skew` rejection threshold). Pi-gateway: NTP via `systemd-timesyncd` (default on Raspberry Pi OS); offline-buffered messages use the cycle's observed time at capture, not at later send. Reader-direct: NTP-synced or GNSS-derived. Producers that cannot maintain ±5 min should not be deployed against v2. | TagPulse, 2026-05-23 |
 | Q8 | Rate limit per producer | Producer-side throttle: ≤100 msgs/s sustained, ≤500/s burst per producer. Pi-gateway enforces via batched `transport.py` flush. Reader-direct producers self-limit. Mosquitto per-client cap configured to match. Above-burst messages are buffered (Pi-gateway: SQLite ring; reader-direct: vendor decision). | TagPulse, 2026-05-23 |
 
-### 8.3 Open — WM reader-to-edge LAN-side contract
+### 8.3 Removed in the v2.0 KISS pass
+
+The following questions appeared in earlier drafts and were resolved by **deleting the underlying wire feature** rather than answering them. Recorded here so historic references in commits, ADRs, and the conformance test suite remain decipherable.
+
+| # | Original question | Resolution |
+|---|---|---|
+| Q2 | `seq` persistence across reboot | **Moot.** `seq` removed from the wire (§3.1). Producer reboot is opaque to the server; the snap-on-reconnect rule (§3.3 trigger 3) is what brings the server back into sync. |
+| Q10 | `seq` wrap behavior at `2^32 − 1 → 0` | **Moot.** No counter to wrap. |
+| Q12 | Snap terminator (`{"end":true}`) | **Moot.** A snap is one MQTT message carrying the full `epcs[]` array (§3.4) — there is nothing to terminate. The original concern (snap-window close ambiguity) does not exist when there is no snap window. |
+
+### 8.4 Open — WM reader-to-edge LAN-side contract
 
 These questions are about WM's reader-to-Pi LAN-side output (per-read CSV, per-antenna headers — see the sample at `https://github.com/weimin-peng/hello-world/blob/main/data.csv`). They are out of scope for v2 (which is the MQTT cellular-side contract) and belong in a companion spec.
 
 - **Q-LAN-1** — Transport: serial / USB-CDC / TCP / file watch / UDP? Per-SKU or uniform?
 - **Q-LAN-2** — CSV schema: what does the `--` separator between blocks delimit (cycle boundary, antenna boundary, both)? Is there a per-row timestamp, or is timing implicit in arrival order?
 - **Q-LAN-3** — Sensor read failure encoding: when a sensor read fails for an inventoried tag, does WM (a) omit the row entirely, (b) emit the row with empty `temp` / `humidity` cells, or (c) emit a sentinel value (`-999`, etc.)? The Pi-gateway needs this to correctly apply the v2 §2.2 omit-vs-present rule.
-- **Q-LAN-4** — Empty-cycle signaling: how does the reader indicate "this cycle saw zero EPCs" on the LAN stream? (Needed for Pi-gateway to emit `empty:true` per §3.4.)
+- **Q-LAN-4** — Empty-cycle signaling: how does the reader indicate "this cycle saw zero EPCs" on the LAN stream? (Needed for Pi-gateway to emit the `"epcs":[]` snap per §3.4.)
 - **Q-LAN-5** — Per-SKU capability inventory: which antenna count, sensor types, RSSI dynamic range per WM SKU? (Pi-gateway uses this to validate input and to know what fields can ever appear.)
 - **Q-LAN-6** — Reader-side reset / reboot signaling: is there an explicit marker on the LAN stream, or does the Pi infer from gaps / sequence discontinuities?
 - **Q-LAN-7** — Header typo: the sample CSV header reads `issi` — confirm this is RSSI (and ideally fix to `rssi` in firmware).
@@ -554,32 +592,16 @@ Each entry below uses the same structure so a developer touching the relevant co
 
 #### 1. Single subscriber replica assumption
 
-- **Scenario.** Snap-window buffering for `(sn, seq)` lives in `MQTTSubscriber` process memory. If two subscriber replicas are simultaneously subscribed to the broker, MQTT shared-subscription semantics route messages across both replicas round-robin. Messages for the same snap end up split across two heap buffers, neither of which sees the complete EPC set.
-- **Symptoms.** Each replica's reconciliation runs against a *subset* of the real snap → both fire spurious `signaling.tag_disappeared` for EPCs the other replica buffered. `tagpulse_mqtt_wm_snap_timeout_total` spikes (windows never close cleanly because the "missing" messages went to the other pod). Dashboards flap. `tag_presence` rows oscillate `present` → `gone` → `present` on the snap cadence.
+- **Scenario.** Reconciliation reads-then-writes against `tag_presence` per-snap (§4.2). With two subscriber replicas simultaneously subscribed to the broker, MQTT shared-subscription semantics round-robin messages across both. Two snaps from different readers process in parallel against the same database — fine. But two **deltas** (`t=1` / `t=2`) for the same EPC arriving simultaneously at different replicas can race on the `tag_presence` upsert, and two **snaps** from the same reader arriving in rapid succession (e.g., reconnect immediately followed by periodic snap) can race their reconciliations.
+- **Symptoms.** Lost-update on `last_rssi` / `last_antenna` (winner is unpredictable). Spurious extra `signaling.tag_appeared` / `tag_disappeared` events if both replicas observe a transition between read and write. Generally low-impact because the next snap reasserts truth, but downstream rules that key on event order may misfire.
 - **Mitigation today.** Pinned to one replica.
   - **K8s framing (forward-compatible).** Run the `MQTTSubscriber` Deployment with `replicas: 1` and `strategy.type: Recreate`.
-  - **Current implementation (Azure Container Apps).** The worker is an ACA container app, not a K8s Deployment — the data model is identical but ACA layers in three deployment-specific caveats:
-    - **Replica pinning is enforced in Bicep.** [deploy/azure/bicep/workload.bicep](../../deploy/azure/bicep/workload.bicep) sets `minReplicas: 1, maxReplicas: 1` on the worker container app (the API app next to it is `1..3` because it's stateless — *do not copy that pattern to the worker*). A code comment in the bicep should call out *why* the worker can't scale horizontally, so a future operator doesn't "fix" the cap.
-    - **ACA rolling-revision deploys briefly run two replicas.** ACA's revision model is rolling, not `Recreate`. During every deploy there's a ~30–60 s window where both old and new revisions are active, both subscribed to the broker, both buffering snap windows independently — the exact failure mode this concern warns about, just transient. Protocol self-heal recovers within one snap cadence (5 min default); operators should expect a short burst of `tag_disappeared` / `tag_appeared` flapping on every deploy. Runbook addendum. Optional hardening: `az containerapp revision deactivate` the old revision before activating the new one, accepting ~15–30 s of ingest pause (Mosquitto QoS 1 + `clean_session=false` buffer through it per §7).
-    - **Scale-to-zero is dangerous.** Never let the worker's `minReplicas` drift to 0 — cold-start drops all in-flight snap windows and races with broker session restore. Bicep enforces `minReplicas: 1` today; treat as load-bearing.
-- **Long-term.** When per-broker volume justifies sharding:
-  - **On ACA.** No stable replica IDs / ordinals (unlike a K8s StatefulSet) → "sticky shared subscription by replica ID" is *not available*. Only viable path: move snap-window state to Redis (new Azure Cache for Redis dependency — not deployed today). Reconciler becomes stateless; any replica can close any window.
-  - **On AKS (if we ever migrate).** StatefulSet + sticky shared subscription by ordinal becomes available as a lighter alternative to Redis.
+  - **Current implementation (Azure Container Apps).** Worker pinned to `minReplicas: 1, maxReplicas: 1` in [deploy/azure/bicep/workload.bicep](../../deploy/azure/bicep/workload.bicep) (the API app next to it is `1..3` because it's stateless — *do not copy that pattern to the worker*).
+    - **ACA rolling-revision deploys briefly run two replicas.** ACA's revision model is rolling, not `Recreate`. During every deploy there's a ~30–60 s window where both old and new revisions are active, both subscribed to the broker, both processing messages independently. Self-heal recovers within one snap cadence (5 min default); operators should expect a short burst of `tag_disappeared` / `tag_appeared` flapping on every deploy.
+    - **Scale-to-zero is dangerous.** Never let the worker's `minReplicas` drift to 0 — cold-start drops broker subscription, missing every message published during the gap until reconnect-and-snap. Bicep enforces `minReplicas: 1` today; treat as load-bearing.
+- **Long-term.** When per-broker volume justifies sharding: shared subscription with one consumer per shard, each shard owning a `(tenant, device)` partition so the upsert never races. On ACA, no stable replica ordinals — would require an external coordinator (Redis) or migrating the worker to AKS.
 
-#### 2. Snap window timeout vs. snapshot completeness
-
-- **Scenario.** Server doesn't know how many messages a snap will contain (no count on the wire). It closes the window on whichever fires first: (a) next-seq arrives, or (b) 10 s timeout (§3.6). The 10 s is a guess. Both failure modes are real and asymmetric.
-- **Symptoms.**
-  - **Timeout too short** — slow link, snap partially delivered when timeout fires. Reconciliation runs with subset → marks late-arriving EPCs as `gone` → stragglers arrive seconds later and re-mark them `present`. **Flapping every snap on slow readers.** Watch for: `tag_disappeared` immediately followed by `tag_appeared` for the same EPC within < 30 s, repeating on the snap cadence. Downstream rules fire twice, false alerts go out.
-  - **Timeout too long** — snap completed in 200 ms, reader then quiet for 4 min, window held open. Reconciliation deferred → dashboards show stale `present` rows for that long. Worker heap grows unbounded if a reader misbehaves and never emits next-seq. Crash blast radius widens (more lost in-flight state per deploy — interacts with #4).
-- **Asymmetry.** Flapping is recurring and user-visible; stale state is gradual and bounded. Bias is "err toward longer" for production tuning, but capped by deploy-loss surface area from #4.
-- **Mitigation today.** Hardcoded 10 s. New OTel counter `tagpulse_mqtt_wm_snap_timeout_total{sn}` will surface which readers are hitting timeout vs. clean next-seq close — that's the tuning signal post-pilot.
-- **Long-term.** Three options, ranked:
-  1. **Snap terminator message** (preferred, see §8 Q12). Reader emits a final `{"t":0,"sn":...,"seq":...,"end":true}` after the last EPC. Server closes window on receipt. Cost: 1 extra message (~50 B) per snap. Falls back to timeout if terminator is lost. Requires firmware support — added as an open question to WM.
-  2. **Per-reader adaptive timeout.** Track P99 inter-snap-message gap per reader, set timeout = `max(10s, 3 × P99)`. Adjusts automatically; cost is per-reader stats in memory.
-  3. **Configurable per-reader override** in `devices.configuration` JSONB. Default 10 s, operators tune for known-slow readers. Lowest implementation cost.
-
-#### 3. `tag_presence` table unbounded growth
+#### 2. `tag_presence` table unbounded growth
 
 - **Scenario.** Every EPC ever seen at a reader gets a row that stays forever — `gone` rows never delete. A tenant with 1M unique EPCs over a year has 1M `tag_presence` rows even if only 200 are present at any instant.
 - **Symptoms.** Slow `tag_presence` queries over time (indexes still help, but page cache effectiveness degrades). Bloated logical backups. The `idx_tag_presence_tenant_epc … WHERE status='present'` partial index keeps hot-path queries fast, but `SELECT … WHERE tenant_id=? AND epc=?` (no status filter) full-table scans escalate. Migration costs rise.
@@ -589,28 +611,21 @@ Each entry below uses the same structure so a developer touching the relevant co
   2. **Compaction to cold table.** Move aged `gone` rows to `tag_presence_history` summary table (one row per `(tenant, device, epc)` lifetime with `seen_count`, `first_seen`, `last_seen`). Preserves history at lower cost. More implementation work.
   - Backlog entry against ADR 026.
 
-#### 4. Per-reader `(sn, seq)` state lost on subscriber restart
-
-- **Scenario.** Server tracks `last_seq` per reader in process memory (not persisted). Worker restart (deploy, crash, ACA revision swap) → state is empty → first `t=1` / `t=2` from any reader after restart is `seq > 0` with `last_seq = None`, looks like a gap.
-- **Symptoms.** Burst of "gap" handling on every deploy: messages discarded, `tagpulse_mqtt_wm_gap_total{sn}` spikes per reader, presence marked `suspect` for every active reader until each one's next snap arrives. Snap cadence is 5 min default → up to 5 min of stale/suspect data after restart, plus the in-flight snap window losses from #1/#2.
-- **Mitigation today.** Accepted and documented. Snap mechanism self-heals within one snap cadence. The deploy-time burst is expected and operators are trained to ignore short `gap_total` spikes immediately following deploys (runbook addendum).
-- **Long-term.** Persist `last_seq` per `(tenant, device)` either in Redis (with snap window in #1 long-term) or as a column on `devices.runtime_state` JSONB. Updated on every message — write amplification is the tradeoff. Probably comes bundled with the Redis migration when #1 forces it.
-
-#### 5. Two-table writes are not cross-pool transactional
+#### 3. Two-table writes are not cross-pool transactional
 
 - **Scenario.** A `t=1` (add) writes to both `tag_reads` (hypertable) and `tag_presence` (new table). Today both run inside the same `AsyncSession` → one DB transaction → atomic. **But if `tag_reads` is ever migrated to a separate DB pool** (e.g., Sprint 13b multi-tier with TimescaleDB on a dedicated cluster), the two writes split across pools and lose atomicity. A crash between them leaves `tag_reads` populated and `tag_presence` stale, or vice versa.
 - **Symptoms (only if we go multi-tier).** Dashboard tag count disagrees with raw audit query (`SELECT count(distinct epc) FROM tag_reads WHERE …` vs. `SELECT count(*) FROM tag_presence WHERE status='present' AND …`). Inconsistency persists until next snap reconciles `tag_presence` (5 min default). `tag_reads` audit trail stays trustworthy throughout.
 - **Mitigation today.** Single pool — non-issue. Both writes ride one `AsyncSession.commit()`.
 - **Long-term.** If multi-tier comes: either (a) use the outbox pattern (write a single row to `tag_reads`-pool outbox table in the same transaction, async dispatcher applies the `tag_presence` update), or (b) accept the inconsistency window because snap reconciliation bounds it anyway. (b) is simpler and matches the spec's general "self-heal beats consensus" philosophy.
 
-#### 6. Clock-skew rejection vs. mobile readers
+#### 4. Clock-skew rejection vs. mobile readers
 
 - **Scenario.** §6 rejects messages where `ts` drifts > 5 min from server clock. Truck-mounted / battery / intermittent-GNSS readers can naturally drift minutes between fixes. A reader that comes online after a clock jump uploads a backlog of events all stamped with stale `ts` → server rejects every one of them → entire backlog dropped + DLQ.
 - **Symptoms.** `tagpulse_mqtt_wm_rejections_total{reason="clock_skew"}` spikes for one `sn`. The reader appears to be "silent" from dashboard perspective even though it's actively publishing. DLQ fills with that reader's payload. Operator sees ingest rate drop with no obvious cause.
 - **Mitigation today.** Fixed 5-min threshold. Acceptable for fixed-installation readers (dock doors, gates). **Hostile to mobile readers** — flag clearly in deployment docs that this default presumes infrastructure-grade clocks.
 - **Long-term.** Per-reader threshold in `devices.configuration` JSONB (`{"mqtt": {"clock_skew_seconds": 900}}`). Default 5 min. Ratchet down to 60 s for fixed installations once we have field data; raise to 15+ min for mobile fleets. Lookup happens once per device on subscriber-side device cache load — no hot-path penalty.
 
-#### 7. `signaling.tag_disappeared` event-bus volume
+#### 5. `signaling.tag_disappeared` event-bus volume
 
 - **Scenario.** A dock-door reader watching constant pallet movement sees dozens of EPCs appear and disappear per second. Each transition fans out a `signaling.tag_appeared` / `tag_disappeared` event. At 50 churn events/s sustained, that's 4.3M events/day from one reader. Per ADR 010 (internal event bus), the bus is in-process async — back-pressure on slow consumers stalls publish.
 - **Symptoms.** Subscriber latency rises (event publish blocks message handling). `tagpulse_event_bus_lag_seconds` grows on the `signaling.*` consumers. Downstream rule processors (Sprint 47+ on-disappearance rules) fall further behind real-time. In the limit: subscriber message buffer fills, broker backs off, ingest stalls system-wide for one noisy reader.
@@ -621,7 +636,7 @@ Each entry below uses the same structure so a developer touching the relevant co
   3. **Move event bus to durable queue** (Service Bus / Event Hubs). Decouples producer from consumer entirely. Largest scope change; defer until volume justifies it.
   - Flagged for ADR 026. **Mandatory** decision before high-churn readers go to production.
 
-#### 8. EPC simultaneously `present` at two readers
+#### 6. EPC simultaneously `present` at two readers
 
 - **Scenario.** EPC X is at reader A. Reader A loses power before its next snap. EPC X is physically moved into reader B's range. Reader B emits `t=1` for EPC X → `tag_presence` now has *two* `present` rows for EPC X, one per reader. Reader A is offline so its `tag_presence` never gets reconciled — could stay stale for hours / days / forever (until reader A returns or is decommissioned).
 - **Symptoms.** "Where is EPC X?" query returns two readers. Location-based rules (e.g., "alert if pallet leaves zone") behave nondeterministically depending on which reader's row the rule reads. Dashboard heatmaps double-count.
@@ -642,36 +657,34 @@ Each entry below uses the same structure so a developer touching the relevant co
 
 - **Phase A — Spec finalization.** Resolve §8 open questions with WM. Land ADR 025 (wire format) + ADR 026 (server-side presence model). Promote this document out of DRAFT.
 - **Phase B — Schema.** Alembic migration `042_tag_presence.py`. Pydantic models for v2 messages in new `src/tagpulse/ingestion/wm_wire_format.py`.
-- **Phase C — Subscriber.** v2 branch in `_handle_tag_read`. New module `src/tagpulse/ingestion/presence_reconciler.py` for snap-window buffering + reconciliation. Two new event-bus topics.
-- **Phase D — Tests.** Conformance + integration coverage for all 7 scenarios in §5; explicit lost-`sub` recovery test; snap-window timeout test; reboot test.
-- **Phase E — Observability.** New OTel counters per §6. Dashboard tile for presence-state size, snap cadence, gap rate.
+- **Phase C — Subscriber.** v2 branch in `_handle_tag_read`. New module `src/tagpulse/ingestion/presence_reconciler.py` for synchronous reconciliation on snap receipt (no window state). Two new event-bus topics.
+- **Phase D — Tests.** Conformance + integration coverage for all 7 scenarios in §5; explicit lost-`sub` recovery test; large-snap (~1000 entries) test; reboot test.
+- **Phase E — Observability.** New OTel counters per §6. Dashboard tile for presence-state size, snap cadence, snap entry-count distribution.
 - **Phase F — Docs.** Update [docs/guides/device-developer-guide.md](../guides/device-developer-guide.md) with v2 alongside v1. CHANGELOG entry. Operator runbook addendum for the new "what's at this reader now" presence-table query.
 
 ---
 
 ## 11. Review checklist (pre-promotion out of DRAFT)
 
-**§8 protocol decisions** (all RESOLVED 2026-05-23 under Shape C producer architecture, §1.5):
+**§8 protocol decisions** (all RESOLVED 2026-05-23 under Shape C producer architecture, §1.5; KISS pass dropped Q2/Q10/Q12, see §8.3):
 
 - [x] §8 Q1 `sn` type — integer
-- [x] §8 Q2 `seq` persistence — producer-defined
 - [x] §8 Q3 snap cadence — 300 s / 100 cycles default
 - [x] §8 Q4 snap on reconnect — required of all producers (Pi-gateway reference impl handles it)
-- [x] §8 Q5 empty-field snap — required of all producers
+- [x] §8 Q5 empty-field snap — required of all producers (`"epcs":[]`)
 - [x] §8 Q6 `tmp` / `hum` aggregation — total/cnt per cycle (WM, 2026-05-23)
 - [x] §8 Q7 clock source — producer must hold ±5 min; Pi-gateway via NTP
 - [x] §8 Q8 rate limit — producer-side throttle, ≤100/s sustained
-- [x] §8 Q9 multi-antenna — one message per (EPC, antenna) pair (WM, 2026-05-23)
-- [x] §8 Q10 wrap behavior — treated as reboot, documented
+- [x] §8 Q9 multi-antenna — one entry per (EPC, antenna) pair (WM, 2026-05-23)
 - [x] §8 Q11 sensor-error encoding — wire is lossy by design; diagnostics stay producer-local
-- [x] §8 Q12 snap terminator — deferred to v2.1 pending production telemetry
+- [x] §8.3 KISS-pass removals (Q2 / Q10 / Q12) documented
 
 **§9.2 internal concerns:**
 
 - [ ] §9.2 #1 single-subscriber-replica trade-off accepted
-- [ ] §9.2 #2 snap-timeout failure modes accepted; tuning plan post-pilot agreed
-- [ ] §9.2 #3 `tag_presence` growth policy accepted as backlog
-- [ ] §9.2 #7 event-bus volume mitigation path agreed before high-churn rollout
+- [ ] §9.2 #2 `tag_presence` growth policy accepted as backlog
+- [ ] §9.2 #3 two-table-write race accepted; mitigation path documented
+- [ ] §9.2 #5 event-bus volume mitigation path agreed before high-churn rollout
 
 **Companion / follow-up:**
 
