@@ -323,9 +323,7 @@ class WmV2Producer:
             return True
         if self.snap_period_s >= 0 and (ts_ms - self._last_snap_ts_ms) >= self.snap_period_s * 1000:
             return True
-        if self.snap_cycle_count >= 0 and self._cycles_since_snap >= self.snap_cycle_count:
-            return True
-        return False
+        return self.snap_cycle_count >= 0 and self._cycles_since_snap >= self.snap_cycle_count
 
     # ------------------------------------------------------------------
     # Snap emit (t=0)
@@ -374,7 +372,7 @@ class WmV2Producer:
         add_keys = sorted(current.keys() - self._last_cycle.keys())
         # Subs: EPCs that were in last_cycle but are not in current_cycle
         # (under ANY antenna). One t=2 per departing EPC.
-        last_epcs = {epc for (_an, epc) in self._last_cycle.keys()}
+        last_epcs = {epc for (_an, epc) in self._last_cycle}
         current_epcs = {epc for (_an, epc) in current}
         sub_epcs = sorted(last_epcs - current_epcs)
 
