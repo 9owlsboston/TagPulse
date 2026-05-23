@@ -1141,6 +1141,51 @@ ADR 019 (Sprint 34) introduced `category_id` as the structured replacement for t
 
 ---
 
+## Sprint 46 — Edge wire format v2: backend ingest + presence model (proposed)
+
+**Goal.** Land the server-side half of the v2 wire-format contract — Pydantic models, Alembic migration for `tag_presence`, MQTTSubscriber v2 branch, synchronous presence reconciler, two new event-bus topics, observability counters. Producer side (Pi-gateway reference impl, WM reader-direct) ships in Sprint 47.
+
+**Specs / ADRs (all proposed, all on `docs/edge-wire-format-v2-draft` branch).**
+- [docs/design/edge-wire-format-v2.md](design/edge-wire-format-v2.md) — wire-format and server-side model spec (KISS pass shipped commit `155f1e5`).
+- [docs/adr/025-edge-wire-format-v2.md](adr/025-edge-wire-format-v2.md) — ratifies §3 wire contract.
+- [docs/adr/026-presence-model.md](adr/026-presence-model.md) — ratifies §4 `tag_presence` + synchronous reconciler.
+
+**Phases** (mirrors spec §10):
+- **Phase A — Spec finalization** *(this PR — `docs/edge-wire-format-v2-draft` branch).* Resolve §8 open questions (DONE — all marked resolved 2026-05-23 under Shape C producer architecture). Land ADR 025 + ADR 026 (DONE — commit `58bbcc8`). Promote spec out of DRAFT. Merge branch to `main`.
+- **Phase B — Schema.** New Alembic migration `042_tag_presence.py` per ADR 026 §3.1 (regular table, no hypertable, no `last_seq`/`suspect` columns; PK `(tenant_id, device_id, epc)`; partial index `WHERE status='present'`). Pydantic models for v2 messages in new `src/tagpulse/ingestion/wm_wire_format.py` (`SnapMessage` / `AppearedMessage` / `DisappearedMessage`, discriminated union on `t`).
+- **Phase C — Subscriber.** v2 detection branch in `_handle_tag_read` (recognize by integer `t` field per spec §1.4 / §9.1 #4). New module `src/tagpulse/ingestion/presence_reconciler.py` — synchronous reconciliation on snap receipt, no window state. Two new event-bus topics added to `src/tagpulse/events/protocol.py`: `Topic.SIGNALING_TAG_APPEARED`, `Topic.SIGNALING_TAG_DISAPPEARED`. v1 path stays untouched (coexistence per spec §9.1 #4).
+- **Phase D — Tests.** Conformance suite for all 7 scenarios in spec §5; explicit lost-`t=2` recovery test (next snap reconciles); large-snap test (~1000 entries); reader-reboot test (snap-on-reconnect); v1/v2 coexistence test (both shapes on same topic, correctly dispatched).
+- **Phase E — Observability.** New OTel counters per spec §6: `tagpulse_mqtt_wm_rejections_total{reason}`, `tagpulse_presence_reconcile_duration_seconds`, `tagpulse_presence_entries_total{status}`, `tagpulse_signaling_tag_appeared_total`, `tagpulse_signaling_tag_disappeared_total`. Dashboard tile for presence-state size + snap-cadence histogram.
+- **Phase F — Docs.** Update [docs/guides/device-developer-guide.md](guides/device-developer-guide.md) — v2 section alongside v1, both supported indefinitely. CHANGELOG entry. Operator runbook addendum for the new "what's at this reader now" presence-table query.
+
+**Out-of-scope for Sprint 46:**
+- Producer-side implementation (Pi-gateway translator, WM reader-direct firmware) — Sprint 47.
+- `docs/design/reader-to-edge-contract.md` for the §8.4 Q-LAN-* questions — companion spec, WM-facing, separate review cycle.
+- High-churn-reader event-bus mitigation (spec §9.2 #5) — accepted as risk for pilot scale; ADR-level mitigation decision required *before* a production deploy with sustained > 10 churn events/sec/reader.
+- `tag_presence` growth policy (spec §9.2 #2) — accepted as backlog; ADR-026-deferred.
+
+**Risks.**
+- ACA rolling-revision deploys briefly run two subscriber replicas, breaking the single-replica invariant for ~30–60 s per deploy (spec §9.2 #1). Self-heal recovers within one snap cadence; flagged in operator runbook addendum.
+- v2 producer is unspecified — the spec defines the wire, not the producer. Sprint 47 picks one or both of (Pi-gateway translator, WM reader-direct) without spec impact.
+
+---
+
+## Sprint 47 — Edge wire format v2: producer side (proposed, gated on Sprint 46 ship)
+
+**Goal.** Ship at least one producer that speaks v2 end-to-end against the Sprint 46 backend. Two candidate producers, not mutually exclusive:
+
+1. **Pi-gateway reference implementation** in `clients/pi/tagpulse_edge/` — translates a reader's LAN-side output (per the future `docs/design/reader-to-edge-contract.md`) to v2 MQTT. Owned by us; ships regardless of WM timing. Lets us run end-to-end conformance tests against simulated readers and serves as the reference any third-party reader vendor can imitate.
+2. **WM reader-direct firmware** speaking v2 directly to the cellular MQTT broker, skipping the Pi entirely. Owned by WM; gated on WM dev capacity + the `reader-to-edge-contract.md` companion spec being ratified. Until then, WM readers ride path #1 via a co-located Pi.
+
+**Conformance harness.** New test fixture in `tests/conformance/` that replays a captured v2 message log against the Sprint 46 subscriber and asserts the final `tag_presence` state matches a golden snapshot. Same harness validates both producers; same golden cases cover all 7 scenarios in spec §5.
+
+**Out-of-scope for Sprint 47:**
+- Server → reader config push (spec §9.3 #1) — v2.1 of the spec.
+- Heartbeat / reader-error message types `t=3` / `t=4` (spec §9.3 #2) — v2.1.
+- Binary wire format v3 (spec §9.3 #3) — gated on measured bandwidth justifying the cost.
+
+---
+
 ## Backlog (not scheduled)
 - **Rule taxonomy unification (post-Sprint 41 cleanup).** Collapse the dual-shape `rules` table (10 pre-existing `condition_type` values + 12 new `signaling.<event_type>.<trigger>` values added in Sprint 41) into a single Azure-Monitor-aligned `(signal_type, condition, action_group)` taxonomy. Concrete deliverables: rename `rules` → `alert_rules`; rename / subsume `condition_type` into a flat `signal_type` enum that covers both the signaling event types (`location_change`, `geolocation_change`, `temperature`, `geofence_transition`, `inactivity`) and the non-event signals the pre-existing rules cover (`generic_threshold`, `rate_change`, `tag_read_rate`, `stock_threshold`, `stock_movement`); retire the "legacy rule" framing in docs / Pydantic / UI sub-tabs; unify the "Signaling Events" and "Legacy rules" UI surfaces into one "Alert Rules" page; update [docs/data-models.md](data-models.md), the rule-schema docstrings, ADR-021 revision history, and the CHANGELOG. Pre-req: Sprint 41 fully shipped so real-world usage informs the new taxonomy and there is no in-flight feature churn around `rules`. New ADR will supersede the relevant portions of ADR-021 v2 (additive signaling-event columns) and ADR-006 (the original rules engine).
 - Cloud-to-device commands (reader configuration push via MQTT) (G8)

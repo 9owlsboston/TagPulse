@@ -1,17 +1,17 @@
 # TagPulse Edge Wire Format v2 — Specification
 
-> **Status: DRAFT v0.2 — pre-review.** This document is a working draft for review with WM (RFID reader firmware partner) before any code, schema, or ADR commits. **Nothing in this document is binding on either side until both parties sign off.** Open questions in §8 must be resolved before the spec is promoted out of draft.
+> **Status: ACCEPTED v1.0 (2026-05-23).** Ratified by ADR 025 (wire contract, §3) and ADR 026 (server-side presence model, §4). Sprint 46 (proposed) implements the backend; Sprint 47 (proposed) implements the producer side. Two `§11` checklist items intentionally remain unchecked: §9.2 #5 (event-bus volume mitigation) gates *production rollout of high-churn readers*, not Sprint 46 ship; the `reader-to-edge-contract.md` companion spec is Sprint 47 scope.
 
 | | |
 |---|---|
-| **Status** | Draft v0.2 |
+| **Status** | Accepted v1.0 |
 | **Date** | 2026-05-23 |
 | **Authors** | TagPulse backend (Boston Owls) |
 | **External collaborator** | WM (RFID reader firmware, experimental; protocol co-designer) |
 | **Supersedes (additively)** | TagPulse Edge Wire Format v1 (canonical `TagReadCreate`, Sprint 14; see [docs/guides/device-developer-guide.md](../guides/device-developer-guide.md)) |
 | **Scope** | MQTT producer → broker (`devices/{tenant_id}/{device_id}/tag-reads`) → TagPulse `MQTTSubscriber`. JSON over MQTT. The producer is **unspecified** — it MAY be an RFID reader emitting v2 directly, or a Pi-class gateway (`clients/pi/tagpulse_edge/`) translating from a reader's native LAN-side output. See §1.5. Binary protocol explicitly out of scope for v2. |
-| **Implementation sprint (proposed)** | Sprint 46 (unscheduled — see [docs/roadmap.md](../roadmap.md)) |
-| **Related ADRs (proposed)** | ADR 025 — Edge wire format v2 (this spec). ADR 026 — Server-side tag presence model (storage decision in §4). |
+| **Implementation sprint (proposed)** | Sprint 46 (backend) + Sprint 47 (producer) — see [docs/roadmap.md](../roadmap.md) |
+| **Ratifying ADRs** | [ADR 025](../adr/025-edge-wire-format-v2.md) — Edge wire format v2 (this spec). [ADR 026](../adr/026-presence-model.md) — Server-side `tag_presence` model + synchronous reconciler (§4). |
 
 ---
 
@@ -681,13 +681,13 @@ Each entry below uses the same structure so a developer touching the relevant co
 
 **§9.2 internal concerns:**
 
-- [ ] §9.2 #1 single-subscriber-replica trade-off accepted
-- [ ] §9.2 #2 `tag_presence` growth policy accepted as backlog
-- [ ] §9.2 #3 two-table-write race accepted; mitigation path documented
-- [ ] §9.2 #5 event-bus volume mitigation path agreed before high-churn rollout
+- [x] §9.2 #1 single-subscriber-replica trade-off accepted (pinned `minReplicas=maxReplicas=1` on ACA; rolling-deploy flap documented; ADR 026 §3.4)
+- [x] §9.2 #2 `tag_presence` growth policy accepted as backlog (ADR-026-deferred; TTL job vs cold-table compaction noted)
+- [x] §9.2 #3 two-table-write race accepted; mitigation path documented (single pool today; outbox pattern noted for future multi-tier; ADR 026 §3.7)
+- [ ] §9.2 #5 event-bus volume mitigation path agreed before high-churn rollout (gating *production* rollout, not Sprint 46 ship)
 
 **Companion / follow-up:**
 
-- [ ] `docs/design/reader-to-edge-contract.md` drafted (covers §8.4 Q-LAN-1..Q-LAN-7, WM-facing)
+- [ ] `docs/design/reader-to-edge-contract.md` drafted (covers §8.4 Q-LAN-1..Q-LAN-7, WM-facing) — Sprint 47 companion
 - [x] ADR 025 (wire format) + ADR 026 (server-side presence model) drafted and reviewed
-- [ ] Roadmap entry for Sprint 46 added to [docs/roadmap.md](../roadmap.md)
+- [x] Roadmap entry for Sprint 46 added to [docs/roadmap.md](../roadmap.md)
