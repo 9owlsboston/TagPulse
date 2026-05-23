@@ -7,9 +7,9 @@
 | **Status** | Draft v0.2 |
 | **Date** | 2026-05-23 |
 | **Authors** | TagPulse backend (Boston Owls) |
-| **External collaborator** | WM (RFID reader firmware) |
+| **External collaborator** | WM (RFID reader firmware, experimental; protocol co-designer) |
 | **Supersedes (additively)** | TagPulse Edge Wire Format v1 (canonical `TagReadCreate`, Sprint 14; see [docs/guides/device-developer-guide.md](../guides/device-developer-guide.md)) |
-| **Scope** | RFID reader → MQTT broker (`devices/{tenant_id}/{device_id}/tag-reads`) → TagPulse `MQTTSubscriber`. JSON over MQTT. Binary protocol explicitly out of scope for v2. |
+| **Scope** | MQTT producer → broker (`devices/{tenant_id}/{device_id}/tag-reads`) → TagPulse `MQTTSubscriber`. JSON over MQTT. The producer is **unspecified** — it MAY be an RFID reader emitting v2 directly, or a Pi-class gateway (`clients/pi/tagpulse_edge/`) translating from a reader's native LAN-side output. See §1.5. Binary protocol explicitly out of scope for v2. |
 | **Implementation sprint (proposed)** | Sprint 46 (unscheduled — see [docs/roadmap.md](../roadmap.md)) |
 | **Related ADRs (proposed)** | ADR 025 — Edge wire format v2 (this spec). ADR 026 — Server-side tag presence model (storage decision in §4). |
 
@@ -31,6 +31,37 @@
 2. Server → reader configuration push (separate topic; out of scope for this spec).
 3. Replacing HTTP `POST /tag-reads/batch` shape — that path stays on v1 forever.
 4. Cryptographic tag authentication (Gen2v2 Authenticate — see [docs/roadmap.md](../roadmap.md) backlog).
+5. **The reader-to-gateway LAN-side contract** (when a Pi-gateway producer is used). That is a separate spec — see `docs/design/reader-to-edge-contract.md` (TBD). v2 is the cellular/cloud-side MQTT contract only.
+
+---
+
+## 1.5 Producer architecture — who emits v2 MQTT
+
+v2 is a **producer-agnostic wire format.** The spec does not constrain what kind of device terminates the MQTT connection — it only constrains what bytes are on the wire. Three concrete shapes are first-class:
+
+```
+Shape 1 — Reader-direct (high-end SKUs with embedded Linux + cellular modem):
+
+    [RFID reader firmware]  --MQTT v2 over cellular-->  [TagPulse subscriber]
+
+Shape 2 — Pi-gateway (low-end SKUs + experimental / homegrown readers):
+
+    [reader]  --LAN: native format-->  [Pi: tagpulse_edge]  --MQTT v2 over cellular-->  [TagPulse subscriber]
+            (CSV, serial, USB-CDC, TCP, etc.)            (JSON over MQTT QoS 1)
+
+Shape 3 — Mixed fleet (the realistic deployment):
+
+    Some readers run Shape 1, others run Shape 2, against the same broker / tenant.
+    Server cannot tell them apart — both produce identical v2 bytes.
+```
+
+**Why this matters for the spec.** Several v2 features (snap-on-reconnect, `empty:true`, NTP clock, rate limiting, snap window terminator, offline buffering, dedup) require *some* producer-side state and intelligence. v2 assigns those responsibilities to **"the producer,"** not to "the reader." Whoever terminates MQTT — embedded firmware or Pi gateway — owns them.
+
+**The Pi-gateway reference implementation** (`clients/pi/tagpulse_edge/`) already handles all producer-side responsibilities: cycle aggregation from a per-read input stream, diff state, MQTT QoS 1, reconnect with backoff, NTP-grade clocking, SQLite ring-buffer offline storage, ENTER/EXIT dedup, heartbeat. For Shape 2 / Shape 3 deployments it is the reference, and the v2 spec is its *output* contract.
+
+**For WM specifically.** WM's experimental reader emits a native LAN-side format (per-read CSV rows, per-antenna headers — see `docs/design/reader-to-edge-contract.md`). In current deployments that stream is consumed by a `tagpulse_edge` Pi gateway, which produces v2 MQTT. WM remains the **protocol co-designer** for v2 — they brought the delta concept and understand the cellular bandwidth pain point — even when they are not the MQTT terminator in production. If WM ships a SKU that terminates MQTT itself in the future (Shape 1), the same v2 spec applies unchanged.
+
+**Conformance.** A v2 producer is anything that emits the bytes specified in §2–§4. The §3.8 "reader profiles" (Delta / Snap-only / Legacy) describe the producer's behavior, not the underlying hardware. A Pi gateway implementing Profile A is just as conformant as a reader implementing Profile A natively.
 
 ---
 
@@ -184,17 +215,17 @@ The takeaway: **a missing `t=1` for an EPC is benign** (next snap reconciles wit
 
 Common confusion: "if every cycle was a snap, we'd never need `t=1`/`t=2`." True — and that's exactly the **snap-only profile** in §3.8. The point of `t=1`/`t=2` is bandwidth, not correctness; the point of `t=0` is correctness, not bandwidth.
 
-### 3.8 Reader profiles — what firmware needs to support
+### 3.8 Producer profiles — what the MQTT producer needs to support
 
-Three firmware profiles are first-class on this protocol. Conformance tests MUST NOT require profile 1 of all readers — the lower profiles are valid implementations targeting different reader classes.
+Three producer profiles are first-class on this protocol. "Producer" here means the entity that terminates MQTT and emits v2 bytes — could be reader firmware (Shape 1, §1.5) or a Pi-gateway (Shape 2). Conformance tests MUST NOT require Profile A of all producers — the lower profiles are valid implementations targeting different hardware / cost classes.
 
 **Profile A — Delta (full v2).** The default this spec is designed around.
 
 - Emits `t=0` snap on triggers per §3.3 (boot, reconnect, periodic time/cycle)
 - Emits `t=1` / `t=2` deltas between snaps
-- Requires per-cycle diff state on the reader (last-cycle EPC set in memory)
+- Requires per-cycle diff state on the producer (last-cycle EPC set in memory)
 - Bandwidth: minimal in steady state
-- Target hardware: WM's reader, mid-range and above
+- Target producer: Pi-gateway (`tagpulse_edge`, default), mid-to-high-end reader firmware
 
 **Profile B — Snap-only.** Acceptable for readers that can't maintain per-cycle diff state.
 
@@ -202,21 +233,21 @@ Three firmware profiles are first-class on this protocol. Conformance tests MUST
 - Each cycle is a complete declaration of current field
 - Server reconciles every cycle (§4.2), not just on snap triggers — `last_seq` advances on every snap
 - `empty:true` (§3.4) still required when field is empty
-- Bandwidth: ~N× higher than Profile A in steady state (where N = EPC count); acceptable for short-range / low-EPC-count readers (e.g., handheld scanners, single-pallet zones)
-- No firmware state beyond "what's in my field right now this cycle"
-- **Server treats Profile B identically to Profile A** — there is no profile flag on the wire. A reader that only ever sends `t=0` is just a reader whose snap cadence is "every cycle." The §3.6 sequence rules still apply (`t=0` with gap is fine).
-- Target hardware: low-end / handheld / battery readers
+- Bandwidth: ~N× higher than Profile A in steady state (where N = EPC count); acceptable for short-range / low-EPC-count deployments (e.g., handheld scanners, single-pallet zones)
+- No producer state beyond "what's in my field right now this cycle"
+- **Server treats Profile B identically to Profile A** — there is no profile flag on the wire. A producer that only ever sends `t=0` is just a producer whose snap cadence is "every cycle." The §3.6 sequence rules still apply (`t=0` with gap is fine).
+- Target producer: minimal Pi-gateway configs, low-end / handheld / battery reader firmware
 
-**Profile C — Legacy / v1 streaming.** Existing readers staying on the v1 wire format indefinitely.
+**Profile C — Legacy / v1 streaming.** Existing producers staying on the v1 wire format indefinitely.
 
 - Emits canonical `TagReadCreate` per-read (no `t` field at all)
 - v1 path in `_handle_tag_read` handles these unchanged (§4.3)
 - Does NOT populate `tag_presence` — presence model is v2-only
-- Target hardware: any reader from before v2, or partners who don't want to implement deltas
+- Target producer: any pre-v2 reader, or partners who don't want to implement deltas
 
 **Mixed-fleet operation.** All three profiles can run simultaneously against the same broker / subscriber / tenant. The recognizer (presence of integer `t` field) routes v1 vs. v2 per-message. Within v2, Profile A and Profile B are indistinguishable to the server. No tenant-level or device-level profile config is needed.
 
-**For WM specifically:** we're asking for Profile A, but if any SKU in WM's lineup can't maintain diff state, Profile B is a fully-supported fallback — no spec changes needed, no server changes needed, just emit `t=0` every cycle.
+**For Shape 2 / WM deployments specifically:** the Pi-gateway implements Profile A by default; the underlying WM reader doesn't need to know about profiles or deltas — it just streams per-read observations on the LAN side and the Pi handles aggregation. If a future reader SKU implements MQTT termination directly (Shape 1) and can't maintain diff state, Profile B is a fully-supported fallback — no spec changes needed.
 
 ---
 
@@ -459,31 +490,49 @@ All rejection paths route through the existing `_record_rejection` + `_persist_m
 
 ---
 
-## 8. Open questions (to confirm with WM)
+## 8. Open questions
 
-1. **`sn` type — integer or string?** Drives the type column in §2.2 and the lookup logic in §4.5. Recommend: integer if reader serials are stamped numerically (e.g., `123`), string if alphanumeric (e.g., `"RDR-000123"`). Lock per-deployment.
+Resolutions below are organized by **who owns each question** under the Shape C producer architecture (§1.5). Most questions that originally read as "for WM firmware" are actually producer-side concerns — and under Shape 2 (Pi-gateway), the producer is `clients/pi/tagpulse_edge/`, which we own. Only questions about protocol semantics or the WM reader's LAN-side output remain WM-facing, and the LAN-side ones move to `docs/design/reader-to-edge-contract.md` (TBD).
 
-2. **`seq` persistence across reboot — flash-backed or reset to 0?** Either works. If flash-backed, monotonic across reboots gives nicer audit trails; if reset, we always start with a snap so it's fine. Document whichever firmware does.
+### 8.1 Resolved — producer-agnostic protocol decisions
 
-3. **Snapshot cadence configurability.** Are 300 s / 100 cycles defaults acceptable for v2.0? Server-side config push deferred to v2.1.
+These are decisions about the v2 wire bytes themselves. Co-designed with WM as protocol partner; binding on any producer (reader-direct or Pi-gateway).
 
-4. **Snapshot emission on reconnect — does firmware support it?** *This is the load-bearing question.* If firmware can't emit a full snap as the first messages of a new MQTT session, self-heal degrades and we'd need to fall back to "every cycle is a full snapshot" — which kills the bandwidth model.
+| # | Question | Resolution | Authority |
+|---|---|---|---|
+| Q1 | `sn` type — integer or string? | **Integer** (uint32). Producers stamp a numeric reader ID. Strings remain reserved in §2.2 for future deployments with alphanumeric serials but are not used in v2.0. | TagPulse + WM, 2026-05-23 |
+| Q6 | `tmp` / `hum` aggregation window | `Σ(per-read value) / cnt` per cycle — same window as `rssi`. Recorded in §2.2. | WM, 2026-05-23 |
+| Q9 | Multi-antenna emission | **One message per (EPC, antenna) pair per cycle.** If EPC X is read on antennas 1 and 2 in the same cycle, the producer emits two messages with the same `seq` / `ts`, different `an`, and each `rssi` reflects that antenna's reads. Rationale: location triangulation downstream needs per-antenna RSSI, and aggregating across antennas would lose that signal. Server-side reconciliation (§4.2) keys on `(sn, epc)` not `(sn, an, epc)` — duplicate per-antenna messages within a snap are merged. | TagPulse + WM, 2026-05-23 |
+| Q10 | `seq` wrap behavior | Server treats `2^32 − 1 → 0` as reboot per §3.6. At 1 cycle/s that's a ~136-year horizon — practical only across reader replacements. Documented; no producer action needed. | TagPulse, 2026-05-23 |
+| Q11 | Sensor-error vs. no-sensor on the wire | **Omit `tmp` / `hum` in both cases.** The v2 wire is intentionally lossy here — it carries the value when the producer has one to emit and stays silent otherwise. Diagnostic detail (per-EPC sensor-read failure rate, capability inference) is producer-local concern, exposed via producer-side metrics, not on the cellular wire. Rationale: passive RFID sensor tags fail reads for many physics-driven reasons (collision, attenuation, tag-side timeout) that aren't binary "sensor broken" signals — overloading the wire with a `sensor_err` enum would invite false-positive ops noise. Revisit in v2.1 if dashboards need it; for now, the producer keeps a local rolling counter. | TagPulse, 2026-05-23 |
+| Q12 | Snap terminator (`{"end":true}`) | **Not in v2.0.** Server keeps the snap-window close on next-seq OR 10 s timeout (§9.2 #2). Reconsider in v2.1 only if production telemetry shows the timeout path causing user-visible flapping. The cost (one extra ~50 B message per snap) isn't justified pre-evidence; the failure modes documented in §9.2 #2 are tolerable for v2.0. | TagPulse, 2026-05-23 |
 
-5. **Empty-field snapshot (`empty:true`) — does firmware support it?** Easy to do but easy to forget in firmware. Without it, the server cannot distinguish "reader sees nothing" from "reader is dead."
+### 8.2 Resolved — producer-side responsibilities
 
-6. ~~**`tmp` / `hum` aggregation window.**~~ **RESOLVED (WM, 2026-05-23):** `tmp` = `Σ(per-read temp) / cnt`, `hum` = `Σ(per-read humidity) / cnt`, averaged over the `cnt` reads in this cycle — consistent with `rssi`. Recorded in §2.2.
+These are concerns about producer state and behavior, not about wire bytes. Under Shape 2 (Pi-gateway) the producer is `clients/pi/tagpulse_edge/`, which already implements all of these (`clients/pi/README.md`). Under Shape 1 (reader-direct), the reader must implement them. Either way, the v2 spec just requires the bytes to come out right.
 
-7. **Clock source on reader.** NTP-synced? GNSS-derived? If clock can drift > 5 min, the §6 `clock_skew` rejection will fire spuriously. Need to know firmware's clock reliability before locking the rejection threshold.
+| # | Question | Resolution | Authority |
+|---|---|---|---|
+| Q2 | `seq` persistence across reboot | Producer-defined. Both flash-backed (monotonic) and reset-to-0 are acceptable to the server (§3.6) — wrap and reset are both treated as reboot, with a snap as the first message. Pi-gateway reference impl: SQLite-backed, monotonic. | TagPulse, 2026-05-23 |
+| Q3 | Snapshot cadence defaults | **300 s OR 100 cycles, whichever comes first**, as v2.0 default for both Shape 1 and Shape 2 producers. Per-device configurable via producer config (Pi-gateway: `clients/pi/tagpulse_edge/config.py`; reader-direct: vendor config). Server-side config push deferred to v2.1. | TagPulse, 2026-05-23 |
+| Q4 | Snap on reconnect | **Required of all producers.** Pi-gateway reference impl emits a snap as the first message of every new MQTT session (already in `transport.py`). Reader-direct producers MUST do the same — if a reader-direct SKU can't, it falls back to Profile B (snap-every-cycle, §3.8), which makes reconnect-snap automatic. No "reconnect without snap" path is permitted in v2. | TagPulse, 2026-05-23 |
+| Q5 | Empty-field snap (`empty:true`) | **Required of all producers.** Pi-gateway reference impl detects empty cycle from input stream and emits the conditional `empty:true` snap. Reader-direct producers MUST do the same. Without it, the server cannot distinguish "field empty" from "producer dead" (§3.4). | TagPulse, 2026-05-23 |
+| Q7 | Clock source | Producer MUST emit `ts` within ±5 min of true UTC (§6 `clock_skew` rejection threshold). Pi-gateway: NTP via `systemd-timesyncd` (default on Raspberry Pi OS); offline-buffered messages use the cycle's observed time at capture, not at later send. Reader-direct: NTP-synced or GNSS-derived. Producers that cannot maintain ±5 min should not be deployed against v2. | TagPulse, 2026-05-23 |
+| Q8 | Rate limit per producer | Producer-side throttle: ≤100 msgs/s sustained, ≤500/s burst per producer. Pi-gateway enforces via batched `transport.py` flush. Reader-direct producers self-limit. Mosquitto per-client cap configured to match. Above-burst messages are buffered (Pi-gateway: SQLite ring; reader-direct: vendor decision). | TagPulse, 2026-05-23 |
 
-8. **Rate limit per reader.** What's the max `t=1` / `t=2` per second the reader can emit? Affects our ingest rate-limit config and Mosquitto's per-client message rate cap. Recommend documenting the expected peak (e.g., "≤100 messages/s sustained, ≤500/s burst").
+### 8.3 Open — WM reader-to-edge LAN-side contract
 
-9. **Multi-antenna semantics.** If the same EPC is read on antenna 1 *and* antenna 2 in the same cycle, does the reader emit one message (which antenna in `an`?) or two? Recommend: one message, with `an` = strongest-RSSI antenna. Document explicitly.
+These questions are about WM's reader-to-Pi LAN-side output (per-read CSV, per-antenna headers — see the sample at `https://github.com/weimin-peng/hello-world/blob/main/data.csv`). They are out of scope for v2 (which is the MQTT cellular-side contract) and belong in a companion spec.
 
-10. **Behavior at exactly the wrap boundary.** `seq` wraps `2^32 - 1 → 0`. Server treats this as reboot (§3.6). At 1 cycle/s that's a ~136-year horizon — practical only across reader replacements. Acceptable; flag in docs.
+- **Q-LAN-1** — Transport: serial / USB-CDC / TCP / file watch / UDP? Per-SKU or uniform?
+- **Q-LAN-2** — CSV schema: what does the `--` separator between blocks delimit (cycle boundary, antenna boundary, both)? Is there a per-row timestamp, or is timing implicit in arrival order?
+- **Q-LAN-3** — Sensor read failure encoding: when a sensor read fails for an inventoried tag, does WM (a) omit the row entirely, (b) emit the row with empty `temp` / `humidity` cells, or (c) emit a sentinel value (`-999`, etc.)? The Pi-gateway needs this to correctly apply the v2 §2.2 omit-vs-present rule.
+- **Q-LAN-4** — Empty-cycle signaling: how does the reader indicate "this cycle saw zero EPCs" on the LAN stream? (Needed for Pi-gateway to emit `empty:true` per §3.4.)
+- **Q-LAN-5** — Per-SKU capability inventory: which antenna count, sensor types, RSSI dynamic range per WM SKU? (Pi-gateway uses this to validate input and to know what fields can ever appear.)
+- **Q-LAN-6** — Reader-side reset / reboot signaling: is there an explicit marker on the LAN stream, or does the Pi infer from gaps / sequence discontinuities?
+- **Q-LAN-7** — Header typo: the sample CSV header reads `issi` — confirm this is RSSI (and ideally fix to `rssi` in firmware).
 
-11. **Sensor-error vs. no-sensor disambiguation.** §2.2 says omit `tmp` / `hum` both when the reader has no sensor *and* when this cycle had no successful sensor read. Does firmware need to distinguish these on the wire (e.g., for diagnostic dashboards showing "sensor configured but failing")? If yes, recommend an optional `sensor_err` string field in v2.1 (`"tmp_timeout"`, `"hum_out_of_range"`, etc.) rather than overloading `empty`. If no (current default), no spec change needed.
-
-12. **Snap terminator message support.** §9.2 #2 describes the snap-window-completeness problem: server today closes the window on next-seq OR 10 s timeout, both of which have failure modes. The cleanest fix is a sentinel message — reader emits `{"t":0,"sn":...,"seq":...,"end":true}` after the last EPC of a snap, server closes immediately on receipt. Cost: 1 extra ~50 B message per snap. Falls back gracefully to the timeout path if the terminator is lost. **Question for WM:** can firmware emit this terminator reliably? If yes, we add it to v2.1 and the 10 s timeout becomes a defensive backstop rather than the primary close trigger.
+**Action:** these move to `docs/design/reader-to-edge-contract.md` (new doc, TBD). Out of scope for v2 promotion.
 
 ---
 
@@ -602,18 +651,30 @@ Each entry below uses the same structure so a developer touching the relevant co
 
 ## 11. Review checklist (pre-promotion out of DRAFT)
 
-- [ ] WM has answered §8 Q1 (`sn` type)
-- [ ] WM has confirmed §8 Q4 (snap-on-reconnect supported in firmware)
-- [ ] WM has confirmed §8 Q5 (empty-field snap supported in firmware)
-- [x] WM has confirmed §8 Q6 (`tmp` / `hum` aggregation window) — 2026-05-23, total/cnt per cycle
-- [ ] WM has provided clock-source answer for §8 Q7
-- [ ] WM has provided expected message-rate ceiling for §8 Q8
-- [ ] WM has confirmed §8 Q9 (multi-antenna emission rule)
-- [ ] WM has answered §8 Q11 (need on-wire sensor-error vs. no-sensor disambiguation?)
-- [ ] WM has answered §8 Q12 (snap terminator `{"end":true}` supported in firmware?)
-- [ ] Internal review: §9.2 #1 single-subscriber-replica trade-off accepted
-- [ ] Internal review: §9.2 #2 snap-timeout failure modes accepted; tuning plan post-pilot agreed
-- [ ] Internal review: §9.2 #3 `tag_presence` growth policy accepted as backlog
-- [ ] Internal review: §9.2 #7 event-bus volume mitigation path agreed before high-churn rollout
-- [ ] ADR 025 + ADR 026 drafted and reviewed
+**§8 protocol decisions** (all RESOLVED 2026-05-23 under Shape C producer architecture, §1.5):
+
+- [x] §8 Q1 `sn` type — integer
+- [x] §8 Q2 `seq` persistence — producer-defined
+- [x] §8 Q3 snap cadence — 300 s / 100 cycles default
+- [x] §8 Q4 snap on reconnect — required of all producers (Pi-gateway reference impl handles it)
+- [x] §8 Q5 empty-field snap — required of all producers
+- [x] §8 Q6 `tmp` / `hum` aggregation — total/cnt per cycle (WM, 2026-05-23)
+- [x] §8 Q7 clock source — producer must hold ±5 min; Pi-gateway via NTP
+- [x] §8 Q8 rate limit — producer-side throttle, ≤100/s sustained
+- [x] §8 Q9 multi-antenna — one message per (EPC, antenna) pair (WM, 2026-05-23)
+- [x] §8 Q10 wrap behavior — treated as reboot, documented
+- [x] §8 Q11 sensor-error encoding — wire is lossy by design; diagnostics stay producer-local
+- [x] §8 Q12 snap terminator — deferred to v2.1 pending production telemetry
+
+**§9.2 internal concerns:**
+
+- [ ] §9.2 #1 single-subscriber-replica trade-off accepted
+- [ ] §9.2 #2 snap-timeout failure modes accepted; tuning plan post-pilot agreed
+- [ ] §9.2 #3 `tag_presence` growth policy accepted as backlog
+- [ ] §9.2 #7 event-bus volume mitigation path agreed before high-churn rollout
+
+**Companion / follow-up:**
+
+- [ ] `docs/design/reader-to-edge-contract.md` drafted (covers §8.3 Q-LAN-1..Q-LAN-7, WM-facing)
+- [ ] ADR 025 (wire format) + ADR 026 (server-side presence model) drafted and reviewed
 - [ ] Roadmap entry for Sprint 46 added to [docs/roadmap.md](../roadmap.md)
