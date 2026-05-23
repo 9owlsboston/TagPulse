@@ -689,5 +689,5 @@ Each entry below uses the same structure so a developer touching the relevant co
 **Companion / follow-up:**
 
 - [ ] `docs/design/reader-to-edge-contract.md` drafted (covers §8.4 Q-LAN-1..Q-LAN-7, WM-facing)
-- [ ] ADR 025 (wire format) + ADR 026 (server-side presence model) drafted and reviewed
+- [x] ADR 025 (wire format) + ADR 026 (server-side presence model) drafted and reviewed
 - [ ] Roadmap entry for Sprint 46 added to [docs/roadmap.md](../roadmap.md)
