@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-LocationSource = Literal["gps", "fixed", "inferred"]
+LocationSource = Literal["gps", "fixed", "inferred", "reader_gnss"]
 
 # -- Sprint 34 (gap 2.8): external_ref must avoid characters that are
 # unsafe in URLs / shell paths / CSV exports. Matches the reference

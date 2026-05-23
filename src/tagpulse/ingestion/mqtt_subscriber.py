@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 import aiomqtt
+from pydantic import TypeAdapter, ValidationError
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tagpulse.api.services.device_service import DeviceService
@@ -21,10 +24,20 @@ from tagpulse.core.otel_metrics import (
 )
 from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.protocol import Event, EventBus, Topic
+from tagpulse.ingestion import presence_reconciler
 from tagpulse.ingestion.service import IngestionService
+from tagpulse.ingestion.wm_wire_format import (
+    SNAP_SOFT_CAP_ENTRIES,
+    WmAppearedMessage,
+    WmDisappearedMessage,
+    WmMessage,
+    WmSnapMessage,
+)
 from tagpulse.models.schemas import (
     DeviceEventPayload,
     DeviceStatusUpdate,
+    Identity,
+    Location,
     LocationPayload,
     TagReadCreate,
     TelemetryReading,
@@ -77,6 +90,118 @@ KNOWN_SUFFIXES = {"tag-reads", "status", "telemetry", "location", "events"}
 # straight into ``telemetry_readings`` via ``insert``.
 SUBJECT_TOPIC_FILTER = "tenants/+/subjects/+/+/telemetry"
 SUBJECT_KINDS = {"device", "asset", "lot", "stock_item", "zone"}
+
+# Sprint 46 / ADR-025 v2 wire format. Module-level TypeAdapter so we
+# don't pay the discriminated-union schema build on every message.
+_WM_MESSAGE_ADAPTER: TypeAdapter[WmMessage] = TypeAdapter(WmMessage)
+
+
+def _classify_wm_validation_error(raw: dict[str, Any], exc: ValidationError) -> str:
+    """Map a v2 wire ValidationError to a spec §6 ``reason`` label.
+
+    Inspects the first error from Pydantic. Discriminator failures
+    (missing or unknown ``t``) take precedence because they short-
+    circuit any other validation.
+    """
+    # Discriminator problems are tagged as type=union_tag_invalid or
+    # union_tag_not_found by Pydantic v2.
+    for err in exc.errors():
+        etype = err.get("type", "")
+        loc = err.get("loc", ())
+        if etype == "union_tag_not_found":
+            return "missing_type"
+        if etype == "union_tag_invalid":
+            return "unknown_type"
+        if loc and loc[-1] == "epc":
+            return "invalid_epc"
+        if "explicit null" in str(err.get("msg", "")):
+            return "explicit_null"
+        if etype == "extra_forbidden" and "epcs" in loc:
+            return "epcs_wrong_type"
+        if etype == "missing" and "epcs" in loc and isinstance(raw.get("t"), int) and raw["t"] == 0:
+            return "missing_required_field"
+        if etype == "missing" and loc and loc[-1] in {"lat", "lon"}:
+            return "missing_required_field"
+        if etype == "missing" and len(loc) >= 2 and loc[0] == "epcs":
+            return "invalid_snap_entry"
+    return "invalid_schema"
+
+
+def _wm_ts_to_datetime(ts_ms: int) -> datetime:
+    """Convert a v2 envelope ``ts`` (epoch ms, UTC) to a tz-aware datetime."""
+    return datetime.fromtimestamp(ts_ms / 1000.0, tz=UTC)
+
+
+def _wm_location(lat: float | None, lon: float | None) -> Location | None:
+    """Build a :class:`Location` with ``source="reader_gnss"`` per spec §4.4.
+
+    The v2 envelope encodes lat/lon as required-but-nullable; ``None``
+    on both means no fix at message time, in which case no Location is
+    attached to the resulting :class:`TagReadCreate`.
+    """
+    if lat is None or lon is None:
+        return None
+    return Location(latitude=lat, longitude=lon, source="reader_gnss")
+
+
+def _wm_sensor_data(
+    cnt: int | None = None,
+    tmp: float | None = None,
+    hum: float | None = None,
+) -> dict[str, Any] | None:
+    """Pack v2 ``cnt``/``tmp``/``hum`` into a ``sensor_data`` JSON blob.
+
+    Returns ``None`` if all three are absent so we don't write empty
+    dicts into the column.
+    """
+    out: dict[str, Any] = {}
+    if cnt is not None:
+        out["read_count"] = cnt
+    if tmp is not None:
+        out["temperature_c"] = tmp
+    if hum is not None:
+        out["humidity_pct"] = hum
+    return out or None
+
+
+def _wm_snap_to_tag_reads(device_id: UUID, msg: WmSnapMessage) -> list[TagReadCreate]:
+    """Map a t=0 snap to one :class:`TagReadCreate` per ``epcs[]`` entry.
+
+    Spec §4.4 mapping table. Per-entry ``an``/``rssi``/``cnt``/``tmp``/
+    ``hum`` flow into the read; envelope-level ``ts``/``lat``/``lon``
+    are shared across all reads in the snap.
+    """
+    ts = _wm_ts_to_datetime(msg.ts)
+    location = _wm_location(msg.lat, msg.lon)
+    reads: list[TagReadCreate] = []
+    for entry in msg.epcs:
+        reads.append(
+            TagReadCreate(
+                device_id=device_id,
+                tag_id=entry.epc,
+                timestamp=ts,
+                signal_strength=float(entry.rssi),
+                reader_antenna=entry.an,
+                identity=Identity(epc_hex=entry.epc),
+                location=location,
+                sensor_data=_wm_sensor_data(cnt=entry.cnt, tmp=entry.tmp, hum=entry.hum),
+            )
+        )
+    return reads
+
+
+def _wm_appeared_to_tag_read(device_id: UUID, msg: WmAppearedMessage) -> TagReadCreate:
+    """Map a t=1 appeared message to a single :class:`TagReadCreate`."""
+    return TagReadCreate(
+        device_id=device_id,
+        tag_id=msg.epc,
+        timestamp=_wm_ts_to_datetime(msg.ts),
+        signal_strength=float(msg.rssi),
+        reader_antenna=msg.an,
+        identity=Identity(epc_hex=msg.epc),
+        location=_wm_location(msg.lat, msg.lon),
+        sensor_data=_wm_sensor_data(tmp=msg.tmp, hum=msg.hum),
+    )
 
 
 def _parse_topic(topic: str) -> tuple[UUID | None, UUID | None, str | None]:
@@ -334,6 +459,14 @@ class MqttSubscriber:
             _record_rejection("tag_read", "invalid_json")
             return
 
+        # Sprint 46 / ADR-025 §4.3 — v2 wire format detection. An integer
+        # ``t`` field at the envelope is the v2 discriminator; route to
+        # the v2 handler. The v1 paths below are unchanged (spec §9.1 #4
+        # coexistence).
+        if isinstance(raw, dict) and isinstance(raw.get("t"), int):
+            await self._handle_wm_v2_message(tenant_id, device_id, raw, message)
+            return
+
         if isinstance(raw, list):
             items: list[Any] = raw
         elif isinstance(raw, dict):
@@ -387,6 +520,108 @@ class MqttSubscriber:
                 "Failed to ingest tag reads from MQTT: device=%s count=%d",
                 device_id,
                 len(reads),
+            )
+
+    async def _handle_wm_v2_message(
+        self,
+        tenant_id: UUID,
+        device_id: UUID,
+        raw: dict[str, Any],
+        message: aiomqtt.Message,
+    ) -> None:
+        """Sprint 46 / ADR-025 §4.3 — handle one v2 wire-format message.
+
+        Parses against the :data:`WmMessage` discriminated union, then
+        dispatches on ``t``:
+
+        - ``t=0`` (snap) → :func:`presence_reconciler.reconcile_snap` then
+          one ``tag_reads`` insert per entry in ``epcs[]``.
+        - ``t=1`` (appeared) → :func:`presence_reconciler.apply_appeared`
+          then one ``tag_reads`` insert.
+        - ``t=2`` (disappeared) → :func:`presence_reconciler.apply_disappeared`,
+          no ``tag_reads`` row (spec §4.3).
+
+        Validation rejections route through ``_record_rejection`` +
+        ``_persist_mqtt_drop`` with the spec §6 reason label. The
+        ``app.current_tenant_id`` GUC is set on the session before any
+        write so the RLS policy on ``tag_presence`` (migration 042)
+        accepts the rows.
+        """
+        try:
+            msg = _WM_MESSAGE_ADAPTER.validate_python(raw)
+        except ValidationError as exc:
+            reason = _classify_wm_validation_error(raw, exc)
+            logger.warning(
+                "Rejecting v2 wm message on topic %s reason=%s errors=%s",
+                message.topic,
+                reason,
+                exc.errors()[:3],
+            )
+            _record_rejection("wm_v2", reason)
+            await self._persist_mqtt_drop(tenant_id, str(message.topic), raw, "wm_v2", reason)
+            return
+
+        # Spec §6 soft cap — log + (Phase E) bump
+        # tagpulse_mqtt_wm_snap_large_total{sn}. Do NOT reject.
+        if isinstance(msg, WmSnapMessage) and len(msg.epcs) > SNAP_SOFT_CAP_ENTRIES:
+            logger.warning(
+                "v2 snap above soft cap sn=%d entries=%d (cap=%d)",
+                msg.sn,
+                len(msg.epcs),
+                SNAP_SOFT_CAP_ENTRIES,
+            )
+
+        try:
+            async with self._session_factory() as session:
+                # Set the RLS GUC so the policy on tag_presence
+                # (migration 042) admits the rows.
+                await session.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tid, true)"),
+                    {"tid": str(tenant_id)},
+                )
+
+                if isinstance(msg, WmSnapMessage):
+                    await presence_reconciler.reconcile_snap(
+                        session,
+                        self._event_bus,
+                        tenant_id=tenant_id,
+                        device_id=device_id,
+                        msg=msg,
+                    )
+                    reads = _wm_snap_to_tag_reads(device_id, msg)
+                elif isinstance(msg, WmAppearedMessage):
+                    await presence_reconciler.apply_appeared(
+                        session,
+                        self._event_bus,
+                        tenant_id=tenant_id,
+                        device_id=device_id,
+                        msg=msg,
+                    )
+                    reads = [_wm_appeared_to_tag_read(device_id, msg)]
+                elif isinstance(msg, WmDisappearedMessage):
+                    # No tag_reads row per spec §4.3.
+                    await presence_reconciler.apply_disappeared(
+                        session,
+                        self._event_bus,
+                        tenant_id=tenant_id,
+                        device_id=device_id,
+                        msg=msg,
+                    )
+                    reads = []
+                else:  # pragma: no cover - discriminated union exhausts above
+                    raise AssertionError(f"unhandled WmMessage variant: {type(msg).__name__}")
+                if reads:
+                    ingestion_service = self._build_ingestion_service(session)
+                    for read in reads:
+                        await ingestion_service.ingest(tenant_id, read)
+
+                await session.commit()
+        except Exception:
+            logger.exception(
+                "Failed to apply v2 wm message: device=%s t=%s sn=%s",
+                device_id,
+                msg.t,
+                msg.sn,
             )
 
     async def _handle_status(
