@@ -57,9 +57,7 @@ class Outbox:
         self._max_rows = max_rows
         self._max_age_s = max_age_s
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(
-            str(self._path), check_same_thread=False, isolation_level=None
-        )
+        self._conn = sqlite3.connect(str(self._path), check_same_thread=False, isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(_SCHEMA)
@@ -77,8 +75,7 @@ class Outbox:
         payload_json = json.dumps(event.payload, separators=(",", ":"))
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO outbox(kind, topic, payload_json, enqueued_at) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO outbox(kind, topic, payload_json, enqueued_at) VALUES (?, ?, ?, ?)",
                 (event.kind, event.topic, payload_json, event.enqueued_at),
             )
             event.rowid = int(cur.lastrowid or 0)
@@ -86,14 +83,13 @@ class Outbox:
 
     def ack(self, rowids: Iterable[int]) -> int:
         """Delete acknowledged rows. Returns the number deleted."""
-        ids = list(rowids)
+        ids = [(i,) for i in rowids]
         if not ids:
             return 0
-        placeholders = ",".join("?" * len(ids))
         with self._lock:
-            cur = self._conn.execute(
-                f"DELETE FROM outbox WHERE id IN ({placeholders})", ids
-            )
+            # executemany avoids building a dynamic IN(...) clause; each id is
+            # bound as a parameter, so there is no SQL-injection surface.
+            cur = self._conn.executemany("DELETE FROM outbox WHERE id = ?", ids)
             return int(cur.rowcount or 0)
 
     def _evict_locked(self) -> None:
@@ -106,9 +102,7 @@ class Outbox:
         if count > self._max_rows:
             overflow = count - self._max_rows
             self._conn.execute(
-                "DELETE FROM outbox WHERE id IN ("
-                "  SELECT id FROM outbox ORDER BY id ASC LIMIT ?"
-                ")",
+                "DELETE FROM outbox WHERE id IN (  SELECT id FROM outbox ORDER BY id ASC LIMIT ?)",
                 (overflow,),
             )
 

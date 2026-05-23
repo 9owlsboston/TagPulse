@@ -11,6 +11,7 @@ Why a thin wrapper over paho-mqtt?
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import random
 import ssl
@@ -115,10 +116,9 @@ class MqttTransport:
 
     def stop(self) -> None:
         self._stop.set()
-        try:
+        # paho can raise during shutdown; safe to ignore.
+        with contextlib.suppress(Exception):
             self._client.disconnect()
-        except Exception:  # noqa: BLE001 — paho can raise during shutdown
-            pass
         self._client.loop_stop()
         if self._reconnect_thread:
             self._reconnect_thread.join(timeout=2.0)
@@ -137,36 +137,46 @@ class MqttTransport:
 
     # -- Internals --
 
-    def _handle_connect(self, _client: Any, _ud: Any, _flags: Any, reason_code: Any, _props: Any) -> None:
+    def _handle_connect(
+        self,
+        _client: Any,
+        _ud: Any,
+        _flags: Any,
+        reason_code: Any,
+        _props: Any,
+    ) -> None:
         if _reason_is_not_authorized(reason_code):
-            err = TokenRevokedError(
-                f"broker rejected credentials (reason={reason_code})"
-            )
-            logger.error(
-                "Device token appears revoked; awaiting reload — %s", err
-            )
+            err = TokenRevokedError(f"broker rejected credentials (reason={reason_code})")
+            logger.error("Device token appears revoked; awaiting reload — %s", err)
             self._on_token_revoked_cb(err)
             return
         if reason_code == 0 or getattr(reason_code, "is_failure", False) is False:
-            logger.info("MQTT connected to %s:%d", self._config.broker_host, self._config.broker_port)
+            logger.info(
+                "MQTT connected to %s:%d",
+                self._config.broker_host,
+                self._config.broker_port,
+            )
             self._connected.set()
             self._on_connect_cb()
         else:
             logger.warning("MQTT connect failed: %s", reason_code)
 
-    def _handle_disconnect(self, _client: Any, _ud: Any, _flags: Any, reason_code: Any, _props: Any) -> None:
+    def _handle_disconnect(
+        self,
+        _client: Any,
+        _ud: Any,
+        _flags: Any,
+        reason_code: Any,
+        _props: Any,
+    ) -> None:
         was_connected = self._connected.is_set()
         self._connected.clear()
         if was_connected:
             logger.warning("MQTT disconnected: %s", reason_code)
             self._on_disconnect_cb()
         if _reason_is_not_authorized(reason_code):
-            err = TokenRevokedError(
-                f"broker forced disconnect (reason={reason_code})"
-            )
-            logger.error(
-                "Device token appears revoked; awaiting reload — %s", err
-            )
+            err = TokenRevokedError(f"broker forced disconnect (reason={reason_code})")
+            logger.error("Device token appears revoked; awaiting reload — %s", err)
             self._on_token_revoked_cb(err)
 
     def _reconnect_loop(self) -> None:
@@ -202,4 +212,5 @@ class MqttTransport:
 def _full_jitter(attempt: int, *, base: float, cap: float) -> float:
     """AWS-style full-jitter backoff."""
     expo = min(cap, base * (2 ** max(0, attempt - 1)))
-    return random.uniform(0, expo)
+    # Non-cryptographic jitter for reconnect backoff timing.
+    return random.uniform(0, expo)  # noqa: S311

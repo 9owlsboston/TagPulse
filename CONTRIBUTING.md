@@ -39,7 +39,7 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
 
 ## Before Submitting a PR
 
-1. Run `make check` (lint + typecheck + test)
+1. Run `make check` (lint + typecheck + test). Lint covers `src`, `tests`, and `clients/pi`.
 2. Add tests for new/changed behavior
 3. Update `CHANGELOG.md` under `## Unreleased`
 4. Unit tests in `tests/unit/`, integration in `tests/integration/`

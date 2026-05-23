@@ -18,6 +18,7 @@ do network I/O directly, so a slow / dead broker can never block the reader.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
@@ -106,10 +107,8 @@ class EdgeAgent(AbstractContextManager["EdgeAgent"]):
         self._stop.set()
         self._wake_publisher.set()
         # Best-effort offline LWT-equivalent on clean shutdown.
-        try:
+        with contextlib.suppress(Exception):
             self._publish_status(connection_state="offline", reason="shutdown")
-        except Exception:  # noqa: BLE001
-            pass
         self._publisher.stop()
         for t in self._threads:
             t.join(timeout=2.0)

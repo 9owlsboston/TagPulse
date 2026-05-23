@@ -10,7 +10,7 @@ syncs). We must:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 
 
 def to_utc(ts: datetime | None) -> datetime:
@@ -20,7 +20,7 @@ def to_utc(ts: datetime | None) -> datetime:
     if ts.tzinfo is None:
         # Naive: assume UTC. The agent rejects local-time inputs from old code.
         return ts.replace(tzinfo=UTC)
-    if ts.tzinfo is timezone.utc or ts.utcoffset() == UTC.utcoffset(None):
+    if ts.tzinfo is UTC or ts.utcoffset() == UTC.utcoffset(None):
         return ts
     return ts.astimezone(UTC)
 
@@ -38,6 +38,4 @@ class ClockGuard:
         delta_s = (now_utc - ts_utc).total_seconds()
         if delta_s > self.max_age_s:
             return False
-        if delta_s < -self.max_skew_future_s:
-            return False
-        return True
+        return delta_s >= -self.max_skew_future_s

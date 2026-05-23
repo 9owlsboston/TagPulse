@@ -1192,6 +1192,23 @@ ADR 019 (Sprint 34) introduced `category_id` as the structured replacement for t
 
 ---
 
+## Sprint 48 — Extend ruff lint gate to clients/pi (shipped — closes #64)
+
+**Goal.** Bring the Pi-gateway reference package (`clients/pi/`) under the same `make lint` / `make format` gate as `src/` and `tests/`, fixing all 19 pre-existing ruff findings surfaced in the Sprint 47 post-ship audit ([#64](https://github.com/9owlsboston/TagPulse/issues/64)).
+
+- **Phase A — Security fix (S608).** [done, this PR] [clients/pi/tagpulse_edge/buffer.py](../clients/pi/tagpulse_edge/buffer.py) `ack()` rewritten to use `executemany("DELETE FROM outbox WHERE id = ?", ids)` instead of building a dynamic `IN(?,?,?,...)` clause via f-string. The original code was already parameterized (the f-string only injected literal `?` placeholders, ids were bound), but eliminating the dynamic SQL removes the S608 warning surface entirely — a real fix, not a `# noqa`. All 4 existing buffer tests pass unchanged.
+- **Phase B — Mechanical fixes (production code).** [done, this PR] [agent.py](../clients/pi/tagpulse_edge/agent.py) + [transport.py](../clients/pi/tagpulse_edge/transport.py): `try/except/pass` → `contextlib.suppress(Exception)` (clears SIM105 + S110 pairs at both sites). [clock.py](../clients/pi/tagpulse_edge/clock.py): `datetime.timezone.utc` → `datetime.UTC` alias (UP017, autofixable) and `is_acceptable()` collapsed to a direct return (SIM103). [transport.py](../clients/pi/tagpulse_edge/transport.py): two MQTT handler signatures (`_handle_connect`, `_handle_disconnect`) and the `logger.info("MQTT connected ...")` call reflowed to multi-line (clears 3× E501).
+- **Phase C — Justified `# noqa` (non-production code).** [done, this PR] [examples/run_reader.py](../clients/pi/examples/run_reader.py): 1× S108 + 6× S311 annotated `# noqa: SXXX # demo simulator` (the `/tmp` buffer-path default is the documented demo default, and the `random.choice` / `random.uniform` calls are simulating reader hardware — non-crypto by design). [transport.py](../clients/pi/tagpulse_edge/transport.py) `_full_jitter()`: `# noqa: S311 # non-cryptographic jitter for reconnect backoff`. [tests/test_transport_token_revoked.py](../clients/pi/tests/test_transport_token_revoked.py): hardcoded `password="p"` test fixture → `# noqa: S106 # test fixture`.
+- **Phase D — Lint gate extension.** [done, this PR] [Makefile](../Makefile) `lint:` and `format:` targets extended from `src tests` to `src tests clients/pi`. [CONTRIBUTING.md](../CONTRIBUTING.md) updated to note `clients/pi` is now lint-gated (one line under §Before Submitting).
+- **Phase E — Validation.** [done, this PR] `make check`: **1176 passed, 1 skipped** (no regression). `cd clients/pi && python -m pytest -q`: **69 passed**. `ruff check clients/pi`: clean.
+
+**Out of scope for Sprint 48:**
+- Adding mypy to `clients/pi` (Pi package has no type-checking story today — separate concern).
+- Refactoring [run_reader.py](../clients/pi/examples/run_reader.py) beyond satisfying ruff (it's a demo simulator).
+- Extending lint to `scripts/` (separate cleanup).
+
+---
+
 ## Backlog (not scheduled)
 - **Rule taxonomy unification (post-Sprint 41 cleanup).** Collapse the dual-shape `rules` table (10 pre-existing `condition_type` values + 12 new `signaling.<event_type>.<trigger>` values added in Sprint 41) into a single Azure-Monitor-aligned `(signal_type, condition, action_group)` taxonomy. Concrete deliverables: rename `rules` → `alert_rules`; rename / subsume `condition_type` into a flat `signal_type` enum that covers both the signaling event types (`location_change`, `geolocation_change`, `temperature`, `geofence_transition`, `inactivity`) and the non-event signals the pre-existing rules cover (`generic_threshold`, `rate_change`, `tag_read_rate`, `stock_threshold`, `stock_movement`); retire the "legacy rule" framing in docs / Pydantic / UI sub-tabs; unify the "Signaling Events" and "Legacy rules" UI surfaces into one "Alert Rules" page; update [docs/data-models.md](data-models.md), the rule-schema docstrings, ADR-021 revision history, and the CHANGELOG. Pre-req: Sprint 41 fully shipped so real-world usage informs the new taxonomy and there is no in-flight feature churn around `rules`. New ADR will supersede the relevant portions of ADR-021 v2 (additive signaling-event columns) and ADR-006 (the original rules engine).
 - Cloud-to-device commands (reader configuration push via MQTT) (G8)

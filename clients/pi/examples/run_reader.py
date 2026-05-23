@@ -29,7 +29,7 @@ def main() -> None:
     parser.add_argument("--broker-port", default=1883, type=int)
     parser.add_argument("--username", default=None)
     parser.add_argument("--password", default=None)
-    parser.add_argument("--buffer-path", default="/tmp/tagpulse-edge.sqlite")
+    parser.add_argument("--buffer-path", default="/tmp/tagpulse-edge.sqlite")  # noqa: S108 # demo simulator default; override for prod
     parser.add_argument("--read-interval-s", default=0.5, type=float)
     args = parser.parse_args()
 
@@ -65,9 +65,9 @@ def main() -> None:
         while not stop:
             agent.submit_tag_read(
                 RawTagRead(
-                    tag_id=random.choice(TAG_POOL),
-                    antenna=random.choice(ANTENNAS),
-                    signal_strength=round(random.uniform(-80, -30), 1),
+                    tag_id=random.choice(TAG_POOL),  # noqa: S311 # demo simulator
+                    antenna=random.choice(ANTENNAS),  # noqa: S311 # demo simulator
+                    signal_strength=round(random.uniform(-80, -30), 1),  # noqa: S311 # demo simulator
                     observed_at=datetime.now(UTC),
                 )
             )
@@ -76,7 +76,7 @@ def main() -> None:
                 agent.submit_telemetry(
                     SensorSample(
                         metric_name="temperature",
-                        value=round(random.uniform(18.0, 28.0), 2),
+                        value=round(random.uniform(18.0, 28.0), 2),  # noqa: S311 # demo simulator
                         unit="C",
                         observed_at=datetime.now(UTC),
                     )
@@ -85,8 +85,8 @@ def main() -> None:
             if now - last_location > 10.0:
                 agent.submit_location(
                     LocationFix(
-                        latitude=42.36 + random.uniform(-0.001, 0.001),
-                        longitude=-71.06 + random.uniform(-0.001, 0.001),
+                        latitude=42.36 + random.uniform(-0.001, 0.001),  # noqa: S311 # demo simulator
+                        longitude=-71.06 + random.uniform(-0.001, 0.001),  # noqa: S311 # demo simulator
                         accuracy_m=5.0,
                         observed_at=datetime.now(UTC),
                     )
