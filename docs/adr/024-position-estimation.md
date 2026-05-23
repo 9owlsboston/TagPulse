@@ -1,6 +1,6 @@
 # ADR-024: Indoor Position Estimation — Trilateration Processor + `asset_positions` Hypertable
 
-- Status: Proposed (Sprint 33, May 2026)
+- Status: Deferred (Sprint 49, May 2026) — originally Proposed (Sprint 33). Backlog item; gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled — no schema rewrite required to unblock.
 - Implements: a new gap (row 2.18 in `docs/design/reference-design-remediation.md`) surfaced by SME review of large-zone deployments (football-field-size sites divided by a 400×600 XY grid of fixed readers).
 - Related: ADR [002 MQTT for device connectivity](002-mqtt-device-connectivity.md), ADR [003 TimescaleDB storage](003-timescaledb-storage.md), ADR [011 Device identity roadmap](011-device-identity-roadmap.md) (introduces `devices.mobility`), ADR [013 Subject-scoped telemetry](013-telemetry-subject-scoping.md), ADR [014 Multi-subject telemetry ingest](014-telemetry-multi-subject-ingest.md), ADR [021 Configurable Sensing Events v2](021-configurable-sensing-events.md) (the `processor` enum this ADR extends), [edge-hardware-and-rfid-primer.md §3.1](../refs/edge-hardware-and-rfid-primer.md).
 

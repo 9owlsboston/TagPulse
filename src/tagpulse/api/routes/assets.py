@@ -75,20 +75,12 @@ async def list_assets(
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
     service: AssetService = Depends(get_asset_service),
 ) -> list[AssetResponse]:
-    # -- Sprint 41 Phase H (ADR 019 close-out): the legacy
-    # ``?asset_type=`` query parameter was removed when ``assets.asset_type``
-    # was dropped. Surface an explicit 400 with a migration hint for one
-    # release so clients see a useful error rather than a silent
-    # whatever-pagination behaviour. Drop this guard in Sprint 42. --
-    if "asset_type" in request.query_params:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "The ?asset_type= query parameter was removed in Sprint 41 "
-                "(ADR 019 close-out). Use ?category_id=<uuid> instead \u2014 "
-                "list categories at GET /v1/tenants/{slug}/categories."
-            ),
-        )
+    # -- Sprint 49 Phase B1: the Sprint 41 Phase H ``?asset_type=`` 400
+    # migration-hint guard was dropped here. ``asset_type`` is now treated
+    # as an unknown query param and silently ignored, matching FastAPI's
+    # default behaviour for every other route. Clients that still send it
+    # will see a 200 with the unfiltered list \u2014 the column is gone, so
+    # there is no longer any filter to apply. --
     try:
         labels = parse_label_filter(request.query_params)
     except LabelFilterError as exc:

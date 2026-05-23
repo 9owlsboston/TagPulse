@@ -382,7 +382,7 @@
 
 ---
 
-## Sprint 22 — Cloud Readiness (Azure first, multi-cloud-shaped)
+## Sprint 22 — Cloud Readiness (Azure first, multi-cloud-shaped) (shipped)
 
 > Design: ADR-016 (this sprint), [docs/adr/008-multi-tenancy-strategy.md](adr/008-multi-tenancy-strategy.md) (tenant-export shape), [docs/adr/002-mqtt-device-connectivity.md](adr/002-mqtt-device-connectivity.md) (broker target)
 > Goal: close the 12 must-fix gaps that block first cloud deploy. Land a per-provider IaC layout with Azure as the v1 target; keep the data layer portable so cross-cloud migration is a `pg_dump --where=tenant_id` + Helm-replay drill, not a rewrite. EMQX broker cutover, mTLS broker rollout (Sprint 17c), and AWS/GCP IaC implementations stay deferred — Sprint 22 ships only the **structure** for the latter two so they aren't a refactor when scheduled.
@@ -454,7 +454,7 @@
 
 ---
 
-## Sprint 23 — Network Hardening (KV private endpoint + VNet-integrated ACA)
+## Sprint 23 — Network Hardening (KV private endpoint + VNet-integrated ACA) (shipped)
 
 > Design: ADR-017 (this sprint), [docs/runbooks/azure-first-deploy.md](runbooks/azure-first-deploy.md) (impacted), [deploy/azure/README.md](../deploy/azure/README.md) (hardening backlog → promoted)
 > Goal: comply with the corporate "no public network access on Key Vault / Storage" policy that the platform team is enforcing tenant-wide. First deployment in Sprint 22-C exposed two problems: (1) the storage policy is `Modify`-mode and silently reverted `allowSharedKeyAccess=true`, breaking the Mosquitto Azure Files mount; (2) the KV policies are currently `Audit`-only but flagged for promotion to `Deny`. Sprint 23 lands the proper VNet + private-endpoint topology so neither service depends on public network access, *and* removes the Mosquitto Files dependency entirely.
@@ -524,7 +524,7 @@
 
 ---
 
-## Sprint 24 — Frontend Cloud Deployment (parity with Sprint 22 backend deploy)
+## Sprint 24 — Frontend Cloud Deployment (parity with Sprint 22 backend deploy) (shipped)
 
 > Design: [docs/design/frontend-deployment.md](design/frontend-deployment.md), [docs/adr/018-frontend-cloud-deployment.md](adr/018-frontend-cloud-deployment.md)
 > Companion repo: [9owlsboston/TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI) — Phase B lands there
@@ -761,7 +761,7 @@ All tasks land in this repo (`9owlsboston/TagPulse`). No UI work.
 
 ---
 
-## Sprint 27 — Inventory CRUD Completeness & Operational Polish
+## Sprint 27 — Inventory CRUD Completeness & Operational Polish (shipped)
 
 > Companion repo: [9owlsboston/TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI) — Phase A lands there
 > Goal: close the CRUD gaps in the inventory UI that Sprint 15b left as read-only, add the manual stock adjustment flow that operators need for cycle-count corrections, and wire the backend endpoints that exist but are missing (lot/stock-item delete, manual stock-movement create, tag-data-mapping update/delete). Small sprint — no schema changes, no new tables.
@@ -828,7 +828,7 @@ All tasks land in this repo (`9owlsboston/TagPulse`). No UI work.
 
 ---
 
-## Sprint 28 — Operational Excellence & On-Call Readiness
+## Sprint 28 — Operational Excellence & On-Call Readiness (shipped)
 
 > Goal: harden the operate side of the platform now that build/ship/feature cadence is stable. Sprints 22–27 left a trail of one-off `azd-*` scripts, an in-VNet tools job, and a KV-rooted secret pattern; Sprint 28 consolidates that surface, adds the missing self-monitoring, and writes the runbooks an on-call engineer would need at 03:00. No new product features; no schema changes beyond an Azure Monitor alert ruleset and one optional `dead_letter_events.source` column.
 >
@@ -1141,6 +1141,25 @@ ADR 019 (Sprint 34) introduced `category_id` as the structured replacement for t
 
 ---
 
+## Sprint 42 — Multi-category asset filter (shipped, [PR #58](https://github.com/9owlsboston/TagPulse/pull/58))
+
+**Goal.** Extend `GET /v1/tenants/{slug}/assets` to accept multiple categories via repeated `?category_ids[]=<uuid>` query params (OR semantics across categories), unblocking the UI "filter by multiple categories" interaction that the Sprint 41 SignalingRuleModal scope-picker surfaced as missing. The Sprint 41 "Out of scope" note pointed at "drop the asset_type guard in Sprint 42" — that guard work slipped to Sprint 49 (Phase B1 below); the asset-multi-category filter was the only work that actually landed under the Sprint 42 branch slug (`sprint-42/assets-multi-category`).
+
+- [done, `5cc4352`] **A1 — Repeated query param support** on `GET /assets` — `category_ids: list[UUID] | None = Query(default=None, alias="category_ids[]")` with OR semantics in the repository layer.
+- [done, `30c7674`] **A2 — Regression fix** — `AssetResponse.category_id` re-allowed `None` because the Sprint 41 Phase H NOT-NULL constraint had not yet propagated to all ingest paths (manifest-only assets in tests).
+
+**Out of scope (intentionally not done as Sprint 42):**
+- ADR 023 MQTT outbound dispatcher (Sprint 41 had pointed here; deferred per Sprint 49 Phase C1 below).
+- The `?asset_type=` 400 guard drop (Sprint 41 Phase H4 told us to do it here; deferred to Sprint 49 Phase B1).
+
+---
+
+## Sprint 43-45 — (no work; intentional gap)
+
+Numbering jumped from Sprint 42 (multi-category filter) to Sprint 46 (edge wire format v2 backend). The intervening numbers were **never planned and never executed** — focus shifted to the Sprint 46/47 edge-wire-format work after the SME review surfaced [ADR 025](adr/025-edge-wire-format-v2.md) / [ADR 026](adr/026-presence-model.md) as higher-priority than the [ADR 023](adr/023-outbound-connections-mqtt-kafka.md) / [ADR 024](adr/024-position-estimation.md) work originally pencilled in for Sprints 42-45. ADR 023 + ADR 024 reconciled to Backlog as part of Sprint 49 Phase C below.
+
+---
+
 ## Sprint 46 — Edge wire format v2: backend ingest + presence model (shipped)
 
 **Goal.** Land the server-side half of the v2 wire-format contract — Pydantic models, Alembic migration for `tag_presence`, MQTTSubscriber v2 branch, synchronous presence reconciler, two new event-bus topics, observability counters. Producer side (Pi-gateway reference impl, WM reader-direct) ships in Sprint 47.
@@ -1209,7 +1228,29 @@ ADR 019 (Sprint 34) introduced `category_id` as the structured replacement for t
 
 ---
 
+## Sprint 49 — Roadmap & deprecation reconciliation (shipped, [PR #67](https://github.com/9owlsboston/TagPulse/pull/67))
+
+**Goal.** Close the bookkeeping debt left after the Sprint 41 megaship and Sprint 48 lint sweep: reconcile the roadmap with what actually shipped, retire the stale Sprint 41 Phase H `?asset_type=` 400 guard whose deprecation window has long expired, and triage ADRs 023 + 024 to Backlog so future status audits don't have to spelunk through ADR files.
+
+- [done, this PR] **A1 — Backfill `(shipped)` tags** on Sprint 22 / 23 / 24 / 27 / 28 headers in this file (verified against `git log --grep='sprint-NN'`). Sprint 17c intentionally remains `(planned)` — mTLS broker rollout never shipped.
+- [done, this PR] **A2 — Add Sprint 42 entry** (multi-category asset filter, PR #58, commits `5cc4352` + `30c7674`) — the slot was previously missing from the roadmap despite shipping under the `sprint-42/assets-multi-category` branch.
+- [done, this PR] **A3 — Add `## Sprint 43-45 — (no work; intentional gap)` placeholder** explaining the focus shift to Sprint 46/47 edge-wire-format-v2 work.
+- [done, this PR] **B1 — Removed the `?asset_type=` 400 guard** from [src/tagpulse/api/routes/assets.py](../src/tagpulse/api/routes/assets.py) (Sprint 41 Phase H had asked for this in "Sprint 42" — slipped). Route now silently ignores the unknown param. Replaced [tests/unit/test_assets_route_asset_type_removed.py](../tests/unit/test_assets_route_asset_type_removed.py) to pin the new 200 behaviour.
+- [reviewed, not done, this PR] **B2 — EPC parser variable rename** — the `asset_type` identifier in [src/tagpulse/rfid/epc.py](../src/tagpulse/rfid/epc.py) is the GS1 GRAI standard "Asset Type" field (`urn:epc:id:grai:{cp}.{asset_type}.{serial}`). The name matches the EPC spec; rename would be wrong. No action.
+- [done, this PR] **C1 — ADR 023 (MQTT outbound dispatcher)** status flipped Proposed → **Deferred**, with the gate documented in the ADR + a Backlog entry below.
+- [done, this PR] **C2 — ADR 024 (indoor position / trilateration)** status flipped Proposed → **Deferred**, with the gate documented in the ADR + a Backlog entry below. The Sprint 41 `processor` enum is live so unblock is additive.
+- [done, this PR] **D — Validation.** `make check` clean; `ruff check src tests clients/pi` clean.
+
+**Out of scope for Sprint 49:**
+- Actually building MQTT dispatcher (ADR 023) or trilateration (ADR 024) — Backlog.
+- Rule taxonomy unification (`rules` → `alert_rules`) — the canonical post-Sprint-41 ADR; deserves its own sprint.
+- Backfilling `category_ids` on legacy rules — no UI flow, no customer ask.
+
+---
+
 ## Backlog (not scheduled)
+- **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
+- **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock.
 - **Rule taxonomy unification (post-Sprint 41 cleanup).** Collapse the dual-shape `rules` table (10 pre-existing `condition_type` values + 12 new `signaling.<event_type>.<trigger>` values added in Sprint 41) into a single Azure-Monitor-aligned `(signal_type, condition, action_group)` taxonomy. Concrete deliverables: rename `rules` → `alert_rules`; rename / subsume `condition_type` into a flat `signal_type` enum that covers both the signaling event types (`location_change`, `geolocation_change`, `temperature`, `geofence_transition`, `inactivity`) and the non-event signals the pre-existing rules cover (`generic_threshold`, `rate_change`, `tag_read_rate`, `stock_threshold`, `stock_movement`); retire the "legacy rule" framing in docs / Pydantic / UI sub-tabs; unify the "Signaling Events" and "Legacy rules" UI surfaces into one "Alert Rules" page; update [docs/data-models.md](data-models.md), the rule-schema docstrings, ADR-021 revision history, and the CHANGELOG. Pre-req: Sprint 41 fully shipped so real-world usage informs the new taxonomy and there is no in-flight feature churn around `rules`. New ADR will supersede the relevant portions of ADR-021 v2 (additive signaling-event columns) and ADR-006 (the original rules engine).
 - Cloud-to-device commands (reader configuration push via MQTT) (G8)
 - Bulk device operations / jobs (G9)
