@@ -563,6 +563,43 @@ class SubjectCurrentZoneModel(Base):
     )
 
 
+class TagPresenceModel(Base):
+    """Current-state EPC presence per (tenant, device) (Sprint 46, ADR-026 §3.1).
+
+    Regular table — NOT a hypertable. Row count is bounded by EPC fleet
+    size, every update touches the current row, so the partitioned
+    layout would only add overhead. Maintained synchronously by the
+    presence reconciler on v2 wire messages (see
+    :mod:`tagpulse.ingestion.presence_reconciler`). Schema lives in
+    migration ``042_tag_presence.py``.
+
+    ``status`` is a free-form ``VARCHAR(16)`` with a DB ``CHECK`` to
+    ``'present' | 'gone'``. Two partial indexes (both
+    ``WHERE status='present'``) cover the "what's at this reader now"
+    and "where is this EPC now" queries. RLS is enabled via the
+    ``app.current_tenant_id`` session GUC.
+    """
+
+    __tablename__ = "tag_presence"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    epc: Mapped[str] = mapped_column(String(124), primary_key=True)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    last_rssi: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    last_antenna: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+
+
 class CategoryModel(Base):
     """Tenant-scoped Category for assets (Sprint 34, ADR 019).
 

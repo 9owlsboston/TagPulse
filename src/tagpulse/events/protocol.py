@@ -36,6 +36,17 @@ class Topic(StrEnum):
     # evaluate ``signaling.location.on_inference`` rules. In-process per
     # ADR-010; no external bus dependency.
     SIGNALING_ATTRIBUTION_SETTLED = "signaling.attribution_settled"
+    # Sprint 46 / ADR-025 + ADR-026. Published by the presence reconciler
+    # (``src/tagpulse/ingestion/presence_reconciler.py``) when a v2 wire-format
+    # message causes an EPC to transition into or out of presence at a reader.
+    # ``SIGNALING_TAG_APPEARED`` fires on a ``t=1`` add and on snap-derived
+    # additions; ``SIGNALING_TAG_DISAPPEARED`` fires on a ``t=2`` removal and
+    # on snap-derived removals. Payload: ``{tenant_id, device_id, epc,
+    # observed_at, source: "delta"|"snap"}``. Joins
+    # ``SIGNALING_ATTRIBUTION_SETTLED`` as the input set for the future
+    # presence-based rule family (Sprint 47+).
+    SIGNALING_TAG_APPEARED = "signaling.tag_appeared"
+    SIGNALING_TAG_DISAPPEARED = "signaling.tag_disappeared"
 
 
 @dataclasses.dataclass(frozen=True)

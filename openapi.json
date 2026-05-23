@@ -2463,7 +2463,8 @@
             "enum": [
               "gps",
               "fixed",
-              "inferred"
+              "inferred",
+              "reader_gnss"
             ],
             "title": "Source",
             "type": "string"
