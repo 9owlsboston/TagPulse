@@ -1,6 +1,6 @@
 # TagPulse Edge Wire Format v2 — Specification
 
-> **Status: ACCEPTED v1.0 (2026-05-23).** Ratified by ADR 025 (wire contract, §3) and ADR 026 (server-side presence model, §4). Sprint 46 (proposed) implements the backend; Sprint 47 (proposed) implements the producer side. Two `§11` checklist items intentionally remain unchecked: §9.2 #5 (event-bus volume mitigation) gates *production rollout of high-churn readers*, not Sprint 46 ship; the `reader-to-edge-contract.md` companion spec is Sprint 47 scope.
+> **Status: ACCEPTED v1.0 (2026-05-23).** Ratified by ADR 025 (wire contract, §3) and ADR 026 (server-side presence model, §4). Sprint 46 implements the backend (shipped); Sprint 47 implements the producer side (shipped — Pi-gateway producer + companion [reader-to-edge contract](reader-to-edge-contract.md) under [ADR-027](../adr/027-reader-to-edge-contract.md)). One `§11` checklist item intentionally remains unchecked: §9.2 #5 (event-bus volume mitigation) gates *production rollout of high-churn readers*, not Sprint 46/47 ship.
 
 | | |
 |---|---|
@@ -688,6 +688,6 @@ Each entry below uses the same structure so a developer touching the relevant co
 
 **Companion / follow-up:**
 
-- [ ] `docs/design/reader-to-edge-contract.md` drafted (covers §8.4 Q-LAN-1..Q-LAN-7, WM-facing) — Sprint 47 companion
+- [x] `docs/design/reader-to-edge-contract.md` drafted (covers §8.4 Q-LAN-1..Q-LAN-7, WM-facing) — Sprint 47 companion (landed under [ADR-027](../adr/027-reader-to-edge-contract.md))
 - [x] ADR 025 (wire format) + ADR 026 (server-side presence model) drafted and reviewed
 - [x] Roadmap entry for Sprint 46 added to [docs/roadmap.md](../roadmap.md)

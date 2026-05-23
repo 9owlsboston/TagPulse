@@ -1170,19 +1170,25 @@ ADR 019 (Sprint 34) introduced `category_id` as the structured replacement for t
 
 ---
 
-## Sprint 47 — Edge wire format v2: producer side (proposed, gated on Sprint 46 ship)
+## Sprint 47 — Edge wire format v2: producer side (shipped — Pi-gateway producer + reader-to-edge contract)
 
-**Goal.** Ship at least one producer that speaks v2 end-to-end against the Sprint 46 backend. Two candidate producers, not mutually exclusive:
+**Goal.** Ship the Pi-gateway reference producer for v2, plus the LAN-side contract (`docs/design/reader-to-edge-contract.md` + ADR-027) that any third-party reader vendor — WM included — can target. The conformance harness validates the producer end-to-end against the Sprint 46 subscriber for all 7 spec §5 scenarios.
 
-1. **Pi-gateway reference implementation** in `clients/pi/tagpulse_edge/` — translates a reader's LAN-side output (per the future `docs/design/reader-to-edge-contract.md`) to v2 MQTT. Owned by us; ships regardless of WM timing. Lets us run end-to-end conformance tests against simulated readers and serves as the reference any third-party reader vendor can imitate.
-2. **WM reader-direct firmware** speaking v2 directly to the cellular MQTT broker, skipping the Pi entirely. Owned by WM; gated on WM dev capacity + the `reader-to-edge-contract.md` companion spec being ratified. Until then, WM readers ride path #1 via a co-located Pi.
+- **Phase A — Reader-to-edge LAN contract.** [done, this PR] New companion spec [docs/design/reader-to-edge-contract.md](design/reader-to-edge-contract.md) resolves spec v2 §8.4 Q-LAN-1..Q-LAN-7 (transport options, CSV schema, sensor-failure encoding, empty-cycle signalling, per-SKU capability descriptor, reset signalling, header `issi`→`rssi` correction). Ratified by [ADR-027](adr/027-reader-to-edge-contract.md) — Proposed status, promotes to Accepted after at least one vendor reviews. Pi owns the wall clock; reader emits monotonic boot counter only (resolves spec v2 §8 Q7).
+- **Phase B — Pi-gateway producer + unit tests.** [done, this PR] New pure-logic producer at [clients/pi/tagpulse_edge/wm_v2_producer.py](../clients/pi/tagpulse_edge/wm_v2_producer.py) — `WmV2Producer` + `CycleEpcObservation`. Cycle-diff state keyed by `(antenna, EPC)`; per-EPC `t=2` (one departure message per EPC across all antennas) per spec §2.2. Supports Profile A (delta, default 300 s / 100 cycle snap cadence) and Profile B (snap every cycle, `snap_cycle_count=0`). Sensor field omission (`tmp`/`hum` keys absent when `None`) mirrors the subscriber's `_reject_explicit_null_*` enforcement. EPC validation and field range constants duplicated locally (NOT imported from the backend) so the Pi-gateway package stays self-contained for Pi-side packaging — any change MUST be matched in both places. 34 unit tests in [clients/pi/tests/test_wm_v2_producer.py](../clients/pi/tests/test_wm_v2_producer.py) cover snap triggers, cycle diff, sensor omission, EPC validation, antenna-move semantics, soft-cap warning, and reset/begin_session.
+- **Phase C — End-to-end conformance harness.** [done, this PR] New [clients/pi/tests/test_wm_v2_producer_e2e.py](../clients/pi/tests/test_wm_v2_producer_e2e.py) drives the producer through scripted scenarios for all 7 §5 cases (steady-state, mixed deltas, periodic snap, empty snap, reboot, subscriber outage, lost sub) and round-trips every emitted dict through the backend's `WmMessage` discriminated-union parser via `TypeAdapter.validate_json` — i.e., asserts the producer cannot emit a message the subscriber would DLQ. Backend-side §5 coverage in `tests/unit/test_wm_v2_conformance.py` (Sprint 46 Phase D) remains the subscriber-side harness; together the two span the full conformance matrix.
 
-**Conformance harness.** New test fixture in `tests/conformance/` that replays a captured v2 message log against the Sprint 46 subscriber and asserts the final `tag_presence` state matches a golden snapshot. Same harness validates both producers; same golden cases cover all 7 scenarios in spec §5.
-
-**Out-of-scope for Sprint 47:**
+**Out-of-scope for Sprint 47 (deferred):**
+- WM reader-direct firmware speaking v2 directly to the cellular broker (skips the Pi entirely) — gated on WM dev capacity + vendor sign-off on the new `reader-to-edge-contract.md`. Until then, WM readers ride the Pi-gateway path #1 from this sprint.
+- LAN-side parser (the CSV-over-TCP / file / serial layer that produces `CycleEpcObservation` records on the Pi) — wired in Sprint 48 when the first concrete reader integration lands. The producer module is reader-agnostic on purpose; only the LAN parser is vendor-shaped.
 - Server → reader config push (spec §9.3 #1) — v2.1 of the spec.
 - Heartbeat / reader-error message types `t=3` / `t=4` (spec §9.3 #2) — v2.1.
 - Binary wire format v3 (spec §9.3 #3) — gated on measured bandwidth justifying the cost.
+
+**Spec follow-ups (now closed):**
+- v2 spec §8.4 (Q-LAN-1..Q-LAN-7) — resolved in this sprint's Phase A.
+- v2 spec §8 Q7 (clock discipline) — resolved by ADR-027 §3: Pi owns wall clock.
+- v2 spec §11 review checklist line "`docs/design/reader-to-edge-contract.md` drafted — Sprint 47 companion" — checked off in this sprint.
 
 ---
 
