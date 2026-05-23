@@ -433,6 +433,8 @@ All rejection paths route through the existing `_record_rejection` + `_persist_m
 
 11. **Sensor-error vs. no-sensor disambiguation.** §2.2 says omit `tmp` / `hum` both when the reader has no sensor *and* when this cycle had no successful sensor read. Does firmware need to distinguish these on the wire (e.g., for diagnostic dashboards showing "sensor configured but failing")? If yes, recommend an optional `sensor_err` string field in v2.1 (`"tmp_timeout"`, `"hum_out_of_range"`, etc.) rather than overloading `empty`. If no (current default), no spec change needed.
 
+12. **Snap terminator message support.** §9.2 #2 describes the snap-window-completeness problem: server today closes the window on next-seq OR 10 s timeout, both of which have failure modes. The cleanest fix is a sentinel message — reader emits `{"t":0,"sn":...,"seq":...,"end":true}` after the last EPC of a snap, server closes immediately on receipt. Cost: 1 extra ~50 B message per snap. Falls back gracefully to the timeout path if the terminator is lost. **Question for WM:** can firmware emit this terminator reliably? If yes, we add it to v2.1 and the 10 s timeout becomes a defensive backstop rather than the primary close trigger.
+
 ---
 
 ## 9. Concerns
@@ -449,29 +451,83 @@ These are the open / uncomfortable items, listed explicitly so they don't get lo
 
 ### 9.2 Concerns this spec does NOT fully solve
 
-1. ⚠️ **Single subscriber replica assumption.** Snap-window buffering is in-process memory. If we ever run >1 `MQTTSubscriber` pod, messages for the same `(sn, seq)` could land on different pods and reconciliation breaks. Mitigations: pin to 1 replica per-broker for v2 (acceptable until customer volume justifies sharding), OR move snap window to Redis (new dependency — out of scope for this sprint).
+Each entry below uses the same structure so a developer touching the relevant code path knows exactly what can go wrong, what they'll see in metrics/logs, what we've done about it today, and what the long-term plan is. **Read the concern for the area you're modifying before changing code.**
 
-   **Current implementation (Azure Container Apps).** The worker hosting `MQTTSubscriber` is deployed as an ACA container app, not as a K8s Deployment. The K8s framing above carries over 1:1 — the data model doesn't care about the runtime — but ACA introduces three deployment-specific caveats:
+#### 1. Single subscriber replica assumption
 
-   - **Replica pinning is enforced in Bicep.** [deploy/azure/bicep/workload.bicep](../../deploy/azure/bicep/workload.bicep) sets `minReplicas: 1, maxReplicas: 1` on the worker container app (the API app next to it is `1..3` because it's stateless — do not copy that pattern to the worker). A code comment in the bicep should call out *why* the worker can't scale horizontally, so a future operator doesn't "fix" the cap.
-   - **ACA rolling-revision deploys briefly run two replicas.** ACA's revision model is rolling, not `Recreate`. During every deploy there is a ~30–60 s window where both the old and new revisions are active, both subscribed to the broker, both buffering snap windows independently — the exact failure mode this concern warns about, just transient. Protocol self-heal recovers within one snap cadence (5 min default); operators should expect a short burst of `signaling.tag_disappeared` / `signaling.tag_appeared` flapping on every deploy. Runbook addendum. Optional hardening: `az containerapp revision deactivate` the old revision before activating the new one, accepting ~15–30 s of ingest pause (Mosquitto QoS 1 + `clean_session=false` buffer through it per §7).
-   - **Scale-to-zero is dangerous.** Never let the worker's `minReplicas` drift to 0 — cold-start drops all in-flight snap windows and races with broker session restore. Bicep enforces `minReplicas: 1` today; treat as load-bearing.
+- **Scenario.** Snap-window buffering for `(sn, seq)` lives in `MQTTSubscriber` process memory. If two subscriber replicas are simultaneously subscribed to the broker, MQTT shared-subscription semantics route messages across both replicas round-robin. Messages for the same snap end up split across two heap buffers, neither of which sees the complete EPC set.
+- **Symptoms.** Each replica's reconciliation runs against a *subset* of the real snap → both fire spurious `signaling.tag_disappeared` for EPCs the other replica buffered. `tagpulse_mqtt_wm_snap_timeout_total` spikes (windows never close cleanly because the "missing" messages went to the other pod). Dashboards flap. `tag_presence` rows oscillate `present` → `gone` → `present` on the snap cadence.
+- **Mitigation today.** Pinned to one replica.
+  - **K8s framing (forward-compatible).** Run the `MQTTSubscriber` Deployment with `replicas: 1` and `strategy.type: Recreate`.
+  - **Current implementation (Azure Container Apps).** The worker is an ACA container app, not a K8s Deployment — the data model is identical but ACA layers in three deployment-specific caveats:
+    - **Replica pinning is enforced in Bicep.** [deploy/azure/bicep/workload.bicep](../../deploy/azure/bicep/workload.bicep) sets `minReplicas: 1, maxReplicas: 1` on the worker container app (the API app next to it is `1..3` because it's stateless — *do not copy that pattern to the worker*). A code comment in the bicep should call out *why* the worker can't scale horizontally, so a future operator doesn't "fix" the cap.
+    - **ACA rolling-revision deploys briefly run two replicas.** ACA's revision model is rolling, not `Recreate`. During every deploy there's a ~30–60 s window where both old and new revisions are active, both subscribed to the broker, both buffering snap windows independently — the exact failure mode this concern warns about, just transient. Protocol self-heal recovers within one snap cadence (5 min default); operators should expect a short burst of `tag_disappeared` / `tag_appeared` flapping on every deploy. Runbook addendum. Optional hardening: `az containerapp revision deactivate` the old revision before activating the new one, accepting ~15–30 s of ingest pause (Mosquitto QoS 1 + `clean_session=false` buffer through it per §7).
+    - **Scale-to-zero is dangerous.** Never let the worker's `minReplicas` drift to 0 — cold-start drops all in-flight snap windows and races with broker session restore. Bicep enforces `minReplicas: 1` today; treat as load-bearing.
+- **Long-term.** When per-broker volume justifies sharding:
+  - **On ACA.** No stable replica IDs / ordinals (unlike a K8s StatefulSet) → "sticky shared subscription by replica ID" is *not available*. Only viable path: move snap-window state to Redis (new Azure Cache for Redis dependency — not deployed today). Reconciler becomes stateless; any replica can close any window.
+  - **On AKS (if we ever migrate).** StatefulSet + sticky shared subscription by ordinal becomes available as a lighter alternative to Redis.
 
-   **Forward path on ACA when volume requires multiple replicas.** ACA does not expose stable replica IDs or ordinals (unlike a K8s StatefulSet), so the "sticky shared subscription by replica ID" pattern is not available on ACA. The only viable mitigation on the current platform is moving the snap window to Redis (new Azure Cache for Redis dependency — not deployed today). If we ever migrate the worker to AKS, the StatefulSet + sticky-shared-subscription path becomes available again as a lighter-weight alternative.
+#### 2. Snap window timeout vs. snapshot completeness
 
-2. ⚠️ **Snap window timeout vs. snapshot completeness.** 10 s timeout (§3.6) is a guess. Too short → partial snaps marked complete, real EPCs spuriously marked gone, next snap re-marks them present (annoying flapping in `signaling.tag_disappeared`). Too long → reconciliation lag. Need tuning data from real readers post-pilot.
+- **Scenario.** Server doesn't know how many messages a snap will contain (no count on the wire). It closes the window on whichever fires first: (a) next-seq arrives, or (b) 10 s timeout (§3.6). The 10 s is a guess. Both failure modes are real and asymmetric.
+- **Symptoms.**
+  - **Timeout too short** — slow link, snap partially delivered when timeout fires. Reconciliation runs with subset → marks late-arriving EPCs as `gone` → stragglers arrive seconds later and re-mark them `present`. **Flapping every snap on slow readers.** Watch for: `tag_disappeared` immediately followed by `tag_appeared` for the same EPC within < 30 s, repeating on the snap cadence. Downstream rules fire twice, false alerts go out.
+  - **Timeout too long** — snap completed in 200 ms, reader then quiet for 4 min, window held open. Reconciliation deferred → dashboards show stale `present` rows for that long. Worker heap grows unbounded if a reader misbehaves and never emits next-seq. Crash blast radius widens (more lost in-flight state per deploy — interacts with #4).
+- **Asymmetry.** Flapping is recurring and user-visible; stale state is gradual and bounded. Bias is "err toward longer" for production tuning, but capped by deploy-loss surface area from #4.
+- **Mitigation today.** Hardcoded 10 s. New OTel counter `tagpulse_mqtt_wm_snap_timeout_total{sn}` will surface which readers are hitting timeout vs. clean next-seq close — that's the tuning signal post-pilot.
+- **Long-term.** Three options, ranked:
+  1. **Snap terminator message** (preferred, see §8 Q12). Reader emits a final `{"t":0,"sn":...,"seq":...,"end":true}` after the last EPC. Server closes window on receipt. Cost: 1 extra message (~50 B) per snap. Falls back to timeout if terminator is lost. Requires firmware support — added as an open question to WM.
+  2. **Per-reader adaptive timeout.** Track P99 inter-snap-message gap per reader, set timeout = `max(10s, 3 × P99)`. Adjusts automatically; cost is per-reader stats in memory.
+  3. **Configurable per-reader override** in `devices.configuration` JSONB. Default 10 s, operators tune for known-slow readers. Lowest implementation cost.
 
-3. ⚠️ **`tag_presence` table unbounded growth.** `status='gone'` rows accumulate forever. Needs a cleanup policy: TTL `gone` rows older than 30 days (configurable), or compaction into a colder summary table. Out of scope for v2.0; add to backlog.
+#### 3. `tag_presence` table unbounded growth
 
-4. ⚠️ **Per-tenant scoping of `(sn, seq)` state.** Server's per-reader sequence tracking lives in process memory. Subscriber restart loses it — first cycle after restart will be incorrectly flagged as "gap" until the next snap arrives (which is fine because the snap fixes it, but we'll see noise in `gap_total` on every deploy). Acceptable, documented.
+- **Scenario.** Every EPC ever seen at a reader gets a row that stays forever — `gone` rows never delete. A tenant with 1M unique EPCs over a year has 1M `tag_presence` rows even if only 200 are present at any instant.
+- **Symptoms.** Slow `tag_presence` queries over time (indexes still help, but page cache effectiveness degrades). Bloated logical backups. The `idx_tag_presence_tenant_epc … WHERE status='present'` partial index keeps hot-path queries fast, but `SELECT … WHERE tenant_id=? AND epc=?` (no status filter) full-table scans escalate. Migration costs rise.
+- **Mitigation today.** None — `gone` rows accumulate. Acceptable for v2.0 (pilot scale, ~10K EPCs/tenant/month).
+- **Long-term.** Two options:
+  1. **TTL job.** Periodic `DELETE FROM tag_presence WHERE status='gone' AND last_seen < now() - interval '30 days'` (configurable). Simple. Loses long-term "was this tag ever at this reader" history.
+  2. **Compaction to cold table.** Move aged `gone` rows to `tag_presence_history` summary table (one row per `(tenant, device, epc)` lifetime with `seen_count`, `first_seen`, `last_seen`). Preserves history at lower cost. More implementation work.
+  - Backlog entry against ADR 026.
 
-5. ⚠️ **Two-table writes per add/snap are not transactional with each other across replicas.** Within one DB transaction, fine. But if `tag_reads` ingestion path is on a different DB pool (Sprint 13b multi-tier), they could split. We're not in that situation today; flag if we ever go multi-tier.
+#### 4. Per-reader `(sn, seq)` state lost on subscriber restart
 
-6. ⚠️ **Clock-skew rejection (§6) interacts badly with mobile readers.** A truck-mounted reader with intermittent GNSS may have ±minutes of clock drift naturally. 5-min threshold may be too tight. Recommend: make threshold per-reader configurable in `devices.configuration` JSONB, default 5 min, ratchet down to 60 s for fixed installations once we have data.
+- **Scenario.** Server tracks `last_seq` per reader in process memory (not persisted). Worker restart (deploy, crash, ACA revision swap) → state is empty → first `t=1` / `t=2` from any reader after restart is `seq > 0` with `last_seq = None`, looks like a gap.
+- **Symptoms.** Burst of "gap" handling on every deploy: messages discarded, `tagpulse_mqtt_wm_gap_total{sn}` spikes per reader, presence marked `suspect` for every active reader until each one's next snap arrives. Snap cadence is 5 min default → up to 5 min of stale/suspect data after restart, plus the in-flight snap window losses from #1/#2.
+- **Mitigation today.** Accepted and documented. Snap mechanism self-heals within one snap cadence. The deploy-time burst is expected and operators are trained to ignore short `gap_total` spikes immediately following deploys (runbook addendum).
+- **Long-term.** Persist `last_seq` per `(tenant, device)` either in Redis (with snap window in #1 long-term) or as a column on `devices.runtime_state` JSONB. Updated on every message — write amplification is the tradeoff. Probably comes bundled with the Redis migration when #1 forces it.
 
-7. ⚠️ **`signaling.tag_disappeared` event-bus volume.** A reader entering a high-churn area (e.g., a dock door with constant pallet movement) could emit thousands of disappear events per minute. Need to confirm Sprint 41's event bus + future on-disappearance rule kinds can absorb that without rate-limiting. Out of scope for this sprint but flag to ADR 026.
+#### 5. Two-table writes are not cross-pool transactional
 
-8. ⚠️ **`sub` for `(sn, epc)` last-seen on a *different* reader.** If EPC X was last present at reader A, then physically moves to reader B's range without reader A ever seeing it leave (e.g., reader A powered off), reader A never emits `sub`. Reader B emits `add`. `tag_presence` will show the EPC as present at *both* readers simultaneously until reader A's next snap (or until reader A is removed from the system). Acceptable; document. The Sprint 41 OverlappingZones processor is the eventual answer to "which reader is the authoritative location for an EPC right now."
+- **Scenario.** A `t=1` (add) writes to both `tag_reads` (hypertable) and `tag_presence` (new table). Today both run inside the same `AsyncSession` → one DB transaction → atomic. **But if `tag_reads` is ever migrated to a separate DB pool** (e.g., Sprint 13b multi-tier with TimescaleDB on a dedicated cluster), the two writes split across pools and lose atomicity. A crash between them leaves `tag_reads` populated and `tag_presence` stale, or vice versa.
+- **Symptoms (only if we go multi-tier).** Dashboard tag count disagrees with raw audit query (`SELECT count(distinct epc) FROM tag_reads WHERE …` vs. `SELECT count(*) FROM tag_presence WHERE status='present' AND …`). Inconsistency persists until next snap reconciles `tag_presence` (5 min default). `tag_reads` audit trail stays trustworthy throughout.
+- **Mitigation today.** Single pool — non-issue. Both writes ride one `AsyncSession.commit()`.
+- **Long-term.** If multi-tier comes: either (a) use the outbox pattern (write a single row to `tag_reads`-pool outbox table in the same transaction, async dispatcher applies the `tag_presence` update), or (b) accept the inconsistency window because snap reconciliation bounds it anyway. (b) is simpler and matches the spec's general "self-heal beats consensus" philosophy.
+
+#### 6. Clock-skew rejection vs. mobile readers
+
+- **Scenario.** §6 rejects messages where `ts` drifts > 5 min from server clock. Truck-mounted / battery / intermittent-GNSS readers can naturally drift minutes between fixes. A reader that comes online after a clock jump uploads a backlog of events all stamped with stale `ts` → server rejects every one of them → entire backlog dropped + DLQ.
+- **Symptoms.** `tagpulse_mqtt_wm_rejections_total{reason="clock_skew"}` spikes for one `sn`. The reader appears to be "silent" from dashboard perspective even though it's actively publishing. DLQ fills with that reader's payload. Operator sees ingest rate drop with no obvious cause.
+- **Mitigation today.** Fixed 5-min threshold. Acceptable for fixed-installation readers (dock doors, gates). **Hostile to mobile readers** — flag clearly in deployment docs that this default presumes infrastructure-grade clocks.
+- **Long-term.** Per-reader threshold in `devices.configuration` JSONB (`{"mqtt": {"clock_skew_seconds": 900}}`). Default 5 min. Ratchet down to 60 s for fixed installations once we have field data; raise to 15+ min for mobile fleets. Lookup happens once per device on subscriber-side device cache load — no hot-path penalty.
+
+#### 7. `signaling.tag_disappeared` event-bus volume
+
+- **Scenario.** A dock-door reader watching constant pallet movement sees dozens of EPCs appear and disappear per second. Each transition fans out a `signaling.tag_appeared` / `tag_disappeared` event. At 50 churn events/s sustained, that's 4.3M events/day from one reader. Per ADR 010 (internal event bus), the bus is in-process async — back-pressure on slow consumers stalls publish.
+- **Symptoms.** Subscriber latency rises (event publish blocks message handling). `tagpulse_event_bus_lag_seconds` grows on the `signaling.*` consumers. Downstream rule processors (Sprint 47+ on-disappearance rules) fall further behind real-time. In the limit: subscriber message buffer fills, broker backs off, ingest stalls system-wide for one noisy reader.
+- **Mitigation today.** No rate limiting. Acceptable only at pilot scale (≤ 10 active readers, modest churn). **Not safe for production-scale rollout of high-churn readers without #7's long-term fix.**
+- **Long-term.** Three layered options:
+  1. **Coalesce in reconciler.** If an EPC transitions `present → gone → present` within N seconds (configurable, default 30 s), suppress both events. Implementation lives in the reconciler, before the event bus sees them.
+  2. **Per-reader rate limit on `signaling.*` emission.** Token bucket per `sn`. When exceeded, drop with counter (`tagpulse_signaling_dropped_total{sn, reason="rate_limit"}`).
+  3. **Move event bus to durable queue** (Service Bus / Event Hubs). Decouples producer from consumer entirely. Largest scope change; defer until volume justifies it.
+  - Flagged for ADR 026. **Mandatory** decision before high-churn readers go to production.
+
+#### 8. EPC simultaneously `present` at two readers
+
+- **Scenario.** EPC X is at reader A. Reader A loses power before its next snap. EPC X is physically moved into reader B's range. Reader B emits `t=1` for EPC X → `tag_presence` now has *two* `present` rows for EPC X, one per reader. Reader A is offline so its `tag_presence` never gets reconciled — could stay stale for hours / days / forever (until reader A returns or is decommissioned).
+- **Symptoms.** "Where is EPC X?" query returns two readers. Location-based rules (e.g., "alert if pallet leaves zone") behave nondeterministically depending on which reader's row the rule reads. Dashboard heatmaps double-count.
+- **Mitigation today.** None at the wire-format / presence-model layer — this is fundamentally a *distributed observation* problem, not a wire-format problem. Operators handle it manually: when a reader is decommissioned, run a script to bulk-`gone` all its `present` rows.
+- **Long-term.** Sprint 41's **OverlappingZones processor** is the eventual answer. It treats `tag_presence` as observations from multiple sensors and computes a per-EPC authoritative location based on (a) recency, (b) RSSI, (c) zone topology configuration. `tag_presence` becomes the raw observation layer; a derived `tag_location` view is the user-facing truth. Out of scope for this spec; explicit dependency for ADR 026 to call out.
 
 ### 9.3 Concerns surfaced by the spec but deferred
 
@@ -504,7 +560,10 @@ These are the open / uncomfortable items, listed explicitly so they don't get lo
 - [ ] WM has provided expected message-rate ceiling for §8 Q8
 - [ ] WM has confirmed §8 Q9 (multi-antenna emission rule)
 - [ ] WM has answered §8 Q11 (need on-wire sensor-error vs. no-sensor disambiguation?)
+- [ ] WM has answered §8 Q12 (snap terminator `{"end":true}` supported in firmware?)
 - [ ] Internal review: §9.2 #1 single-subscriber-replica trade-off accepted
+- [ ] Internal review: §9.2 #2 snap-timeout failure modes accepted; tuning plan post-pilot agreed
 - [ ] Internal review: §9.2 #3 `tag_presence` growth policy accepted as backlog
+- [ ] Internal review: §9.2 #7 event-bus volume mitigation path agreed before high-churn rollout
 - [ ] ADR 025 + ADR 026 drafted and reviewed
 - [ ] Roadmap entry for Sprint 46 added to [docs/roadmap.md](../roadmap.md)
