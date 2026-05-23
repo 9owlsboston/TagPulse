@@ -1,6 +1,6 @@
 # ADR-025: Edge wire format v2 — JSON-over-MQTT with snap-based presence
 
-- Status: Proposed (Sprint 46, May 2026)
+- Status: **Accepted** (Sprint 46, May 2026) — ratified after Phases A–F shipped on the `sprint-46/edge-wire-format-v2-backend` branch (commits `3e0d124` Phase B, `2d63dd9` Phase C, `cc7d09b` Phase D, `a47c91d` Phase E + F). Originally **Proposed** in Sprint 46 (May 2026). Producer side ships in Sprint 47.
 - Implements: the JSON schema and behaviours defined in
   [docs/design/edge-wire-format-v2.md](../design/edge-wire-format-v2.md).
 - Related: ADR [002 MQTT for device connectivity](002-mqtt-device-connectivity.md)

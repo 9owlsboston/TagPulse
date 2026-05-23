@@ -322,9 +322,9 @@ async def apply_disappeared(
     Updates ``tag_presence`` to ``gone`` iff the EPC was previously
     ``present`` for this ``(tenant, device)`` and emits
     ``SIGNALING_TAG_DISAPPEARED`` for the transition. If the EPC was
-    never seen, logs at debug + returns False (per spec §6
-    ``tagpulse_mqtt_wm_sub_no_presence_total`` — counter wiring in
-    Phase E). If the EPC was already ``gone``, no-op.
+    never seen, logs at debug + bumps
+    ``tagpulse_mqtt_wm_sub_no_presence_total`` (spec §6) + returns
+    False. If the EPC was already ``gone``, no-op.
 
     Returns ``True`` if an event was emitted.
     """

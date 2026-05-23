@@ -1,6 +1,6 @@
 # ADR-026: Server-side presence model — `tag_presence` + synchronous reconciler
 
-- Status: Proposed (Sprint 46, May 2026)
+- Status: **Accepted** (Sprint 46, May 2026) — ratified after Phases A–F shipped on the `sprint-46/edge-wire-format-v2-backend` branch (commits `3e0d124` Phase B, `2d63dd9` Phase C, `cc7d09b` Phase D, `a47c91d` Phase E + F). Originally **Proposed** in Sprint 46 (May 2026).
 - Implements: the server-side data model and reconciliation algorithm
   defined in [docs/design/edge-wire-format-v2.md](../design/edge-wire-format-v2.md)
   §4.

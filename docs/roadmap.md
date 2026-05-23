@@ -1141,7 +1141,7 @@ ADR 019 (Sprint 34) introduced `category_id` as the structured replacement for t
 
 ---
 
-## Sprint 46 — Edge wire format v2: backend ingest + presence model (proposed)
+## Sprint 46 — Edge wire format v2: backend ingest + presence model (shipped)
 
 **Goal.** Land the server-side half of the v2 wire-format contract — Pydantic models, Alembic migration for `tag_presence`, MQTTSubscriber v2 branch, synchronous presence reconciler, two new event-bus topics, observability counters. Producer side (Pi-gateway reference impl, WM reader-direct) ships in Sprint 47.
 
