@@ -168,6 +168,56 @@ If the server receives a `t=2` (sub) for an `(sn, epc)` it has no `present` row 
 
 The *suspect* flag means: presence rows for this reader are still queryable for dashboard purposes, but tagged "may be stale, awaiting reconciliation." Cleared on next complete snapshot.
 
+### 3.7 `t=0` vs `t=1` — wire-shape twins, semantic opposites
+
+`t=0` (snap) and `t=1` (add) messages are **nearly identical on the wire** — same required fields (`sn`, `seq`, `ts`, `lat`, `lon`, `an`, `epc`, `rssi`, `cnt`), same encoding, same size. The **only** wire difference is the value of the `t` discriminator. The semantic difference is large and load-bearing:
+
+| Property | `t=0` (snap) | `t=1` (add) |
+|---|---|---|
+| **Meaning of message presence** | "EPC X is in my field right now" | "EPC X just appeared (wasn't here last cycle)" |
+| **Meaning of message absence within the cycle** | "Any EPC not listed in this cycle's snap is **gone** — wipe it from presence" | Silent — says nothing about other EPCs |
+| **Triggers reconciliation?** | **Yes** — closes a snap window, runs the diff in §4.2, may emit `tag_disappeared` for EPCs not present | **No** — point update only |
+| **Cycle is atomic in?** | The **full set** of `t=0` messages for one `(sn, seq)`. Server buffers until complete (§3.6) | This single message |
+| **Emitted on every cycle?** | No — only on snap triggers (§3.3) or empty field (§3.4) | Only when an EPC transitions absent → present |
+
+The takeaway: **a missing `t=1` for an EPC is benign** (next snap reconciles within snap cadence), but **a missing message from a `t=0` set is dangerous** (server treats the absent EPC as gone and fires `tag_disappeared`). This asymmetry is why §3.3's snap-on-reconnect rule and §3.4's `empty:true` requirement are load-bearing for the self-heal property: the snap message set is the *complete-truth declaration*, and any incompleteness propagates as false "gone" events.
+
+Common confusion: "if every cycle was a snap, we'd never need `t=1`/`t=2`." True — and that's exactly the **snap-only profile** in §3.8. The point of `t=1`/`t=2` is bandwidth, not correctness; the point of `t=0` is correctness, not bandwidth.
+
+### 3.8 Reader profiles — what firmware needs to support
+
+Three firmware profiles are first-class on this protocol. Conformance tests MUST NOT require profile 1 of all readers — the lower profiles are valid implementations targeting different reader classes.
+
+**Profile A — Delta (full v2).** The default this spec is designed around.
+
+- Emits `t=0` snap on triggers per §3.3 (boot, reconnect, periodic time/cycle)
+- Emits `t=1` / `t=2` deltas between snaps
+- Requires per-cycle diff state on the reader (last-cycle EPC set in memory)
+- Bandwidth: minimal in steady state
+- Target hardware: WM's reader, mid-range and above
+
+**Profile B — Snap-only.** Acceptable for readers that can't maintain per-cycle diff state.
+
+- Emits `t=0` snap **every cycle** (no `t=1`, no `t=2`)
+- Each cycle is a complete declaration of current field
+- Server reconciles every cycle (§4.2), not just on snap triggers — `last_seq` advances on every snap
+- `empty:true` (§3.4) still required when field is empty
+- Bandwidth: ~N× higher than Profile A in steady state (where N = EPC count); acceptable for short-range / low-EPC-count readers (e.g., handheld scanners, single-pallet zones)
+- No firmware state beyond "what's in my field right now this cycle"
+- **Server treats Profile B identically to Profile A** — there is no profile flag on the wire. A reader that only ever sends `t=0` is just a reader whose snap cadence is "every cycle." The §3.6 sequence rules still apply (`t=0` with gap is fine).
+- Target hardware: low-end / handheld / battery readers
+
+**Profile C — Legacy / v1 streaming.** Existing readers staying on the v1 wire format indefinitely.
+
+- Emits canonical `TagReadCreate` per-read (no `t` field at all)
+- v1 path in `_handle_tag_read` handles these unchanged (§4.3)
+- Does NOT populate `tag_presence` — presence model is v2-only
+- Target hardware: any reader from before v2, or partners who don't want to implement deltas
+
+**Mixed-fleet operation.** All three profiles can run simultaneously against the same broker / subscriber / tenant. The recognizer (presence of integer `t` field) routes v1 vs. v2 per-message. Within v2, Profile A and Profile B are indistinguishable to the server. No tenant-level or device-level profile config is needed.
+
+**For WM specifically:** we're asking for Profile A, but if any SKU in WM's lineup can't maintain diff state, Profile B is a fully-supported fallback — no spec changes needed, no server changes needed, just emit `t=0` every cycle.
+
 ---
 
 ## 4. Server-side behavior
