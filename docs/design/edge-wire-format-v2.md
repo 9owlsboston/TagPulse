@@ -42,6 +42,33 @@ One JSON object per MQTT publish. Flat — no nesting except `null`-allowed valu
 
 ### 2.2 Fields
 
+**Presence conventions** (apply to the "Required on" column below):
+
+- **Required** — the JSON key MUST appear in every message of the listed type(s). Receivers reject if missing.
+- **Optional** — the JSON key is **omitted entirely** when the value is absent. Senders MUST NOT emit `"key":null` for optional fields; receivers reject explicit `null` on optional sensor fields (`tmp`, `hum`) with DLQ `reason="explicit_null"`. See §6.
+- **Nullable** — applies only to `lat` / `lon`. The key MUST appear, and `null` is the valid "no GNSS fix" value. (We keep these required-but-nullable rather than optional so a missing-key message is unambiguously malformed, not "no fix.")
+- **Conditional** — see the row's own notes (`empty` is the only example).
+
+Examples:
+
+```jsonc
+// Reader with temp sensor, this cycle had a successful reading:
+{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,
+ "epc":"E2801160AAAA","rssi":-48,"cnt":2,"tmp":23.45,"hum":41.2}
+
+// Reader with NO temp sensor (or sensor failed this cycle) — tmp/hum keys absent:
+{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,
+ "epc":"E2801160AAAA","rssi":-48,"cnt":2}
+
+// Reader with no GNSS fix — lat/lon present and explicitly null:
+{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":null,"lon":null,"an":1,
+ "epc":"E2801160AAAA","rssi":-48,"cnt":2}
+
+// MALFORMED — explicit null on an optional field (rejected, DLQ reason=explicit_null):
+{"t":1,"sn":123,"seq":12346,"ts":1716489732001,"lat":41.40338,"lon":2.17403,"an":1,
+ "epc":"E2801160AAAA","rssi":-48,"cnt":2,"tmp":null}
+```
+
 | Field | JSON type | Wire encoding | Range / format | Required on | Notes |
 |---|---|---|---|---|---|
 | `t` | integer | uint8 | `0` = snap, `1` = add, `2` = sub | **all** | Message type discriminator. Integer enum, not string. Reserved: `3` = heartbeat (v2.1), `4` = error (v2.1). |
@@ -357,6 +384,7 @@ Cycle 13300: snapshot. EPC is not in snap set. Reconciliation marks it `gone`, e
 | Missing `lat` / `lon` / `an` on `t=0` / `t=1` | Reject | Yes | `...{reason="missing_required_field"}` |
 | `empty:true` with any `epc` / `rssi` / `cnt` field present | Reject | Yes | `...{reason="empty_with_payload"}` |
 | `empty:true` on `t=1` or `t=2` (only valid on `t=0`) | Reject | Yes | `...{reason="empty_wrong_type"}` |
+| Explicit `null` on optional sensor field (`tmp`, `hum`) | Reject | Yes | `...{reason="explicit_null"}` |
 | `t=2` for never-seen EPC | Log debug + counter only; do not reject | No | `tagpulse_mqtt_wm_sub_no_presence_total` |
 | `seq` gap on `t=1` / `t=2` | Discard message; mark suspect | No | `tagpulse_mqtt_wm_gap_total{sn}` |
 | `seq` rollback / reset to 0 | Mark suspect; wait for snap | No | `tagpulse_mqtt_wm_reboot_total{sn}` |
