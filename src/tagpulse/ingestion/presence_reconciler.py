@@ -43,6 +43,12 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from tagpulse.core.otel_metrics import (
+    mqtt_wm_sub_no_presence_counter,
+    presence_entries_counter,
+    signaling_tag_appeared_counter,
+    signaling_tag_disappeared_counter,
+)
 from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.models.database import TagPresenceModel
 
@@ -94,6 +100,26 @@ async def _emit(
             },
         ),
     )
+    # Sprint 46 Phase E: per-topic signaling counters with source label.
+    try:
+        counter = (
+            signaling_tag_appeared_counter
+            if topic == Topic.SIGNALING_TAG_APPEARED
+            else signaling_tag_disappeared_counter
+        )
+        counter.add(1, {"source": source})
+    except Exception:  # noqa: BLE001
+        logger.exception("failed to bump signaling counter topic=%s source=%s", topic, source)
+
+
+def _bump_presence(status: str, n: int) -> None:
+    """Best-effort bump of tagpulse_presence_entries_total{status}."""
+    if n <= 0:
+        return
+    try:
+        presence_entries_counter.add(n, {"status": status})
+    except Exception:  # noqa: BLE001
+        logger.exception("failed to bump presence_entries counter status=%s n=%d", status, n)
 
 
 def _collapse_snap_entries(
@@ -177,6 +203,7 @@ async def reconcile_snap(
             },
         )
         await session.execute(stmt)
+        _bump_presence("present", len(snap_state))
 
     # 3. Mark previously-present-but-absent EPCs as gone.
     gone_epcs = sorted(present_epcs - snap_epcs)
@@ -191,6 +218,7 @@ async def reconcile_snap(
             )
             .values(status="gone", last_seen=observed_at)
         )
+        _bump_presence("gone", len(gone_epcs))
 
     # 4. Emit transition events.
     appeared_epcs = sorted(snap_epcs - present_epcs)
@@ -265,6 +293,7 @@ async def apply_appeared(
         },
     )
     await session.execute(stmt)
+    _bump_presence("present", 1)
 
     is_transition = prior_status != "present"
     if is_transition:
@@ -311,7 +340,7 @@ async def apply_disappeared(
     prior_status = prior.scalar_one_or_none()
 
     if prior_status is None:
-        # Never-seen EPC: log + (future Phase E) bump
+        # Never-seen EPC: log + bump
         # tagpulse_mqtt_wm_sub_no_presence_total. Do NOT reject (spec §6).
         logger.debug(
             "t=2 for never-seen epc=%s device=%s tenant=%s — ignored",
@@ -319,6 +348,10 @@ async def apply_disappeared(
             device_id,
             tenant_id,
         )
+        try:
+            mqtt_wm_sub_no_presence_counter.add(1)
+        except Exception:  # noqa: BLE001
+            logger.exception("failed to bump wm sub-no-presence counter")
         return False
 
     if prior_status == "gone":
@@ -345,6 +378,7 @@ async def apply_disappeared(
         )
         .values(status="gone", last_seen=observed_at)
     )
+    _bump_presence("gone", 1)
     await _emit(
         event_bus,
         Topic.SIGNALING_TAG_DISAPPEARED,

@@ -296,6 +296,97 @@ mqtt_subscriber_last_message_age_seconds = meter.create_observable_gauge(
 )
 
 
+# -- Sprint 46 Phase E: v2 wire-format + presence reconciler counters --
+# All per spec §6 (docs/design/edge-wire-format-v2.md) + roadmap Phase E
+# (docs/roadmap.md). Counter wiring is best-effort — call sites swallow
+# OTel exceptions so an instrumentation failure cannot stall the MQTT
+# message loop or the reconciler transaction.
+
+mqtt_wm_rejections_counter = meter.create_counter(
+    "tagpulse_mqtt_wm_rejections_total",
+    description=(
+        "v2 wire-format MQTT messages rejected before reaching the "
+        "presence reconciler. The 'reason' label is one of the spec §6 "
+        "rows (missing_type, unknown_type, invalid_epc, "
+        "missing_required_field, epcs_wrong_type, invalid_snap_entry, "
+        "explicit_null, invalid_json, invalid_schema). Rejections are "
+        "also persisted to the DLQ via _persist_mqtt_drop (Sprint 28 C3)."
+    ),
+    unit="messages",
+)
+
+mqtt_wm_snap_large_counter = meter.create_counter(
+    "tagpulse_mqtt_wm_snap_large_total",
+    description=(
+        "v2 snapshot messages whose 'epcs[]' length exceeds the §6 soft "
+        "cap (default 5000). Soft cap is warning-only: messages are "
+        "processed in full, not rejected. The 'sn' label identifies the "
+        "producer's per-device serial; cardinality is bounded by device "
+        "count."
+    ),
+    unit="messages",
+)
+
+mqtt_wm_sub_no_presence_counter = meter.create_counter(
+    "tagpulse_mqtt_wm_sub_no_presence_total",
+    description=(
+        "v2 t=2 (disappeared) deltas for an EPC the server has never "
+        "seen in tag_presence for the (tenant, device) pair. Logged at "
+        "debug + counted, not rejected (spec §6). A sustained non-zero "
+        "rate indicates either subscriber state loss (pod restart with "
+        "no snap-on-reconnect yet) or a producer with no snap cadence."
+    ),
+    unit="messages",
+)
+
+presence_reconcile_duration_seconds = meter.create_histogram(
+    "tagpulse_presence_reconcile_duration_seconds",
+    description=(
+        "Wall-clock seconds spent applying one v2 message (snap, "
+        "appeared, or disappeared) to tag_presence inside the "
+        "subscriber's transaction. Labelled by 't' "
+        "(snap | appeared | disappeared)."
+    ),
+    unit="s",
+)
+
+presence_entries_counter = meter.create_counter(
+    "tagpulse_presence_entries_total",
+    description=(
+        "tag_presence row writes by resulting status. Incremented per "
+        "upsert: 'present' on every snap entry and every appeared "
+        "delta; 'gone' on each present→gone transition (either via a "
+        "snap that omits the EPC or via an explicit t=2). Useful for "
+        "presence-table throughput dashboards independent of event "
+        "emission."
+    ),
+    unit="rows",
+)
+
+signaling_tag_appeared_counter = meter.create_counter(
+    "tagpulse_signaling_tag_appeared_total",
+    description=(
+        "SIGNALING_TAG_APPEARED events emitted by the presence "
+        "reconciler. Counts transitions to 'present' (new EPC or "
+        "gone→present). Labelled by 'source' (snap | delta) so an "
+        "operator can tell snap-on-reconnect bursts from steady-state "
+        "delta-driven appearances."
+    ),
+    unit="events",
+)
+
+signaling_tag_disappeared_counter = meter.create_counter(
+    "tagpulse_signaling_tag_disappeared_total",
+    description=(
+        "SIGNALING_TAG_DISAPPEARED events emitted by the presence "
+        "reconciler. Counts present→gone transitions. Labelled by "
+        "'source' (snap | delta) so an operator can tell §5.7 "
+        "snap-driven self-heals from prompt t=2 deltas."
+    ),
+    unit="events",
+)
+
+
 # -- Labels (Sprint 35, ADR 020) --
 labels_associations_total = meter.create_counter(
     "tagpulse_labels_associations_total",

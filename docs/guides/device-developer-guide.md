@@ -201,6 +201,116 @@ curl -s "https://$API_FQDN/tag-reads?limit=5" \
   -H "Authorization: Bearer <admin-api-key>" | jq '.[] | {tag_id,timestamp,device_id}'
 ```
 
+### 3.4 v2 wire format — presence-oriented (Sprint 46+)
+
+> **Status:** v1 (shown in §3.2/§3.3) and v2 are both supported indefinitely
+> per [spec §9.1 #4](../design/edge-wire-format-v2.md). New firmware should
+> prefer v2; existing v1 deployments keep working with no changes.
+>
+> **Authoritative spec:** [`docs/design/edge-wire-format-v2.md`](../design/edge-wire-format-v2.md).
+> This section is the producer-facing summary.
+
+v2 is a presence-oriented schema: instead of streaming every tag observation
+as an independent row, the reader maintains a local view of "which EPCs are
+currently in field" and publishes three message kinds:
+
+| `t` | Kind | When to publish |
+|---|---|---|
+| `0` | **Snap** | Full current state of the field. Once per snap cadence (default **300 s** or every **100 read cycles**, whichever fires first), plus immediately after MQTT reconnect to resync the subscriber. |
+| `1` | **Appeared** | One EPC just entered the field (first cycle the antenna saw it after being absent). |
+| `2` | **Disappeared** | One EPC just left the field (exit-timeout elapsed with no read). |
+
+All three flow on the **same topic** as v1 (`tenants/{tenant}/devices/{device}/tag-reads`).
+The integer `t` field at the envelope is the discriminator — the subscriber
+routes by `t` and falls through to v1 parsing only when `t` is absent.
+
+#### Minimal examples
+
+`t=0` snap (two EPCs in field, no GPS):
+```json
+{
+  "t": 0, "sn": 42, "ts": 1716489732001,
+  "lat": null, "lon": null,
+  "epcs": [
+    {"an": 1, "epc": "E2801160AAAA1111", "rssi": -52, "cnt": 7},
+    {"an": 2, "epc": "E2801160BBBB2222", "rssi": -61, "cnt": 3}
+  ]
+}
+```
+
+`t=1` appeared:
+```json
+{
+  "t": 1, "sn": 43, "ts": 1716489734120,
+  "lat": 37.7749, "lon": -122.4194,
+  "an": 1, "epc": "E2801160CCCC3333", "rssi": -49, "cnt": 1
+}
+```
+
+`t=2` disappeared (only the EPC; no antenna/rssi):
+```json
+{ "t": 2, "sn": 44, "ts": 1716489750200, "epc": "E2801160AAAA1111" }
+```
+
+#### MQTT settings (same as v1)
+
+| Setting | Value |
+|---|---|
+| Topic | `tenants/{tenant_id}/devices/{device_id}/tag-reads` |
+| QoS | `1` (at-least-once) |
+| Retain | `false` |
+| `clean_session` | `false` (so the broker queues messages across short disconnects) |
+| TLS | per environment (1883 plain on dev; 8883 TLS once Sprint 24 lands) |
+| Auth | `username = device_id`, `password = device_token` (unchanged) |
+
+#### Producer responsibilities
+
+1. **EPC encoding** — uppercase hex, no separators. Mixed-case is rejected
+   (`invalid_epc`). Two-character minimum length, no upper bound (spec).
+2. **`sn`** — monotonic per-device sequence number. Used by the subscriber
+   for log correlation and (future Phase) replay-window detection. 32-bit
+   unsigned wrap is fine.
+3. **`ts`** — Unix epoch milliseconds (integer). UTC.
+4. **`lat`/`lon`** — omit or send `null` when no fix. **Never** send `null`
+   for optional sensor fields you simply don't have on this hardware
+   (`rssi`, `cnt`, `an`); just omit them. Spec §6 reason `explicit_null`
+   rejects messages that explicitly null an unsupported field, so the
+   subscriber can distinguish "no GPS" from "config drift".
+5. **Snap cadence** — fire a `t=0` snap every 300 s or every 100 read
+   cycles (whichever comes first), AND on every successful reconnect.
+   Without snaps, a missed `t=2` leaves the subscriber's `tag_presence`
+   row stuck at `present` until the next snap heals it.
+6. **Multi-antenna entries** — a snap can list the same EPC under multiple
+   `an` values in the same `epcs[]` array; that's a feature, not a duplicate.
+7. **Soft cap** — snaps with more than 5,000 entries are accepted but logged
+   (`tagpulse_mqtt_wm_snap_large_total{sn}`). Above that, your reader is
+   probably either misconfigured or saturating its tag inventory loop.
+
+#### Reference implementation
+
+Shape 2 (Pi-style edge agent) — see [`clients/pi/tagpulse_edge/`](../../clients/pi/tagpulse_edge/).
+The agent maintains in-memory presence state, fires `t=1`/`t=2` deltas as
+they happen, and emits a `t=0` snap on cadence or reconnect. Configuration
+knobs (snap interval, exit timeout, soft cap) live in
+[`tagpulse_edge/config.py`](../../clients/pi/tagpulse_edge/config.py).
+
+#### Inspecting what the subscriber stored
+
+Each v2 message updates `tag_presence` (one row per `(tenant, device, epc)`).
+To see what's currently visible at a reader:
+
+```sql
+SELECT epc, status, last_seen, last_rssi, last_antenna
+FROM tag_presence
+WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+  AND device_id = '00000000-0000-0000-0000-000000000002'
+  AND status = 'present'
+ORDER BY last_seen DESC;
+```
+
+Operator runbook with more queries + counter cheatsheet:
+[`docs/runbooks/wm-wire-format-v2.md`](../runbooks/wm-wire-format-v2.md).
+
 ---
 
 ## 4. HTTP API quick reference

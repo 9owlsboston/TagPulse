@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -21,6 +22,9 @@ from tagpulse.core.otel_metrics import (
     mark_mqtt_message_processed,
     mqtt_messages_rejected_counter,
     mqtt_reconnect_attempts_counter,
+    mqtt_wm_rejections_counter,
+    mqtt_wm_snap_large_counter,
+    presence_reconcile_duration_seconds,
 )
 from tagpulse.core.usage_meter import UsageMeter
 from tagpulse.events.protocol import Event, EventBus, Topic
@@ -558,10 +562,14 @@ class MqttSubscriber:
                 exc.errors()[:3],
             )
             _record_rejection("wm_v2", reason)
+            try:
+                mqtt_wm_rejections_counter.add(1, {"reason": reason})
+            except Exception:  # noqa: BLE001
+                logger.exception("failed to bump wm rejections counter reason=%s", reason)
             await self._persist_mqtt_drop(tenant_id, str(message.topic), raw, "wm_v2", reason)
             return
 
-        # Spec §6 soft cap — log + (Phase E) bump
+        # Spec §6 soft cap — log + bump
         # tagpulse_mqtt_wm_snap_large_total{sn}. Do NOT reject.
         if isinstance(msg, WmSnapMessage) and len(msg.epcs) > SNAP_SOFT_CAP_ENTRIES:
             logger.warning(
@@ -570,6 +578,10 @@ class MqttSubscriber:
                 len(msg.epcs),
                 SNAP_SOFT_CAP_ENTRIES,
             )
+            try:
+                mqtt_wm_snap_large_counter.add(1, {"sn": str(msg.sn)})
+            except Exception:  # noqa: BLE001
+                logger.exception("failed to bump wm snap-large counter sn=%s", msg.sn)
 
         try:
             async with self._session_factory() as session:
@@ -580,6 +592,8 @@ class MqttSubscriber:
                     {"tid": str(tenant_id)},
                 )
 
+                t_label = {0: "snap", 1: "appeared", 2: "disappeared"}[msg.t]
+                started = time.perf_counter()
                 if isinstance(msg, WmSnapMessage):
                     await presence_reconciler.reconcile_snap(
                         session,
@@ -610,6 +624,12 @@ class MqttSubscriber:
                     reads = []
                 else:  # pragma: no cover - discriminated union exhausts above
                     raise AssertionError(f"unhandled WmMessage variant: {type(msg).__name__}")
+                try:
+                    presence_reconcile_duration_seconds.record(
+                        time.perf_counter() - started, {"t": t_label}
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("failed to record presence reconcile histogram t=%s", t_label)
                 if reads:
                     ingestion_service = self._build_ingestion_service(session)
                     for read in reads:
