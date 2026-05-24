@@ -1090,7 +1090,7 @@ class CategoryResponse(BaseModel):
 
 # -- Sprint 35 (ADR 020): Labels first-class --
 
-LabelEntityType = Literal["asset", "site", "zone", "device", "category"]
+LabelEntityType = Literal["asset", "site", "zone", "device", "category", "tag"]
 
 # Patterns mirror the DB CHECK constraints created in migration 039.
 # Keep these in lockstep with ``migrations/versions/039_labels_catalog.py``;
@@ -1169,3 +1169,99 @@ class LabelAssociationResponse(BaseModel):
     color: str | None
     created_by: UUID | None
     created_at: datetime
+
+
+# -- Sprint 50 (ADR 028): Tag registry --
+
+TagStatus = Literal["registered", "active", "retired", "defective", "transferred_out"]
+TagSource = Literal["csv_import", "api", "backfill", "transfer_in"]
+TagTransferStatus = Literal["requested", "completed", "failed"]
+
+# Mirrors ck_tags_epc_hex_format in migration 043: canonical uppercase
+# hex, no separators, 16-128 chars. The API helper ``normalize_epc_hex``
+# upper-cases and strips before validation so operators can paste in
+# lowercase or whitespace-padded values.
+_EPC_HEX_PATTERN = r"^[0-9A-F]{16,128}$"
+
+
+class TagCreate(BaseModel):
+    """Create one tag registry row (Phase B, single-row path).
+
+    ``source`` is constrained to operator-driven values — ``transfer_in``
+    is reserved for the transfer-completion path that writes the row
+    server-side, not via this endpoint.
+    """
+
+    epc_hex: str = Field(min_length=16, max_length=128, pattern=_EPC_HEX_PATTERN)
+    source: Literal["csv_import", "api", "backfill"] = "api"
+    metadata: dict[str, object] | None = None
+
+
+class TagUpdate(BaseModel):
+    """Patch a tag registry row.
+
+    Only ``status`` and ``metadata`` are operator-mutable here. The
+    ADR-028 status-transition rules are enforced in the service
+    layer; the schema accepts the full enum so an admin can flip
+    ``registered`` / ``active`` → ``retired`` / ``defective``. The
+    registrar worker is the only writer that may set ``active`` and
+    the transfer flow is the only writer that may set
+    ``transferred_out`` — both rejected here in the service layer.
+
+    ``epc_hex`` is immutable (it's the natural key). ``source``,
+    ``first_seen_at``, ``last_seen_at``, ``gs1_uri`` are all
+    system-owned. There is intentionally no ``batch_id`` field —
+    batch grouping goes through the ``entity_labels`` API per
+    ADR 028 OQ 5.
+    """
+
+    status: TagStatus | None = None
+    metadata: dict[str, object] | None = None
+
+
+class TagResponse(BaseModel):
+    """Persisted tag registry row."""
+
+    id: UUID
+    tenant_id: UUID
+    epc_hex: str
+    gs1_uri: str | None
+    status: TagStatus
+    source: TagSource
+    first_seen_at: datetime | None
+    last_seen_at: datetime | None
+    metadata: dict[str, object] | None = Field(default=None, alias="metadata_")
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class TagTransferRequest(BaseModel):
+    """Initiate a cross-tenant transfer of one or more EPCs.
+
+    All EPCs in one request share a server-generated ``request_id``.
+    The receiving tenant is identified by slug. Phase B creates rows
+    in ``status='requested'`` only — the acknowledgement /
+    completion path lands in a later phase.
+    """
+
+    to_tenant_slug: str = Field(min_length=1, max_length=64)
+    epcs: list[str] = Field(min_length=1, max_length=1000)
+
+
+class TagTransferResponse(BaseModel):
+    """Persisted tag_transfer row (one EPC of a request)."""
+
+    id: UUID
+    request_id: UUID
+    from_tenant_id: UUID
+    to_tenant_id: UUID
+    epc_hex: str
+    status: TagTransferStatus
+    failure_reason: str | None
+    requested_by: UUID
+    requested_at: datetime
+    completed_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)

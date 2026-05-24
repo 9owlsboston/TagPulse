@@ -942,3 +942,99 @@ class TagDataMappingModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class TagModel(Base):
+    """Tenant-scoped EPC identity/ownership row (Sprint 50, ADR 028).
+
+    One row per ``(tenant_id, epc_hex)`` — that pair is the natural
+    key (see ``uq_tags_tenant_epc`` in migration 043). ``epc_hex`` is
+    the canonical uppercase-hex form with no separators; the CHECK
+    constraint ``ck_tags_epc_hex_format`` enforces ``^[0-9A-F]{16,128}$``.
+
+    ``gs1_uri`` is a *denormalized* lenient parse of the GS1
+    identifier (e.g. ``urn:epc:id:sgtin:0614141.012345.62852``) for
+    EPCs whose header maps to a known scheme; ``NULL`` for raw /
+    proprietary / unparseable tags. The partial index
+    ``ix_tags_tenant_gs1_uri`` covers the populated subset.
+
+    ``status`` ∈ ``{registered, active, retired, defective,
+    transferred_out}``; ``source`` ∈ ``{csv_import, api, backfill,
+    transfer_in}`` (no ``first_read`` per ADR 028 OQ 3). Both are
+    ``VARCHAR(16)`` with CHECK constraints rather than native enums
+    so additive evolution stays cheap. Status transition rules live
+    in the service layer (``tagpulse.services.tags``).
+
+    ``first_seen_at`` / ``last_seen_at`` are populated by the
+    registrar worker (Phase D, not yet built) — Phase B leaves them
+    ``NULL`` on create.
+    """
+
+    __tablename__ = "tags"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    epc_hex: Mapped[str] = mapped_column(String(128), nullable=False)
+    gs1_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    first_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (UniqueConstraint("tenant_id", "epc_hex", name="uq_tags_tenant_epc"),)
+
+
+class TagTransferModel(Base):
+    """Cross-tenant transfer audit log row (Sprint 50, ADR 028).
+
+    One row per EPC; all rows belonging to one operator-initiated
+    request share a ``request_id``. The schema deliberately omits a
+    ``tenant_id`` column — the row already names both sides
+    (``from_tenant_id``, ``to_tenant_id``) and the RLS policy
+    ``tenant_isolation_tag_transfers`` lets either side see it.
+
+    ``status`` ∈ ``{requested, completed, failed}`` with cross-column
+    invariants (see ``ck_tag_transfers_terminal_failure_reason`` and
+    ``ck_tag_transfers_completed_at`` in migration 043). Phase B
+    creates rows in ``requested`` only; the completion / failure
+    path lands with the receiving-tenant acknowledgement flow.
+    """
+
+    __tablename__ = "tag_transfers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    from_tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    to_tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    epc_hex: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
