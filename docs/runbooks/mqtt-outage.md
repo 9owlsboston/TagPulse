@@ -145,3 +145,8 @@ worker so the subscriber picks up the new env var.
   device, the gauge can legitimately reach 300s+. The alert excludes
   `dev` for this reason; staging/production must keep a synthetic
   publisher running (the canary, on a 5-min schedule).
+
+## Related
+
+- Canary and v2 smoke publisher recipes (how to manually re-establish a
+  trickle of ingest while debugging): [../../clients/pi/README.md](../../clients/pi/README.md) — see the "v2 wire format" section for `paho_smoke_publisher.py --wire v2` and `mqtt_canary.py` invocations, plus the TLS handshake / KV CA pull notes if `:8883` is the suspect path.
