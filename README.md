@@ -4,9 +4,9 @@ IoT platform for RFID tag readers and sensor data. Ingests device telemetry, man
 
 ## Status
 
-- **Current sprint:** 28 — Operational Excellence & On-Call Readiness (see [docs/roadmap.md §sprint-28](docs/roadmap.md#sprint-28)).
-- **Shipped through Sprint 28:** Azure deploy via `azd up` (Sprint 22+), Static Web App frontend (Sprint 24), VNet integration + private endpoints (Sprint 23), tenant-scoped KV (Sprint 26), subject-scoped telemetry (Sprints 18–21), SLOs + alerts + on-call runbooks (Sprint 28).
-- **Operators:** start at [docs/operator-quickstart.md](docs/operator-quickstart.md). On-call → [docs/runbooks/incident-template.md](docs/runbooks/incident-template.md).
+- **Current sprint:** 53 — Workflow tooling & cross-sprint catch-up (see [docs/roadmap.md §sprint-53](docs/roadmap.md#sprint-53--workflow-tooling--cross-sprint-catch-up-pr-72)).
+- **Shipped through Sprint 53:** Azure deploy via `azd up` (Sprint 22+), Static Web App frontend (Sprint 24), VNet integration + private endpoints (Sprint 23), tenant-scoped KV (Sprint 26), subject-scoped telemetry (Sprints 18–21), SLOs + alerts + on-call runbooks (Sprint 28), edge wire format v2 + presence reconciler ([ADR-025](docs/adr/025-edge-wire-format-v2.md), Sprints 46/47), tag registry backend + UI ([ADR-028](docs/adr/028-tags-as-first-class-entity.md), Sprints 50/51), `GET /bulk-operations` (Sprint 52), v2 test clients + MQTT TLS sidecar + `sensor_data → telemetry_readings` bridge fix (Sprint 53 F/H/I).
+- **Operators:** start at [docs/operator-quickstart.md](docs/operator-quickstart.md). On-call → [docs/runbooks/incident-template.md](docs/runbooks/incident-template.md). Edge / Pi smoke + canary recipes → [clients/pi/README.md](clients/pi/README.md).
 - **Developers on a laptop:** [docs/quickstart.md](docs/quickstart.md).
 
 ## Quick Start (developer laptop)
