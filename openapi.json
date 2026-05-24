@@ -5018,6 +5018,225 @@
         "title": "StockMovementResponse",
         "type": "object"
       },
+      "TagBulkOperationResult": {
+        "description": "Outcome of ``POST /tags/bulk-patch`` or ``POST /tags/bulk-retire``.\n\nFive branches mirroring :class:`TagImportResult`:\n\n- ``errors`` non-empty \u2192 **422**; the scope resolved but at\n  least one matched tag would violate its status-transition\n  edge list. Nothing is written. No token is minted.\n- ``dry_run=True`` and ``errors`` empty \u2192 **200**; ``matched``\n  is the number of tags the scope resolved to, ``updated`` is\n  0 (nothing written), ``token`` + ``expires_in`` + ``sample``\n  are populated for a follow-up ``?confirm=<token>``.\n- ``dry_run=False`` and ``confirm`` provided and ``matched``\n  below tenant threshold \u2192 **200**; ``updated`` is the number\n  of rows changed.\n- ``dry_run=False`` and ``confirm`` provided and ``matched``\n  at or above tenant threshold \u2192 **202**; the op is queued\n  for second-admin approval. ``requires_approval=True``,\n  ``pending_id`` is set, ``updated=0``.\n- Bad token surfaces as 409 from the route, not via this\n  schema.",
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/TagBulkRowError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "expires_in": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In"
+          },
+          "matched": {
+            "title": "Matched",
+            "type": "integer"
+          },
+          "pending_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Id"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "requires_approval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requires Approval"
+          },
+          "sample": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sample",
+            "type": "array"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "matched",
+          "updated",
+          "dry_run"
+        ],
+        "title": "TagBulkOperationResult",
+        "type": "object"
+      },
+      "TagBulkPatchRequest": {
+        "description": "Body for ``POST /tags/bulk-patch`` (Sprint 50 C4, ADR 028).\n\nAt least one of ``status`` / ``metadata`` must be set \u2014 the\nserver has nothing else to apply otherwise. Per-tag status\ntransitions are validated server-side against the same edge\nlist :class:`TagUpdate` uses, so an operator can't slip\n``transferred_out`` past the bulk surface.\n\n``metadata`` is a full **replace** of the target row's\nmetadata column (mirroring single-row PATCH semantics).\nPer-key merge can be added in a later sprint if customer\nfeedback asks for it; doing replace-by-default avoids\nsurprising \"I cleared one key and the others stayed\".",
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/TagBulkScope"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "registered",
+                  "active",
+                  "retired",
+                  "defective",
+                  "transferred_out"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "title": "TagBulkPatchRequest",
+        "type": "object"
+      },
+      "TagBulkRetireRequest": {
+        "description": "Body for ``POST /tags/bulk-retire`` (Sprint 50 C4, ADR 028).\n\nEquivalent to ``POST /tags/bulk-patch`` with ``status='retired'``\nbut exposed as its own endpoint so the audit log carries a\ndistinct action name (``tag.bulk_retired`` vs\n``tag.bulk_patched``) \u2014 operators searching \"who retired\nbatch X\" don't have to filter PATCH calls by status payload.\n\n``reason`` is optional free-text recorded on the audit-log\nentry; not persisted on the tag rows themselves.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/TagBulkScope"
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "title": "TagBulkRetireRequest",
+        "type": "object"
+      },
+      "TagBulkRowError": {
+        "description": "One per-tag failure from a bulk PATCH / retire dry-run or commit.\n\nCurrently the only failure surfaced this way is a rejected\nstatus transition (e.g., ``transferred_out \u2192 retired``).\nPer ADR 028's all-or-nothing rule on bulk mutations, any\nnon-empty error list aborts the operation \u2014 nothing is written\neven on a confirmed commit.",
+        "properties": {
+          "epc_hex": {
+            "title": "Epc Hex",
+            "type": "string"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          }
+        },
+        "required": [
+          "epc_hex",
+          "error"
+        ],
+        "title": "TagBulkRowError",
+        "type": "object"
+      },
+      "TagBulkScope": {
+        "description": "Scope selector for a bulk PATCH or bulk retire.\n\nPer ADR 028 \u00a7Governance #3 every bulk mutation MUST carry one of:\n\n- ``labels`` \u2014 deep-object label filter; MUST include a non-empty\n  ``batch`` key (other label keys may be present and are\n  AND-combined). This is the \"operators think in batches\"\n  contract \u2014 bulk ops scoped purely by some other label key\n  would be hard to audit by reel.\n- ``epc_list`` \u2014 explicit list of 1..1000 canonical EPC hex\n  values. The 1000 cap is the ADR-pinned blast-radius limit\n  for the explicit-enumeration shape.\n\nExactly one of ``labels`` / ``epc_list`` must be set.",
+        "properties": {
+          "epc_list": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 1000,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Epc List"
+          },
+          "labels": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labels"
+          }
+        },
+        "title": "TagBulkScope",
+        "type": "object"
+      },
       "TagCreate": {
         "description": "Create one tag registry row (Phase B, single-row path).\n\n``source`` is constrained to operator-driven values \u2014 ``transfer_in``\nis reserved for the transfer-completion path that writes the row\nserver-side, not via this endpoint.",
         "properties": {
@@ -14149,6 +14368,160 @@
           }
         ],
         "summary": "Create Tag",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags/bulk-patch": {
+      "post": {
+        "description": "Apply a status and/or metadata change to a scoped set of tags.\n\nPer [ADR-028 \u00a7\"Governance\" rule 3](../../../../docs/adr/028-tags-as-first-class-entity.md):\n\n- Body MUST include ``scope`` with exactly one of:\n  ``labels.batch=<value>`` (other label keys allowed\n  alongside) **or** ``epc_list[]`` (1..1000 EPCs). 422 if\n  neither/both/oversized.\n- At least one of ``status`` / ``metadata`` must be set.\n- **400** on bad XOR (no dry_run and no confirm, or both).\n- **422** if scope matches zero tags, or if any matched tag\n  would violate its status-transition edge list (all-or-\n  nothing: nothing is written).\n- **200** on successful dry-run (token + expires_in + sample).\n- **200** on successful sub-threshold commit.\n- **202** when ``matched >= tenants.tag_bulk_two_person_threshold``\n  \u2014 queued for second-admin approval, ``pending_id`` returned.\n- **409** on a bad confirmation token.\n\nThe audit shape (``tag.bulk_patched``) is forward-compatible\nwith the C5 unified bulk-op audit envelope.",
+        "operationId": "bulk_patch_tags_tags_bulk_patch_post",
+        "parameters": [
+          {
+            "description": "Preview mode. Resolves the scope, validates per-tag status transitions, and (on success) mints a single-use confirmation token bound to the resolved EPC set + the requested mutation. Per ADR 028 \u00a7Governance #2 every bulk op is dry-run-first.",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Preview mode. Resolves the scope, validates per-tag status transitions, and (on success) mints a single-use confirmation token bound to the resolved EPC set + the requested mutation. Per ADR 028 \u00a7Governance #2 every bulk op is dry-run-first.",
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Confirmation token from a prior successful dry-run. Mutually exclusive with dry_run=true. Binds to (tenant, user, scope, mutation) \u2014 confirming a different scope or mutation returns 409.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Confirmation token from a prior successful dry-run. Mutually exclusive with dry_run=true. Binds to (tenant, user, scope, mutation) \u2014 confirming a different scope or mutation returns 409.",
+              "title": "Confirm"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagBulkPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagBulkOperationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Bulk Patch Tags",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags/bulk-retire": {
+      "post": {
+        "description": "Retire (status='retired') a scoped set of tags.\n\nDistinct from :func:`bulk_patch_tags` only by:\n\n- **admin-only** (retire is destructive enough to refuse the\n  editor role even though single-row PATCH allows it; ADR 028\n  \u00a7Governance #3 frames retire as the most common bulk\n  destructive op and we want the most-defensible default).\n- audit action is ``tag.bulk_retired`` (greppable for\n  \"who retired batch X\" without filtering PATCH bodies).\n- body has no ``status`` (implicit) or ``metadata`` (out of\n  scope here); it accepts an optional ``reason`` that's\n  attached to the audit-log entry only.\n\nAll other governance rails (dry-run, confirmation token,\nscope-XOR, two-person threshold) are identical to the bulk\nPATCH endpoint.",
+        "operationId": "bulk_retire_tags_tags_bulk_retire_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Confirm"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagBulkRetireRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagBulkOperationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Bulk Retire Tags",
         "tags": [
           "tags"
         ]

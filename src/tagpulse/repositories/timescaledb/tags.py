@@ -266,6 +266,83 @@ class TimescaleTagRepository:
         skipped = len(rows) - created
         return created, skipped
 
+    async def resolve_bulk_scope(
+        self,
+        tenant_id: uuid.UUID,
+        *,
+        batch_label: str | None = None,
+        epc_list: list[str] | None = None,
+    ) -> list[TagModel]:
+        """Materialise the tag rows a Sprint 50 C4 bulk op targets.
+
+        Returns full :class:`TagModel` rows (not response DTOs) so
+        the route layer can run :func:`validate_status_transition`
+        against the live ``status`` value, then call
+        :meth:`bulk_apply` on the same list without a second round
+        trip.
+
+        Exactly one of ``batch_label`` / ``epc_list`` must be set —
+        the schema layer (:class:`TagBulkScope`) enforces the XOR;
+        we re-assert here as a defensive belt-and-braces.
+
+        Ordering: results are sorted by ``epc_hex`` so the
+        downstream sample preview and content-hash are
+        deterministic regardless of physical row order.
+        """
+        if (batch_label is None) == (epc_list is None):
+            raise ValueError("resolve_bulk_scope: exactly one of batch_label or epc_list")
+        stmt = select(TagModel).where(TagModel.tenant_id == tenant_id)
+        if batch_label is not None:
+            stmt = stmt.where(
+                exists().where(
+                    and_(
+                        EntityLabelModel.entity_id == TagModel.id,
+                        EntityLabelModel.value == batch_label,
+                        LabelModel.id == EntityLabelModel.label_id,
+                        LabelModel.tenant_id == tenant_id,
+                        LabelModel.entity_type == "tag",
+                        func.lower(LabelModel.key) == "batch",
+                    )
+                )
+            )
+        else:
+            assert epc_list is not None
+            stmt = stmt.where(TagModel.epc_hex.in_(epc_list))
+        stmt = stmt.order_by(TagModel.epc_hex.asc())
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def bulk_apply(
+        self,
+        rows: list[TagModel],
+        *,
+        status: str | None = None,
+        metadata: dict[str, object] | None = None,
+        metadata_set: bool = False,
+    ) -> int:
+        """Apply ``status`` and/or ``metadata`` to a pre-resolved row set.
+
+        The caller (route layer) has already run
+        :func:`validate_status_transition` on every row, so no
+        per-row validation happens here. ``metadata_set=True`` is
+        the "metadata field was present in the request body" flag
+        — needed to disambiguate "do not touch metadata" from
+        "explicitly clear metadata to NULL".
+
+        Returns the number of rows actually mutated (which equals
+        ``len(rows)`` unless the caller passed an empty list).
+        Flushes once at the end, not per row.
+        """
+        if not rows:
+            return 0
+        for row in rows:
+            if status is not None:
+                row.status = status
+            if metadata_set:
+                row.metadata_ = metadata
+        await self._session.flush()
+        return len(rows)
+
     async def update(
         self,
         tenant_id: uuid.UUID,

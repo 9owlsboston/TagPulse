@@ -32,12 +32,16 @@ audit-log surface until the C5 unified shape lands.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tagpulse.api.routes.tags import import_payload_content_hash
+from tagpulse.api.routes.tags import (
+    bulk_mutation_payload_content_hash,
+    import_payload_content_hash,
+)
 from tagpulse.core.audit import AuditLogger
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.database import PendingBulkOperationModel
@@ -46,6 +50,31 @@ from tagpulse.repositories.timescaledb.session import get_session
 from tagpulse.services import pending_bulk_operations as pending_ops
 
 router = APIRouter(prefix="/bulk-operations", tags=["bulk-operations"])
+
+
+# Per-operation content hasher used by the approve-path tamper guard.
+# Adding a new bulk operation = register an executor in its route
+# module + add a row here. Unknown ops surface as 409 on approve
+# (handled in :func:`_resolve_content_hasher` below).
+_CONTENT_HASHERS = {
+    "tags.import": import_payload_content_hash,
+    "tags.bulk_patch": bulk_mutation_payload_content_hash,
+    "tags.bulk_retire": bulk_mutation_payload_content_hash,
+}
+
+
+def _resolve_content_hasher(operation: str) -> Callable[[bytes], str]:
+    """Look up the hasher for ``operation``; 409 if not registered."""
+    hasher = _CONTENT_HASHERS.get(operation)
+    if hasher is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "no content hasher registered for operation",
+                "operation": operation,
+            },
+        )
+    return hasher
 
 
 def _to_response(row: PendingBulkOperationModel) -> PendingBulkOperationResponse:
@@ -123,29 +152,31 @@ async def approve_pending_bulk_operation(
 
     # 404 fast-fail outside the service so the standard not-found
     # mapping stays uniform across GET/approve/reject.
-    await _load_or_404(session, pending_id, user.tenant_id)
+    row = await _load_or_404(session, pending_id, user.tenant_id)
+    hasher = _resolve_content_hasher(row.operation)
 
-    outcome, row, summary = await pending_ops.approve(
+    outcome, decided_row, summary = await pending_ops.approve(
         session,
         pending_id=pending_id,
         tenant_id=user.tenant_id,
         decided_by=user.user_id,
-        content_hasher=import_payload_content_hash,
+        content_hasher=hasher,
     )
 
     if outcome is not pending_ops.PendingDecisionOutcome.OK:
-        assert row is not None  # not-found was handled above
+        assert decided_row is not None  # not-found was handled above
         raise HTTPException(
             status_code=_outcome_to_http(outcome),
             detail={
                 "message": ("pending bulk operation cannot be approved in its current state"),
                 "reason": outcome.value,
-                "status": row.status,
+                "status": decided_row.status,
             },
         )
 
-    assert row is not None
+    assert decided_row is not None
     assert summary is not None
+    row = decided_row
     await AuditLogger(session=session).log(
         user.tenant_id,
         f"{row.operation}.approved",

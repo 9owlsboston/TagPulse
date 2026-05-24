@@ -41,6 +41,7 @@ scope through ``get_current_tenant`` and skips the slug in the URL.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import uuid
 from typing import Annotated, Any
@@ -68,8 +69,13 @@ from tagpulse.core.bulk_confirmation_tokens import (
 from tagpulse.core.tag_import_rate_limit import TAG_IMPORT_LIMITER
 from tagpulse.core.tenant_auth import Tenant, get_current_tenant
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
-from tagpulse.models.database import PendingBulkOperationModel, TenantModel
+from tagpulse.models.database import PendingBulkOperationModel, TagModel, TenantModel
 from tagpulse.models.schemas import (
+    TagBulkOperationResult,
+    TagBulkPatchRequest,
+    TagBulkRetireRequest,
+    TagBulkRowError,
+    TagBulkScope,
     TagCreate,
     TagImportResult,
     TagResponse,
@@ -85,7 +91,11 @@ from tagpulse.repositories.timescaledb.tags import (
     TimescaleTagTransferRepository,
 )
 from tagpulse.services import pending_bulk_operations as pending_ops
-from tagpulse.services.tags import normalize_epc_hex, parse_tag_import_csv
+from tagpulse.services.tags import (
+    normalize_epc_hex,
+    parse_tag_import_csv,
+    validate_status_transition,
+)
 
 router = APIRouter(tags=["tags"])
 
@@ -646,8 +656,8 @@ async def _tag_import_executor(
 
 
 # Register the executor at import time so /bulk-operations/{id}/approve
-# can find it as soon as the app starts. Sprint 50 C4 will add
-# ``tags.bulk_patch`` / ``tags.bulk_retire`` next to this line.
+# can find it as soon as the app starts. C4 adds ``tags.bulk_patch`` /
+# ``tags.bulk_retire`` further down in this module.
 pending_ops.register_executor(_IMPORT_OPERATION, _tag_import_executor)
 
 
@@ -661,6 +671,627 @@ def import_payload_content_hash(payload: bytes) -> str:
     """
     valid_rows, _errors = parse_tag_import_csv(payload)
     return _content_hash([r.epc_hex for r in valid_rows])
+
+
+# ---------------------------------------------------------------------------
+# Bulk PATCH / retire (Sprint 50 C4 — ADR 028 §Governance #3)
+# ---------------------------------------------------------------------------
+
+_BULK_PATCH_OPERATION = "tags.bulk_patch"
+_BULK_RETIRE_OPERATION = "tags.bulk_retire"
+
+# Same eyeball-it cap as the import dry-run preview so operators
+# get a consistent "did I scope the right reel?" surface across
+# every bulk op.
+_BULK_MUTATE_SAMPLE_SIZE = 10
+
+
+def _bulk_mutation_content_hash(
+    epc_hexes: list[str],
+    *,
+    status: str | None,
+    metadata: dict[str, Any] | None,
+    metadata_set: bool,
+) -> str:
+    """Hash the *intent* — scope EPC set + the exact mutation payload.
+
+    The hash MUST change when any of these change:
+
+    - the resolved scope (so a label-scoped op whose batch grows
+      between dry-run and confirm fails with content_mismatch, not
+      silently widens);
+    - the requested ``status`` (so a typo'd dry-run can't be
+      confirmed against a corrected mutation);
+    - the requested ``metadata`` *replacement* (per-key order is
+      ignored — we sort).
+
+    ``metadata_set`` distinguishes "don't touch metadata" (False)
+    from "explicitly set to NULL" (True with ``metadata is None``)
+    — the wire payload of these two intents differs and the hash
+    must reflect that.
+    """
+
+    payload = {
+        "epcs": sorted(epc_hexes),
+        "status": status,
+        "metadata_set": metadata_set,
+        # ``sort_keys`` makes the encoding deterministic for any
+        # dict the operator submits.
+        "metadata": metadata if metadata_set else None,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _serialize_bulk_payload(
+    *,
+    scope_kind: str,
+    scope_value: object,
+    status: str | None,
+    metadata: dict[str, Any] | None,
+    metadata_set: bool,
+    resolved_epcs: list[str],
+) -> bytes:
+    """Encode everything the executor will need at approve time.
+
+    ``resolved_epcs`` is included so the approve-path executor
+    can re-target the exact set the requester previewed, even if
+    a batch label has gained/lost members in the meantime (the
+    content-hash check on approve compares against this stored
+    list, not the current label state).
+
+    Stored as JSON bytes for human-greppability in the DB; the
+    table column is ``BYTEA`` so no encoding concerns either way.
+    """
+
+    return json.dumps(
+        {
+            "scope_kind": scope_kind,
+            "scope_value": scope_value,
+            "status": status,
+            "metadata_set": metadata_set,
+            "metadata": metadata if metadata_set else None,
+            "resolved_epcs": sorted(resolved_epcs),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _bulk_payload_content_hash(payload: bytes) -> str:
+    """Re-hash a stored bulk-mutation payload (approve-path tamper guard)."""
+
+    decoded = json.loads(payload.decode("utf-8"))
+    return _bulk_mutation_content_hash(
+        list(decoded["resolved_epcs"]),
+        status=decoded.get("status"),
+        metadata=decoded.get("metadata"),
+        metadata_set=bool(decoded.get("metadata_set", False)),
+    )
+
+
+def _normalize_scope(scope: TagBulkScope) -> tuple[str, str | list[str]]:
+    """Canonicalise the scope selector for storage + audit.
+
+    Returns ``("label_batch", value)`` or ``("epc_list", [epc, ...])``.
+    EPC normalization (upper + strip) happens here so the
+    downstream resolver, hash, and audit all see the same shape.
+    """
+    if scope.epc_list is not None and len(scope.epc_list) > 0:
+        normalised = [normalize_epc_hex(epc) for epc in scope.epc_list]
+        if len(set(normalised)) != len(normalised):
+            # Schema already dedup-checks, but EPC normalization can
+            # collapse "abcd..." and "ABCD..." into a duplicate post-
+            # normalize. Surface explicitly so the operator sees why.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="scope.epc_list contains duplicates after normalization",
+            )
+        return ("epc_list", normalised)
+    assert scope.labels is not None
+    return ("label_batch", scope.labels["batch"])
+
+
+async def _resolve_bulk_scope_rows(
+    repo: TimescaleTagRepository,
+    tenant_id: uuid.UUID,
+    scope_kind: str,
+    scope_value: str | list[str],
+) -> list[TagModel]:
+    """Materialise the rows for ``scope_kind`` / ``scope_value``."""
+    if scope_kind == "label_batch":
+        assert isinstance(scope_value, str)
+        return await repo.resolve_bulk_scope(tenant_id, batch_label=scope_value)
+    assert scope_kind == "epc_list" and isinstance(scope_value, list)
+    return await repo.resolve_bulk_scope(tenant_id, epc_list=scope_value)
+
+
+def _validate_transitions(
+    rows: list[TagModel],
+    target_status: str | None,
+) -> list[TagBulkRowError]:
+    """Run :func:`validate_status_transition` per row; collect failures.
+
+    Returns an empty list when ``target_status`` is None
+    (metadata-only patch — no transition check needed).
+    """
+    if target_status is None:
+        return []
+    errors: list[TagBulkRowError] = []
+    for row in rows:
+        try:
+            validate_status_transition(row.status, target_status)
+        except StatusTransitionError as exc:
+            errors.append(TagBulkRowError(epc_hex=row.epc_hex, error=str(exc)))
+    return errors
+
+
+def _require_xor_flow(dry_run: bool, confirm: str | None) -> None:
+    """Mirror the import endpoint's dry-run / confirm contract."""
+    if dry_run and confirm is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": (
+                    "dry_run and confirm are mutually exclusive;"
+                    " preview first, then submit ?confirm=<token>"
+                ),
+            },
+        )
+    if not dry_run and confirm is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": (
+                    "confirmation required: POST with ?dry_run=true first,"
+                    " then re-POST with ?confirm=<token> (ADR 028"
+                    " §Governance #2)"
+                ),
+            },
+        )
+
+
+async def _run_bulk_mutation(
+    *,
+    session: AsyncSession,
+    user: AuthenticatedUser,
+    operation: str,
+    audit_action_requested: str,
+    audit_action_applied: str,
+    scope: TagBulkScope,
+    target_status: str | None,
+    metadata: dict[str, Any] | None,
+    metadata_set: bool,
+    dry_run: bool,
+    confirm: str | None,
+    response: Response | None,
+    extra_audit: dict[str, Any] | None = None,
+) -> TagBulkOperationResult:
+    """Shared 0→7 flow for both bulk PATCH and bulk retire.
+
+    Mirrors the structure of :func:`import_tags` so the branches
+    line up one-for-one (XOR check → scope resolve → transition
+    validate → dry-run / confirm token → two-person threshold →
+    direct apply). Differences from import: no rate-limiter (the
+    scope-required + threshold + 1000-EPC cap are the blast-radius
+    controls per ADR 028 §Governance #3); no parse step (scope
+    resolution replaces it).
+    """
+    _require_xor_flow(dry_run, confirm)
+
+    scope_kind, scope_value = _normalize_scope(scope)
+    repo = _repo(session)
+    rows = await _resolve_bulk_scope_rows(repo, user.tenant_id, scope_kind, scope_value)
+    matched = len(rows)
+    sample = [r.epc_hex for r in rows[:_BULK_MUTATE_SAMPLE_SIZE]]
+
+    if matched == 0:
+        # Empty scope is a 422 — operators expect the scope to
+        # match something, and confirming an empty preview would
+        # be a silent no-op (bad ops experience). Mirrors the
+        # import "0 rows" branch.
+        if response is not None:
+            response.status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        return TagBulkOperationResult(
+            matched=0,
+            updated=0,
+            dry_run=dry_run,
+            errors=[TagBulkRowError(epc_hex="", error="scope matched no tags")],
+            sample=[],
+        )
+
+    transition_errors = _validate_transitions(rows, target_status)
+    if transition_errors:
+        if response is not None:
+            response.status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        return TagBulkOperationResult(
+            matched=matched,
+            updated=0,
+            dry_run=dry_run,
+            errors=transition_errors,
+            sample=sample,
+        )
+
+    epc_hexes = [r.epc_hex for r in rows]
+    content_hash = _bulk_mutation_content_hash(
+        epc_hexes,
+        status=target_status,
+        metadata=metadata,
+        metadata_set=metadata_set,
+    )
+
+    # --- Dry-run: 200, mint token, no write ---
+    if dry_run:
+        token, expires_in = BULK_CONFIRMATION_TOKENS.mint(
+            tenant_id=user.tenant_id,
+            user_id=user.user_id,
+            operation=operation,
+            content_hash=content_hash,
+            ttl_seconds=DEFAULT_TTL_SECONDS,
+        )
+        return TagBulkOperationResult(
+            matched=matched,
+            updated=0,
+            dry_run=True,
+            errors=[],
+            sample=sample,
+            token=token,
+            expires_in=expires_in,
+        )
+
+    # --- Confirm path ---
+    assert confirm is not None
+    outcome = BULK_CONFIRMATION_TOKENS.consume(
+        confirm,
+        tenant_id=user.tenant_id,
+        user_id=user.user_id,
+        operation=operation,
+        content_hash=content_hash,
+    )
+    if outcome is not ConfirmationOutcome.OK:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "confirmation token did not match this submission;"
+                    " re-run with ?dry_run=true to mint a fresh token"
+                ),
+                "reason": outcome.value,
+            },
+        )
+
+    tenant_row = (
+        await session.execute(select(TenantModel).where(TenantModel.id == user.tenant_id))
+    ).scalar_one()
+    threshold = tenant_row.tag_bulk_two_person_threshold
+
+    # --- Two-person rule (above threshold → 202, queue) ---
+    if matched >= threshold:
+        payload_bytes = _serialize_bulk_payload(
+            scope_kind=scope_kind,
+            scope_value=scope_value,
+            status=target_status,
+            metadata=metadata,
+            metadata_set=metadata_set,
+            resolved_epcs=epc_hexes,
+        )
+        pending = await pending_ops.create_pending(
+            session,
+            tenant_id=user.tenant_id,
+            operation=operation,
+            requested_by=user.user_id,
+            content_hash=content_hash,
+            row_count=matched,
+            sample=sample,
+            payload=payload_bytes,
+        )
+        changes: dict[str, Any] = {
+            "operation": operation,
+            "scope_kind": scope_kind,
+            "scope_value": scope_value,
+            "matched": matched,
+            "threshold": threshold,
+            "confirmation_token": confirm,
+            "content_hash": content_hash,
+            "target_status": target_status,
+            "metadata_set": metadata_set,
+        }
+        if extra_audit:
+            changes.update(extra_audit)
+        await AuditLogger(session=session).log(
+            user.tenant_id,
+            audit_action_requested,
+            "pending_bulk_operation",
+            pending.id,
+            changes=changes,
+            user_id=user.user_id,
+        )
+        if response is not None:
+            response.status_code = status.HTTP_202_ACCEPTED
+        return TagBulkOperationResult(
+            matched=matched,
+            updated=0,
+            dry_run=False,
+            errors=[],
+            sample=sample,
+            token=confirm,
+            requires_approval=True,
+            pending_id=pending.id,
+        )
+
+    # --- Sub-threshold: apply now, 200, single audit entry ---
+    request_id = uuid.uuid4()
+    updated = await _execute_bulk_mutation(
+        session,
+        tenant_id=user.tenant_id,
+        rows=rows,
+        target_status=target_status,
+        metadata=metadata,
+        metadata_set=metadata_set,
+        actor_user_id=user.user_id,
+        audit_action=audit_action_applied,
+        scope_kind=scope_kind,
+        scope_value=scope_value,
+        confirmation_token=confirm,
+        approved_by=None,
+        pending_id=None,
+        request_id=request_id,
+        extra_audit=extra_audit,
+    )
+    if response is not None:
+        response.status_code = status.HTTP_200_OK
+    return TagBulkOperationResult(
+        matched=matched,
+        updated=updated,
+        request_id=request_id,
+        dry_run=False,
+        errors=[],
+        sample=sample,
+        token=confirm,
+    )
+
+
+async def _execute_bulk_mutation(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    rows: list[TagModel],
+    target_status: str | None,
+    metadata: dict[str, Any] | None,
+    metadata_set: bool,
+    actor_user_id: uuid.UUID | None,
+    audit_action: str,
+    scope_kind: str,
+    scope_value: object,
+    confirmation_token: str | None,
+    approved_by: uuid.UUID | None,
+    pending_id: uuid.UUID | None,
+    request_id: uuid.UUID,
+    extra_audit: dict[str, Any] | None = None,
+) -> int:
+    """Apply the mutation + write one batched audit entry.
+
+    Shared between the sub-threshold direct path and the
+    approve-path executor so the audit shape stays in one place
+    (forward-compatible with Phase C5's unification).
+    """
+    repo = _repo(session)
+    updated = await repo.bulk_apply(
+        rows,
+        status=target_status,
+        metadata=metadata,
+        metadata_set=metadata_set,
+    )
+    changes: dict[str, Any] = {
+        "operation": audit_action,
+        "scope_kind": scope_kind,
+        "scope_value": scope_value,
+        "matched": len(rows),
+        "updated": updated,
+        "request_id": str(request_id),
+        "target_status": target_status,
+        "metadata_set": metadata_set,
+        "confirmation_token": confirmation_token,
+    }
+    if approved_by is not None:
+        changes["approved_by"] = str(approved_by)
+    if pending_id is not None:
+        changes["pending_id"] = str(pending_id)
+    if extra_audit:
+        changes.update(extra_audit)
+    await AuditLogger(session=session).log(
+        tenant_id,
+        audit_action,
+        "tag",
+        request_id,
+        changes=changes,
+        user_id=actor_user_id,
+    )
+    return updated
+
+
+@router.post(
+    "/tags/bulk-patch",
+    response_model=TagBulkOperationResult,
+)
+async def bulk_patch_tags(
+    body: TagBulkPatchRequest,
+    dry_run: bool = Query(
+        default=False,
+        description=(
+            "Preview mode. Resolves the scope, validates per-tag"
+            " status transitions, and (on success) mints a"
+            " single-use confirmation token bound to the resolved"
+            " EPC set + the requested mutation. Per ADR 028"
+            " §Governance #2 every bulk op is dry-run-first."
+        ),
+    ),
+    confirm: str | None = Query(
+        default=None,
+        description=(
+            "Confirmation token from a prior successful dry-run."
+            " Mutually exclusive with dry_run=true. Binds to"
+            " (tenant, user, scope, mutation) — confirming a"
+            " different scope or mutation returns 409."
+        ),
+    ),
+    response: Response = None,  # type: ignore[assignment]
+    user: AuthenticatedUser = require_role("admin", "editor"),
+    session: AsyncSession = Depends(get_session),
+) -> TagBulkOperationResult:
+    """Apply a status and/or metadata change to a scoped set of tags.
+
+    Per [ADR-028 §"Governance" rule 3](../../../../docs/adr/028-tags-as-first-class-entity.md):
+
+    - Body MUST include ``scope`` with exactly one of:
+      ``labels.batch=<value>`` (other label keys allowed
+      alongside) **or** ``epc_list[]`` (1..1000 EPCs). 422 if
+      neither/both/oversized.
+    - At least one of ``status`` / ``metadata`` must be set.
+    - **400** on bad XOR (no dry_run and no confirm, or both).
+    - **422** if scope matches zero tags, or if any matched tag
+      would violate its status-transition edge list (all-or-
+      nothing: nothing is written).
+    - **200** on successful dry-run (token + expires_in + sample).
+    - **200** on successful sub-threshold commit.
+    - **202** when ``matched >= tenants.tag_bulk_two_person_threshold``
+      — queued for second-admin approval, ``pending_id`` returned.
+    - **409** on a bad confirmation token.
+
+    The audit shape (``tag.bulk_patched``) is forward-compatible
+    with the C5 unified bulk-op audit envelope.
+    """
+    return await _run_bulk_mutation(
+        session=session,
+        user=user,
+        operation=_BULK_PATCH_OPERATION,
+        audit_action_requested="tag.bulk_patch_requested",
+        audit_action_applied="tag.bulk_patched",
+        scope=body.scope,
+        target_status=body.status,
+        metadata=body.metadata,
+        metadata_set="metadata" in body.model_fields_set,
+        dry_run=dry_run,
+        confirm=confirm,
+        response=response,
+    )
+
+
+@router.post(
+    "/tags/bulk-retire",
+    response_model=TagBulkOperationResult,
+)
+async def bulk_retire_tags(
+    body: TagBulkRetireRequest,
+    dry_run: bool = Query(default=False),
+    confirm: str | None = Query(default=None),
+    response: Response = None,  # type: ignore[assignment]
+    user: AuthenticatedUser = require_role("admin"),
+    session: AsyncSession = Depends(get_session),
+) -> TagBulkOperationResult:
+    """Retire (status='retired') a scoped set of tags.
+
+    Distinct from :func:`bulk_patch_tags` only by:
+
+    - **admin-only** (retire is destructive enough to refuse the
+      editor role even though single-row PATCH allows it; ADR 028
+      §Governance #3 frames retire as the most common bulk
+      destructive op and we want the most-defensible default).
+    - audit action is ``tag.bulk_retired`` (greppable for
+      "who retired batch X" without filtering PATCH bodies).
+    - body has no ``status`` (implicit) or ``metadata`` (out of
+      scope here); it accepts an optional ``reason`` that's
+      attached to the audit-log entry only.
+
+    All other governance rails (dry-run, confirmation token,
+    scope-XOR, two-person threshold) are identical to the bulk
+    PATCH endpoint.
+    """
+    extra_audit = {"reason": body.reason} if body.reason else None
+    return await _run_bulk_mutation(
+        session=session,
+        user=user,
+        operation=_BULK_RETIRE_OPERATION,
+        audit_action_requested="tag.bulk_retire_requested",
+        audit_action_applied="tag.bulk_retired",
+        scope=body.scope,
+        target_status="retired",
+        metadata=None,
+        metadata_set=False,
+        dry_run=dry_run,
+        confirm=confirm,
+        response=response,
+        extra_audit=extra_audit,
+    )
+
+
+async def _bulk_mutation_executor(
+    session: AsyncSession,
+    row: PendingBulkOperationModel,
+    request_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Approve-path executor for both bulk PATCH and bulk retire.
+
+    Decodes the stored JSON payload, re-resolves the rows by
+    re-querying the exact EPC set the requester previewed (NOT
+    the current label state — that's what the content-hash check
+    on approve ensures hasn't drifted), then delegates to
+    :func:`_execute_bulk_mutation`.
+    """
+
+    decoded = json.loads(row.payload.decode("utf-8"))
+    resolved_epcs: list[str] = list(decoded["resolved_epcs"])
+    target_status = decoded.get("status")
+    metadata = decoded.get("metadata")
+    metadata_set = bool(decoded.get("metadata_set", False))
+    scope_kind = decoded["scope_kind"]
+    scope_value = decoded["scope_value"]
+
+    repo = _repo(session)
+    # Re-target the EPC set that was hashed (which is stable across
+    # the approval window) — this also guarantees we don't accidentally
+    # apply to NEW tags that joined a batch label since dry-run.
+    rows = await repo.resolve_bulk_scope(row.tenant_id, epc_list=resolved_epcs)
+
+    audit_action = (
+        "tag.bulk_patched" if row.operation == _BULK_PATCH_OPERATION else "tag.bulk_retired"
+    )
+    updated = await _execute_bulk_mutation(
+        session,
+        tenant_id=row.tenant_id,
+        rows=rows,
+        target_status=target_status,
+        metadata=metadata,
+        metadata_set=metadata_set,
+        actor_user_id=row.requested_by,
+        audit_action=audit_action,
+        scope_kind=scope_kind,
+        scope_value=scope_value,
+        confirmation_token=None,
+        approved_by=row.decided_by,
+        pending_id=row.id,
+        request_id=request_id,
+    )
+    return {
+        "matched": len(rows),
+        "updated": updated,
+        "request_id": str(request_id),
+    }
+
+
+pending_ops.register_executor(_BULK_PATCH_OPERATION, _bulk_mutation_executor)
+pending_ops.register_executor(_BULK_RETIRE_OPERATION, _bulk_mutation_executor)
+
+
+def bulk_mutation_payload_content_hash(payload: bytes) -> str:
+    """Public alias exposing the approve-path hasher.
+
+    :mod:`tagpulse.api.routes.bulk_operations` looks this up by
+    operation string to drive the tamper-guard for C4 pending
+    rows (same shape as :func:`import_payload_content_hash` for
+    C1/C2).
+    """
+    return _bulk_payload_content_hash(payload)
 
 
 # ---------------------------------------------------------------------------

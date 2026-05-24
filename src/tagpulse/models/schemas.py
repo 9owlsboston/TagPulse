@@ -1383,3 +1383,161 @@ class PendingBulkOperationResponse(BaseModel):
     expires_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 50 C4: scope-required bulk mutations (ADR 028 §Governance #3)
+# ---------------------------------------------------------------------------
+
+
+class TagBulkScope(BaseModel):
+    """Scope selector for a bulk PATCH or bulk retire.
+
+    Per ADR 028 §Governance #3 every bulk mutation MUST carry one of:
+
+    - ``labels`` — deep-object label filter; MUST include a non-empty
+      ``batch`` key (other label keys may be present and are
+      AND-combined). This is the "operators think in batches"
+      contract — bulk ops scoped purely by some other label key
+      would be hard to audit by reel.
+    - ``epc_list`` — explicit list of 1..1000 canonical EPC hex
+      values. The 1000 cap is the ADR-pinned blast-radius limit
+      for the explicit-enumeration shape.
+
+    Exactly one of ``labels`` / ``epc_list`` must be set.
+    """
+
+    labels: dict[str, str] | None = None
+    epc_list: list[str] | None = Field(default=None, min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def _exactly_one_scope(self) -> "TagBulkScope":
+        has_labels = self.labels is not None and len(self.labels) > 0
+        has_epcs = self.epc_list is not None and len(self.epc_list) > 0
+        if has_labels and has_epcs:
+            raise ValueError(
+                "scope: provide exactly one of 'labels' or 'epc_list', not both"
+            )
+        if not has_labels and not has_epcs:
+            raise ValueError(
+                "scope: must provide either 'labels' (with a 'batch' key) or 'epc_list'"
+            )
+        if has_labels:
+            assert self.labels is not None
+            if "batch" not in self.labels or not self.labels["batch"].strip():
+                raise ValueError(
+                    "scope.labels: must include a non-empty 'batch' key"
+                    " (ADR 028 §Governance #3)"
+                )
+        if has_epcs:
+            assert self.epc_list is not None
+            # Per-EPC format check; the route layer normalizes (upper +
+            # strip) before this validator runs in the request lifecycle,
+            # but we re-check defensively in case a future caller skips
+            # the route normalization (e.g., calling the schema from a
+            # background worker that constructs a request body directly).
+            pattern = re.compile(_EPC_HEX_PATTERN)
+            for epc in self.epc_list:
+                if not pattern.match(epc):
+                    raise ValueError(
+                        f"scope.epc_list: {epc!r} is not canonical EPC hex"
+                        " (uppercase, 16-128 chars, no separators)"
+                    )
+            if len(set(self.epc_list)) != len(self.epc_list):
+                raise ValueError("scope.epc_list: duplicate EPC values")
+        return self
+
+
+class TagBulkPatchRequest(BaseModel):
+    """Body for ``POST /tags/bulk-patch`` (Sprint 50 C4, ADR 028).
+
+    At least one of ``status`` / ``metadata`` must be set — the
+    server has nothing else to apply otherwise. Per-tag status
+    transitions are validated server-side against the same edge
+    list :class:`TagUpdate` uses, so an operator can't slip
+    ``transferred_out`` past the bulk surface.
+
+    ``metadata`` is a full **replace** of the target row's
+    metadata column (mirroring single-row PATCH semantics).
+    Per-key merge can be added in a later sprint if customer
+    feedback asks for it; doing replace-by-default avoids
+    surprising "I cleared one key and the others stayed".
+    """
+
+    scope: TagBulkScope
+    status: TagStatus | None = None
+    metadata: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_mutation(self) -> "TagBulkPatchRequest":
+        if self.status is None and self.metadata is None:
+            raise ValueError(
+                "bulk patch: at least one of 'status' or 'metadata' must be set"
+            )
+        return self
+
+
+class TagBulkRetireRequest(BaseModel):
+    """Body for ``POST /tags/bulk-retire`` (Sprint 50 C4, ADR 028).
+
+    Equivalent to ``POST /tags/bulk-patch`` with ``status='retired'``
+    but exposed as its own endpoint so the audit log carries a
+    distinct action name (``tag.bulk_retired`` vs
+    ``tag.bulk_patched``) — operators searching "who retired
+    batch X" don't have to filter PATCH calls by status payload.
+
+    ``reason`` is optional free-text recorded on the audit-log
+    entry; not persisted on the tag rows themselves.
+    """
+
+    scope: TagBulkScope
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class TagBulkRowError(BaseModel):
+    """One per-tag failure from a bulk PATCH / retire dry-run or commit.
+
+    Currently the only failure surfaced this way is a rejected
+    status transition (e.g., ``transferred_out → retired``).
+    Per ADR 028's all-or-nothing rule on bulk mutations, any
+    non-empty error list aborts the operation — nothing is written
+    even on a confirmed commit.
+    """
+
+    epc_hex: str
+    error: str
+
+
+class TagBulkOperationResult(BaseModel):
+    """Outcome of ``POST /tags/bulk-patch`` or ``POST /tags/bulk-retire``.
+
+    Five branches mirroring :class:`TagImportResult`:
+
+    - ``errors`` non-empty → **422**; the scope resolved but at
+      least one matched tag would violate its status-transition
+      edge list. Nothing is written. No token is minted.
+    - ``dry_run=True`` and ``errors`` empty → **200**; ``matched``
+      is the number of tags the scope resolved to, ``updated`` is
+      0 (nothing written), ``token`` + ``expires_in`` + ``sample``
+      are populated for a follow-up ``?confirm=<token>``.
+    - ``dry_run=False`` and ``confirm`` provided and ``matched``
+      below tenant threshold → **200**; ``updated`` is the number
+      of rows changed.
+    - ``dry_run=False`` and ``confirm`` provided and ``matched``
+      at or above tenant threshold → **202**; the op is queued
+      for second-admin approval. ``requires_approval=True``,
+      ``pending_id`` is set, ``updated=0``.
+    - Bad token surfaces as 409 from the route, not via this
+      schema.
+    """
+
+    matched: int
+    updated: int
+    request_id: UUID | None = None
+    dry_run: bool
+    errors: list[TagBulkRowError] = Field(default_factory=list)
+    sample: list[str] = Field(default_factory=list)
+    token: str | None = None
+    expires_in: int | None = None
+    requires_approval: bool | None = None
+    pending_id: UUID | None = None
