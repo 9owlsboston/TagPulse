@@ -9,12 +9,15 @@ Behaviour:
    (``MQTT_BROKER_HOST``, ``MQTT_BROKER_PORT``, ``MQTT_BROKER_USERNAME``,
    ``MQTT_BROKER_PASSWORD`` — all already wired by
    ``deploy/azure/bicep/modules/mqtt.bicep`` for the worker).
-2. Publishes one synthetic tag-read on
-   ``tenants/{TENANT_ID}/devices/{DEVICE_ID}/tag-reads`` with a
-   recognisable ``tag_id="CANARY-<run-id>"``.
+2. Publishes one synthetic v2 ``t=1`` (appeared) tag-read on
+   ``tenants/{TENANT_ID}/devices/{DEVICE_ID}/tag-reads`` carrying a
+   recognisable per-run EPC ``CA<run-id>...``. Sprint 53 Phase F:
+   exercises the v2 dispatch + presence-reconciler branch end-to-end
+   per ADR-025 / spec §4.4 (one ``t=1`` writes exactly one
+   ``tag_reads`` row, which the polling loop below detects).
 3. Polls Postgres for the row to appear in ``tag_reads`` within
    ``--timeout-seconds`` (default 30s) — proves broker → subscriber →
-   ingestion → DB end-to-end.
+   v2 dispatch → presence reconciler → ingestion → DB end-to-end.
 4. Exits 0 on success, 1 on canary not seen in time, 2 on setup error.
 
 Used by:
@@ -28,11 +31,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
+import time
 import uuid
-from datetime import UTC, datetime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("mqtt-canary")
@@ -116,10 +120,28 @@ async def _run_async(args: argparse.Namespace) -> int:
         log.error("invalid UUID: %s", exc)
         return 2
 
-    run_id = uuid.uuid4().hex[:8]
-    tag_id = f"CANARY-{run_id}"
+    # Sprint 53 Phase F: emit a v2 t=1 (appeared) message instead of the
+    # legacy v1 shape so the canary exercises the v2 dispatch + presence
+    # reconciler path end-to-end (ADR-025 / spec §4.4). The subscriber
+    # maps msg.epc → tag_reads.tag_id, so we poll by EPC. The EPC is a
+    # 24-char uppercase hex string "CA" + 22 hex chars derived from
+    # uuid4, satisfying the spec §6 invalid_epc validator (hex, even,
+    # 8..124 chars).
+    epc = ("CA" + uuid.uuid4().hex[:22]).upper()
     topic = f"tenants/{tenant_uuid}/devices/{device_uuid}/tag-reads"
-    body = '{"tag_id":"' + tag_id + '","timestamp":"' + datetime.now(UTC).isoformat() + '"}'
+    body = json.dumps(
+        {
+            "t": 1,
+            "sn": 1,
+            "ts": int(time.time() * 1000),
+            "lat": None,
+            "lon": None,
+            "an": 0,
+            "epc": epc,
+            "rssi": -50,
+            "cnt": 1,
+        }
+    )
 
     try:
         await _publish(host, port, username, password, topic, body)
@@ -127,7 +149,7 @@ async def _run_async(args: argparse.Namespace) -> int:
         log.exception("publish failed")
         return 1
 
-    ok = await _wait_for_row(database_url, tenant_uuid, tag_id, args.timeout_seconds)
+    ok = await _wait_for_row(database_url, tenant_uuid, epc, args.timeout_seconds)
     return 0 if ok else 1
 
 
