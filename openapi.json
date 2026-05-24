@@ -14643,6 +14643,116 @@
         ]
       }
     },
+    "/tags/reconciliation/{view}": {
+      "get": {
+        "description": "Read-only exception views over the tag registry.\n\nPer ADR 028 \u00a7Governance rule #5: these views are read-only and\nsurface discrepancies the registrar worker can detect but\ncannot self-heal. Viewer role is sufficient \u2014 exposing them is\na monitoring concern, not a write concern.\n\nSee :mod:`tagpulse.services.tag_reconciliation` for the per-view\nSQL semantics. CSV export emits a fixed header per view; an\nempty result set still returns the header so spreadsheet\nconsumers see a stable schema.",
+        "operationId": "get_reconciliation_view_tags_reconciliation__view__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "view",
+            "required": true,
+            "schema": {
+              "enum": [
+                "registered-unread",
+                "unregistered-reading",
+                "bindings-on-retired"
+              ],
+              "title": "View",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Lookback window in days. Applies to ``registered-unread`` (staleness cutoff) and ``unregistered-reading`` (read scan window). Ignored by ``bindings-on-retired``.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Lookback window in days. Applies to ``registered-unread`` (staleness cutoff) and ``unregistered-reading`` (read scan window). Ignored by ``bindings-on-retired``.",
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(json|csv)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Reconciliation rows. JSON by default; text/csv when ``?format=csv`` is supplied."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Reconciliation View",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
     "/tags/{epc_hex}": {
       "get": {
         "description": "Lookup by canonical EPC hex (case-insensitive in path).",

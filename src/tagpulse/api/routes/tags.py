@@ -57,6 +57,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,6 +92,7 @@ from tagpulse.repositories.timescaledb.tags import (
     TimescaleTagTransferRepository,
 )
 from tagpulse.services import pending_bulk_operations as pending_ops
+from tagpulse.services import tag_reconciliation
 from tagpulse.services.tags import (
     normalize_epc_hex,
     parse_tag_import_csv,
@@ -1442,3 +1444,99 @@ async def get_tag_transfer(
     if row is None:
         raise HTTPException(status_code=404, detail="Tag transfer not found")
     return row
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation reports (Sprint 50 Phase E — ADR 028 §Governance #5)
+# ---------------------------------------------------------------------------
+
+# Default lookback for views 1+2. Operators can override per-call
+# with ?days=N. Bounded [1, 365] in the query model.
+_RECON_DEFAULT_DAYS = 30
+
+
+@router.get(
+    "/tags/reconciliation/{view}",
+    response_model=None,
+    responses={
+        200: {
+            "description": (
+                "Reconciliation rows. JSON by default; text/csv when ``?format=csv`` is supplied."
+            ),
+            "content": {
+                "application/json": {},
+                "text/csv": {"schema": {"type": "string"}},
+            },
+        },
+    },
+)
+async def get_reconciliation_view(
+    view: tag_reconciliation.ReconciliationView,
+    days: int = Query(
+        default=_RECON_DEFAULT_DAYS,
+        ge=1,
+        le=365,
+        description=(
+            "Lookback window in days. Applies to ``registered-unread``"
+            " (staleness cutoff) and ``unregistered-reading`` (read"
+            " scan window). Ignored by ``bindings-on-retired``."
+        ),
+    ),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    format: Annotated[str | None, Query(pattern="^(json|csv)$")] = None,
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Read-only exception views over the tag registry.
+
+    Per ADR 028 §Governance rule #5: these views are read-only and
+    surface discrepancies the registrar worker can detect but
+    cannot self-heal. Viewer role is sufficient — exposing them is
+    a monitoring concern, not a write concern.
+
+    See :mod:`tagpulse.services.tag_reconciliation` for the per-view
+    SQL semantics. CSV export emits a fixed header per view; an
+    empty result set still returns the header so spreadsheet
+    consumers see a stable schema.
+    """
+    if view == "registered-unread":
+        rows: list[Any] = list(
+            await tag_reconciliation.query_registered_unread(
+                session,
+                user.tenant_id,
+                days=days,
+                limit=limit,
+                offset=offset,
+            )
+        )
+    elif view == "unregistered-reading":
+        rows = list(
+            await tag_reconciliation.query_unregistered_reading(
+                session,
+                user.tenant_id,
+                days=days,
+                limit=limit,
+                offset=offset,
+            )
+        )
+    else:  # "bindings-on-retired" — exhaustive per Literal
+        rows = list(
+            await tag_reconciliation.query_bindings_on_retired(
+                session,
+                user.tenant_id,
+                limit=limit,
+                offset=offset,
+            )
+        )
+
+    if format == "csv":
+        body = tag_reconciliation.rows_to_csv(view, rows)
+        return PlainTextResponse(
+            content=body,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="tags-{view}.csv"',
+            },
+        )
+    return [row.model_dump(mode="json") for row in rows]

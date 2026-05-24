@@ -1415,9 +1415,7 @@ class TagBulkScope(BaseModel):
         has_labels = self.labels is not None and len(self.labels) > 0
         has_epcs = self.epc_list is not None and len(self.epc_list) > 0
         if has_labels and has_epcs:
-            raise ValueError(
-                "scope: provide exactly one of 'labels' or 'epc_list', not both"
-            )
+            raise ValueError("scope: provide exactly one of 'labels' or 'epc_list', not both")
         if not has_labels and not has_epcs:
             raise ValueError(
                 "scope: must provide either 'labels' (with a 'batch' key) or 'epc_list'"
@@ -1426,8 +1424,7 @@ class TagBulkScope(BaseModel):
             assert self.labels is not None
             if "batch" not in self.labels or not self.labels["batch"].strip():
                 raise ValueError(
-                    "scope.labels: must include a non-empty 'batch' key"
-                    " (ADR 028 §Governance #3)"
+                    "scope.labels: must include a non-empty 'batch' key (ADR 028 §Governance #3)"
                 )
         if has_epcs:
             assert self.epc_list is not None
@@ -1471,9 +1468,7 @@ class TagBulkPatchRequest(BaseModel):
     @model_validator(mode="after")
     def _at_least_one_mutation(self) -> "TagBulkPatchRequest":
         if self.status is None and self.metadata is None:
-            raise ValueError(
-                "bulk patch: at least one of 'status' or 'metadata' must be set"
-            )
+            raise ValueError("bulk patch: at least one of 'status' or 'metadata' must be set")
         return self
 
 
@@ -1541,3 +1536,60 @@ class TagBulkOperationResult(BaseModel):
     expires_in: int | None = None
     requires_approval: bool | None = None
     pending_id: UUID | None = None
+
+
+# ---------------------------------------------------------------------------
+# Sprint 50 Phase E — reconciliation report rows (ADR 028 §Governance #5).
+# ---------------------------------------------------------------------------
+
+
+class RegisteredUnreadRow(BaseModel):
+    """One row of the ``registered-unread`` reconciliation view.
+
+    Tag is in ``status ∈ {registered, active}`` but either has
+    never been observed (``last_seen_at IS NULL``) or its last
+    observation is older than the requested staleness window.
+    """
+
+    tag_id: UUID
+    epc_hex: str
+    status: TagStatus
+    source: TagSource
+    first_seen_at: datetime | None
+    last_seen_at: datetime | None
+    created_at: datetime
+
+
+class UnregisteredReadingRow(BaseModel):
+    """One row of the ``unregistered-reading`` reconciliation view.
+
+    Distinct ``tag_id`` from ``tag_reads`` with ``tag_known=FALSE``
+    inside the lookback window. ``tag_id`` is the raw value the
+    reader emitted (not necessarily a canonical EPC) — operators
+    use this view to onboard real-world EPCs that arrived without
+    a prior registry entry.
+    """
+
+    tag_id: str
+    last_seen_at: datetime
+    read_count: int
+
+
+class BindingOnRetiredRow(BaseModel):
+    """One row of the ``bindings-on-retired`` reconciliation view.
+
+    A ``stock_items`` row whose EPC binding points to a registry
+    tag in a terminal status (``retired`` / ``defective`` /
+    ``transferred_out``) and that has not been consumed. Surfaces
+    inventory carrying decommissioned tags so the operator can
+    re-bind or consume.
+    """
+
+    stock_item_id: UUID
+    epc_hex: str
+    product_id: UUID
+    lot_id: UUID | None
+    stock_item_state: str
+    tag_id: UUID
+    tag_status: TagStatus
+    tag_updated_at: datetime
