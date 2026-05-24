@@ -928,6 +928,9 @@ class MqttSubscriber:
         from tagpulse.repositories.timescaledb.sites_zones import (
             TimescaleZoneRepository,
         )
+        from tagpulse.repositories.timescaledb.tags import (
+            TimescaleTagRepository,
+        )
         from tagpulse.repositories.timescaledb.tenants import (
             TimescaleTenantRepository,
         )
@@ -946,5 +949,6 @@ class MqttSubscriber:
             tag_data_mapping_repo=TimescaleTagDataMappingRepository(session),
             tenant_repo=TimescaleTenantRepository(session),
             telemetry_readings_repo=TimescaleTelemetryReadingsRepository(session),
+            tag_repo=TimescaleTagRepository(session),
             usage_meter=self._usage_meter,
         )

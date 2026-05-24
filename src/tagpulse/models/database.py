@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import (
     CHAR,
     BigInteger,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -19,7 +20,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, BYTEA, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -60,6 +61,17 @@ class TenantModel(Base):
     # Shape: {"ingest": int, "read": int, "write": int, "admin": int}.
     # Any subset of keys allowed; missing keys fall back to Settings. --
     rate_limit_overrides: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # -- Sprint 50 C1: per-tenant hourly cap on POST /tags/import calls.
+    # Default 10 / hour per ADR 028 OQ 4. Lives in tagpulse.core.tag_import_rate_limit. --
+    tag_bulk_import_rate_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="10"
+    )
+    # -- Sprint 50 C3: two-person-rule threshold per ADR 028 §Governance #4.
+    # Bulk ops over this row count create a pending_bulk_operations row
+    # that a second admin must approve. Default 10 000 matches the ADR. --
+    tag_bulk_two_person_threshold: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="10000"
+    )
     # -- Sprint 33 QW6: per-tenant branding (NULL = use system defaults).
     # See docs/design/reference-design-remediation.md §3.3. --
     logo_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
@@ -133,6 +145,12 @@ class TagReadModel(Base):
     user_memory_hex: Mapped[str | None] = mapped_column(Text, nullable=True)
     tag_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     reader_antenna: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # -- Sprint 50 Phase D (ADR 028 §"Gating"): three-valued tag registry
+    # gate. NULL on insert (ingest never reads ``tags``); flipped to TRUE
+    # / FALSE by :class:`TagRegistrarWorker`. No index by design — the
+    # worker drains a small NULL backlog from the recent hypertable
+    # chunks. See ``migrations/versions/044_tag_reads_tag_known.py``.
+    tag_known: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -423,10 +441,26 @@ class AuditLogModel(Base):
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
     resource_type: Mapped[str] = mapped_column(String(50), nullable=False)
     resource_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     changes: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Sprint 50 Phase C5 — unified bulk-op shape per ADR 028 §Governance #7.
+    # All five columns are NULL for non-bulk-op rows (device tokens,
+    # label changes, etc.). See migration 048.
+    request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    batch: Mapped[str | None] = mapped_column(Text, nullable=True)
+    count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pending_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("pending_bulk_operations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )
@@ -942,3 +976,142 @@ class TagDataMappingModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class TagModel(Base):
+    """Tenant-scoped EPC identity/ownership row (Sprint 50, ADR 028).
+
+    One row per ``(tenant_id, epc_hex)`` — that pair is the natural
+    key (see ``uq_tags_tenant_epc`` in migration 043). ``epc_hex`` is
+    the canonical uppercase-hex form with no separators; the CHECK
+    constraint ``ck_tags_epc_hex_format`` enforces ``^[0-9A-F]{16,128}$``.
+
+    ``gs1_uri`` is a *denormalized* lenient parse of the GS1
+    identifier (e.g. ``urn:epc:id:sgtin:0614141.012345.62852``) for
+    EPCs whose header maps to a known scheme; ``NULL`` for raw /
+    proprietary / unparseable tags. The partial index
+    ``ix_tags_tenant_gs1_uri`` covers the populated subset.
+
+    ``status`` ∈ ``{registered, active, retired, defective,
+    transferred_out}``; ``source`` ∈ ``{csv_import, api, backfill,
+    transfer_in}`` (no ``first_read`` per ADR 028 OQ 3). Both are
+    ``VARCHAR(16)`` with CHECK constraints rather than native enums
+    so additive evolution stays cheap. Status transition rules live
+    in the service layer (``tagpulse.services.tags``).
+
+    ``first_seen_at`` / ``last_seen_at`` are populated by the
+    registrar worker (Phase D, not yet built) — Phase B leaves them
+    ``NULL`` on create.
+    """
+
+    __tablename__ = "tags"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    epc_hex: Mapped[str] = mapped_column(String(128), nullable=False)
+    gs1_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (UniqueConstraint("tenant_id", "epc_hex", name="uq_tags_tenant_epc"),)
+
+
+class TagTransferModel(Base):
+    """Cross-tenant transfer audit log row (Sprint 50, ADR 028).
+
+    One row per EPC; all rows belonging to one operator-initiated
+    request share a ``request_id``. The schema deliberately omits a
+    ``tenant_id`` column — the row already names both sides
+    (``from_tenant_id``, ``to_tenant_id``) and the RLS policy
+    ``tenant_isolation_tag_transfers`` lets either side see it.
+
+    ``status`` ∈ ``{requested, completed, failed}`` with cross-column
+    invariants (see ``ck_tag_transfers_terminal_failure_reason`` and
+    ``ck_tag_transfers_completed_at`` in migration 043). Phase B
+    creates rows in ``requested`` only; the completion / failure
+    path lands with the receiving-tenant acknowledgement flow.
+    """
+
+    __tablename__ = "tag_transfers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    from_tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    to_tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    epc_hex: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PendingBulkOperationModel(Base):
+    """Pending two-person-rule bulk op (Sprint 50 C3, ADR 028 §Governance #4).
+
+    One row per operator-initiated bulk op whose row count meets or
+    exceeds the tenant's ``tag_bulk_two_person_threshold``. The row
+    stashes the raw CSV bytes (``payload``) plus the C2
+    ``content_hash`` so the approve path can verify the stored
+    payload still matches what the first admin previewed before
+    executing.
+
+    The table is generic: the ``operation`` column discriminates
+    (currently only ``tags.import``; C4 will add
+    ``tags.bulk_patch`` / ``tags.bulk_retire``). The approve
+    endpoint dispatches by ``operation`` to the appropriate
+    executor; one table covers every bulk endpoint.
+
+    State machine: ``pending -> approved -> executed`` is the happy
+    path (``executed`` is set after the actual bulk op succeeds);
+    ``pending -> rejected`` is the deny path; ``pending -> expired``
+    is the timeout path swept lazily on ``approve``.
+    """
+
+    __tablename__ = "pending_bulk_operations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    operation: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    sample: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    payload: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
+    request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

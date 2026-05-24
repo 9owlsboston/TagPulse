@@ -765,6 +765,21 @@
         "title": "Body_import_stock_items_stock_items_import_post",
         "type": "object"
       },
+      "Body_import_tags_tags_import_post": {
+        "properties": {
+          "upload": {
+            "contentMediaType": "application/octet-stream",
+            "description": "CSV with required column 'epc_hex'. Extra columns are ignored. Max 10 000 rows per import (413 above). Max 10 imports/hour per tenant (configurable via tenants.tag_bulk_import_rate_limit).",
+            "title": "Upload",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload"
+        ],
+        "title": "Body_import_tags_tags_import_post",
+        "type": "object"
+      },
       "CategoryCreate": {
         "description": "Create a category.",
         "properties": {
@@ -2190,7 +2205,8 @@
               "site",
               "zone",
               "device",
-              "category"
+              "category",
+              "tag"
             ],
             "title": "Entity Type",
             "type": "string"
@@ -2243,7 +2259,8 @@
               "site",
               "zone",
               "device",
-              "category"
+              "category",
+              "tag"
             ],
             "title": "Entity Type",
             "type": "string"
@@ -2300,7 +2317,8 @@
               "site",
               "zone",
               "device",
-              "category"
+              "category",
+              "tag"
             ],
             "title": "Entity Type",
             "type": "string"
@@ -2930,6 +2948,132 @@
           "unit"
         ],
         "title": "MetricDefinition",
+        "type": "object"
+      },
+      "PendingBulkOperationResponse": {
+        "description": "Persisted ``pending_bulk_operations`` row (ADR 028 \u00a7Governance #4).\n\nSurfaced on:\n\n- the **202** branch of ``POST /tags/import`` (via the\n  ``pending_id`` field on :class:`TagImportResult`) \u2014 operator A\n  learns \"your import is queued for approval, here is the id\";\n- ``GET /bulk-operations/{id}`` \u2014 operator B fetches the record\n  they're being asked to approve;\n- ``POST /bulk-operations/{id}/approve`` and ``/reject`` \u2014\n  the response echoes the updated row.\n\nThe CSV bytes themselves (``payload``) are deliberately **not**\nexposed \u2014 operator B sees ``row_count`` + ``sample`` (the same\n10-EPC preview operator A saw on dry-run) which is the\nintended review surface. ``content_hash`` is exposed for\ncross-system verification.",
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "executed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed At"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "row_count": {
+            "title": "Row Count",
+            "type": "integer"
+          },
+          "sample": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sample",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "operation",
+          "status",
+          "requested_by",
+          "decided_by",
+          "content_hash",
+          "row_count",
+          "sample",
+          "request_id",
+          "created_at",
+          "decided_at",
+          "executed_at",
+          "expires_at"
+        ],
+        "title": "PendingBulkOperationResponse",
         "type": "object"
       },
       "ProductCreate": {
@@ -4874,6 +5018,264 @@
         "title": "StockMovementResponse",
         "type": "object"
       },
+      "TagBulkOperationResult": {
+        "description": "Outcome of ``POST /tags/bulk-patch`` or ``POST /tags/bulk-retire``.\n\nFive branches mirroring :class:`TagImportResult`:\n\n- ``errors`` non-empty \u2192 **422**; the scope resolved but at\n  least one matched tag would violate its status-transition\n  edge list. Nothing is written. No token is minted.\n- ``dry_run=True`` and ``errors`` empty \u2192 **200**; ``matched``\n  is the number of tags the scope resolved to, ``updated`` is\n  0 (nothing written), ``token`` + ``expires_in`` + ``sample``\n  are populated for a follow-up ``?confirm=<token>``.\n- ``dry_run=False`` and ``confirm`` provided and ``matched``\n  below tenant threshold \u2192 **200**; ``updated`` is the number\n  of rows changed.\n- ``dry_run=False`` and ``confirm`` provided and ``matched``\n  at or above tenant threshold \u2192 **202**; the op is queued\n  for second-admin approval. ``requires_approval=True``,\n  ``pending_id`` is set, ``updated=0``.\n- Bad token surfaces as 409 from the route, not via this\n  schema.",
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/TagBulkRowError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "expires_in": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In"
+          },
+          "matched": {
+            "title": "Matched",
+            "type": "integer"
+          },
+          "pending_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Id"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "requires_approval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requires Approval"
+          },
+          "sample": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sample",
+            "type": "array"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "matched",
+          "updated",
+          "dry_run"
+        ],
+        "title": "TagBulkOperationResult",
+        "type": "object"
+      },
+      "TagBulkPatchRequest": {
+        "description": "Body for ``POST /tags/bulk-patch`` (Sprint 50 C4, ADR 028).\n\nAt least one of ``status`` / ``metadata`` must be set \u2014 the\nserver has nothing else to apply otherwise. Per-tag status\ntransitions are validated server-side against the same edge\nlist :class:`TagUpdate` uses, so an operator can't slip\n``transferred_out`` past the bulk surface.\n\n``metadata`` is a full **replace** of the target row's\nmetadata column (mirroring single-row PATCH semantics).\nPer-key merge can be added in a later sprint if customer\nfeedback asks for it; doing replace-by-default avoids\nsurprising \"I cleared one key and the others stayed\".",
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/TagBulkScope"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "registered",
+                  "active",
+                  "retired",
+                  "defective",
+                  "transferred_out"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "title": "TagBulkPatchRequest",
+        "type": "object"
+      },
+      "TagBulkRetireRequest": {
+        "description": "Body for ``POST /tags/bulk-retire`` (Sprint 50 C4, ADR 028).\n\nEquivalent to ``POST /tags/bulk-patch`` with ``status='retired'``\nbut exposed as its own endpoint so the audit log carries a\ndistinct action name (``tag.bulk_retired`` vs\n``tag.bulk_patched``) \u2014 operators searching \"who retired\nbatch X\" don't have to filter PATCH calls by status payload.\n\n``reason`` is optional free-text recorded on the audit-log\nentry; not persisted on the tag rows themselves.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/TagBulkScope"
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "title": "TagBulkRetireRequest",
+        "type": "object"
+      },
+      "TagBulkRowError": {
+        "description": "One per-tag failure from a bulk PATCH / retire dry-run or commit.\n\nCurrently the only failure surfaced this way is a rejected\nstatus transition (e.g., ``transferred_out \u2192 retired``).\nPer ADR 028's all-or-nothing rule on bulk mutations, any\nnon-empty error list aborts the operation \u2014 nothing is written\neven on a confirmed commit.",
+        "properties": {
+          "epc_hex": {
+            "title": "Epc Hex",
+            "type": "string"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          }
+        },
+        "required": [
+          "epc_hex",
+          "error"
+        ],
+        "title": "TagBulkRowError",
+        "type": "object"
+      },
+      "TagBulkScope": {
+        "description": "Scope selector for a bulk PATCH or bulk retire.\n\nPer ADR 028 \u00a7Governance #3 every bulk mutation MUST carry one of:\n\n- ``labels`` \u2014 deep-object label filter; MUST include a non-empty\n  ``batch`` key (other label keys may be present and are\n  AND-combined). This is the \"operators think in batches\"\n  contract \u2014 bulk ops scoped purely by some other label key\n  would be hard to audit by reel.\n- ``epc_list`` \u2014 explicit list of 1..1000 canonical EPC hex\n  values. The 1000 cap is the ADR-pinned blast-radius limit\n  for the explicit-enumeration shape.\n\nExactly one of ``labels`` / ``epc_list`` must be set.",
+        "properties": {
+          "epc_list": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 1000,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Epc List"
+          },
+          "labels": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labels"
+          }
+        },
+        "title": "TagBulkScope",
+        "type": "object"
+      },
+      "TagCreate": {
+        "description": "Create one tag registry row (Phase B, single-row path).\n\n``source`` is constrained to operator-driven values \u2014 ``transfer_in``\nis reserved for the transfer-completion path that writes the row\nserver-side, not via this endpoint.",
+        "properties": {
+          "epc_hex": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[0-9A-F]{16,128}$",
+            "title": "Epc Hex",
+            "type": "string"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "source": {
+            "default": "api",
+            "enum": [
+              "csv_import",
+              "api",
+              "backfill"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "epc_hex"
+        ],
+        "title": "TagCreate",
+        "type": "object"
+      },
       "TagDataMappingCreate": {
         "properties": {
           "scope_id": {
@@ -5038,6 +5440,131 @@
           }
         },
         "title": "TagDataMappingUpdate",
+        "type": "object"
+      },
+      "TagImportResult": {
+        "description": "Outcome of ``POST /tags/import`` (Sprint 50 C1/C2/C3).\n\nFive branches the client must distinguish:\n\n- ``errors`` non-empty \u2192 422; the CSV was rejected, nothing was\n  written, ``rows_created`` and ``rows_skipped`` are both 0.\n  ``token`` is null (the ADR 028 governance rule binds the token\n  to a *valid* preview only).\n- ``dry_run=True`` and ``errors`` empty \u2192 200; the CSV would\n  have created ``rows_created`` rows. No rows were written.\n  ``token``, ``expires_in``, and ``sample`` are populated so the\n  operator can re-submit with ``?confirm=<token>``.\n- ``dry_run=False`` and ``confirm`` provided and ``errors``\n  empty and ``rows_total`` < tenant threshold \u2192 201; the CSV was\n  written. ``rows_created`` + ``rows_skipped`` = ``rows_total``;\n  ``rows_skipped`` counts EPCs that already existed for the\n  tenant (treated as idempotent, not as errors). ``token``\n  echoes the consumed token for audit traceability.\n- ``dry_run=False`` and ``confirm`` provided and ``errors``\n  empty and ``rows_total`` >= tenant threshold \u2192 **202**; the\n  CSV is *queued* for second-admin approval per ADR 028\n  \u00a7Governance #4. ``requires_approval=True`` and ``pending_id``\n  is set; ``rows_created`` / ``rows_skipped`` are 0 (nothing\n  written yet). The second admin completes the op via\n  ``POST /bulk-operations/{pending_id}/approve``.\n- A bad token (mismatched CSV, wrong tenant/user, expired)\n  surfaces as 409 from the route, not via this schema.\n\nPer ADR 028 \u00a7\"Governance\" rule 2, ``confirm`` and ``dry_run`` are\nmutually exclusive and at least one must be set \u2014 the route\nrejects \"bare\" submits (no dry-run, no confirm) with 400.",
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/TagImportRowError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "expires_in": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In"
+          },
+          "pending_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Id"
+          },
+          "requires_approval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requires Approval"
+          },
+          "rows_created": {
+            "title": "Rows Created",
+            "type": "integer"
+          },
+          "rows_skipped": {
+            "title": "Rows Skipped",
+            "type": "integer"
+          },
+          "rows_total": {
+            "title": "Rows Total",
+            "type": "integer"
+          },
+          "sample": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          }
+        },
+        "required": [
+          "rows_total",
+          "rows_created",
+          "rows_skipped",
+          "dry_run"
+        ],
+        "title": "TagImportResult",
+        "type": "object"
+      },
+      "TagImportRowError": {
+        "description": "One invalid CSV row from ``POST /tags/import`` (Sprint 50 C1).\n\nReturned to the client as part of :class:`TagImportResult` when\nany row fails validation; per ADR 028 OQ 4 the import is\nall-or-nothing, so a non-empty ``errors`` list means *nothing*\nwas written (regardless of ``dry_run``).\n\n``row`` is the 1-based CSV row number *after* the header\n(matching what spreadsheet users see). ``epc_hex`` is the\noperator-supplied value, echoed back unmodified so they can\ngrep their CSV; it's omitted only if the row had no ``epc_hex``\ncolumn value at all.",
+        "properties": {
+          "epc_hex": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Epc Hex"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "row": {
+            "title": "Row",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row",
+          "error"
+        ],
+        "title": "TagImportRowError",
         "type": "object"
       },
       "TagReadCreate": {
@@ -5336,6 +5863,265 @@
           "created_at"
         ],
         "title": "TagReadResponse",
+        "type": "object"
+      },
+      "TagResponse": {
+        "description": "Persisted tag registry row.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "epc_hex": {
+            "title": "Epc Hex",
+            "type": "string"
+          },
+          "first_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seen At"
+          },
+          "gs1_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gs1 Uri"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "metadata_": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "source": {
+            "enum": [
+              "csv_import",
+              "api",
+              "backfill",
+              "transfer_in"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "registered",
+              "active",
+              "retired",
+              "defective",
+              "transferred_out"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "epc_hex",
+          "gs1_uri",
+          "status",
+          "source",
+          "first_seen_at",
+          "last_seen_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TagResponse",
+        "type": "object"
+      },
+      "TagTransferRequest": {
+        "description": "Initiate a cross-tenant transfer of one or more EPCs.\n\nAll EPCs in one request share a server-generated ``request_id``.\nThe receiving tenant is identified by slug. Phase B creates rows\nin ``status='requested'`` only \u2014 the acknowledgement /\ncompletion path lands in a later phase.",
+        "properties": {
+          "epcs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Epcs",
+            "type": "array"
+          },
+          "to_tenant_slug": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "To Tenant Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to_tenant_slug",
+          "epcs"
+        ],
+        "title": "TagTransferRequest",
+        "type": "object"
+      },
+      "TagTransferResponse": {
+        "description": "Persisted tag_transfer row (one EPC of a request).",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "epc_hex": {
+            "title": "Epc Hex",
+            "type": "string"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "from_tenant_id": {
+            "format": "uuid",
+            "title": "From Tenant Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by": {
+            "format": "uuid",
+            "title": "Requested By",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "requested",
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "to_tenant_id": {
+            "format": "uuid",
+            "title": "To Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "request_id",
+          "from_tenant_id",
+          "to_tenant_id",
+          "epc_hex",
+          "status",
+          "failure_reason",
+          "requested_by",
+          "requested_at",
+          "completed_at"
+        ],
+        "title": "TagTransferResponse",
+        "type": "object"
+      },
+      "TagUpdate": {
+        "description": "Patch a tag registry row.\n\nOnly ``status`` and ``metadata`` are operator-mutable here. The\nADR-028 status-transition rules are enforced in the service\nlayer; the schema accepts the full enum so an admin can flip\n``registered`` / ``active`` \u2192 ``retired`` / ``defective``. The\nregistrar worker is the only writer that may set ``active`` and\nthe transfer flow is the only writer that may set\n``transferred_out`` \u2014 both rejected here in the service layer.\n\n``epc_hex`` is immutable (it's the natural key). ``source``,\n``first_seen_at``, ``last_seen_at``, ``gs1_uri`` are all\nsystem-owned. There is intentionally no ``batch_id`` field \u2014\nbatch grouping goes through the ``entity_labels`` API per\nADR 028 OQ 5.",
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "registered",
+                  "active",
+                  "retired",
+                  "defective",
+                  "transferred_out"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "TagUpdate",
         "type": "object"
       },
       "TelemetryAggregateBucket": {
@@ -6830,6 +7616,43 @@
               ],
               "description": "Comma-separated list of actions to filter by (e.g. 'device.token_rotated,device.cert_attached').",
               "title": "Actions"
+            }
+          },
+          {
+            "description": "Filter to audit entries carrying this bulk-op request_id (Sprint 50 Phase C5, ADR 028 \u00a7Governance #7).",
+            "in": "query",
+            "name": "request_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to audit entries carrying this bulk-op request_id (Sprint 50 Phase C5, ADR 028 \u00a7Governance #7).",
+              "title": "Request Id"
+            }
+          },
+          {
+            "description": "Filter to audit entries scoped to this label batch value (Sprint 50 Phase C5, ADR 028 \u00a7Governance #7).",
+            "in": "query",
+            "name": "batch",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to audit entries scoped to this label batch value (Sprint 50 Phase C5, ADR 028 \u00a7Governance #7).",
+              "title": "Batch"
             }
           },
           {
@@ -8604,6 +9427,153 @@
         ]
       }
     },
+    "/bulk-operations/{pending_id}": {
+      "get": {
+        "description": "Fetch a queued bulk op so the reviewing admin can inspect it.",
+        "operationId": "get_pending_bulk_operation_bulk_operations__pending_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pending_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pending Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingBulkOperationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Pending Bulk Operation",
+        "tags": [
+          "bulk-operations"
+        ]
+      }
+    },
+    "/bulk-operations/{pending_id}/approve": {
+      "post": {
+        "description": "Second admin approves; the queued op executes immediately.\n\nPer ADR 028 \u00a7Governance #4 the approver MUST differ from the\nrequester (``SELF_APPROVAL`` \u2192 403). The stored payload's\ncontent hash is re-verified before execution (tamper guard;\n409 on mismatch).",
+        "operationId": "approve_pending_bulk_operation_bulk_operations__pending_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pending_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pending Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingBulkOperationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Approve Pending Bulk Operation",
+        "tags": [
+          "bulk-operations"
+        ]
+      }
+    },
+    "/bulk-operations/{pending_id}/reject": {
+      "post": {
+        "description": "Second admin denies; the queued op never executes.\n\nSelf-rejection is blocked for symmetry with approve. If the\noriginal requester wants to back out, ask the same colleague\nthey were asking to review.",
+        "operationId": "reject_pending_bulk_operation_bulk_operations__pending_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pending_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pending Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingBulkOperationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Reject Pending Bulk Operation",
+        "tags": [
+          "bulk-operations"
+        ]
+      }
+    },
     "/categories": {
       "get": {
         "description": "List the calling tenant's categories.",
@@ -10072,7 +11042,8 @@
                     "site",
                     "zone",
                     "device",
-                    "category"
+                    "category",
+                    "tag"
                   ],
                   "type": "string"
                 },
@@ -13081,6 +14052,851 @@
         "summary": "Unique Tags Per Window",
         "tags": [
           "query"
+        ]
+      }
+    },
+    "/tag-transfers": {
+      "get": {
+        "operationId": "list_tag_transfers_tag_transfers_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(in|out)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Direction"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagTransferResponse"
+                  },
+                  "title": "Response List Tag Transfers Tag Transfers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List Tag Transfers",
+        "tags": [
+          "tags"
+        ]
+      },
+      "post": {
+        "description": "Initiate a cross-tenant transfer.\n\nValidation:\n  - Every EPC must be owned by the calling tenant and in\n    ``status='active'`` (only active tags can transfer out;\n    ``registered`` tags haven't been observed yet and\n    terminal-state tags can't move).\n  - The receiving tenant must exist and be ``active``.\n  - Self-transfers (``from == to``) are rejected.\n\nOn success, writes one ``tag_transfers`` row per EPC, all\nsharing one server-generated ``request_id``, in\n``status='requested'``. Phase B does **not** flip the source\ntag's status \u2014 that happens at acknowledgement / completion in\nthe receiving-tenant flow (Phase C3).",
+        "operationId": "create_tag_transfer_tag_transfers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagTransferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagTransferResponse"
+                  },
+                  "title": "Response Create Tag Transfer Tag Transfers Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Create Tag Transfer",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tag-transfers/{transfer_id}": {
+      "get": {
+        "operationId": "get_tag_transfer_tag_transfers__transfer_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transfer_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Transfer Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagTransferResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Tag Transfer",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags": {
+      "get": {
+        "description": "List the calling tenant's tag registry rows.",
+        "operationId": "list_tags_tags_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "epc_prefix",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Epc Prefix"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bound",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Bound"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagResponse"
+                  },
+                  "title": "Response List Tags Tags Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List Tags",
+        "tags": [
+          "tags"
+        ]
+      },
+      "post": {
+        "description": "Create a tag in ``status='registered'``.\n\nThe schema's regex runs against the *normalised* value so we\nrewrite the payload before handing it to the repo. ``gs1_uri``\nis derived in the repo from the same normalised value.",
+        "operationId": "create_tag_tags_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Create Tag",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags/bulk-patch": {
+      "post": {
+        "description": "Apply a status and/or metadata change to a scoped set of tags.\n\nPer [ADR-028 \u00a7\"Governance\" rule 3](../../../../docs/adr/028-tags-as-first-class-entity.md):\n\n- Body MUST include ``scope`` with exactly one of:\n  ``labels.batch=<value>`` (other label keys allowed\n  alongside) **or** ``epc_list[]`` (1..1000 EPCs). 422 if\n  neither/both/oversized.\n- At least one of ``status`` / ``metadata`` must be set.\n- **400** on bad XOR (no dry_run and no confirm, or both).\n- **422** if scope matches zero tags, or if any matched tag\n  would violate its status-transition edge list (all-or-\n  nothing: nothing is written).\n- **200** on successful dry-run (token + expires_in + sample).\n- **200** on successful sub-threshold commit.\n- **202** when ``matched >= tenants.tag_bulk_two_person_threshold``\n  \u2014 queued for second-admin approval, ``pending_id`` returned.\n- **409** on a bad confirmation token.\n\nThe audit shape (``tag.bulk_patched``) is forward-compatible\nwith the C5 unified bulk-op audit envelope.",
+        "operationId": "bulk_patch_tags_tags_bulk_patch_post",
+        "parameters": [
+          {
+            "description": "Preview mode. Resolves the scope, validates per-tag status transitions, and (on success) mints a single-use confirmation token bound to the resolved EPC set + the requested mutation. Per ADR 028 \u00a7Governance #2 every bulk op is dry-run-first.",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Preview mode. Resolves the scope, validates per-tag status transitions, and (on success) mints a single-use confirmation token bound to the resolved EPC set + the requested mutation. Per ADR 028 \u00a7Governance #2 every bulk op is dry-run-first.",
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Confirmation token from a prior successful dry-run. Mutually exclusive with dry_run=true. Binds to (tenant, user, scope, mutation) \u2014 confirming a different scope or mutation returns 409.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Confirmation token from a prior successful dry-run. Mutually exclusive with dry_run=true. Binds to (tenant, user, scope, mutation) \u2014 confirming a different scope or mutation returns 409.",
+              "title": "Confirm"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagBulkPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagBulkOperationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Bulk Patch Tags",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags/bulk-retire": {
+      "post": {
+        "description": "Retire (status='retired') a scoped set of tags.\n\nDistinct from :func:`bulk_patch_tags` only by:\n\n- **admin-only** (retire is destructive enough to refuse the\n  editor role even though single-row PATCH allows it; ADR 028\n  \u00a7Governance #3 frames retire as the most common bulk\n  destructive op and we want the most-defensible default).\n- audit action is ``tag.bulk_retired`` (greppable for\n  \"who retired batch X\" without filtering PATCH bodies).\n- body has no ``status`` (implicit) or ``metadata`` (out of\n  scope here); it accepts an optional ``reason`` that's\n  attached to the audit-log entry only.\n\nAll other governance rails (dry-run, confirmation token,\nscope-XOR, two-person threshold) are identical to the bulk\nPATCH endpoint.",
+        "operationId": "bulk_retire_tags_tags_bulk_retire_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Confirm"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagBulkRetireRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagBulkOperationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Bulk Retire Tags",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags/import": {
+      "post": {
+        "description": "Bulk-register tags from a CSV.\n\nPer ADR-028 OQ 4 + \u00a7Governance #2:\n\n- **400** if neither ``dry_run`` nor ``confirm`` is supplied, or\n  if both are supplied (mutually exclusive \u2014 preview first, then\n  commit with the returned token).\n- **413** if file >8 MiB *or* row count >10 000.\n- **429** if the tenant has already issued\n  ``tag_bulk_import_rate_limit`` imports in the trailing hour.\n  The counter advances *before* parsing so a malformed CSV\n  still counts toward the cap (catches the runaway-script\n  threat model exactly). Dry-runs and confirms each consume\n  one slot \u2014 the cap is on operator activity, not on writes.\n- **422** if any row fails validation. Per the all-or-nothing\n  rule nothing is written and no token is minted; the response\n  body lists every offending row.\n- **200** on a successful ``dry_run=true``. The response\n  includes ``token``, ``expires_in``, and a 10-EPC ``sample``.\n- **409** if ``?confirm=<token>`` is supplied but the token\n  doesn't match this CSV (content drift, wrong operator,\n  wrong tenant, expired, or already consumed).\n- **202** on a confirmed import whose row count meets or\n  exceeds ``tenants.tag_bulk_two_person_threshold`` (default\n  10 000) per ADR 028 \u00a7Governance #4. The CSV is stashed in\n  ``pending_bulk_operations`` and ``pending_id`` is returned;\n  a second admin must POST ``/bulk-operations/{pending_id}/approve``\n  to execute. Nothing is written to ``tags`` yet.\n- **201** on a successful confirmed import below the threshold.\n\nEvery confirmed import writes one ``tag.bulk_imported`` audit\nlog entry covering the whole batch. Phase C5 unifies this\nwith the other bulk-op audit shapes; the keys we already emit\n(``count``, ``request_id``) are forward-compatible.",
+        "operationId": "import_tags_tags_import_post",
+        "parameters": [
+          {
+            "description": "Preview mode. Validate the CSV and (on success) mint a single-use confirmation token bound to this CSV's content, tenant, and operator. Re-submit the same CSV with ?confirm=<token> to apply. Per ADR 028 \u00a7Governance #2 every bulk op is dry-run-first.",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Preview mode. Validate the CSV and (on success) mint a single-use confirmation token bound to this CSV's content, tenant, and operator. Re-submit the same CSV with ?confirm=<token> to apply. Per ADR 028 \u00a7Governance #2 every bulk op is dry-run-first.",
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Confirmation token from a prior successful dry-run. Mutually exclusive with dry_run=true. The token binds to (tenant, user, CSV content) \u2014 confirming a different CSV with the same token returns 409.",
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Confirmation token from a prior successful dry-run. Mutually exclusive with dry_run=true. The token binds to (tenant, user, CSV content) \u2014 confirming a different CSV with the same token returns 409.",
+              "title": "Confirm"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_tags_tags_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagImportResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Import Tags",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags/reconciliation/{view}": {
+      "get": {
+        "description": "Read-only exception views over the tag registry.\n\nPer ADR 028 \u00a7Governance rule #5: these views are read-only and\nsurface discrepancies the registrar worker can detect but\ncannot self-heal. Viewer role is sufficient \u2014 exposing them is\na monitoring concern, not a write concern.\n\nSee :mod:`tagpulse.services.tag_reconciliation` for the per-view\nSQL semantics. CSV export emits a fixed header per view; an\nempty result set still returns the header so spreadsheet\nconsumers see a stable schema.",
+        "operationId": "get_reconciliation_view_tags_reconciliation__view__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "view",
+            "required": true,
+            "schema": {
+              "enum": [
+                "registered-unread",
+                "unregistered-reading",
+                "bindings-on-retired"
+              ],
+              "title": "View",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Lookback window in days. Applies to ``registered-unread`` (staleness cutoff) and ``unregistered-reading`` (read scan window). Ignored by ``bindings-on-retired``.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Lookback window in days. Applies to ``registered-unread`` (staleness cutoff) and ``unregistered-reading`` (read scan window). Ignored by ``bindings-on-retired``.",
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(json|csv)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Reconciliation rows. JSON by default; text/csv when ``?format=csv`` is supplied."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Reconciliation View",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags/{epc_hex}": {
+      "get": {
+        "description": "Lookup by canonical EPC hex (case-insensitive in path).",
+        "operationId": "get_tag_by_epc_tags__epc_hex__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epc_hex",
+            "required": true,
+            "schema": {
+              "title": "Epc Hex",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Tag By Epc",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags/{tag_id}": {
+      "delete": {
+        "description": "Hard-delete a tag. Admin only. 409 if still bound to a stock item.",
+        "operationId": "delete_tag_tags__tag_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tag Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Delete Tag",
+        "tags": [
+          "tags"
+        ]
+      },
+      "patch": {
+        "description": "Patch ``status`` and/or ``metadata``.\n\n``epc_hex`` is intentionally absent from :class:`TagUpdate` \u2014\nit's the natural key. ``batch_id`` / category-style grouping\ngoes through ``POST /tags/{id}/labels`` (per ADR 028 OQ 5).",
+        "operationId": "update_tag_tags__tag_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tag Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Update Tag",
+        "tags": [
+          "tags"
         ]
       }
     },

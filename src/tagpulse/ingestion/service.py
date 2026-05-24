@@ -16,6 +16,7 @@ from tagpulse.core.otel_metrics import (
     geofence_transitions_counter,
     ingestion_counter,
     inventory_unmapped_sgtin_counter,
+    stock_item_auto_create_blocked_counter,
     stock_item_auto_created_counter,
     stock_movements_recorded_counter,
     subject_zone_changed_counter,
@@ -48,11 +49,13 @@ from tagpulse.repositories.timescaledb.inventory import (
 from tagpulse.repositories.timescaledb.sites_zones import (
     TimescaleZoneRepository,
 )
+from tagpulse.repositories.timescaledb.tags import TimescaleTagRepository
 from tagpulse.repositories.timescaledb.telemetry import (
     TimescaleTelemetryReadingsRepository,
 )
 from tagpulse.repositories.timescaledb.tenants import TimescaleTenantRepository
 from tagpulse.rfid.epc import decode_epc_hex, gtin14_from_decoded
+from tagpulse.services.tags import normalize_epc_hex
 
 logger = logging.getLogger(__name__)
 
@@ -64,19 +67,13 @@ logger = logging.getLogger(__name__)
 _ZONE_CACHE_MAX = 10_000
 
 _LAST_ZONE_BY_ASSET: dict[tuple[uuid.UUID, uuid.UUID], uuid.UUID | None] = {}
-_LAST_ZONE_BY_STOCK_ITEM: dict[
-    tuple[uuid.UUID, uuid.UUID], uuid.UUID | None
-] = {}
+_LAST_ZONE_BY_STOCK_ITEM: dict[tuple[uuid.UUID, uuid.UUID], uuid.UUID | None] = {}
 
 # Sprint 17a: separate caches for geofence-zone transitions per subject. They
 # never collide with reader-bound caches above because zone_kind is included
 # in the emitted event payload, and downstream consumers key on subject_id.
-_LAST_GEOFENCE_BY_ASSET: dict[
-    tuple[uuid.UUID, uuid.UUID], uuid.UUID | None
-] = {}
-_LAST_GEOFENCE_BY_STOCK_ITEM: dict[
-    tuple[uuid.UUID, uuid.UUID], uuid.UUID | None
-] = {}
+_LAST_GEOFENCE_BY_ASSET: dict[tuple[uuid.UUID, uuid.UUID], uuid.UUID | None] = {}
+_LAST_GEOFENCE_BY_STOCK_ITEM: dict[tuple[uuid.UUID, uuid.UUID], uuid.UUID | None] = {}
 
 # GTIN -> product_id and (tenant, product, scope_kind) -> mappings caches.
 # Same boundedness story as the zone caches; sized smaller because catalog
@@ -100,16 +97,12 @@ _TRACKING_MODES: dict[uuid.UUID, tuple[str, ...]] = {}
 _BINDING_CACHE_MAX = 8_192
 _MOBILITY_CACHE_MAX = 4_096
 # (tenant, binding_value) -> (asset_id, binding_id) ; None = "no active binding"
-_BINDING_BY_VALUE: dict[
-    tuple[uuid.UUID, str], tuple[uuid.UUID, uuid.UUID] | None
-] = {}
+_BINDING_BY_VALUE: dict[tuple[uuid.UUID, str], tuple[uuid.UUID, uuid.UUID] | None] = {}
 # (tenant, device_id) -> "fixed" | "mobile"
 _DEVICE_MOBILITY: dict[tuple[uuid.UUID, uuid.UUID], str] = {}
 
 
-def _bounded_set(
-    cache: dict[Any, Any], key: Any, value: Any, maxsize: int
-) -> None:
+def _bounded_set(cache: dict[Any, Any], key: Any, value: Any, maxsize: int) -> None:
     """FIFO-evicting setter; pops the oldest insertion when ``len(cache)`` hits
     ``maxsize``. Idempotent re-inserts (key already present) do not change
     insertion order — callers that need LRU semantics should ``pop`` first.
@@ -142,9 +135,8 @@ class IngestionService:
         movement_repo: TimescaleStockMovementRepository | None = None,
         tag_data_mapping_repo: TimescaleTagDataMappingRepository | None = None,
         tenant_repo: TimescaleTenantRepository | None = None,
-        telemetry_readings_repo: (
-            TimescaleTelemetryReadingsRepository | None
-        ) = None,
+        telemetry_readings_repo: (TimescaleTelemetryReadingsRepository | None) = None,
+        tag_repo: TimescaleTagRepository | None = None,
         usage_meter: UsageMeter | None = None,
     ) -> None:
         self._repo = repo
@@ -160,6 +152,7 @@ class IngestionService:
         self._tag_data_mapping_repo = tag_data_mapping_repo
         self._tenant_repo = tenant_repo
         self._telemetry_readings_repo = telemetry_readings_repo
+        self._tag_repo = tag_repo
         self._usage_meter = usage_meter
 
     async def ingest(self, tenant_id: uuid.UUID, read: TagReadCreate) -> TagReadResponse:
@@ -177,9 +170,7 @@ class IngestionService:
                 },
             )
             if self._usage_meter is not None:
-                self._usage_meter.record(
-                    tenant_id, "events_rejected_clock", "events"
-                )
+                self._usage_meter.record(tenant_id, "events_rejected_clock", "events")
             logger.warning(
                 "Tag read out-of-window: device=%s ts=%s reason=%s mode=%s",
                 normalized.device_id,
@@ -199,11 +190,11 @@ class IngestionService:
         )
         if self._device_repo:
             now = datetime.now(UTC)
-            await self._device_repo.record_last_seen(
-                tenant_id, normalized.device_id, now
-            )
+            await self._device_repo.record_last_seen(tenant_id, normalized.device_id, now)
             await self._device_repo.record_connection_state(
-                tenant_id, normalized.device_id, "online",
+                tenant_id,
+                normalized.device_id,
+                "online",
             )
         await self._mirror_tag_borne_sensors(tenant_id, normalized, result.id)
         await self._enrich_with_asset_zone(tenant_id, normalized, result.id)
@@ -256,9 +247,7 @@ class IngestionService:
                     },
                 )
                 if self._usage_meter is not None:
-                    self._usage_meter.record(
-                        tenant_id, "events_rejected_clock", "events"
-                    )
+                    self._usage_meter.record(tenant_id, "events_rejected_clock", "events")
                 rejected += 1
                 if settings.ingest_clock_enforce:
                     continue
@@ -279,11 +268,11 @@ class IngestionService:
                 if read.device_id in seen_devices:
                     continue
                 seen_devices.add(read.device_id)
-                await self._device_repo.record_last_seen(
-                    tenant_id, read.device_id, now
-                )
+                await self._device_repo.record_last_seen(tenant_id, read.device_id, now)
                 await self._device_repo.record_connection_state(
-                    tenant_id, read.device_id, "online",
+                    tenant_id,
+                    read.device_id,
+                    "online",
                 )
         for read, row in zip(normalized, inserted, strict=True):
             await self._mirror_tag_borne_sensors(tenant_id, read, row.id)
@@ -308,9 +297,7 @@ class IngestionService:
             )
         return count, rejected
 
-    def _normalize(
-        self, tenant_id: uuid.UUID, read: TagReadCreate
-    ) -> TagReadCreate:
+    def _normalize(self, tenant_id: uuid.UUID, read: TagReadCreate) -> TagReadCreate:
         """Apply EPC decode, tag_id defaulting, and tag_data inline cap."""
         identity = read.identity
         if identity and identity.epc_hex and not identity.epc:
@@ -397,9 +384,7 @@ class IngestionService:
                     metadata=provenance,
                 )
                 try:
-                    await self._telemetry_service.ingest_reading(
-                        tenant_id, read.device_id, reading
-                    )
+                    await self._telemetry_service.ingest_reading(tenant_id, read.device_id, reading)
                 except Exception:  # noqa: BLE001
                     logger.exception(
                         "Failed to mirror tag-borne metric %s for tag_read %s",
@@ -443,8 +428,7 @@ class IngestionService:
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception(
-                        "Failed to fan-out tag-borne metric %s "
-                        "to subject %s/%s for tag_read %s",
+                        "Failed to fan-out tag-borne metric %s to subject %s/%s for tag_read %s",
                         key,
                         subject_kind,
                         subject_id,
@@ -505,14 +489,8 @@ class IngestionService:
             cache_key = (tenant_id, read.tag_id)
             cached = _BINDING_BY_VALUE.get(cache_key)
             if cached is None and cache_key not in _BINDING_BY_VALUE:
-                binding = await self._binding_repo.get_active_by_value(
-                    tenant_id, read.tag_id
-                )
-                value = (
-                    (binding.asset_id, binding.id)
-                    if binding is not None
-                    else None
-                )
+                binding = await self._binding_repo.get_active_by_value(tenant_id, read.tag_id)
+                value = (binding.asset_id, binding.id) if binding is not None else None
                 _bounded_set(
                     _BINDING_BY_VALUE,
                     cache_key,
@@ -529,13 +507,9 @@ class IngestionService:
             # first sight via a different binding_kind. We try the most
             # common kind ('epc') and fall back to ('tid'); a future
             # change can plumb the resolved binding_kind through here.
-            stock = await self._stock_repo.get_active_by_binding(
-                tenant_id, "epc", read.tag_id
-            )
+            stock = await self._stock_repo.get_active_by_binding(tenant_id, "epc", read.tag_id)
             if stock is None:
-                stock = await self._stock_repo.get_active_by_binding(
-                    tenant_id, "tid", read.tag_id
-                )
+                stock = await self._stock_repo.get_active_by_binding(tenant_id, "tid", read.tag_id)
             if stock is not None:
                 subjects.append(("stock_item", stock.id))
                 if stock.lot_id is not None:
@@ -543,9 +517,7 @@ class IngestionService:
 
         return subjects
 
-    async def _get_telemetry_subject_kinds(
-        self, tenant_id: uuid.UUID
-    ) -> tuple[str, ...]:
+    async def _get_telemetry_subject_kinds(self, tenant_id: uuid.UUID) -> tuple[str, ...]:
         """Cached read of ``tenants.telemetry_subject_kinds`` (Sprint 21
         TTL cache; see :mod:`tagpulse.core.telemetry_caches`)."""
         cached = SUBJECT_KINDS_CACHE.get(tenant_id)
@@ -554,9 +526,7 @@ class IngestionService:
         if self._tenant_repo is None:
             value: tuple[str, ...] = ("device",)
         else:
-            kinds = await self._tenant_repo.get_telemetry_subject_kinds(
-                tenant_id
-            )
+            kinds = await self._tenant_repo.get_telemetry_subject_kinds(tenant_id)
             value = tuple(kinds)
         SUBJECT_KINDS_CACHE.set(tenant_id, value)
         return value
@@ -618,20 +588,14 @@ class IngestionService:
                     _BINDING_CACHE_MAX,
                 )
                 break
-            _bounded_set(
-                _BINDING_BY_VALUE, binding_cache_key, None, _BINDING_CACHE_MAX
-            )
+            _bounded_set(_BINDING_BY_VALUE, binding_cache_key, None, _BINDING_CACHE_MAX)
 
         if binding is None:
-            tag_reads_without_asset_counter.add(
-                1, {"tenant_id": str(tenant_id)}
-            )
+            tag_reads_without_asset_counter.add(1, {"tenant_id": str(tenant_id)})
             return
 
         # Mobile readers: no fixed-zone lookup; emit no zone transition.
-        device_mobility = await self._lookup_device_mobility(
-            tenant_id, read.device_id
-        )
+        device_mobility = await self._lookup_device_mobility(tenant_id, read.device_id)
         if device_mobility != "fixed" or self._zone_repo is None:
             # Mobile readers still get a geofence eval if the read carries a fix.
             await self._eval_geofence_for_subject(
@@ -643,9 +607,7 @@ class IngestionService:
             )
             return
 
-        zone = await self._zone_repo.get_zone_for_reader(
-            tenant_id, read.device_id
-        )
+        zone = await self._zone_repo.get_zone_for_reader(tenant_id, read.device_id)
         new_zone_id = zone.id if zone else None
         cache_key = (tenant_id, binding.asset_id)
         prev_zone_id = _LAST_ZONE_BY_ASSET.get(cache_key)
@@ -664,17 +626,13 @@ class IngestionService:
 
         if cache_key not in _LAST_ZONE_BY_ASSET:
             # First time we see this asset — seed the cache without firing.
-            _bounded_set(
-                _LAST_ZONE_BY_ASSET, cache_key, new_zone_id, _ZONE_CACHE_MAX
-            )
+            _bounded_set(_LAST_ZONE_BY_ASSET, cache_key, new_zone_id, _ZONE_CACHE_MAX)
             return
 
         if new_zone_id == prev_zone_id:
             return
 
-        _bounded_set(
-            _LAST_ZONE_BY_ASSET, cache_key, new_zone_id, _ZONE_CACHE_MAX
-        )
+        _bounded_set(_LAST_ZONE_BY_ASSET, cache_key, new_zone_id, _ZONE_CACHE_MAX)
         await self._event_bus.publish(
             Topic.SUBJECT_ZONE_CHANGED,
             Event(
@@ -697,9 +655,7 @@ class IngestionService:
                 },
             ),
         )
-        subject_zone_changed_counter.add(
-            1, {"tenant_id": str(tenant_id), "subject_kind": "asset"}
-        )
+        subject_zone_changed_counter.add(1, {"tenant_id": str(tenant_id), "subject_kind": "asset"})
 
     async def _eval_geofence_for_subject(
         self,
@@ -737,12 +693,8 @@ class IngestionService:
         from tagpulse.geo import point_in_polygon
 
         start = time.perf_counter()
-        candidates = await self._zone_repo.find_geofence_candidates(
-            tenant_id, lat, lon
-        )
-        geofence_candidates_per_evaluation.record(
-            len(candidates), {"tenant_id": str(tenant_id)}
-        )
+        candidates = await self._zone_repo.find_geofence_candidates(tenant_id, lat, lon)
+        geofence_candidates_per_evaluation.record(len(candidates), {"tenant_id": str(tenant_id)})
 
         new_zone_id: uuid.UUID | None = None
         for candidate in candidates:
@@ -769,11 +721,7 @@ class IngestionService:
             time.perf_counter() - start, {"tenant_id": str(tenant_id)}
         )
 
-        cache = (
-            _LAST_GEOFENCE_BY_ASSET
-            if subject_kind == "asset"
-            else _LAST_GEOFENCE_BY_STOCK_ITEM
-        )
+        cache = _LAST_GEOFENCE_BY_ASSET if subject_kind == "asset" else _LAST_GEOFENCE_BY_STOCK_ITEM
         cache_key = (tenant_id, subject_id)
         prev_zone_id = cache.get(cache_key)
         seen_before = cache_key in cache
@@ -819,9 +767,7 @@ class IngestionService:
             },
         )
 
-    async def _lookup_device_mobility(
-        self, tenant_id: uuid.UUID, device_id: uuid.UUID
-    ) -> str:
+    async def _lookup_device_mobility(self, tenant_id: uuid.UUID, device_id: uuid.UUID) -> str:
         """Return device mobility ('fixed' | 'mobile'), defaulting to 'fixed'.
 
         Cached in-process; mobility is changed by an admin via /devices PATCH
@@ -834,12 +780,8 @@ class IngestionService:
         if self._device_repo is None:
             return "fixed"
         device = await self._device_repo.get(tenant_id, device_id)
-        mobility = (
-            getattr(device, "mobility", "fixed") if device is not None else "fixed"
-        )
-        _bounded_set(
-            _DEVICE_MOBILITY, cache_key, mobility, _MOBILITY_CACHE_MAX
-        )
+        mobility = getattr(device, "mobility", "fixed") if device is not None else "fixed"
+        _bounded_set(_DEVICE_MOBILITY, cache_key, mobility, _MOBILITY_CACHE_MAX)
         return mobility
 
     async def _enrich_with_inventory(
@@ -883,19 +825,27 @@ class IngestionService:
 
         product_id = await self._lookup_product_id_by_gtin(tenant_id, gtin)
         if product_id is None:
-            inventory_unmapped_sgtin_counter.add(
-                1, {"tenant_id": str(tenant_id)}
-            )
+            inventory_unmapped_sgtin_counter.add(1, {"tenant_id": str(tenant_id)})
             return
 
         epc = read.identity.epc
-        stock_item = await self._stock_repo.get_active_by_binding(
-            tenant_id, "epc", epc
-        )
+        stock_item = await self._stock_repo.get_active_by_binding(tenant_id, "epc", epc)
         if stock_item is None:
-            lot_id = await self._infer_lot_id(
-                tenant_id, product_id, read.tag_data
-            )
+            # Sprint 50 Phase D3 (ADR 028 §"Soft-asset interaction"):
+            # The tag registry is the authoritative answer to "does this
+            # tenant own this EPC?". Auto-create only when the EPC has a
+            # row in ``tags`` with a non-terminal status. Reading ``tags``
+            # is acceptable here because this branch is on the rare path
+            # (first-ever read for an EPC) — the steady-state inventory
+            # hot path skips this block via the ``stock_items`` lookup
+            # above. The MQTT ingest write path (``self._repo.create``)
+            # still never touches ``tags``.
+            if self._tag_repo is not None:
+                tag = await self._tag_repo.get_by_epc(tenant_id, normalize_epc_hex(epc))
+                if tag is None or tag.status not in {"registered", "active"}:
+                    stock_item_auto_create_blocked_counter.add(1, {"tenant_id": str(tenant_id)})
+                    return
+            lot_id = await self._infer_lot_id(tenant_id, product_id, read.tag_data)
             try:
                 stock_item = await self._stock_repo.create(
                     tenant_id,
@@ -908,21 +858,15 @@ class IngestionService:
                 )
             except ValueError:
                 # Race: another worker just created the same active binding.
-                stock_item = await self._stock_repo.get_active_by_binding(
-                    tenant_id, "epc", epc
-                )
+                stock_item = await self._stock_repo.get_active_by_binding(tenant_id, "epc", epc)
                 if stock_item is None:
                     return
             else:
-                stock_item_auto_created_counter.add(
-                    1, {"tenant_id": str(tenant_id)}
-                )
+                stock_item_auto_created_counter.add(1, {"tenant_id": str(tenant_id)})
 
         # Mobile readers (or no zone repo) skip zone resolution — no
         # transition can be inferred without a fixed reader-bound zone.
-        device_mobility = await self._lookup_device_mobility(
-            tenant_id, read.device_id
-        )
+        device_mobility = await self._lookup_device_mobility(tenant_id, read.device_id)
         if device_mobility != "fixed" or self._zone_repo is None:
             await self._eval_geofence_for_subject(
                 tenant_id=tenant_id,
@@ -933,9 +877,7 @@ class IngestionService:
             )
             return
 
-        zone = await self._zone_repo.get_zone_for_reader(
-            tenant_id, read.device_id
-        )
+        zone = await self._zone_repo.get_zone_for_reader(tenant_id, read.device_id)
         new_zone_id = zone.id if zone else None
 
         observation = await self._stock_repo.record_observation(
@@ -950,9 +892,7 @@ class IngestionService:
 
         cache_key = (tenant_id, stock_item.id)
         seen_before = cache_key in _LAST_ZONE_BY_STOCK_ITEM
-        _bounded_set(
-            _LAST_ZONE_BY_STOCK_ITEM, cache_key, new_zone_id, _ZONE_CACHE_MAX
-        )
+        _bounded_set(_LAST_ZONE_BY_STOCK_ITEM, cache_key, new_zone_id, _ZONE_CACHE_MAX)
         if not seen_before:
             return  # seed; first observation never fires a transition
         if new_zone_id == prev_zone_id:
@@ -968,13 +908,9 @@ class IngestionService:
                 device_id=read.device_id,
                 occurred_at=read.timestamp,
             )
-            stock_movements_recorded_counter.add(
-                1, {"tenant_id": str(tenant_id)}
-            )
+            stock_movements_recorded_counter.add(1, {"tenant_id": str(tenant_id)})
             if self._usage_meter is not None:
-                self._usage_meter.record(
-                    tenant_id, "inventory_movements", "events"
-                )
+                self._usage_meter.record(tenant_id, "inventory_movements", "events")
 
         await self._event_bus.publish(
             Topic.SUBJECT_ZONE_CHANGED,
@@ -1020,11 +956,7 @@ class IngestionService:
         mapping declares ``semantic_field='lot'`` or when the referenced
         ``lot_code`` is unknown for the product.
         """
-        if (
-            not tag_data
-            or self._tag_data_mapping_repo is None
-            or self._lot_repo is None
-        ):
+        if not tag_data or self._tag_data_mapping_repo is None or self._lot_repo is None:
             return None
 
         # Pull both scopes in priority order; first hit wins.
@@ -1042,9 +974,7 @@ class IngestionService:
                 value = tag_data.get(mapping.tag_data_key)
                 if not isinstance(value, str) or not value:
                     continue
-                lots = await self._lot_repo.list_for_product(
-                    tenant_id, product_id, limit=1000
-                )
+                lots = await self._lot_repo.list_for_product(tenant_id, product_id, limit=1000)
                 for lot in lots:
                     if lot.lot_code == value:
                         return lot.id
@@ -1067,14 +997,10 @@ class IngestionService:
             # behavior matches the pre-guard implementation.
             return True
         modes = await self._tenant_repo.get_tracking_modes(tenant_id)
-        _bounded_set(
-            _TRACKING_MODES, tenant_id, tuple(modes), _TRACKING_MODES_CACHE_MAX
-        )
+        _bounded_set(_TRACKING_MODES, tenant_id, tuple(modes), _TRACKING_MODES_CACHE_MAX)
         return "inventory" in modes
 
-    async def _lookup_product_id_by_gtin(
-        self, tenant_id: uuid.UUID, gtin: str
-    ) -> uuid.UUID | None:
+    async def _lookup_product_id_by_gtin(self, tenant_id: uuid.UUID, gtin: str) -> uuid.UUID | None:
         """Resolve ``(tenant, gtin) -> product_id`` with a bounded LRU cache.
 
         Both hits and misses are cached; a missing product is far more common

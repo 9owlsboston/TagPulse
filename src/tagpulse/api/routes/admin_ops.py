@@ -116,6 +116,20 @@ async def list_audit_logs(
         description="Comma-separated list of actions to filter by (e.g. "
         "'device.token_rotated,device.cert_attached').",
     ),
+    request_id: UUID | None = Query(
+        default=None,
+        description=(
+            "Filter to audit entries carrying this bulk-op request_id"
+            " (Sprint 50 Phase C5, ADR 028 §Governance #7)."
+        ),
+    ),
+    batch: str | None = Query(
+        default=None,
+        description=(
+            "Filter to audit entries scoped to this label batch value"
+            " (Sprint 50 Phase C5, ADR 028 §Governance #7)."
+        ),
+    ),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     user: AuthenticatedUser = require_role("admin"),
@@ -123,13 +137,13 @@ async def list_audit_logs(
 ) -> list[dict[str, object]]:
     """List audit logs for this tenant."""
     audit = AuditLogger(session)
-    action_list = (
-        [a.strip() for a in actions.split(",") if a.strip()] if actions else None
-    )
+    action_list = [a.strip() for a in actions.split(",") if a.strip()] if actions else None
     return await audit.list_logs(
         user.tenant_id,
         resource_type=resource_type,
         actions=action_list,
+        request_id=request_id,
+        batch=batch,
         limit=limit,
         offset=offset,
     )
@@ -161,7 +175,5 @@ async def get_tag_collisions(
         binding_repo=TimescaleAssetTagBindingRepository(session),
         audit=AuditLogger(session),
     )
-    count = await service.count_other_tenant_collisions(
-        user.tenant_id, binding_value
-    )
+    count = await service.count_other_tenant_collisions(user.tenant_id, binding_value)
     return {"binding_value": binding_value, "other_tenant_count": count}

@@ -43,6 +43,8 @@ referenced from the incident template.
 | [geofence-postgis-trigger.md](geofence-postgis-trigger.md) | Sprint 17a | Stable. PostGIS trigger DDL + idempotency notes. |
 | [subject-scoped-telemetry.md](subject-scoped-telemetry.md) | Sprint 20 | Cutover from device-scoped to subject-scoped telemetry; idempotent dual-write window. |
 | [device-token-rotation.md](device-token-rotation.md) | Sprint 16 | Bulk-rotate device JWTs; see also ADR-011 for the long-term mTLS plan (ADR-012 partially implemented in Sprint 28 C6). |
+| [reserved-label-key-collision.md](reserved-label-key-collision.md) | **Sprint 50 Phase A3** | What to do when migration `045_tag_label_namespace.py` refuses because a tenant holds labels under the reserved `batch.*` namespace ([ADR 028](../adr/028-tags-as-first-class-entity.md)). |
+| [tag-registry-operations.md](tag-registry-operations.md) | **Sprint 50 Phase F2** | Day-to-day tag registry ops: CSV bulk import (limits, dry-run, two-person rule), status lifecycle, cross-tenant transfer, and the three reconciliation views ([ADR 028](../adr/028-tags-as-first-class-entity.md)). |
 
 ## Cross-references
 

@@ -1090,7 +1090,7 @@ class CategoryResponse(BaseModel):
 
 # -- Sprint 35 (ADR 020): Labels first-class --
 
-LabelEntityType = Literal["asset", "site", "zone", "device", "category"]
+LabelEntityType = Literal["asset", "site", "zone", "device", "category", "tag"]
 
 # Patterns mirror the DB CHECK constraints created in migration 039.
 # Keep these in lockstep with ``migrations/versions/039_labels_catalog.py``;
@@ -1169,3 +1169,427 @@ class LabelAssociationResponse(BaseModel):
     color: str | None
     created_by: UUID | None
     created_at: datetime
+
+
+# -- Sprint 50 (ADR 028): Tag registry --
+
+TagStatus = Literal["registered", "active", "retired", "defective", "transferred_out"]
+TagSource = Literal["csv_import", "api", "backfill", "transfer_in"]
+TagTransferStatus = Literal["requested", "completed", "failed"]
+
+# Mirrors ck_tags_epc_hex_format in migration 043: canonical uppercase
+# hex, no separators, 16-128 chars. The API helper ``normalize_epc_hex``
+# upper-cases and strips before validation so operators can paste in
+# lowercase or whitespace-padded values.
+_EPC_HEX_PATTERN = r"^[0-9A-F]{16,128}$"
+
+
+class TagCreate(BaseModel):
+    """Create one tag registry row (Phase B, single-row path).
+
+    ``source`` is constrained to operator-driven values — ``transfer_in``
+    is reserved for the transfer-completion path that writes the row
+    server-side, not via this endpoint.
+    """
+
+    epc_hex: str = Field(min_length=16, max_length=128, pattern=_EPC_HEX_PATTERN)
+    source: Literal["csv_import", "api", "backfill"] = "api"
+    metadata: dict[str, object] | None = None
+
+
+class TagUpdate(BaseModel):
+    """Patch a tag registry row.
+
+    Only ``status`` and ``metadata`` are operator-mutable here. The
+    ADR-028 status-transition rules are enforced in the service
+    layer; the schema accepts the full enum so an admin can flip
+    ``registered`` / ``active`` → ``retired`` / ``defective``. The
+    registrar worker is the only writer that may set ``active`` and
+    the transfer flow is the only writer that may set
+    ``transferred_out`` — both rejected here in the service layer.
+
+    ``epc_hex`` is immutable (it's the natural key). ``source``,
+    ``first_seen_at``, ``last_seen_at``, ``gs1_uri`` are all
+    system-owned. There is intentionally no ``batch_id`` field —
+    batch grouping goes through the ``entity_labels`` API per
+    ADR 028 OQ 5.
+    """
+
+    status: TagStatus | None = None
+    metadata: dict[str, object] | None = None
+
+
+class TagResponse(BaseModel):
+    """Persisted tag registry row."""
+
+    id: UUID
+    tenant_id: UUID
+    epc_hex: str
+    gs1_uri: str | None
+    status: TagStatus
+    source: TagSource
+    first_seen_at: datetime | None
+    last_seen_at: datetime | None
+    metadata: dict[str, object] | None = Field(default=None, alias="metadata_")
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class TagImportRowError(BaseModel):
+    """One invalid CSV row from ``POST /tags/import`` (Sprint 50 C1).
+
+    Returned to the client as part of :class:`TagImportResult` when
+    any row fails validation; per ADR 028 OQ 4 the import is
+    all-or-nothing, so a non-empty ``errors`` list means *nothing*
+    was written (regardless of ``dry_run``).
+
+    ``row`` is the 1-based CSV row number *after* the header
+    (matching what spreadsheet users see). ``epc_hex`` is the
+    operator-supplied value, echoed back unmodified so they can
+    grep their CSV; it's omitted only if the row had no ``epc_hex``
+    column value at all.
+    """
+
+    row: int
+    epc_hex: str | None = None
+    error: str
+
+
+class TagImportResult(BaseModel):
+    """Outcome of ``POST /tags/import`` (Sprint 50 C1/C2/C3).
+
+    Five branches the client must distinguish:
+
+    - ``errors`` non-empty → 422; the CSV was rejected, nothing was
+      written, ``rows_created`` and ``rows_skipped`` are both 0.
+      ``token`` is null (the ADR 028 governance rule binds the token
+      to a *valid* preview only).
+    - ``dry_run=True`` and ``errors`` empty → 200; the CSV would
+      have created ``rows_created`` rows. No rows were written.
+      ``token``, ``expires_in``, and ``sample`` are populated so the
+      operator can re-submit with ``?confirm=<token>``.
+    - ``dry_run=False`` and ``confirm`` provided and ``errors``
+      empty and ``rows_total`` < tenant threshold → 201; the CSV was
+      written. ``rows_created`` + ``rows_skipped`` = ``rows_total``;
+      ``rows_skipped`` counts EPCs that already existed for the
+      tenant (treated as idempotent, not as errors). ``token``
+      echoes the consumed token for audit traceability.
+    - ``dry_run=False`` and ``confirm`` provided and ``errors``
+      empty and ``rows_total`` >= tenant threshold → **202**; the
+      CSV is *queued* for second-admin approval per ADR 028
+      §Governance #4. ``requires_approval=True`` and ``pending_id``
+      is set; ``rows_created`` / ``rows_skipped`` are 0 (nothing
+      written yet). The second admin completes the op via
+      ``POST /bulk-operations/{pending_id}/approve``.
+    - A bad token (mismatched CSV, wrong tenant/user, expired)
+      surfaces as 409 from the route, not via this schema.
+
+    Per ADR 028 §"Governance" rule 2, ``confirm`` and ``dry_run`` are
+    mutually exclusive and at least one must be set — the route
+    rejects "bare" submits (no dry-run, no confirm) with 400.
+    """
+
+    rows_total: int
+    rows_created: int
+    rows_skipped: int
+    dry_run: bool
+    errors: list[TagImportRowError] = Field(default_factory=list)
+    # Populated only on a successful dry-run (and on the matching
+    # commit, where it echoes the consumed value for audit).
+    token: str | None = None
+    expires_in: int | None = None
+    # First-N preview of the EPCs that would be / were written.
+    # ADR 028 says ``sample`` so the operator can eyeball "did I
+    # paste the right reel?" without scrolling 10 000 rows. Bound
+    # at 10 in the route — schema accepts any length.
+    sample: list[str] | None = None
+    # Sprint 50 C3: two-person rule. Set on the 202 branch only.
+    # ``pending_id`` is the UUID the second admin uses on
+    # ``POST /bulk-operations/{pending_id}/approve``.
+    requires_approval: bool | None = None
+    pending_id: UUID | None = None
+
+
+class TagTransferRequest(BaseModel):
+    """Initiate a cross-tenant transfer of one or more EPCs.
+
+    All EPCs in one request share a server-generated ``request_id``.
+    The receiving tenant is identified by slug. Phase B creates rows
+    in ``status='requested'`` only — the acknowledgement /
+    completion path lands in a later phase.
+    """
+
+    to_tenant_slug: str = Field(min_length=1, max_length=64)
+    epcs: list[str] = Field(min_length=1, max_length=1000)
+
+
+class TagTransferResponse(BaseModel):
+    """Persisted tag_transfer row (one EPC of a request)."""
+
+    id: UUID
+    request_id: UUID
+    from_tenant_id: UUID
+    to_tenant_id: UUID
+    epc_hex: str
+    status: TagTransferStatus
+    failure_reason: str | None
+    requested_by: UUID
+    requested_at: datetime
+    completed_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 50 C3: pending bulk operations (two-person rule)
+# ---------------------------------------------------------------------------
+
+
+class PendingBulkOperationResponse(BaseModel):
+    """Persisted ``pending_bulk_operations`` row (ADR 028 §Governance #4).
+
+    Surfaced on:
+
+    - the **202** branch of ``POST /tags/import`` (via the
+      ``pending_id`` field on :class:`TagImportResult`) — operator A
+      learns "your import is queued for approval, here is the id";
+    - ``GET /bulk-operations/{id}`` — operator B fetches the record
+      they're being asked to approve;
+    - ``POST /bulk-operations/{id}/approve`` and ``/reject`` —
+      the response echoes the updated row.
+
+    The CSV bytes themselves (``payload``) are deliberately **not**
+    exposed — operator B sees ``row_count`` + ``sample`` (the same
+    10-EPC preview operator A saw on dry-run) which is the
+    intended review surface. ``content_hash`` is exposed for
+    cross-system verification.
+    """
+
+    id: UUID
+    tenant_id: UUID
+    operation: str
+    status: str
+    requested_by: UUID | None
+    decided_by: UUID | None
+    content_hash: str
+    row_count: int
+    sample: list[str]
+    request_id: UUID | None
+    created_at: datetime
+    decided_at: datetime | None
+    executed_at: datetime | None
+    expires_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 50 C4: scope-required bulk mutations (ADR 028 §Governance #3)
+# ---------------------------------------------------------------------------
+
+
+class TagBulkScope(BaseModel):
+    """Scope selector for a bulk PATCH or bulk retire.
+
+    Per ADR 028 §Governance #3 every bulk mutation MUST carry one of:
+
+    - ``labels`` — deep-object label filter; MUST include a non-empty
+      ``batch`` key (other label keys may be present and are
+      AND-combined). This is the "operators think in batches"
+      contract — bulk ops scoped purely by some other label key
+      would be hard to audit by reel.
+    - ``epc_list`` — explicit list of 1..1000 canonical EPC hex
+      values. The 1000 cap is the ADR-pinned blast-radius limit
+      for the explicit-enumeration shape.
+
+    Exactly one of ``labels`` / ``epc_list`` must be set.
+    """
+
+    labels: dict[str, str] | None = None
+    epc_list: list[str] | None = Field(default=None, min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def _exactly_one_scope(self) -> "TagBulkScope":
+        has_labels = self.labels is not None and len(self.labels) > 0
+        has_epcs = self.epc_list is not None and len(self.epc_list) > 0
+        if has_labels and has_epcs:
+            raise ValueError("scope: provide exactly one of 'labels' or 'epc_list', not both")
+        if not has_labels and not has_epcs:
+            raise ValueError(
+                "scope: must provide either 'labels' (with a 'batch' key) or 'epc_list'"
+            )
+        if has_labels:
+            assert self.labels is not None
+            if "batch" not in self.labels or not self.labels["batch"].strip():
+                raise ValueError(
+                    "scope.labels: must include a non-empty 'batch' key (ADR 028 §Governance #3)"
+                )
+        if has_epcs:
+            assert self.epc_list is not None
+            # Per-EPC format check; the route layer normalizes (upper +
+            # strip) before this validator runs in the request lifecycle,
+            # but we re-check defensively in case a future caller skips
+            # the route normalization (e.g., calling the schema from a
+            # background worker that constructs a request body directly).
+            pattern = re.compile(_EPC_HEX_PATTERN)
+            for epc in self.epc_list:
+                if not pattern.match(epc):
+                    raise ValueError(
+                        f"scope.epc_list: {epc!r} is not canonical EPC hex"
+                        " (uppercase, 16-128 chars, no separators)"
+                    )
+            if len(set(self.epc_list)) != len(self.epc_list):
+                raise ValueError("scope.epc_list: duplicate EPC values")
+        return self
+
+
+class TagBulkPatchRequest(BaseModel):
+    """Body for ``POST /tags/bulk-patch`` (Sprint 50 C4, ADR 028).
+
+    At least one of ``status`` / ``metadata`` must be set — the
+    server has nothing else to apply otherwise. Per-tag status
+    transitions are validated server-side against the same edge
+    list :class:`TagUpdate` uses, so an operator can't slip
+    ``transferred_out`` past the bulk surface.
+
+    ``metadata`` is a full **replace** of the target row's
+    metadata column (mirroring single-row PATCH semantics).
+    Per-key merge can be added in a later sprint if customer
+    feedback asks for it; doing replace-by-default avoids
+    surprising "I cleared one key and the others stayed".
+    """
+
+    scope: TagBulkScope
+    status: TagStatus | None = None
+    metadata: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_mutation(self) -> "TagBulkPatchRequest":
+        if self.status is None and self.metadata is None:
+            raise ValueError("bulk patch: at least one of 'status' or 'metadata' must be set")
+        return self
+
+
+class TagBulkRetireRequest(BaseModel):
+    """Body for ``POST /tags/bulk-retire`` (Sprint 50 C4, ADR 028).
+
+    Equivalent to ``POST /tags/bulk-patch`` with ``status='retired'``
+    but exposed as its own endpoint so the audit log carries a
+    distinct action name (``tag.bulk_retired`` vs
+    ``tag.bulk_patched``) — operators searching "who retired
+    batch X" don't have to filter PATCH calls by status payload.
+
+    ``reason`` is optional free-text recorded on the audit-log
+    entry; not persisted on the tag rows themselves.
+    """
+
+    scope: TagBulkScope
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class TagBulkRowError(BaseModel):
+    """One per-tag failure from a bulk PATCH / retire dry-run or commit.
+
+    Currently the only failure surfaced this way is a rejected
+    status transition (e.g., ``transferred_out → retired``).
+    Per ADR 028's all-or-nothing rule on bulk mutations, any
+    non-empty error list aborts the operation — nothing is written
+    even on a confirmed commit.
+    """
+
+    epc_hex: str
+    error: str
+
+
+class TagBulkOperationResult(BaseModel):
+    """Outcome of ``POST /tags/bulk-patch`` or ``POST /tags/bulk-retire``.
+
+    Five branches mirroring :class:`TagImportResult`:
+
+    - ``errors`` non-empty → **422**; the scope resolved but at
+      least one matched tag would violate its status-transition
+      edge list. Nothing is written. No token is minted.
+    - ``dry_run=True`` and ``errors`` empty → **200**; ``matched``
+      is the number of tags the scope resolved to, ``updated`` is
+      0 (nothing written), ``token`` + ``expires_in`` + ``sample``
+      are populated for a follow-up ``?confirm=<token>``.
+    - ``dry_run=False`` and ``confirm`` provided and ``matched``
+      below tenant threshold → **200**; ``updated`` is the number
+      of rows changed.
+    - ``dry_run=False`` and ``confirm`` provided and ``matched``
+      at or above tenant threshold → **202**; the op is queued
+      for second-admin approval. ``requires_approval=True``,
+      ``pending_id`` is set, ``updated=0``.
+    - Bad token surfaces as 409 from the route, not via this
+      schema.
+    """
+
+    matched: int
+    updated: int
+    request_id: UUID | None = None
+    dry_run: bool
+    errors: list[TagBulkRowError] = Field(default_factory=list)
+    sample: list[str] = Field(default_factory=list)
+    token: str | None = None
+    expires_in: int | None = None
+    requires_approval: bool | None = None
+    pending_id: UUID | None = None
+
+
+# ---------------------------------------------------------------------------
+# Sprint 50 Phase E — reconciliation report rows (ADR 028 §Governance #5).
+# ---------------------------------------------------------------------------
+
+
+class RegisteredUnreadRow(BaseModel):
+    """One row of the ``registered-unread`` reconciliation view.
+
+    Tag is in ``status ∈ {registered, active}`` but either has
+    never been observed (``last_seen_at IS NULL``) or its last
+    observation is older than the requested staleness window.
+    """
+
+    tag_id: UUID
+    epc_hex: str
+    status: TagStatus
+    source: TagSource
+    first_seen_at: datetime | None
+    last_seen_at: datetime | None
+    created_at: datetime
+
+
+class UnregisteredReadingRow(BaseModel):
+    """One row of the ``unregistered-reading`` reconciliation view.
+
+    Distinct ``tag_id`` from ``tag_reads`` with ``tag_known=FALSE``
+    inside the lookback window. ``tag_id`` is the raw value the
+    reader emitted (not necessarily a canonical EPC) — operators
+    use this view to onboard real-world EPCs that arrived without
+    a prior registry entry.
+    """
+
+    tag_id: str
+    last_seen_at: datetime
+    read_count: int
+
+
+class BindingOnRetiredRow(BaseModel):
+    """One row of the ``bindings-on-retired`` reconciliation view.
+
+    A ``stock_items`` row whose EPC binding points to a registry
+    tag in a terminal status (``retired`` / ``defective`` /
+    ``transferred_out``) and that has not been consumed. Surfaces
+    inventory carrying decommissioned tags so the operator can
+    re-bind or consume.
+    """
+
+    stock_item_id: UUID
+    epc_hex: str
+    product_id: UUID
+    lot_id: UUID | None
+    stock_item_state: str
+    tag_id: UUID
+    tag_status: TagStatus
+    tag_updated_at: datetime

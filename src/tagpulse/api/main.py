@@ -17,6 +17,7 @@ from tagpulse.api.routes.admin_ops import router as admin_ops_router
 from tagpulse.api.routes.analytics import router as analytics_router
 from tagpulse.api.routes.assets import router as assets_router
 from tagpulse.api.routes.auth import router as auth_router
+from tagpulse.api.routes.bulk_operations import router as bulk_operations_router
 from tagpulse.api.routes.categories import router as categories_router
 from tagpulse.api.routes.devices import router as devices_router
 from tagpulse.api.routes.health import router as health_router
@@ -31,6 +32,7 @@ from tagpulse.api.routes.query import router as query_router
 from tagpulse.api.routes.rules import router as rules_router
 from tagpulse.api.routes.security import router as security_router
 from tagpulse.api.routes.sites_zones import router as sites_zones_router
+from tagpulse.api.routes.tags import router as tags_router
 from tagpulse.api.routes.telemetry import router as telemetry_router
 from tagpulse.api.routes.telemetry_models import router as telemetry_models_router
 from tagpulse.api.routes.tenant_branding import router as tenant_branding_router
@@ -56,6 +58,7 @@ from tagpulse.rules.evaluator import RuleEvaluator
 from tagpulse.signaling.periodic_dispatcher import PeriodicSignalingDispatcher
 from tagpulse.workers.dwell_worker import DwellTracker, DwellWorker
 from tagpulse.workers.inventory_rule_worker import InventoryRuleWorker
+from tagpulse.workers.tag_registrar_worker import TagRegistrarWorker
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +112,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     inventory_worker: InventoryRuleWorker | None = None
     dwell_worker: DwellWorker | None = None
     dwell_tracker: DwellTracker | None = None
+    tag_registrar_worker: TagRegistrarWorker | None = None
     periodic_signaling_dispatcher: PeriodicSignalingDispatcher | None = None
     alert_delivery: AlertDeliveryService | None = None
     analytics_modules: list[AnalyticsModule] = []
@@ -158,6 +162,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await dwell_worker.start()
         app.state.dwell_tracker = dwell_tracker
         app.state.dwell_worker = dwell_worker
+
+        # Sprint 50 Phase D (ADR 028): tag registrar worker drains
+        # ``tag_reads.tag_known IS NULL``, populates the three-valued
+        # gating column, and promotes ``registered → active`` on first
+        # observed read. Ingest hot path stays free of any ``tags`` reads.
+        tag_registrar_worker = TagRegistrarWorker(
+            session_factory=async_session_factory,
+            interval_s=settings.tag_registrar_interval_s,
+            batch_size=settings.tag_registrar_batch_size,
+        )
+        await tag_registrar_worker.start()
+        app.state.tag_registrar_worker = tag_registrar_worker
 
         # Sprint 41 Phase B3 / ADR-021 v2: PeriodicSignalingDispatcher.
         # Wakes on its loop tick and evaluates ``signaling.*.periodic``
@@ -222,6 +238,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await dwell_worker.stop()
     if inventory_worker is not None:
         await inventory_worker.stop()
+    if tag_registrar_worker is not None:
+        await tag_registrar_worker.stop()
     if periodic_signaling_dispatcher is not None:
         await periodic_signaling_dispatcher.stop()
     await usage_meter.stop()
@@ -406,3 +424,5 @@ app.include_router(tenant_config_router)
 app.include_router(tenant_branding_router)
 app.include_router(categories_router)
 app.include_router(labels_router)
+app.include_router(tags_router)
+app.include_router(bulk_operations_router)

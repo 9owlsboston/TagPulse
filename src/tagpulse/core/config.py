@@ -94,6 +94,17 @@ class Settings(BaseSettings):
     # Per §5.2 dwell-worker scan interval (seconds).
     dwell_worker_interval_s: int = 60
 
+    # -- Sprint 50 Phase D: tag registrar worker (ADR 028). --
+    # The worker drains ``tag_reads WHERE tag_known IS NULL``,
+    # classifies each row against the tenant ``tags`` registry, and
+    # promotes ``registered → active`` on first observed read. SLI
+    # target: p95 worker lag < 10 s (roadmap.md Sprint 50 risks).
+    # Defaults sized for representative ingest rates; raise
+    # ``tag_registrar_batch_size`` under bursty load if the partial
+    # batch sleep is dominating wall-clock time.
+    tag_registrar_interval_s: float = 1.0
+    tag_registrar_batch_size: int = 500
+
     # -- Sprint 22 A4: global rate limiter. Per-(tenant, route_class)
     # token bucket. Limits are requests-per-minute; per-tenant overrides
     # are stored in ``tenants.rate_limit_overrides`` (migration 033). --

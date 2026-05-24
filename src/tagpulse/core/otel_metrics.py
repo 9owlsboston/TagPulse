@@ -156,6 +156,36 @@ inventory_unmapped_sgtin_counter = meter.create_counter(
     unit="reads",
 )
 
+# -- Sprint 50 Phase D: tag registrar worker (ADR 028) --
+tag_registrar_processed_counter = meter.create_counter(
+    "tagpulse_tag_registrar_processed_total",
+    description=(
+        "tag_reads rows processed by the registrar worker — "
+        "tag_known flipped from NULL to TRUE or FALSE"
+    ),
+    unit="reads",
+)
+
+tag_registrar_promoted_counter = meter.create_counter(
+    "tagpulse_tag_registrar_promoted_total",
+    description=(
+        "tags rows promoted from status=registered to status=active "
+        "by the registrar worker (ADR 028 OQ 3 onboarding contract)"
+    ),
+    unit="tags",
+)
+
+stock_item_auto_create_blocked_counter = meter.create_counter(
+    "tagpulse_stock_item_auto_create_blocked_total",
+    description=(
+        "Stock-item auto-create attempts blocked because the EPC is "
+        "absent from the tag registry or in a terminal status "
+        "(retired/defective/transferred_out) — Sprint 50 Phase D3, "
+        'ADR 028 §"Soft-asset interaction"'
+    ),
+    unit="reads",
+)
+
 # -- Sprint 16: edge contract & identity hardening --
 events_rejected_clock_counter = meter.create_counter(
     "tagpulse_events_rejected_clock_total",

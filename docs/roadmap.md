@@ -1248,6 +1248,52 @@ Numbering jumped from Sprint 42 (multi-category filter) to Sprint 46 (edge wire 
 
 ---
 
+## Sprint 50 — Tag registry v1 (shipped — implements [ADR 028](adr/028-tags-as-first-class-entity.md))
+
+**Goal.** Ship the tag identity + ownership layer ratified in [ADR 028](adr/028-tags-as-first-class-entity.md) (Implemented 2026-05-23). Introduces `tags` and `tag_transfers` tables as the canonical answer to "what EPCs does this tenant own?", a soft-gating signal on `tag_reads` (`tag_known`), a CSV bulk import path with operational guardrails, and the bulk-op governance controls the ADR makes binding. Batch grouping reuses [ADR 020 labels](adr/020-labels-first-class.md) with a reserved `batch.*` key namespace — **no `tag_batches` table**. Closes gap 2.14 of the [reference-design-remediation plan](design/reference-design-remediation.md).
+
+**Phases.**
+
+- **A — Schema & migration.** [shipped]
+  - A1 — Alembic migration: create `tags` (`epc_hex` natural key under `(tenant_id, epc_hex)`, `gs1_uri TEXT NULL` with partial index, `status`, `source`, `first_seen_at`, `last_seen_at`, `metadata`), `tag_transfers`, RLS policies on both. No `tag_batches`. (Migration 043.)
+  - A2 — Alembic migration: `ALTER TABLE tag_reads ADD COLUMN tag_known BOOLEAN NULL;` (three-valued NULL / TRUE / FALSE). Confirm hot-path ingest path performs no lookup. (Migration 044.)
+  - A3 — Register reserved label keys (`batch`, `batch.received_at`, `batch.description`, `batch.supplier`) in the labels catalog at tenant provisioning. Update the tenant-bootstrap path; backfill existing tenants in the same migration. Collision runbook: [runbooks/reserved-label-key-collision.md](runbooks/reserved-label-key-collision.md). (Migration 045.)
+- **B — Read/write API surface.** [shipped]
+  - B1 — Pydantic models + service-layer module `tagpulse.services.tags` (registry CRUD, status transitions, GS1 lenient parser for `gs1_uri` denorm).
+  - B2 — Routes: `GET / POST / PATCH / DELETE /v1/tenants/{slug}/tags` and `GET /v1/tenants/{slug}/tags/{epc_hex}`. List filter accepts `?status`, `?labels[batch]=…`, `?epc_prefix`, `?bound`. PATCH does not accept `batch_id` — batch assignment goes through the existing `entity_labels` API.
+  - B3 — `POST /v1/tenants/{slug}/tag-transfers` (admin) with two-person approval shape consistent with governance §4.
+- **C — Bulk import + governance.** [shipped]
+  - C1 — `POST /v1/tenants/{slug}/tags/import` (CSV). 10 000-row cap → `413 Payload Too Large` above. 10 imports/hour per-tenant rate limit (configurable via `tenants.tag_bulk_import_rate_limit`). All-or-nothing validation; per-line errors surfaced in dry-run. (Migration 046.)
+  - C2 — Dry-run + confirmation-token plumbing (governance §2) applied to `tags/import`, bulk `PATCH`, `tag-transfers`. Tokens single-use, scoped to the previewed payload hash, `expires_in` configurable.
+  - C3 — Two-person rule (governance §4): `tenants.tag_bulk_two_person_threshold` (default 10 000), `pending_bulk_operations` table, second-admin approval endpoint. (Migration 047.)
+  - C4 — Scope-required filters on bulk mutations (governance §3): reject bulk `PATCH` / retire without `labels[batch]=` or `epc_list[]` (`len ≤ 1000`). No "PATCH all tags in tenant" surface.
+  - C5 — Unified audit log keyed on `(actor, action, batch, count, request_id)` for every bulk op (governance §7). (Migration 048.)
+- **D — Registrar worker + `tag_known` population.** [shipped]
+  - D1 — Background worker (`src/tagpulse/workers/tag_registrar_worker.py`) reads from `tag_reads WHERE tag_known IS NULL`, joins `tags`, writes `tag_known` (TRUE for `status ∈ {registered, active}`, FALSE otherwise). Worker is the *only* writer of `tag_known`; ingest path stays unchanged.
+  - D2 — Worker promotes `registered → active` on first matching read (per OQ 3 onboarding contract). Does **not** auto-create rows for unknown EPCs (ADR 028 OQ 3 resolution).
+  - D3 — Confirm soft-asset worker (ADR 022) reads registry directly (not via `tag_known`) so it correctly skips unowned EPCs once the registry is populated. Unblocks gap 2.4's deferred cost concern.
+- **E — Reconciliation reports (governance §5).** [shipped]
+  - E1 — Service module `src/tagpulse/services/tag_reconciliation.py` exposes three exception views: `registered-unread` (registered/active tags with no reads in `?days=N`), `unregistered-reading` (EPCs reading but absent from registry or terminal-status), `bindings-on-retired` (active bindings whose tag is `retired` / `defective` / `transferred_out` — point-in-time). Read-only — never mutates state.
+  - E2 — Surface as `GET /v1/tenants/{slug}/tags/reconciliation/{view}` (viewer role) with `?format=json|csv` export and stable CSV column order (spreadsheet-binding contract). Operator guide: [runbooks/tag-registry-operations.md](runbooks/tag-registry-operations.md).
+- **F — Docs.** [shipped]
+  - F1 — `tags`, `tag_transfers`, `pending_bulk_operations`, `tag_reads.tag_known`, and the reserved `batch.*` label-key namespace added to [docs/data-models.md](data-models.md) under a new "Tag registry (Sprint 50+)" section.
+  - F2 — Operator runbook [runbooks/tag-registry-operations.md](runbooks/tag-registry-operations.md) covering CSV import limits / dry-run / two-person flow, status lifecycle, and the three reconciliation views.
+  - F3 — ADR 028 status flipped Accepted → **Implemented (Sprint 50)** (v1.0 entry with per-phase commit references); [reference-design-remediation plan](design/reference-design-remediation.md) row 2.14 flipped to `✅ Done`; this entry flipped to `(shipped)`.
+- **G — Validation.** [deferred to a follow-up sprint] — registrar-worker integration test, reconciliation worker emitting Prometheus gauges (`tagpulse_tag_reconciliation_rows{view=…}`), and live-Postgres integration tests for the bulk-import + two-person flow. The 1335-test unit-test suite (`make check` clean) covers schema, service layer, governance invariants, and reconciliation queries.
+
+**Out of scope for Sprint 50 (deferred — ADR 028 §"Not in scope"):**
+- Range-based batch optimization (`(min_serial, max_serial)` on sequential reels) — labels-per-tag is v1, deferred under YAGNI.
+- Auto-association by reel range (gap 2.16) — explicitly dropped; manual association suffices.
+- Rigid hierarchy above `batch` (reel → shipment → PO → supplier) — operators use labels.
+- Tenant-level "auto-register on first read" opt-in setting — deferred until a customer asks.
+- Tag credentials / Gen2v2 authenticate — Backlog.
+
+**Risks / open items entering the sprint:**
+- **Registrar worker lag SLI: p95 < 10 s** (locked at planning). Surface as an explicit SLI before merging; `tag_known=NULL` UX copy assumes operators effectively never see it. Worker sizing in Phase D1 must hit this on representative ingest rates.
+- **Reserved-label-key collision policy: refuse + manual intervention** (locked at planning). The A3 migration must detect any pre-existing `batch` (or other reserved `batch.*`) key in a tenant's labels catalog and **fail the migration for that tenant with a structured error** pointing the operator at a rename runbook. No auto-rename, no silent coexistence — operator must consciously reconcile before tag registry rolls out for that tenant. Runbook lives in [docs/runbooks/](runbooks/) (drafted in F2).
+
+---
+
 ## Backlog (not scheduled)
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock.
