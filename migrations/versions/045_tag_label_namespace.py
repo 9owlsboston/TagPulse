@@ -128,6 +128,12 @@ def upgrade() -> None:
     # rather than ON CONFLICT (functional indexes can't be conflict
     # targets without an explicit constraint name).
     for key in _RESERVED_BATCH_KEYS:
+        # Explicit bindparam type — :key appears as both a VARCHAR
+        # column value and inside lower(:key) (TEXT-returning). Without
+        # an explicit type, asyncpg's prepare deduces conflicting
+        # types and fails with AmbiguousParameterError ("text versus
+        # character varying"). SQLAlchemy psycopg2 path tolerates this
+        # by passing parameters server-side; asyncpg does not.
         bind.execute(
             sa.text(
                 """
@@ -141,8 +147,7 @@ def upgrade() -> None:
                         AND lower(l.key) = lower(:key)
                  )
                 """
-            ),
-            {"key": key},
+            ).bindparams(sa.bindparam("key", value=key, type_=sa.Text())),
         )
 
 
