@@ -76,6 +76,41 @@ DEFAULT_ADMIN_EMAIL = "admin@example.com"
 DEFAULT_ADMIN_NAME = "Admin"
 
 
+# Reserved label-key namespace for tag-batch grouping (ADR 028 §"Batches:
+# labels, not a table"; Sprint 50 Phase A3). Migration 045 backfills these
+# for existing tenants; this script's upsert_tenant() seeds them for new
+# tenants the same way the future tenant-provisioning service will.
+_RESERVED_TAG_BATCH_LABEL_KEYS: tuple[str, ...] = (
+    "batch",
+    "batch.received_at",
+    "batch.description",
+    "batch.supplier",
+)
+
+
+async def _seed_reserved_tag_labels(conn: asyncpg.Connection, tenant_id: UUID) -> None:
+    """Seed reserved ``batch.*`` labels (entity_type='tag') for one tenant.
+
+    Idempotent — uses WHERE NOT EXISTS against the lower(key) functional
+    unique index from migration 039. Safe to call on every upsert.
+    """
+    for key in _RESERVED_TAG_BATCH_LABEL_KEYS:
+        await conn.execute(
+            """
+            INSERT INTO labels (tenant_id, entity_type, key, created_at, updated_at)
+            SELECT $1, 'tag', $2, now(), now()
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM labels
+                  WHERE tenant_id = $1
+                    AND entity_type = 'tag'
+                    AND lower(key) = lower($2)
+             )
+            """,
+            tenant_id,
+            key,
+        )
+
+
 async def upsert_tenant(conn: asyncpg.Connection, tenant_id: UUID, slug: str, name: str) -> None:
     await conn.execute(
         """
@@ -90,6 +125,7 @@ async def upsert_tenant(conn: asyncpg.Connection, tenant_id: UUID, slug: str, na
         name,
         slug,
     )
+    await _seed_reserved_tag_labels(conn, tenant_id)
 
 
 async def upsert_role_user(
