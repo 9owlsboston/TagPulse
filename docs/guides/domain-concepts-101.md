@@ -257,46 +257,6 @@ Device → tag_reads → binding (EPC) → StockItem → Lot → Product
 
 Subject-scoped telemetry fan-out (Sprint 19 work) writes the same temperature reading to **three telemetry rows**: one keyed on `device`, one on `stock_item`, one on `lot` — so a cold-chain rule on `lot.temperature_c > 8°C` fires for **the lot as a whole** even though only one unit's tag was scanned.
 
-#### How a sensor reading on a tag becomes an alert
-
-```
-   Sensor-tag MQTT (v2)                External telemetry
-   tenants/<t>/devices/<d>/tag-reads   tenants/<t>/devices/<d>/telemetry
-   {epc, ts, tmp, hum, cnt, ...}       {subject_kind, metric, value, ...}
-              |                                    |
-              v                                    |
-   MqttSubscriber (v2 dispatch)                    |
-              |                                    |
-              v                                    |
-   IngestionService.ingest_reading                 |
-              |                                    |
-     +--------+--------+                           |
-     v                 v                           |
-   tag_reads        _mirror_tag_borne_sensors      |
-   tag_presence            |                       |
-                           v                       v
-                   +----------------------------------+
-                   |       telemetry_readings         |
-                   | (subject_kind, metric, value...) |
-                   +----------------+-----------------+
-                                    v
-                       Topic.TELEMETRY_RECORDED
-                                    v
-                    rules engine (telemetry.threshold)
-                                    v
-                                  alert
-```
-
-Two pipes, one bridge. Sensor-tag readings (cold-chain stickers, etc.)
-ride the v2 tag-reads pipe and get mirrored into `telemetry_readings`
-automatically — you do **not** stand up a second telemetry producer
-for them. External telemetry (gateways, separate sensor devices) uses
-the dedicated telemetry pipe. Both converge at `telemetry_readings`,
-and a `telemetry.threshold` rule on `avg_temperature` fires regardless
-of which pipe the value came in on. The wire→metric mapping for the
-v2 path is fixed by [edge-wire-format-v2 §4.6](../design/edge-wire-format-v2.md);
-the full four-producer list is in [ADR-015 §2](../adr/015-telemetry-rules-and-deprecation.md).
-
 ---
 
 ## End-to-end workflow comparison
@@ -353,6 +313,111 @@ One more nuance worth knowing: in inventory mode the catalog is **two-level** (`
 - **Inventory tracking** = "where are *all the things* that share this batch/SKU, and is any of them about to expire / been recalled / fallen out of cold chain?" — three rows, hierarchical identity, ephemeral.
 
 Same plumbing (devices observe tags; bindings translate; views derive location), but inventory adds the **product → lot → stock_item** hierarchy because regulations and operations need answers at all three granularities.
+
+---
+
+## Forward compatibility: new wire formats and new device types
+
+> **Question (Sprint 53):** *Can what we have withstand future wire format changes, as well as various readers or IoT device wiring formats?*
+
+This section captures the architectural reasoning behind that question. Companion code references: [src/tagpulse/ingestion/service.py](../../src/tagpulse/ingestion/service.py) `_mirror_tag_borne_sensors`, [src/tagpulse/ingestion/mqtt_subscriber.py](../../src/tagpulse/ingestion/mqtt_subscriber.py) `_wm_sensor_data`, [src/tagpulse/ingestion/wm_wire_format.py](../../src/tagpulse/ingestion/wm_wire_format.py), [docs/design/edge-wire-format-v2.md](../design/edge-wire-format-v2.md) §4.6.
+
+### How the ingestion stack layers today
+
+```
+┌───────────────────────────┐
+│ wire format (v1, v2,      │  format-specific
+│ vendor X, BLE, LoRaWAN…)  │  ← swap per device class
+└──────────┬────────────────┘
+           │ parser (e.g. _wm_snap_to_tag_reads)
+           │ normalize names + units here
+           ▼
+┌───────────────────────────┐
+│ TagReadCreate             │  canonical, format-agnostic
+│  ├─ structured fields     │   (device_id, tag_id, timestamp,
+│  ├─ identity / location   │    signal_strength, identity, location)
+│  ├─ sensor_data (JSONB)   │   ← typed sensor blob (cnt/tmp/hum →
+│  └─ tag_data    (JSONB)   │     read_count/temperature_c/...)
+└──────────┬────────────────┘  ← tag/user memory (HTTP, free-form)
+           │
+           ▼
+┌───────────────────────────┐
+│ IngestionService          │  wire-agnostic from here
+│  ├─ tag_reads insert      │
+│  └─ _mirror_*_sensors  ───┼──► telemetry_readings (one per opted subject)
+└───────────────────────────┘            │
+                                         ▼
+                                  Topic.TELEMETRY_RECORDED
+                                         │
+                                         ▼
+                                  telemetry.threshold rules
+```
+
+The **boundary that matters** is `TagReadCreate`. Everything to the right is wire-agnostic and only ever sees the canonical model. Everything to the left is per-format and lives in its own parser module.
+
+### What holds up well
+
+1. **Per-format parser pattern.** Adding a new device class = one new module exporting `parse(payload) → TagReadCreate`. v1 HTTP, v1 MQTT, v2 MQTT, the smoke publisher, and the canary all converge here. Future BLE / LoRaWAN / vendor-X parsers slot in the same way without touching `IngestionService`.
+2. **Discriminated-union pydantic envelopes** ([wm_wire_format.py](../../src/tagpulse/ingestion/wm_wire_format.py)) give you wire-level validation + DLQ reasons for free. The pattern (top-level `t` discriminator, per-variant fields, explicit-null rejection) is reusable for any future versioned format.
+3. **Two-blob storage (`sensor_data` + `tag_data`)** is meaningful and survives well:
+   - `sensor_data` = structured, parser-controlled, canonical key names
+   - `tag_data` = pass-through user memory (RFID user bank, BLE manuf-data, app-defined fields)
+
+   New device types (BLE temp beacons, LoRaWAN soil probes) drop their readings into `sensor_data` with the canonical key set, just like v2 does.
+4. **Post-Phase-I bridge is blob-agnostic.** It iterates both columns with one filter (numeric, non-underscored, non-bool). A new wire format that lands `pressure_hpa` in `sensor_data` instantly becomes available for `telemetry.threshold` rules with zero ingestion code change.
+5. **Provenance + subject fan-out** scale to any source. `source="tag"` today; add `source="reader"` / `source="gateway"` for device-borne sensors (battery, RSSI noise floor) by stamping the right value in the bridge — no schema change.
+
+### What will bite you and how to head it off
+
+Five concrete risks ranked by likelihood × pain:
+
+#### 1. Key-name fragmentation across vendors (high probability, painful)
+
+Today the v2 parser canonicalizes `tmp` → `temperature_c`, but the **canonical name set lives nowhere** — it's just whatever string the parser happens to write. A future vendor parser could land `temp_celsius`, or an HTTP integration could send `tempC` in `tag_data`. Each becomes a separate `metric_name` and rules break silently.
+
+**Mitigation:** introduce `src/tagpulse/ingestion/canonical_metrics.py` with a typed constant set (StrEnum). Every parser writes via this enum; rule template UI builds its dropdown from it. Quarter-page change, prevents the long-tail of `temp` / `temperature` / `temperatureC` / `temp_c` divergence.
+
+#### 2. Units are implicit by key suffix (medium probability, real pain when it hits)
+
+`temperature_c` carries °C in the name. A vendor shipping °F has no natural place to put it; conversion has to happen in the parser. There's no `unit` column on `telemetry_readings`.
+
+**Mitigation now:** keep suffixing units in the key (`temperature_c`, `pressure_hpa`, `battery_pct`) and enforce conversion at parse time. **Mitigation later:** if you ever want unit-aware UI/rules, add a `unit TEXT` column to `telemetry_readings` (backfill from the canonical map). Not urgent.
+
+#### 3. The `bool` collision case Phase I patched is the tip of a type-laundering iceberg
+
+`isinstance(True, int)` is True in Python. Pre-Phase-I, a `{"door_open": True}` tag_data would have become a `door_open=1.0` telemetry row — wrong shape (boolean state, not metric). The patch rejects `bool`, but a future vendor sending `"online": 1` (int meaning bool) will still get mirrored as if it were a metric.
+
+**Mitigation:** consider a parallel `tag_reads.state_data` for non-metric attributes (door, locked, online) that the bridge explicitly skips. Defer until you have stateful attributes — but tag the spot in the bridge code so the next person knows where to slot it.
+
+#### 4. The 4 KB `tag_data` cap (`TAG_DATA_MAX_BYTES`)
+
+Fine for RFID user memory (max ~512 B in practice). Tight for BLE manuf-data + extended scan response, very tight for LoRaWAN downlink-confirmed payloads with FOpts. Already a single constant — easy to make per-tenant or per-device-type when needed. Not blocking.
+
+#### 5. The `_wm_*` parser dispatch lives inline in `mqtt_subscriber.py`
+
+Vendor-specific code in a file that also does the generic MQTT loop. A second vendor will tempt copy-paste.
+
+**Mitigation when it lands:** factor a `ingestion/parsers/` package with a registry:
+
+```python
+WIRE_PARSERS: dict[str, Callable[[bytes], list[TagReadCreate]]] = {
+    "wm:v1": parse_wm_v1,
+    "wm:v2": parse_wm_v2,
+    "ble:v1": parse_ble_v1,
+}
+```
+
+Dispatch keyed off topic suffix or a content-type header. Not needed for one vendor; trivially refactored when you have two.
+
+### Subject resolution beyond EPC
+
+Today subject resolution joins on EPC (and TID / device-id via `binding_kind`). For BLE beacons (MAC address) or LoRaWAN devices (DevEUI), the binding tables would need a generic identifier column or a polymorphic `(id_kind, id_value)` pair. Document this as a known constraint when the first non-RFID device class lands; don't pre-build it.
+
+### Verdict
+
+The **architectural shape is right** — wire parser → `TagReadCreate` → wire-agnostic service → JSONB blobs → bridge → telemetry → rules. Sprint 53 Phase I closed the one structural hole (bridge wasn't reading the right column).
+
+The **biggest remaining risk** is key-name fragmentation across future parsers (#1). A small canonical-metric enum file would prevent that whole class of bug at near-zero cost, and is the natural follow-up before a second wire format or vendor is added.
 
 ---
 
