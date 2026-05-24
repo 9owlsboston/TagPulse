@@ -1258,24 +1258,29 @@ class TagImportRowError(BaseModel):
 
 
 class TagImportResult(BaseModel):
-    """Outcome of ``POST /tags/import`` (Sprint 50 C1).
+    """Outcome of ``POST /tags/import`` (Sprint 50 C1/C2).
 
-    Three branches the client must distinguish:
+    Four branches the client must distinguish:
 
     - ``errors`` non-empty → 422; the CSV was rejected, nothing was
       written, ``rows_created`` and ``rows_skipped`` are both 0.
+      ``token`` is null (the ADR 028 governance rule binds the token
+      to a *valid* preview only).
     - ``dry_run=True`` and ``errors`` empty → 200; the CSV would
-      have created ``rows_created`` rows (no skips because the
-      duplicate check is done at flush time in C1, see ADR 028 OQ
-      4); no rows were written.
-    - ``dry_run=False`` and ``errors`` empty → 201; the CSV was
-      written. ``rows_created`` + ``rows_skipped`` = ``rows_total``;
-      ``rows_skipped`` counts EPCs that already existed for the
-      tenant (treated as idempotent, not as errors).
+      have created ``rows_created`` rows. No rows were written.
+      ``token``, ``expires_in``, and ``sample`` are populated so the
+      operator can re-submit with ``?confirm=<token>``.
+    - ``dry_run=False`` and ``confirm`` provided and ``errors`` empty
+      → 201; the CSV was written. ``rows_created`` + ``rows_skipped``
+      = ``rows_total``; ``rows_skipped`` counts EPCs that already
+      existed for the tenant (treated as idempotent, not as errors).
+      ``token`` echoes the consumed token for audit traceability.
+    - A bad token (mismatched CSV, wrong tenant/user, expired)
+      surfaces as 409 from the route, not via this schema.
 
-    The confirmation-token plumbing that ties a successful
-    ``dry_run=True`` response to a subsequent ``dry_run=False``
-    submit lands in Phase C2.
+    Per ADR 028 §"Governance" rule 2, ``confirm`` and ``dry_run`` are
+    mutually exclusive and at least one must be set — the route
+    rejects "bare" submits (no dry-run, no confirm) with 400.
     """
 
     rows_total: int
@@ -1283,6 +1288,15 @@ class TagImportResult(BaseModel):
     rows_skipped: int
     dry_run: bool
     errors: list[TagImportRowError] = Field(default_factory=list)
+    # Populated only on a successful dry-run (and on the matching
+    # commit, where it echoes the consumed value for audit).
+    token: str | None = None
+    expires_in: int | None = None
+    # First-N preview of the EPCs that would be / were written.
+    # ADR 028 says ``sample`` so the operator can eyeball "did I
+    # paste the right reel?" without scrolling 10 000 rows. Bound
+    # at 10 in the route — schema accepts any length.
+    sample: list[str] | None = None
 
 
 class TagTransferRequest(BaseModel):

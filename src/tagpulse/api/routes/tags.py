@@ -40,6 +40,7 @@ scope through ``get_current_tenant`` and skips the slug in the URL.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import uuid
 from typing import Annotated
@@ -59,6 +60,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.core.audit import AuditLogger
+from tagpulse.core.bulk_confirmation_tokens import (
+    BULK_CONFIRMATION_TOKENS,
+    DEFAULT_TTL_SECONDS,
+    ConfirmationOutcome,
+)
 from tagpulse.core.tag_import_rate_limit import TAG_IMPORT_LIMITER
 from tagpulse.core.tenant_auth import Tenant, get_current_tenant
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
@@ -269,12 +275,30 @@ async def delete_tag(
 # ---------------------------------------------------------------------------
 
 # Sized to comfortably hold the ADR-028 OQ-4 cap (10 000 rows * ~140 bytes
-# per row for a generously-padded EPC line + headers + some commentary
-# columns operators paste in) with headroom; refuses the upload before
-# we spend time CSV-parsing it.
+# average = 1.4 MB); the 8 MiB ceiling absorbs accidental BOM/whitespace.
 MAX_TAG_IMPORT_BYTES = 8 * 1024 * 1024
 # Hard cap per ADR-028 OQ 4. Importers above this must chunk client-side.
 MAX_TAG_IMPORT_ROWS = 10_000
+# How many EPCs the dry-run preview echoes back so the operator can
+# eyeball "did I paste the right reel?" without scrolling 10 000 rows.
+TAG_IMPORT_SAMPLE_SIZE = 10
+# Operation tag for the confirmation-token store. If we ever add a
+# second bulk endpoint sharing the same store (bulk PATCH in C4,
+# transfers in C3), each gets its own constant so the store's
+# operation-mismatch guard catches cross-endpoint token reuse.
+_IMPORT_OPERATION = "tags.import"
+
+
+def _content_hash(epc_hexes: list[str]) -> str:
+    """Stable hash of the canonical EPC set in a CSV.
+
+    Sorted + joined so re-ordered rows hash identically (operators
+    legitimately re-sort spreadsheets between dry-run and commit).
+    Duplicate-within-CSV is already a 422 in :func:`parse_tag_import_csv`,
+    so this list is unique by construction.
+    """
+    payload = "\n".join(sorted(epc_hexes)).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 @router.post(
@@ -293,10 +317,20 @@ async def import_tags(
     dry_run: bool = Query(
         default=False,
         description=(
-            "When true, validate the CSV and report what would happen"
-            " without writing anything. The confirmation-token plumbing"
-            " that ties a successful dry-run to a subsequent commit lands"
-            " in Phase C2."
+            "Preview mode. Validate the CSV and (on success) mint a"
+            " single-use confirmation token bound to this CSV's content,"
+            " tenant, and operator. Re-submit the same CSV with"
+            " ?confirm=<token> to apply. Per ADR 028 §Governance #2"
+            " every bulk op is dry-run-first."
+        ),
+    ),
+    confirm: str | None = Query(
+        default=None,
+        description=(
+            "Confirmation token from a prior successful dry-run."
+            " Mutually exclusive with dry_run=true. The token binds to"
+            " (tenant, user, CSV content) — confirming a different CSV"
+            " with the same token returns 409."
         ),
     ),
     response: Response = None,  # type: ignore[assignment]
@@ -305,25 +339,56 @@ async def import_tags(
 ) -> TagImportResult:
     """Bulk-register tags from a CSV.
 
-    Per ADR-028 OQ 4:
+    Per ADR-028 OQ 4 + §Governance #2:
 
+    - **400** if neither ``dry_run`` nor ``confirm`` is supplied, or
+      if both are supplied (mutually exclusive — preview first, then
+      commit with the returned token).
     - **413** if file >8 MiB *or* row count >10 000.
     - **429** if the tenant has already issued
       ``tag_bulk_import_rate_limit`` imports in the trailing hour.
       The counter advances *before* parsing so a malformed CSV
       still counts toward the cap (catches the runaway-script
-      threat model exactly).
+      threat model exactly). Dry-runs and confirms each consume
+      one slot — the cap is on operator activity, not on writes.
     - **422** if any row fails validation. Per the all-or-nothing
-      rule nothing is written; the response body lists every
-      offending row.
-    - **200** on a successful ``dry_run=true``.
-    - **201** on a successful real import.
+      rule nothing is written and no token is minted; the response
+      body lists every offending row.
+    - **200** on a successful ``dry_run=true``. The response
+      includes ``token``, ``expires_in``, and a 10-EPC ``sample``.
+    - **409** if ``?confirm=<token>`` is supplied but the token
+      doesn't match this CSV (content drift, wrong operator,
+      wrong tenant, expired, or already consumed).
+    - **201** on a successful confirmed import.
 
-    Successful real imports write one ``tag.bulk_imported`` audit
-    log entry covering the whole batch — Phase C5 unifies this
+    Every confirmed import writes one ``tag.bulk_imported`` audit
+    log entry covering the whole batch. Phase C5 unifies this
     with the other bulk-op audit shapes; the keys we already emit
     (``count``, ``request_id``) are forward-compatible.
     """
+    # --- 0. Reject mutually-exclusive / missing intent ---
+    if dry_run and confirm is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": (
+                    "dry_run and confirm are mutually exclusive;"
+                    " preview first, then submit ?confirm=<token>"
+                ),
+            },
+        )
+    if not dry_run and confirm is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": (
+                    "confirmation required: POST with ?dry_run=true first,"
+                    " then re-POST with ?confirm=<token> (ADR 028"
+                    " §Governance #2)"
+                ),
+            },
+        )
+
     # --- 1. Per-tenant hourly counter (advance before parsing) ---
     tenant_row = (
         await session.execute(select(TenantModel).where(TenantModel.id == user.tenant_id))
@@ -363,11 +428,8 @@ async def import_tags(
             },
         )
 
-    # --- 4. All-or-nothing: any error -> 422, nothing written ---
+    # --- 4. All-or-nothing: any error -> 422, nothing written, no token ---
     if errors:
-        # Even on dry_run we surface 422 so the client knows the CSV
-        # would fail. (A successful dry_run = 200; an unsuccessful one
-        # is the same wire shape as the real-mode failure.)
         if response is not None:
             response.status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
         return TagImportResult(
@@ -378,19 +440,54 @@ async def import_tags(
             errors=errors,
         )
 
-    # --- 5. Dry-run success: 200, no write ---
+    epc_hexes = [r.epc_hex for r in valid_rows]
+    content_hash = _content_hash(epc_hexes)
+    sample = epc_hexes[:TAG_IMPORT_SAMPLE_SIZE]
+
+    # --- 5. Dry-run success: 200, mint token, no write ---
     if dry_run:
+        token, expires_in = BULK_CONFIRMATION_TOKENS.mint(
+            tenant_id=user.tenant_id,
+            user_id=user.user_id,
+            operation=_IMPORT_OPERATION,
+            content_hash=content_hash,
+            ttl_seconds=DEFAULT_TTL_SECONDS,
+        )
         return TagImportResult(
             rows_total=total,
             rows_created=len(valid_rows),
             rows_skipped=0,
             dry_run=True,
             errors=[],
+            token=token,
+            expires_in=expires_in,
+            sample=sample,
         )
 
-    # --- 6. Real import: 201, single bulk insert ---
+    # --- 6. Confirm path: validate the token against this CSV ---
+    assert confirm is not None  # narrowed by step 0
+    outcome = BULK_CONFIRMATION_TOKENS.consume(
+        confirm,
+        tenant_id=user.tenant_id,
+        user_id=user.user_id,
+        operation=_IMPORT_OPERATION,
+        content_hash=content_hash,
+    )
+    if outcome is not ConfirmationOutcome.OK:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "confirmation token did not match this submission;"
+                    " re-run with ?dry_run=true to mint a fresh token"
+                ),
+                "reason": outcome.value,
+            },
+        )
+
+    # --- 7. Real import: 201, single bulk insert ---
     repo = _repo(session)
-    created, skipped = await repo.bulk_create(user.tenant_id, [r.epc_hex for r in valid_rows])
+    created, skipped = await repo.bulk_create(user.tenant_id, epc_hexes)
     request_id = uuid.uuid4()
     await AuditLogger(session=session).log(
         user.tenant_id,
@@ -403,6 +500,7 @@ async def import_tags(
             "rows_skipped": skipped,
             "request_id": str(request_id),
             "source": "csv_import",
+            "confirmation_token": confirm,
         },
         user_id=user.user_id,
     )
@@ -414,6 +512,8 @@ async def import_tags(
         rows_skipped=skipped,
         dry_run=False,
         errors=[],
+        token=confirm,
+        sample=sample,
     )
 
 
