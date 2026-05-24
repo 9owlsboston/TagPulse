@@ -1339,6 +1339,57 @@ Numbering jumped from Sprint 42 (multi-category filter) to Sprint 46 (edge wire 
 
 ---
 
+## Sprint 53 — Workflow tooling & cross-sprint catch-up ([PR #72](https://github.com/9owlsboston/TagPulse/pull/72))
+
+**Goal.** Close the bookkeeping debt accumulated since the Sprint 49 reconciliation: land the `--carry` workflow helper that has been informally needed since Sprint 41-style planning-on-`main` mishaps, record the migration-consolidation discussion in the backlog, and clean up the two small documentation tails left by Sprints 50 and 51. The Sprint 46 spec §4.5 `sn → device_id` + JWT cross-check is a real gap but non-trivial (JWT plumbing + clock-skew tolerance + three new rejection reasons) and gets its own sprint rather than expanding this one. **No production-code behaviour change in this PR.**
+
+### Audit summary (Sprints 41 – 52)
+
+Findings reviewed during planning. Each gap is either closed below, deferred with a documented gate, or already in the Backlog:
+
+| # | Source                               | Gap                                                                                                                | Disposition                                              |
+|---|--------------------------------------|--------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------|
+| 1 | Sprint 41 H4 → Sprint 42 → Sprint 49 | Drop `?asset_type=` 400 guard.                                                                                     | **Closed in Sprint 49 B1.**                              |
+| 2 | Sprint 41 out-of-scope               | Backfill `category_ids` / `*_label_filters` on legacy rules.                                                       | Deferred (no customer ask) — leave in Sprint 41 OoS.     |
+| 3 | Sprint 41 out-of-scope               | Postgres ENUM migration for `condition_type`.                                                                      | Deferred (open question #1 — keep VARCHAR + pattern).    |
+| 4 | Sprint 41 out-of-scope               | Rename `asset_type` EPC parser variable.                                                                           | **Closed in Sprint 49 B2** (GS1 GRAI standard name).     |
+| 5 | Sprint 46 Phase C                    | §4.5 `sn → device_id` resolution via `devices.metadata->>'serial'` + JWT cross-check (TODO comment in handler).    | Own sprint — see Phase F below; tracked in Out of scope. |
+| 6 | Sprint 46 Phase E                    | §6 metric reasons `device_not_found` / `sn_jwt_mismatch` / `clock_skew` not yet emitted (blocked on #5).           | Ships with #5.                                           |
+| 7 | Sprint 46 out-of-scope               | High-churn-reader event-bus mitigation; `tag_presence` growth policy.                                              | Deferred (gated on pilot scale / customer signal).       |
+| 8 | Sprint 47 out-of-scope               | WM reader-direct firmware speaking v2.                                                                             | Deferred (vendor capacity gated).                        |
+| 9 | Sprint 47 out-of-scope               | LAN-side parser on Pi — Sprint 48 was earmarked but shipped lint work instead.                                     | Deferred (genuinely gated on first concrete reader).     |
+| 10| Sprint 46/47 out-of-scope            | v2.1 wire-format additions: `t=3` heartbeat, `t=4` reader-error, server→reader config push, binary wire format v3. | Deferred (gated on bandwidth signal / customer ask).     |
+| 11| Sprint 48 out-of-scope               | mypy for `clients/pi`; ruff for `scripts/`; refactor `examples/run_reader.py`.                                     | Deferred (separate cleanups; low priority).              |
+| 12| Sprint 49 Backlog                    | Rule taxonomy unification (`rules` → `alert_rules`, signaling/legacy collapse).                                    | Own sprint — Backlog entry stands.                       |
+| 13| Sprint 50 Phase G                    | Registrar-worker integration test (TimescaleDB-gated).                                                             | Deferred — needs `make migration-check` harness wiring.  |
+| 14| Sprint 50 Phase G                    | Reconciliation Prometheus gauge `tagpulse_tag_reconciliation_rows{view}`.                                          | Phase D below (additive, in-scope).                      |
+| 15| Sprint 50 Phase G                    | Live-Postgres integration test for bulk-import + two-person flow.                                                  | Deferred — bundled with #13 under a future Sprint G-tail.|
+| 16| Sprint 50 out-of-scope               | Range-based batch optimization; auto-association by reel range; tag credentials (Gen2v2); auto-register-on-read.   | All in Backlog or ADR 028 §"Not in scope".               |
+| 17| Sprint 51 Phase G                    | ADR 028 v1.2 entry (`Implemented (Sprint 50)` → `Implemented + UI shipped (Sprint 51)`).                           | Phase C below (in-scope doc tail).                       |
+| 18| Sprint 51 Phase G                    | Runbook §"Operator UI quick reference" in [runbooks/tag-registry-operations.md](runbooks/tag-registry-operations.md). | Phase C below (in-scope doc tail).                    |
+| 19| Sprint 51 out-of-scope               | Bulk-op audit log filter UI (`?request_id=` / `?batch=` on `/admin/audit-logs`).                                   | Deferred — TagPulse-UI repo, separate sprint.            |
+| 20| Sprint 51 out-of-scope               | Tag registry overview dashboard widget on home page.                                                               | Deferred (need operator usage data first).               |
+| 21| Sprint 52 out-of-scope               | Auto-expiry of stale `pending_bulk_operations`; webhook fanout; bulk-approve/reject endpoints.                     | Deferred (no operator demand).                           |
+| 22| This planning session                | Migration consolidation (squash at v1.0 vs full port out of Alembic).                                              | Phase B below — recorded in Backlog.                     |
+
+### Phases
+
+- **A — `--carry` workflow helper (carried onto branch).** [done, starter commit `16aec56`] [scripts/start-sprint.sh](../scripts/start-sprint.sh) gains a `--carry` flag that stashes in-flight planning artifacts on `main`, branches `sprint-NN/topic-slug`, pops the stash, and commits the carried changes as the branch starter commit. [.github/copilot-instructions.md](../.github/copilot-instructions.md) "Process & Artifacts" section gains an explicit "if you already started planning on `main`, use `--carry`" note. [docs/guides/contributor-workflow.md](guides/contributor-workflow.md) walks through both the clean-`main` path and the `--carry` recovery path. CHANGELOG `## Unreleased` entry covers the script change.
+- **B — Migration-consolidation backlog entry (carried).** [done, starter commit] New Backlog item below (`Migration baseline squash at v1.0`) records the May 2026 discussion: 49 Alembic migrations carry ~50 RLS policies on ~22 tables, ~14 TimescaleDB calls, and 4 data seeds; full port out of Alembic costed at 14–23 h; squash-at-v1.0 alternative costed at 4–6 h. Recommendation: keep migrations, squash at the v1.0 tag, do NOT squash mid-flight because ADRs (notably ADR 028 v1.0) cite specific migration numbers.
+- **C — Sprint 51 Phase G doc tail.** [planned] (1) Add v1.2 entry to [ADR 028](adr/028-tags-as-first-class-entity.md) Decision history: status `Implemented (Sprint 50)` → `Implemented + UI shipped (Sprint 51)`, cite the cross-repo TagPulse-UI PR set (#55, #57, #58, #59, #60, #69) and the Sprint 52 bulk-ops list backend (PR #71). (2) Prepend "Operator UI quick reference" §0 to [runbooks/tag-registry-operations.md](runbooks/tag-registry-operations.md) mapping the four runbook workflows to their TagPulse-UI screens, keeping the existing cURL recipes as the automation reference. No behaviour change.
+- **D — Sprint 50 Phase G reconciliation gauge.** [planned] Add `tagpulse_tag_reconciliation_rows{view}` gauge in `src/tagpulse/core/otel_metrics.py` and bump it once per `tag_reconciliation.query_*` call (three labels: `registered-unread`, `unregistered-reading`, `bindings-on-retired`). Pure observability — no behaviour change, no schema change. 1–2 unit tests in `tests/unit/test_tag_reconciliation.py` confirm the gauge fires; defensive `try/except Exception: logger.exception(...)` wrap per the Phase E `otel_metrics.py` convention so a metrics-SDK failure cannot stall the read path.
+- **E — Validation.** [planned] `make check` clean; `ruff check src tests clients/pi` clean.
+
+### Out of scope (deferred to dedicated sprints)
+
+- **Sprint 46 §4.5 SN→device_id + JWT cross-check** (audit row #5/6). Needs JWT verifier plumbing, `devices.metadata->>'serial'` lookup with negative-cache, and a clock-skew tolerance decision; wires up three new §6 rejection reasons and their metric labels in one shot. Track as a dedicated Sprint 54 candidate before the next pilot deploy.
+- **Sprint 50 Phase G live-DB validation** (audit rows #13, #15). Registrar-worker integration test + live-Postgres bulk-import + two-person-flow test need the `make migration-check` TimescaleDB harness wired in CI. Schedule when the first post-50 production incident requires it, or as a Q3 hardening sprint.
+- **Audit rows 2, 3, 7, 8, 9, 10, 11, 16, 19, 20, 21** — all retain their original deferral gates; this sprint just records that they were re-reviewed and remain correctly deferred.
+- **Rule taxonomy unification** (audit row #12) — Backlog entry remains canonical; its own ADR + sprint.
+- **Migration squash** (audit row #22) — gated on v1.0 tag; do not squash mid-flight (ADRs cite migration numbers).
+
+---
+
 ## Backlog (not scheduled)
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock.
