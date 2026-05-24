@@ -765,6 +765,21 @@
         "title": "Body_import_stock_items_stock_items_import_post",
         "type": "object"
       },
+      "Body_import_tags_tags_import_post": {
+        "properties": {
+          "upload": {
+            "contentMediaType": "application/octet-stream",
+            "description": "CSV with required column 'epc_hex'. Extra columns are ignored. Max 10 000 rows per import (413 above). Max 10 imports/hour per tenant (configurable via tenants.tag_bulk_import_rate_limit).",
+            "title": "Upload",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload"
+        ],
+        "title": "Body_import_tags_tags_import_post",
+        "type": "object"
+      },
       "CategoryCreate": {
         "description": "Create a category.",
         "properties": {
@@ -5080,6 +5095,72 @@
           }
         },
         "title": "TagDataMappingUpdate",
+        "type": "object"
+      },
+      "TagImportResult": {
+        "description": "Outcome of ``POST /tags/import`` (Sprint 50 C1).\n\nThree branches the client must distinguish:\n\n- ``errors`` non-empty \u2192 422; the CSV was rejected, nothing was\n  written, ``rows_created`` and ``rows_skipped`` are both 0.\n- ``dry_run=True`` and ``errors`` empty \u2192 200; the CSV would\n  have created ``rows_created`` rows (no skips because the\n  duplicate check is done at flush time in C1, see ADR 028 OQ\n  4); no rows were written.\n- ``dry_run=False`` and ``errors`` empty \u2192 201; the CSV was\n  written. ``rows_created`` + ``rows_skipped`` = ``rows_total``;\n  ``rows_skipped`` counts EPCs that already existed for the\n  tenant (treated as idempotent, not as errors).\n\nThe confirmation-token plumbing that ties a successful\n``dry_run=True`` response to a subsequent ``dry_run=False``\nsubmit lands in Phase C2.",
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/TagImportRowError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "rows_created": {
+            "title": "Rows Created",
+            "type": "integer"
+          },
+          "rows_skipped": {
+            "title": "Rows Skipped",
+            "type": "integer"
+          },
+          "rows_total": {
+            "title": "Rows Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows_total",
+          "rows_created",
+          "rows_skipped",
+          "dry_run"
+        ],
+        "title": "TagImportResult",
+        "type": "object"
+      },
+      "TagImportRowError": {
+        "description": "One invalid CSV row from ``POST /tags/import`` (Sprint 50 C1).\n\nReturned to the client as part of :class:`TagImportResult` when\nany row fails validation; per ADR 028 OQ 4 the import is\nall-or-nothing, so a non-empty ``errors`` list means *nothing*\nwas written (regardless of ``dry_run``).\n\n``row`` is the 1-based CSV row number *after* the header\n(matching what spreadsheet users see). ``epc_hex`` is the\noperator-supplied value, echoed back unmodified so they can\ngrep their CSV; it's omitted only if the row had no ``epc_hex``\ncolumn value at all.",
+        "properties": {
+          "epc_hex": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Epc Hex"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "row": {
+            "title": "Row",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row",
+          "error"
+        ],
+        "title": "TagImportRowError",
         "type": "object"
       },
       "TagReadCreate": {
@@ -13736,6 +13817,67 @@
           }
         ],
         "summary": "Create Tag",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags/import": {
+      "post": {
+        "description": "Bulk-register tags from a CSV.\n\nPer ADR-028 OQ 4:\n\n- **413** if file >8 MiB *or* row count >10 000.\n- **429** if the tenant has already issued\n  ``tag_bulk_import_rate_limit`` imports in the trailing hour.\n  The counter advances *before* parsing so a malformed CSV\n  still counts toward the cap (catches the runaway-script\n  threat model exactly).\n- **422** if any row fails validation. Per the all-or-nothing\n  rule nothing is written; the response body lists every\n  offending row.\n- **200** on a successful ``dry_run=true``.\n- **201** on a successful real import.\n\nSuccessful real imports write one ``tag.bulk_imported`` audit\nlog entry covering the whole batch \u2014 Phase C5 unifies this\nwith the other bulk-op audit shapes; the keys we already emit\n(``count``, ``request_id``) are forward-compatible.",
+        "operationId": "import_tags_tags_import_post",
+        "parameters": [
+          {
+            "description": "When true, validate the CSV and report what would happen without writing anything. The confirmation-token plumbing that ties a successful dry-run to a subsequent commit lands in Phase C2.",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "When true, validate the CSV and report what would happen without writing anything. The confirmation-token plumbing that ties a successful dry-run to a subsequent commit lands in Phase C2.",
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_tags_tags_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagImportResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Import Tags",
         "tags": [
           "tags"
         ]

@@ -44,16 +44,28 @@ import re
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.core.audit import AuditLogger
+from tagpulse.core.tag_import_rate_limit import TAG_IMPORT_LIMITER
 from tagpulse.core.tenant_auth import Tenant, get_current_tenant
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.database import TenantModel
 from tagpulse.models.schemas import (
     TagCreate,
+    TagImportResult,
     TagResponse,
     TagTransferRequest,
     TagTransferResponse,
@@ -66,7 +78,7 @@ from tagpulse.repositories.timescaledb.tags import (
     TimescaleTagRepository,
     TimescaleTagTransferRepository,
 )
-from tagpulse.services.tags import normalize_epc_hex
+from tagpulse.services.tags import normalize_epc_hex, parse_tag_import_csv
 
 router = APIRouter(tags=["tags"])
 
@@ -249,6 +261,159 @@ async def delete_tag(
         tag_id,
         changes={"epc_hex": existing.epc_hex},
         user_id=user.user_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bulk CSV import (Sprint 50 C1)
+# ---------------------------------------------------------------------------
+
+# Sized to comfortably hold the ADR-028 OQ-4 cap (10 000 rows * ~140 bytes
+# per row for a generously-padded EPC line + headers + some commentary
+# columns operators paste in) with headroom; refuses the upload before
+# we spend time CSV-parsing it.
+MAX_TAG_IMPORT_BYTES = 8 * 1024 * 1024
+# Hard cap per ADR-028 OQ 4. Importers above this must chunk client-side.
+MAX_TAG_IMPORT_ROWS = 10_000
+
+
+@router.post(
+    "/tags/import",
+    response_model=TagImportResult,
+)
+async def import_tags(
+    upload: UploadFile = File(
+        ...,
+        description=(
+            "CSV with required column 'epc_hex'. Extra columns are ignored."
+            " Max 10 000 rows per import (413 above). Max 10 imports/hour"
+            " per tenant (configurable via tenants.tag_bulk_import_rate_limit)."
+        ),
+    ),
+    dry_run: bool = Query(
+        default=False,
+        description=(
+            "When true, validate the CSV and report what would happen"
+            " without writing anything. The confirmation-token plumbing"
+            " that ties a successful dry-run to a subsequent commit lands"
+            " in Phase C2."
+        ),
+    ),
+    response: Response = None,  # type: ignore[assignment]
+    user: AuthenticatedUser = require_role("admin", "editor"),
+    session: AsyncSession = Depends(get_session),
+) -> TagImportResult:
+    """Bulk-register tags from a CSV.
+
+    Per ADR-028 OQ 4:
+
+    - **413** if file >8 MiB *or* row count >10 000.
+    - **429** if the tenant has already issued
+      ``tag_bulk_import_rate_limit`` imports in the trailing hour.
+      The counter advances *before* parsing so a malformed CSV
+      still counts toward the cap (catches the runaway-script
+      threat model exactly).
+    - **422** if any row fails validation. Per the all-or-nothing
+      rule nothing is written; the response body lists every
+      offending row.
+    - **200** on a successful ``dry_run=true``.
+    - **201** on a successful real import.
+
+    Successful real imports write one ``tag.bulk_imported`` audit
+    log entry covering the whole batch — Phase C5 unifies this
+    with the other bulk-op audit shapes; the keys we already emit
+    (``count``, ``request_id``) are forward-compatible.
+    """
+    # --- 1. Per-tenant hourly counter (advance before parsing) ---
+    tenant_row = (
+        await session.execute(select(TenantModel).where(TenantModel.id == user.tenant_id))
+    ).scalar_one()
+    cap = tenant_row.tag_bulk_import_rate_limit
+    if not TAG_IMPORT_LIMITER.check_and_record(user.tenant_id, cap):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "message": "tag-import rate limit exceeded for this tenant",
+                "limit_per_hour": cap,
+            },
+        )
+
+    # --- 2. Read + size cap ---
+    raw = await upload.read()
+    if len(raw) > MAX_TAG_IMPORT_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "message": "CSV exceeds maximum size",
+                "max_bytes": MAX_TAG_IMPORT_BYTES,
+                "actual_bytes": len(raw),
+            },
+        )
+
+    # --- 3. Parse + per-row validate ---
+    valid_rows, errors = parse_tag_import_csv(raw)
+    total = len(valid_rows) + len(errors)
+    if total > MAX_TAG_IMPORT_ROWS:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "message": "CSV exceeds maximum row count",
+                "max_rows": MAX_TAG_IMPORT_ROWS,
+                "actual_rows": total,
+            },
+        )
+
+    # --- 4. All-or-nothing: any error -> 422, nothing written ---
+    if errors:
+        # Even on dry_run we surface 422 so the client knows the CSV
+        # would fail. (A successful dry_run = 200; an unsuccessful one
+        # is the same wire shape as the real-mode failure.)
+        if response is not None:
+            response.status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        return TagImportResult(
+            rows_total=total,
+            rows_created=0,
+            rows_skipped=0,
+            dry_run=dry_run,
+            errors=errors,
+        )
+
+    # --- 5. Dry-run success: 200, no write ---
+    if dry_run:
+        return TagImportResult(
+            rows_total=total,
+            rows_created=len(valid_rows),
+            rows_skipped=0,
+            dry_run=True,
+            errors=[],
+        )
+
+    # --- 6. Real import: 201, single bulk insert ---
+    repo = _repo(session)
+    created, skipped = await repo.bulk_create(user.tenant_id, [r.epc_hex for r in valid_rows])
+    request_id = uuid.uuid4()
+    await AuditLogger(session=session).log(
+        user.tenant_id,
+        "tag.bulk_imported",
+        "tag",
+        request_id,
+        changes={
+            "rows_total": total,
+            "rows_created": created,
+            "rows_skipped": skipped,
+            "request_id": str(request_id),
+            "source": "csv_import",
+        },
+        user_id=user.user_id,
+    )
+    if response is not None:
+        response.status_code = status.HTTP_201_CREATED
+    return TagImportResult(
+        rows_total=total,
+        rows_created=created,
+        rows_skipped=skipped,
+        dry_run=False,
+        errors=[],
     )
 
 

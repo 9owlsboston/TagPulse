@@ -29,6 +29,7 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import and_, exists, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -217,6 +218,53 @@ class TimescaleTagRepository:
                 ) from exc
             raise
         return _to_response(row)
+
+    async def bulk_create(
+        self,
+        tenant_id: uuid.UUID,
+        epc_hexes: list[str],
+    ) -> tuple[int, int]:
+        """Insert many tags in ``status='registered'``, ``source='csv_import'``.
+
+        Sprint 50 C1 — companion of :meth:`create` for the
+        ``POST /tags/import`` route. Returns
+        ``(rows_created, rows_skipped)`` where ``rows_skipped``
+        counts EPCs that already existed for this tenant (treated
+        as idempotent re-imports per the inventory_imports
+        precedent).
+
+        Strategy: a single ``INSERT ... ON CONFLICT DO NOTHING``
+        on ``uq_tags_tenant_epc``. The dialect-specific construct
+        lives here (one call site) rather than leaking to the
+        service layer. ``gs1_uri`` is derived row-by-row in
+        Python — same code path as :meth:`create`. The caller is
+        expected to have run :func:`parse_tag_import_csv` first so
+        no per-row format check is repeated here.
+        """
+        if not epc_hexes:
+            return 0, 0
+        rows = [
+            {
+                "id": uuid.uuid4(),
+                "tenant_id": tenant_id,
+                "epc_hex": epc,
+                "gs1_uri": parse_gs1_uri(epc),
+                "status": "registered",
+                "source": "csv_import",
+                "metadata_": None,
+            }
+            for epc in epc_hexes
+        ]
+        stmt = (
+            pg_insert(TagModel)
+            .values(rows)
+            .on_conflict_do_nothing(constraint="uq_tags_tenant_epc")
+            .returning(TagModel.epc_hex)
+        )
+        result = await self._session.execute(stmt)
+        created = len(result.scalars().all())
+        skipped = len(rows) - created
+        return created, skipped
 
     async def update(
         self,

@@ -19,10 +19,21 @@ registrar worker (Phase D, not yet built):
   (``registered → active``) and the transfer flow
   (``* → transferred_out``) call dedicated paths and bypass this
   check.
+- :func:`parse_tag_import_csv` — Sprint 50 C1 CSV parser for
+  ``POST /tags/import``. Pure: takes raw bytes, returns
+  ``(valid_rows, errors)``. The route handles file size / row
+  cap / rate limit / persistence; this function owns format,
+  header, and per-row syntactic validation only.
 """
 
 from __future__ import annotations
 
+import csv
+import io
+import re
+from dataclasses import dataclass
+
+from tagpulse.models.schemas import TagImportRowError
 from tagpulse.rfid.epc import decode_epc_hex
 
 
@@ -95,3 +106,100 @@ def validate_status_transition(current: str, target: str) -> None:
             f"transition {current!r} → {target!r} is not permitted via the "
             "operator API (see ADR 028 §Status enum)"
         )
+
+
+# Mirrors ck_tags_epc_hex_format (migration 043) post-normalisation.
+_EPC_HEX_RE = re.compile(r"^[0-9A-F]{16,128}$")
+
+
+@dataclass(frozen=True)
+class TagImportRow:
+    """A validated CSV row, normalised and ready for insert.
+
+    ``epc_hex`` is post-:func:`normalize_epc_hex` so the repo can
+    insert it verbatim. C1 supports only the ``epc_hex`` column;
+    metadata / labels are out of scope for the import endpoint per
+    ADR 028 §"Phase C" (labels go through the labels API after
+    import).
+    """
+
+    epc_hex: str
+
+
+def parse_tag_import_csv(
+    raw: bytes,
+) -> tuple[list[TagImportRow], list[TagImportRowError]]:
+    """Parse a tag-import CSV into validated rows + per-line errors.
+
+    Contract:
+
+    - UTF-8 with optional BOM (``utf-8-sig``). Any decode error is
+      reported as a single ``row=0`` error so the caller can return
+      a clean 422 without crashing.
+    - A header row is required and must contain ``epc_hex`` (case
+      and surrounding whitespace insensitive). Extra columns are
+      silently ignored — operators frequently paste reel
+      manifests with vendor-specific columns and we don't want to
+      force a strip step.
+    - Per-row validation runs the same regex as the DB CHECK on
+      the *normalised* (upper-cased, stripped) value. Blank
+      ``epc_hex`` cells are errors.
+    - Duplicate ``epc_hex`` values *within the CSV* are reported
+      as errors (catches the operator who pastes the same range
+      twice). Cross-CSV / cross-tenant uniqueness is enforced by
+      the DB constraint at flush time.
+
+    Returns ``(valid_rows, errors)``. Per ADR 028 OQ 4's
+    all-or-nothing rule, the route layer rejects the whole import
+    if ``errors`` is non-empty; the partial ``valid_rows`` list is
+    still returned for completeness but the route must not write it.
+    """
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        return [], [TagImportRowError(row=0, epc_hex=None, error=f"file is not valid UTF-8: {exc}")]
+
+    reader = csv.DictReader(io.StringIO(text))
+    if reader.fieldnames is None:
+        return [], [TagImportRowError(row=0, error="CSV is empty")]
+    headers_norm = {(h or "").strip().lower(): h for h in reader.fieldnames}
+    if "epc_hex" not in headers_norm:
+        return [], [
+            TagImportRowError(
+                row=0,
+                error="CSV is missing required column 'epc_hex'",
+            )
+        ]
+    epc_col = headers_norm["epc_hex"]
+
+    valid: list[TagImportRow] = []
+    errors: list[TagImportRowError] = []
+    seen: dict[str, int] = {}
+    for idx, raw_row in enumerate(reader, start=1):
+        raw_value = (raw_row.get(epc_col) or "").strip()
+        if not raw_value:
+            errors.append(TagImportRowError(row=idx, error="epc_hex is required"))
+            continue
+        normalised = normalize_epc_hex(raw_value)
+        if not _EPC_HEX_RE.match(normalised):
+            errors.append(
+                TagImportRowError(
+                    row=idx,
+                    epc_hex=raw_value,
+                    error="epc_hex must be 16-128 hex chars (case-insensitive)",
+                )
+            )
+            continue
+        prior = seen.get(normalised)
+        if prior is not None:
+            errors.append(
+                TagImportRowError(
+                    row=idx,
+                    epc_hex=raw_value,
+                    error=f"duplicate epc_hex in CSV (first seen on row {prior})",
+                )
+            )
+            continue
+        seen[normalised] = idx
+        valid.append(TagImportRow(epc_hex=normalised))
+    return valid, errors

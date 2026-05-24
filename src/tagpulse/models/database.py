@@ -60,6 +60,11 @@ class TenantModel(Base):
     # Shape: {"ingest": int, "read": int, "write": int, "admin": int}.
     # Any subset of keys allowed; missing keys fall back to Settings. --
     rate_limit_overrides: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # -- Sprint 50 C1: per-tenant hourly cap on POST /tags/import calls.
+    # Default 10 / hour per ADR 028 OQ 4. Lives in tagpulse.core.tag_import_rate_limit. --
+    tag_bulk_import_rate_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="10"
+    )
     # -- Sprint 33 QW6: per-tenant branding (NULL = use system defaults).
     # See docs/design/reference-design-remediation.md §3.3. --
     logo_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
@@ -980,12 +985,8 @@ class TagModel(Base):
     gs1_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     source: Mapped[str] = mapped_column(String(16), nullable=False)
-    first_seen_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    last_seen_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -1035,6 +1036,4 @@ class TagTransferModel(Base):
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

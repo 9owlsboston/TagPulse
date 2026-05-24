@@ -1237,6 +1237,54 @@ class TagResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
+class TagImportRowError(BaseModel):
+    """One invalid CSV row from ``POST /tags/import`` (Sprint 50 C1).
+
+    Returned to the client as part of :class:`TagImportResult` when
+    any row fails validation; per ADR 028 OQ 4 the import is
+    all-or-nothing, so a non-empty ``errors`` list means *nothing*
+    was written (regardless of ``dry_run``).
+
+    ``row`` is the 1-based CSV row number *after* the header
+    (matching what spreadsheet users see). ``epc_hex`` is the
+    operator-supplied value, echoed back unmodified so they can
+    grep their CSV; it's omitted only if the row had no ``epc_hex``
+    column value at all.
+    """
+
+    row: int
+    epc_hex: str | None = None
+    error: str
+
+
+class TagImportResult(BaseModel):
+    """Outcome of ``POST /tags/import`` (Sprint 50 C1).
+
+    Three branches the client must distinguish:
+
+    - ``errors`` non-empty → 422; the CSV was rejected, nothing was
+      written, ``rows_created`` and ``rows_skipped`` are both 0.
+    - ``dry_run=True`` and ``errors`` empty → 200; the CSV would
+      have created ``rows_created`` rows (no skips because the
+      duplicate check is done at flush time in C1, see ADR 028 OQ
+      4); no rows were written.
+    - ``dry_run=False`` and ``errors`` empty → 201; the CSV was
+      written. ``rows_created`` + ``rows_skipped`` = ``rows_total``;
+      ``rows_skipped`` counts EPCs that already existed for the
+      tenant (treated as idempotent, not as errors).
+
+    The confirmation-token plumbing that ties a successful
+    ``dry_run=True`` response to a subsequent ``dry_run=False``
+    submit lands in Phase C2.
+    """
+
+    rows_total: int
+    rows_created: int
+    rows_skipped: int
+    dry_run: bool
+    errors: list[TagImportRowError] = Field(default_factory=list)
+
+
 class TagTransferRequest(BaseModel):
     """Initiate a cross-tenant transfer of one or more EPCs.
 
