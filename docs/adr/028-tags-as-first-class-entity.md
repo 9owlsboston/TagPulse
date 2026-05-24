@@ -1,6 +1,6 @@
 # ADR-028: Tags as a first-class entity
 
-- Status: **Implemented (Sprint 50, May 2026)** — all five open questions resolved inline at v0.1–v0.5; full Phase A–E implementation landed under Sprint 50 (`sprint-50/tag-registry` branch). See [Decision history](#decision-history) v1.0 for the per-phase commit / CHANGELOG cross-references.
+- Status: **Implemented + UI shipped (Sprint 51, May 2026)** — all five open questions resolved inline at v0.1–v0.5; full Phase A–E implementation landed under Sprint 50 (`sprint-50/tag-registry` branch); operator UI surface (CSV import, status lifecycle, two-person approvals, reconciliation views) landed under Sprint 51 in the `TagPulse-UI` repo. See [Decision history](#decision-history) v1.0 for the API/service-layer phase cross-references and v1.2 for the UI phase.
 - Supersedes in part: the "no `tags` table" position documented in
   [docs/data-models.md §"Where is the tag?"](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table).
   That position remains correct for **read ingestion**; this ADR adds a
@@ -596,3 +596,37 @@ table" in the Decision section for full details.
   [tests/unit/test_labels_reserved_keys.py](../../tests/unit/test_labels_reserved_keys.py)
   (16 cases). `make check` clean: 1351 passed, 1 skipped (+16
   from v1.0's 1335).
+- v1.2 (2026-05-24, **Implemented + UI shipped**): Sprint 51
+  delivered the operator-facing UI surface for the registry in
+  the sibling `TagPulse-UI` repo, completing the loop opened by
+  ADR 028 §"Operator surfaces". Status header flipped from
+  "Implemented (Sprint 50)" to "Implemented + UI shipped
+  (Sprint 51)". No schema, API contract, or governance-rule
+  changes in this entry — backend behaviour is unchanged from
+  v1.1. UI pages shipped (cross-repo PR references):
+  - **CSV import wizard** — `/tags/import` — dry-run preview,
+    confirmation token round-trip, two-person-rule banner when
+    row count exceeds `tenants.tag_bulk_two_person_threshold`.
+    `TagPulse-UI` PR #55 + #57.
+  - **Tag detail + status lifecycle** — `/tags/:epc_hex` —
+    PATCH guarded fields (status, labels), reserved `batch.*`
+    namespace surfaced read-only with the rationale tooltip.
+    `TagPulse-UI` PR #58.
+  - **Pending bulk operations queue** — `/admin/pending-bulk-operations`
+    — approve / reject flow for the two-person threshold path,
+    audit-log timeline. `TagPulse-UI` PR #59.
+  - **Reconciliation views** — `/tags/reconciliation/:view`
+    for the three Phase E exception reports
+    (`registered-unread`, `unregistered-reading`,
+    `bindings-on-retired`) with CSV-download passthrough.
+    `TagPulse-UI` PR #60.
+  - **Navigation + role gating** — Tags top-nav entry plus the
+    viewer/editor/admin disabled-state matrix.
+    `TagPulse-UI` PR #69.
+  - **Server-side route wiring + cross-tenant transfer screen**
+    — landed earlier under TagPulse PR #71 (server template
+    fixtures the UI consumes; no behaviour change).
+  Operator-facing entry point is now
+  [runbooks/tag-registry-operations.md §0](../runbooks/tag-registry-operations.md#0-operator-ui-quick-reference)
+  — every workflow in §1–§4 has a UI screen for users who
+  prefer it over the API.
