@@ -24,6 +24,14 @@ registrar worker (Phase D, not yet built):
   ``(valid_rows, errors)``. The route handles file size / row
   cap / rate limit / persistence; this function owns format,
   header, and per-row syntactic validation only.
+- :func:`is_reserved_label_key` / :data:`RESERVED_LABEL_KEYS` —
+  ADR 028 §"Batches: labels, not a table" reserved namespace.
+  Migration 045 seeds these four keys under ``entity_type='tag'``
+  for every tenant and refuses to run on collisions; the labels
+  API uses these helpers to refuse user-initiated mutations of
+  the namespace **regardless of entity_type** (per migration 045
+  docstring). Keeping the constant here puts it next to the ADR
+  it implements rather than in the labels module that consumes it.
 """
 
 from __future__ import annotations
@@ -35,6 +43,36 @@ from dataclasses import dataclass
 
 from tagpulse.models.schemas import TagImportRowError
 from tagpulse.rfid.epc import decode_epc_hex
+
+# ADR 028 §"Batches: labels, not a table". Migration 045 seeds these
+# four keys under ``entity_type='tag'`` for every tenant; the labels
+# API must refuse user-initiated CREATE / UPDATE / DELETE on any key
+# in this namespace — across ALL entity_types — so an operator cannot
+# (a) shadow the reserved namespace under a different entity_type and
+# poison downstream bulk-op ``?labels[batch]=`` filters, or
+# (b) delete the seeded ``(tag, batch)`` row and silently wipe their
+# tenant's batch grouping.
+RESERVED_LABEL_KEYS: frozenset[str] = frozenset(
+    {
+        "batch",
+        "batch.received_at",
+        "batch.description",
+        "batch.supplier",
+    }
+)
+
+
+def is_reserved_label_key(key: str) -> bool:
+    """Return True iff ``key`` is in the ADR 028 reserved namespace.
+
+    Match is case-sensitive — the labels catalog's CHECK constraint
+    (migration 039) already normalises stored keys to a strict
+    charset, and the reserved seeds are inserted lowercase. An
+    operator who supplies ``Batch`` would correctly hit the catalog's
+    own validation before reaching this guard; we do not normalise
+    here because doing so would mask that bug.
+    """
+    return key in RESERVED_LABEL_KEYS
 
 
 def normalize_epc_hex(raw: str) -> str:

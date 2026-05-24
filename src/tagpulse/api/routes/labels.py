@@ -58,19 +58,54 @@ from tagpulse.repositories.timescaledb.labels import (
     TimescaleLabelRepository,
 )
 from tagpulse.repositories.timescaledb.session import get_session
+from tagpulse.services.tags import RESERVED_LABEL_KEYS, is_reserved_label_key
 
 router = APIRouter(tags=["labels"])
 
 
 # URL segments → DB ``entity_type`` value. Keep singular-form values
-# in lockstep with the CHECK constraint in migration 039.
+# in lockstep with the CHECK constraint in migration 039 (and 045,
+# which added ``'tag'`` for Sprint 50 / ADR 028 batch grouping).
 _ENTITY_TYPE_FROM_URL: dict[str, LabelEntityType] = {
     "assets": "asset",
     "sites": "site",
     "zones": "zone",
     "devices": "device",
     "categories": "category",
+    "tags": "tag",
 }
+
+
+def _refuse_if_reserved(key: str) -> None:
+    """Raise 403 if ``key`` is in the ADR 028 reserved namespace.
+
+    Migration 045 docstring is explicit: "the labels API rejects
+    user-initiated CREATE / UPDATE / DELETE for any key matching
+    the reserved namespace regardless of entity_type". The guard
+    fires on the catalog endpoints (``POST /labels``,
+    ``PATCH /labels/{id}``, ``DELETE /labels/{id}``) because those
+    are the ones that can mint, rename, or remove a key. Per-entity
+    *association* endpoints (``POST /{entity}/{id}/labels``) are
+    legal — operators bind ``batch=reel-008rT`` values to tags via
+    the seeded reserved row, which is the whole point of the
+    reservation.
+
+    403 (not 409): the caller has the editor/admin role, the
+    operation is syntactically valid, the row exists — they're just
+    not permitted to mutate this specific reserved resource.
+    """
+    if is_reserved_label_key(key):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": (
+                    f"label key {key!r} is reserved by ADR 028 (Sprint 50 "
+                    "tag-batch namespace) and cannot be created, modified, "
+                    "or deleted via the labels API"
+                ),
+                "reserved_keys": sorted(RESERVED_LABEL_KEYS),
+            },
+        )
 
 
 def _repo(session: AsyncSession) -> TimescaleLabelRepository:
@@ -119,6 +154,7 @@ async def create_label(
 ) -> LabelResponse:
     """Create a new label catalog row. ``entity_type`` is fixed here
     and cannot be changed later."""
+    _refuse_if_reserved(body.key)
     try:
         created = await _repo(session).create(user.tenant_id, body, user_id=user.user_id)
     except LabelKeyConflictError as exc:
@@ -174,6 +210,11 @@ async def update_label(
     before = await repo.get(user.tenant_id, label_id)
     if before is None:
         raise HTTPException(status_code=404, detail="Label not found")
+    # Reserved-key guard runs against the *existing* row's key — a
+    # PATCH cannot rename a key (the labels API has no key-rename
+    # surface), so if the row is reserved, every PATCH against it is
+    # an attempt to mutate reserved metadata.
+    _refuse_if_reserved(before.key)
     try:
         updated = await repo.update(user.tenant_id, label_id, body, user_id=user.user_id)
     except LabelKeyConflictError as exc:
@@ -206,6 +247,10 @@ async def delete_label(
     a guarded confirmation flow ("This label is in use on N items.
     Detach them first.")."""
     repo = _repo(session)
+    existing = await repo.get(user.tenant_id, label_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Label not found")
+    _refuse_if_reserved(existing.key)
     try:
         deleted = await repo.delete(user.tenant_id, label_id)
     except LabelInUseError as exc:

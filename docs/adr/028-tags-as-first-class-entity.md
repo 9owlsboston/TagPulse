@@ -564,3 +564,35 @@ table" in the Decision section for full details.
     out-of-scope for Sprint 50. The unit-test suite (1335
     passing) covers the schema, service layer, governance
     invariants, and reconciliation queries.
+- v1.1 (2026-05-23, **Audit remediation**): Post-ship audit on
+  commit `d776b8a` closed two API-surface gaps that the per-phase
+  test suites missed because they were holes between modules
+  rather than bugs inside one. (1) Migration 045's binding
+  docstring requires the labels API to refuse user-initiated
+  CREATE / UPDATE / DELETE on any key in the reserved `batch.*`
+  namespace **regardless of `entity_type`**, but the route layer
+  had no such guard — an admin could shadow `batch.foo` under
+  `entity_type='asset'`, or DELETE the seeded `(tag, batch)` row
+  and wipe their tenant's batch grouping. Closed by adding
+  `RESERVED_LABEL_KEYS` + `is_reserved_label_key()` to
+  [src/tagpulse/services/tags.py](../../src/tagpulse/services/tags.py)
+  (single source of truth, also reusable by tenant-bootstrap
+  paths) and a `_refuse_if_reserved()` 403-guard in
+  [src/tagpulse/api/routes/labels.py](../../src/tagpulse/api/routes/labels.py)
+  fired from `create_label`, `update_label` (against the
+  existing row's stored key — PATCH has no rename surface),
+  and `delete_label` (against the loaded row before any
+  deletion). Per-entity *association* endpoints
+  (`POST /{entity_segment}/{id}/labels`) are deliberately NOT
+  guarded — operators must be able to bind `batch=reel-008rT`
+  values to tags via the seeded reserved row, which is the
+  whole point of the reservation. (2) The labels-route URL →
+  DB `entity_type` mapping `_ENTITY_TYPE_FROM_URL` was never
+  widened when migration 045 added `'tag'` to the CHECK
+  constraint, so the ADR §"Batches: labels, not a table" flow
+  (`POST /tags/{id}/labels`) returned 404 "Unknown entity
+  kind" end-to-end — closed by adding `"tags": "tag"` to the
+  map. Tests:
+  [tests/unit/test_labels_reserved_keys.py](../../tests/unit/test_labels_reserved_keys.py)
+  (16 cases). `make check` clean: 1351 passed, 1 skipped (+16
+  from v1.0's 1335).
