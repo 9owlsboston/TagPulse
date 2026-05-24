@@ -2950,6 +2950,132 @@
         "title": "MetricDefinition",
         "type": "object"
       },
+      "PendingBulkOperationResponse": {
+        "description": "Persisted ``pending_bulk_operations`` row (ADR 028 \u00a7Governance #4).\n\nSurfaced on:\n\n- the **202** branch of ``POST /tags/import`` (via the\n  ``pending_id`` field on :class:`TagImportResult`) \u2014 operator A\n  learns \"your import is queued for approval, here is the id\";\n- ``GET /bulk-operations/{id}`` \u2014 operator B fetches the record\n  they're being asked to approve;\n- ``POST /bulk-operations/{id}/approve`` and ``/reject`` \u2014\n  the response echoes the updated row.\n\nThe CSV bytes themselves (``payload``) are deliberately **not**\nexposed \u2014 operator B sees ``row_count`` + ``sample`` (the same\n10-EPC preview operator A saw on dry-run) which is the\nintended review surface. ``content_hash`` is exposed for\ncross-system verification.",
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "executed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed At"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "row_count": {
+            "title": "Row Count",
+            "type": "integer"
+          },
+          "sample": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sample",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "operation",
+          "status",
+          "requested_by",
+          "decided_by",
+          "content_hash",
+          "row_count",
+          "sample",
+          "request_id",
+          "created_at",
+          "decided_at",
+          "executed_at",
+          "expires_at"
+        ],
+        "title": "PendingBulkOperationResponse",
+        "type": "object"
+      },
       "ProductCreate": {
         "properties": {
           "attributes": {
@@ -5098,7 +5224,7 @@
         "type": "object"
       },
       "TagImportResult": {
-        "description": "Outcome of ``POST /tags/import`` (Sprint 50 C1/C2).\n\nFour branches the client must distinguish:\n\n- ``errors`` non-empty \u2192 422; the CSV was rejected, nothing was\n  written, ``rows_created`` and ``rows_skipped`` are both 0.\n  ``token`` is null (the ADR 028 governance rule binds the token\n  to a *valid* preview only).\n- ``dry_run=True`` and ``errors`` empty \u2192 200; the CSV would\n  have created ``rows_created`` rows. No rows were written.\n  ``token``, ``expires_in``, and ``sample`` are populated so the\n  operator can re-submit with ``?confirm=<token>``.\n- ``dry_run=False`` and ``confirm`` provided and ``errors`` empty\n  \u2192 201; the CSV was written. ``rows_created`` + ``rows_skipped``\n  = ``rows_total``; ``rows_skipped`` counts EPCs that already\n  existed for the tenant (treated as idempotent, not as errors).\n  ``token`` echoes the consumed token for audit traceability.\n- A bad token (mismatched CSV, wrong tenant/user, expired)\n  surfaces as 409 from the route, not via this schema.\n\nPer ADR 028 \u00a7\"Governance\" rule 2, ``confirm`` and ``dry_run`` are\nmutually exclusive and at least one must be set \u2014 the route\nrejects \"bare\" submits (no dry-run, no confirm) with 400.",
+        "description": "Outcome of ``POST /tags/import`` (Sprint 50 C1/C2/C3).\n\nFive branches the client must distinguish:\n\n- ``errors`` non-empty \u2192 422; the CSV was rejected, nothing was\n  written, ``rows_created`` and ``rows_skipped`` are both 0.\n  ``token`` is null (the ADR 028 governance rule binds the token\n  to a *valid* preview only).\n- ``dry_run=True`` and ``errors`` empty \u2192 200; the CSV would\n  have created ``rows_created`` rows. No rows were written.\n  ``token``, ``expires_in``, and ``sample`` are populated so the\n  operator can re-submit with ``?confirm=<token>``.\n- ``dry_run=False`` and ``confirm`` provided and ``errors``\n  empty and ``rows_total`` < tenant threshold \u2192 201; the CSV was\n  written. ``rows_created`` + ``rows_skipped`` = ``rows_total``;\n  ``rows_skipped`` counts EPCs that already existed for the\n  tenant (treated as idempotent, not as errors). ``token``\n  echoes the consumed token for audit traceability.\n- ``dry_run=False`` and ``confirm`` provided and ``errors``\n  empty and ``rows_total`` >= tenant threshold \u2192 **202**; the\n  CSV is *queued* for second-admin approval per ADR 028\n  \u00a7Governance #4. ``requires_approval=True`` and ``pending_id``\n  is set; ``rows_created`` / ``rows_skipped`` are 0 (nothing\n  written yet). The second admin completes the op via\n  ``POST /bulk-operations/{pending_id}/approve``.\n- A bad token (mismatched CSV, wrong tenant/user, expired)\n  surfaces as 409 from the route, not via this schema.\n\nPer ADR 028 \u00a7\"Governance\" rule 2, ``confirm`` and ``dry_run`` are\nmutually exclusive and at least one must be set \u2014 the route\nrejects \"bare\" submits (no dry-run, no confirm) with 400.",
         "properties": {
           "dry_run": {
             "title": "Dry Run",
@@ -5121,6 +5247,29 @@
               }
             ],
             "title": "Expires In"
+          },
+          "pending_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Id"
+          },
+          "requires_approval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requires Approval"
           },
           "rows_created": {
             "title": "Rows Created",
@@ -9019,6 +9168,153 @@
         "summary": "Get Public Branding",
         "tags": [
           "tenant"
+        ]
+      }
+    },
+    "/bulk-operations/{pending_id}": {
+      "get": {
+        "description": "Fetch a queued bulk op so the reviewing admin can inspect it.",
+        "operationId": "get_pending_bulk_operation_bulk_operations__pending_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pending_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pending Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingBulkOperationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Pending Bulk Operation",
+        "tags": [
+          "bulk-operations"
+        ]
+      }
+    },
+    "/bulk-operations/{pending_id}/approve": {
+      "post": {
+        "description": "Second admin approves; the queued op executes immediately.\n\nPer ADR 028 \u00a7Governance #4 the approver MUST differ from the\nrequester (``SELF_APPROVAL`` \u2192 403). The stored payload's\ncontent hash is re-verified before execution (tamper guard;\n409 on mismatch).",
+        "operationId": "approve_pending_bulk_operation_bulk_operations__pending_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pending_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pending Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingBulkOperationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Approve Pending Bulk Operation",
+        "tags": [
+          "bulk-operations"
+        ]
+      }
+    },
+    "/bulk-operations/{pending_id}/reject": {
+      "post": {
+        "description": "Second admin denies; the queued op never executes.\n\nSelf-rejection is blocked for symmetry with approve. If the\noriginal requester wants to back out, ask the same colleague\nthey were asking to review.",
+        "operationId": "reject_pending_bulk_operation_bulk_operations__pending_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pending_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pending Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingBulkOperationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Reject Pending Bulk Operation",
+        "tags": [
+          "bulk-operations"
         ]
       }
     },
@@ -13860,7 +14156,7 @@
     },
     "/tags/import": {
       "post": {
-        "description": "Bulk-register tags from a CSV.\n\nPer ADR-028 OQ 4 + \u00a7Governance #2:\n\n- **400** if neither ``dry_run`` nor ``confirm`` is supplied, or\n  if both are supplied (mutually exclusive \u2014 preview first, then\n  commit with the returned token).\n- **413** if file >8 MiB *or* row count >10 000.\n- **429** if the tenant has already issued\n  ``tag_bulk_import_rate_limit`` imports in the trailing hour.\n  The counter advances *before* parsing so a malformed CSV\n  still counts toward the cap (catches the runaway-script\n  threat model exactly). Dry-runs and confirms each consume\n  one slot \u2014 the cap is on operator activity, not on writes.\n- **422** if any row fails validation. Per the all-or-nothing\n  rule nothing is written and no token is minted; the response\n  body lists every offending row.\n- **200** on a successful ``dry_run=true``. The response\n  includes ``token``, ``expires_in``, and a 10-EPC ``sample``.\n- **409** if ``?confirm=<token>`` is supplied but the token\n  doesn't match this CSV (content drift, wrong operator,\n  wrong tenant, expired, or already consumed).\n- **201** on a successful confirmed import.\n\nEvery confirmed import writes one ``tag.bulk_imported`` audit\nlog entry covering the whole batch. Phase C5 unifies this\nwith the other bulk-op audit shapes; the keys we already emit\n(``count``, ``request_id``) are forward-compatible.",
+        "description": "Bulk-register tags from a CSV.\n\nPer ADR-028 OQ 4 + \u00a7Governance #2:\n\n- **400** if neither ``dry_run`` nor ``confirm`` is supplied, or\n  if both are supplied (mutually exclusive \u2014 preview first, then\n  commit with the returned token).\n- **413** if file >8 MiB *or* row count >10 000.\n- **429** if the tenant has already issued\n  ``tag_bulk_import_rate_limit`` imports in the trailing hour.\n  The counter advances *before* parsing so a malformed CSV\n  still counts toward the cap (catches the runaway-script\n  threat model exactly). Dry-runs and confirms each consume\n  one slot \u2014 the cap is on operator activity, not on writes.\n- **422** if any row fails validation. Per the all-or-nothing\n  rule nothing is written and no token is minted; the response\n  body lists every offending row.\n- **200** on a successful ``dry_run=true``. The response\n  includes ``token``, ``expires_in``, and a 10-EPC ``sample``.\n- **409** if ``?confirm=<token>`` is supplied but the token\n  doesn't match this CSV (content drift, wrong operator,\n  wrong tenant, expired, or already consumed).\n- **202** on a confirmed import whose row count meets or\n  exceeds ``tenants.tag_bulk_two_person_threshold`` (default\n  10 000) per ADR 028 \u00a7Governance #4. The CSV is stashed in\n  ``pending_bulk_operations`` and ``pending_id`` is returned;\n  a second admin must POST ``/bulk-operations/{pending_id}/approve``\n  to execute. Nothing is written to ``tags`` yet.\n- **201** on a successful confirmed import below the threshold.\n\nEvery confirmed import writes one ``tag.bulk_imported`` audit\nlog entry covering the whole batch. Phase C5 unifies this\nwith the other bulk-op audit shapes; the keys we already emit\n(``count``, ``request_id``) are forward-compatible.",
         "operationId": "import_tags_tags_import_post",
         "parameters": [
           {

@@ -1258,9 +1258,9 @@ class TagImportRowError(BaseModel):
 
 
 class TagImportResult(BaseModel):
-    """Outcome of ``POST /tags/import`` (Sprint 50 C1/C2).
+    """Outcome of ``POST /tags/import`` (Sprint 50 C1/C2/C3).
 
-    Four branches the client must distinguish:
+    Five branches the client must distinguish:
 
     - ``errors`` non-empty → 422; the CSV was rejected, nothing was
       written, ``rows_created`` and ``rows_skipped`` are both 0.
@@ -1270,11 +1270,19 @@ class TagImportResult(BaseModel):
       have created ``rows_created`` rows. No rows were written.
       ``token``, ``expires_in``, and ``sample`` are populated so the
       operator can re-submit with ``?confirm=<token>``.
-    - ``dry_run=False`` and ``confirm`` provided and ``errors`` empty
-      → 201; the CSV was written. ``rows_created`` + ``rows_skipped``
-      = ``rows_total``; ``rows_skipped`` counts EPCs that already
-      existed for the tenant (treated as idempotent, not as errors).
-      ``token`` echoes the consumed token for audit traceability.
+    - ``dry_run=False`` and ``confirm`` provided and ``errors``
+      empty and ``rows_total`` < tenant threshold → 201; the CSV was
+      written. ``rows_created`` + ``rows_skipped`` = ``rows_total``;
+      ``rows_skipped`` counts EPCs that already existed for the
+      tenant (treated as idempotent, not as errors). ``token``
+      echoes the consumed token for audit traceability.
+    - ``dry_run=False`` and ``confirm`` provided and ``errors``
+      empty and ``rows_total`` >= tenant threshold → **202**; the
+      CSV is *queued* for second-admin approval per ADR 028
+      §Governance #4. ``requires_approval=True`` and ``pending_id``
+      is set; ``rows_created`` / ``rows_skipped`` are 0 (nothing
+      written yet). The second admin completes the op via
+      ``POST /bulk-operations/{pending_id}/approve``.
     - A bad token (mismatched CSV, wrong tenant/user, expired)
       surfaces as 409 from the route, not via this schema.
 
@@ -1297,6 +1305,11 @@ class TagImportResult(BaseModel):
     # paste the right reel?" without scrolling 10 000 rows. Bound
     # at 10 in the route — schema accepts any length.
     sample: list[str] | None = None
+    # Sprint 50 C3: two-person rule. Set on the 202 branch only.
+    # ``pending_id`` is the UUID the second admin uses on
+    # ``POST /bulk-operations/{pending_id}/approve``.
+    requires_approval: bool | None = None
+    pending_id: UUID | None = None
 
 
 class TagTransferRequest(BaseModel):
@@ -1325,5 +1338,48 @@ class TagTransferResponse(BaseModel):
     requested_by: UUID
     requested_at: datetime
     completed_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 50 C3: pending bulk operations (two-person rule)
+# ---------------------------------------------------------------------------
+
+
+class PendingBulkOperationResponse(BaseModel):
+    """Persisted ``pending_bulk_operations`` row (ADR 028 §Governance #4).
+
+    Surfaced on:
+
+    - the **202** branch of ``POST /tags/import`` (via the
+      ``pending_id`` field on :class:`TagImportResult`) — operator A
+      learns "your import is queued for approval, here is the id";
+    - ``GET /bulk-operations/{id}`` — operator B fetches the record
+      they're being asked to approve;
+    - ``POST /bulk-operations/{id}/approve`` and ``/reject`` —
+      the response echoes the updated row.
+
+    The CSV bytes themselves (``payload``) are deliberately **not**
+    exposed — operator B sees ``row_count`` + ``sample`` (the same
+    10-EPC preview operator A saw on dry-run) which is the
+    intended review surface. ``content_hash`` is exposed for
+    cross-system verification.
+    """
+
+    id: UUID
+    tenant_id: UUID
+    operation: str
+    status: str
+    requested_by: UUID | None
+    decided_by: UUID | None
+    content_hash: str
+    row_count: int
+    sample: list[str]
+    request_id: UUID | None
+    created_at: datetime
+    decided_at: datetime | None
+    executed_at: datetime | None
+    expires_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

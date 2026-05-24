@@ -19,7 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, BYTEA, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -64,6 +64,12 @@ class TenantModel(Base):
     # Default 10 / hour per ADR 028 OQ 4. Lives in tagpulse.core.tag_import_rate_limit. --
     tag_bulk_import_rate_limit: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="10"
+    )
+    # -- Sprint 50 C3: two-person-rule threshold per ADR 028 §Governance #4.
+    # Bulk ops over this row count create a pending_bulk_operations row
+    # that a second admin must approve. Default 10 000 matches the ADR. --
+    tag_bulk_two_person_threshold: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="10000"
     )
     # -- Sprint 33 QW6: per-tenant branding (NULL = use system defaults).
     # See docs/design/reference-design-remediation.md §3.3. --
@@ -1037,3 +1043,52 @@ class TagTransferModel(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PendingBulkOperationModel(Base):
+    """Pending two-person-rule bulk op (Sprint 50 C3, ADR 028 §Governance #4).
+
+    One row per operator-initiated bulk op whose row count meets or
+    exceeds the tenant's ``tag_bulk_two_person_threshold``. The row
+    stashes the raw CSV bytes (``payload``) plus the C2
+    ``content_hash`` so the approve path can verify the stored
+    payload still matches what the first admin previewed before
+    executing.
+
+    The table is generic: the ``operation`` column discriminates
+    (currently only ``tags.import``; C4 will add
+    ``tags.bulk_patch`` / ``tags.bulk_retire``). The approve
+    endpoint dispatches by ``operation`` to the appropriate
+    executor; one table covers every bulk endpoint.
+
+    State machine: ``pending -> approved -> executed`` is the happy
+    path (``executed`` is set after the actual bulk op succeeds);
+    ``pending -> rejected`` is the deny path; ``pending -> expired``
+    is the timeout path swept lazily on ``approve``.
+    """
+
+    __tablename__ = "pending_bulk_operations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    operation: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    sample: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    payload: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
+    request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

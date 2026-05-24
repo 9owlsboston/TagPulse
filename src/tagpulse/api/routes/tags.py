@@ -28,10 +28,10 @@ Endpoints (current-tenant scope only — no global admin variant this sprint):
   (``in`` / ``out``), ``status``.
 - ``GET  /tag-transfers/{id}``    — viewer+.
 
-The two-person approval shape from ADR 028 §4 lands in Phase C3 —
-this module deliberately keeps the initiation path single-actor so
-the receiving-tenant acknowledgement code can layer on without a
-contract change.
+The two-person approval shape from ADR 028 §Governance #4 lives
+in :mod:`tagpulse.api.routes.bulk_operations` (Sprint 50 C3). The
+transfer-initiation path here remains single-actor; second-party
+acknowledgement for transfers lands in a later phase.
 
 ADR 028 originally specified ``/v1/tenants/{slug}/...`` paths. As
 with ``labels.py`` and ``categories.py``, TagPulse threads tenant
@@ -43,7 +43,7 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
@@ -68,7 +68,7 @@ from tagpulse.core.bulk_confirmation_tokens import (
 from tagpulse.core.tag_import_rate_limit import TAG_IMPORT_LIMITER
 from tagpulse.core.tenant_auth import Tenant, get_current_tenant
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
-from tagpulse.models.database import TenantModel
+from tagpulse.models.database import PendingBulkOperationModel, TenantModel
 from tagpulse.models.schemas import (
     TagCreate,
     TagImportResult,
@@ -84,6 +84,7 @@ from tagpulse.repositories.timescaledb.tags import (
     TimescaleTagRepository,
     TimescaleTagTransferRepository,
 )
+from tagpulse.services import pending_bulk_operations as pending_ops
 from tagpulse.services.tags import normalize_epc_hex, parse_tag_import_csv
 
 router = APIRouter(tags=["tags"])
@@ -359,7 +360,13 @@ async def import_tags(
     - **409** if ``?confirm=<token>`` is supplied but the token
       doesn't match this CSV (content drift, wrong operator,
       wrong tenant, expired, or already consumed).
-    - **201** on a successful confirmed import.
+    - **202** on a confirmed import whose row count meets or
+      exceeds ``tenants.tag_bulk_two_person_threshold`` (default
+      10 000) per ADR 028 §Governance #4. The CSV is stashed in
+      ``pending_bulk_operations`` and ``pending_id`` is returned;
+      a second admin must POST ``/bulk-operations/{pending_id}/approve``
+      to execute. Nothing is written to ``tags`` yet.
+    - **201** on a successful confirmed import below the threshold.
 
     Every confirmed import writes one ``tag.bulk_imported`` audit
     log entry covering the whole batch. Phase C5 unifies this
@@ -485,24 +492,60 @@ async def import_tags(
             },
         )
 
-    # --- 7. Real import: 201, single bulk insert ---
-    repo = _repo(session)
-    created, skipped = await repo.bulk_create(user.tenant_id, epc_hexes)
-    request_id = uuid.uuid4()
-    await AuditLogger(session=session).log(
-        user.tenant_id,
-        "tag.bulk_imported",
-        "tag",
-        request_id,
-        changes={
-            "rows_total": total,
-            "rows_created": created,
-            "rows_skipped": skipped,
-            "request_id": str(request_id),
-            "source": "csv_import",
-            "confirmation_token": confirm,
-        },
-        user_id=user.user_id,
+    # --- 7a. Two-person rule (ADR 028 §Governance #4) ---
+    # If this CSV is at or above the tenant's threshold, don't
+    # execute now — persist a pending row and return 202. The
+    # second admin completes the op via POST /bulk-operations/{id}/approve.
+    threshold = tenant_row.tag_bulk_two_person_threshold
+    if len(valid_rows) >= threshold:
+        pending = await pending_ops.create_pending(
+            session,
+            tenant_id=user.tenant_id,
+            operation=_IMPORT_OPERATION,
+            requested_by=user.user_id,
+            content_hash=content_hash,
+            row_count=len(valid_rows),
+            sample=sample,
+            payload=raw,
+        )
+        await AuditLogger(session=session).log(
+            user.tenant_id,
+            "tag.bulk_import_requested",
+            "pending_bulk_operation",
+            pending.id,
+            changes={
+                "rows_total": total,
+                "row_count": len(valid_rows),
+                "threshold": threshold,
+                "operation": _IMPORT_OPERATION,
+                "confirmation_token": confirm,
+                "content_hash": content_hash,
+            },
+            user_id=user.user_id,
+        )
+        if response is not None:
+            response.status_code = status.HTTP_202_ACCEPTED
+        return TagImportResult(
+            rows_total=total,
+            rows_created=0,
+            rows_skipped=0,
+            dry_run=False,
+            errors=[],
+            token=confirm,
+            sample=sample,
+            requires_approval=True,
+            pending_id=pending.id,
+        )
+
+    # --- 7b. Sub-threshold: real import, 201, single bulk insert ---
+    created, skipped, request_id = await _execute_tag_import(
+        session,
+        tenant_id=user.tenant_id,
+        epc_hexes=epc_hexes,
+        actor_user_id=user.user_id,
+        confirmation_token=confirm,
+        approved_by=None,
+        pending_id=None,
     )
     if response is not None:
         response.status_code = status.HTTP_201_CREATED
@@ -515,6 +558,109 @@ async def import_tags(
         token=confirm,
         sample=sample,
     )
+
+
+async def _execute_tag_import(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    epc_hexes: list[str],
+    actor_user_id: uuid.UUID | None,
+    confirmation_token: str | None,
+    approved_by: uuid.UUID | None,
+    pending_id: uuid.UUID | None,
+    request_id: uuid.UUID | None = None,
+) -> tuple[int, int, uuid.UUID]:
+    """Perform the actual CSV-backed bulk insert + audit-log entry.
+
+    Shared between the direct sub-threshold path (called from
+    :func:`import_tags`) and the two-person approve path (called
+    from :mod:`tagpulse.api.routes.bulk_operations` via the
+    ``tags.import`` executor registered below). Keeps the audit
+    log shape in one place so Phase C5's unified shape is a one-line
+    change.
+    """
+    repo = _repo(session)
+    created, skipped = await repo.bulk_create(tenant_id, epc_hexes)
+    rid = request_id or uuid.uuid4()
+    changes: dict[str, Any] = {
+        "rows_total": len(epc_hexes),
+        "rows_created": created,
+        "rows_skipped": skipped,
+        "request_id": str(rid),
+        "source": "csv_import",
+        "confirmation_token": confirmation_token,
+    }
+    if approved_by is not None:
+        changes["approved_by"] = str(approved_by)
+    if pending_id is not None:
+        changes["pending_id"] = str(pending_id)
+    await AuditLogger(session=session).log(
+        tenant_id,
+        "tag.bulk_imported",
+        "tag",
+        rid,
+        changes=changes,
+        user_id=actor_user_id,
+    )
+    return created, skipped, rid
+
+
+async def _tag_import_executor(
+    session: AsyncSession,
+    row: PendingBulkOperationModel,
+    request_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Pending-bulk-op executor for ``tags.import``.
+
+    Called from :func:`pending_ops.approve` after the approval-side
+    invariants pass (not-self-approval, not-expired, content not
+    tampered). Re-parses the stored CSV bytes and runs the same
+    bulk insert path as the direct route. ``row.requested_by`` is
+    the audit actor (the original requester is the one whose intent
+    the system is honouring); ``approved_by`` is plumbed through as
+    a separate audit-log key.
+    """
+    valid_rows, errors = parse_tag_import_csv(row.payload)
+    if errors:
+        # Should be impossible — the pending row only exists because
+        # the original parse was clean and the content hash matched
+        # on approve. Surface loudly if it ever fires.
+        raise RuntimeError(f"pending tag-import payload failed re-parse: {len(errors)} errors")
+    epc_hexes = [r.epc_hex for r in valid_rows]
+    created, skipped, _ = await _execute_tag_import(
+        session,
+        tenant_id=row.tenant_id,
+        epc_hexes=epc_hexes,
+        actor_user_id=row.requested_by,
+        confirmation_token=None,
+        approved_by=row.decided_by,
+        pending_id=row.id,
+        request_id=request_id,
+    )
+    return {
+        "rows_created": created,
+        "rows_skipped": skipped,
+        "request_id": str(request_id),
+    }
+
+
+# Register the executor at import time so /bulk-operations/{id}/approve
+# can find it as soon as the app starts. Sprint 50 C4 will add
+# ``tags.bulk_patch`` / ``tags.bulk_retire`` next to this line.
+pending_ops.register_executor(_IMPORT_OPERATION, _tag_import_executor)
+
+
+def import_payload_content_hash(payload: bytes) -> str:
+    """Re-hash a stored CSV payload for the approve-path tamper guard.
+
+    Exposed for :mod:`tagpulse.api.routes.bulk_operations` (which
+    passes it as ``content_hasher`` into :func:`pending_ops.approve`)
+    so the hashing logic lives next to :func:`_content_hash` rather
+    than being duplicated in the bulk-operations module.
+    """
+    valid_rows, _errors = parse_tag_import_csv(payload)
+    return _content_hash([r.epc_hex for r in valid_rows])
 
 
 # ---------------------------------------------------------------------------

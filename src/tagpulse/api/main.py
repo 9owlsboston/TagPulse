@@ -17,6 +17,7 @@ from tagpulse.api.routes.admin_ops import router as admin_ops_router
 from tagpulse.api.routes.analytics import router as analytics_router
 from tagpulse.api.routes.assets import router as assets_router
 from tagpulse.api.routes.auth import router as auth_router
+from tagpulse.api.routes.bulk_operations import router as bulk_operations_router
 from tagpulse.api.routes.categories import router as categories_router
 from tagpulse.api.routes.devices import router as devices_router
 from tagpulse.api.routes.health import router as health_router
@@ -408,3 +409,4 @@ app.include_router(tenant_branding_router)
 app.include_router(categories_router)
 app.include_router(labels_router)
 app.include_router(tags_router)
+app.include_router(bulk_operations_router)
