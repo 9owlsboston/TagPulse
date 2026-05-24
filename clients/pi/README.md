@@ -191,7 +191,7 @@ to tell it which CA to trust:
 ```bash
 # in .tp_paho_edge.env
 BROKER_PORT=8883
-TLS_CA=/abs/path/to/ca.pem    # the dev CA pem distributed out-of-band
+TLS_CA=/abs/path/to/ca.pem    # the dev CA pem; pull from KV (below)
 ```
 
 Or via flag:
@@ -200,14 +200,24 @@ Or via flag:
 python3 examples/paho_smoke_publisher.py --once --tls-ca /abs/path/to/ca.pem
 ```
 
+**Pulling the dev CA pem from Key Vault** (KV is `publicNetworkAccess=Disabled`,
+so this runs as an in-VNet Container Apps job — expect 30s–3min of silence):
+
+```bash
+mkdir -p ~/.tagpulse
+scripts/azd-kv-get.sh dev mqtt-tls-ca > ~/.tagpulse/dev-mqtt-ca.pem
+chmod 600 ~/.tagpulse/dev-mqtt-ca.pem
+# then in .tp_paho_edge.env: TLS_CA=$HOME/.tagpulse/dev-mqtt-ca.pem
+```
+
 Notes:
 - The dev broker uses a **self-signed CA** (`tagpulse-dev-mqtt-ca`). The
   system CA bundle does **not** trust it — you must point `TLS_CA` /
-  `--tls-ca` at the pem the platform team gave you.
+  `--tls-ca` at the pem you pulled above.
 - For a quick handshake-debug run only (skips verification — never use in
   prod or against a broker you don't operate): `--insecure`.
 - Port `1883` (plaintext) remains open on dev for backward compatibility;
-  drop the `BROKER_PORT` line and `TLS_CA` to fall back to it.
+  set `BROKER_PORT=1883` and drop `TLS_CA` to fall back to it.
 
 ### Simulating device movement
 
