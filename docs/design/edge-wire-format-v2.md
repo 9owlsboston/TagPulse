@@ -383,6 +383,53 @@ Two-stage lookup, both per-tenant:
 
 Failure → reject, DLQ with `reason='device_not_found'`. The MQTT JWT's `device_id` claim MUST match the resolved `device_id` — mismatch → reject, DLQ with `reason='sn_jwt_mismatch'`. This is the load-bearing identity guarantee; the wire `sn` is for human convenience, the JWT is the trust root.
 
+### 4.6 Downstream fan-out to `telemetry_readings`
+
+§4.4 stops at the `tag_reads` insert. For tag-borne sensor fields
+(`cnt`, `tmp`, `hum`), there is one more hop the v2 spec relies on but
+does not itself define: `IngestionService._mirror_tag_borne_sensors`
+([`src/tagpulse/ingestion/service.py`](../../src/tagpulse/ingestion/service.py))
+writes one `telemetry_readings` row per **opted-in subject × tag-borne
+metric**, using a fixed mapping:
+
+| `tag_reads.sensor_data` key | `telemetry_readings.metric_name` | `unit`    |
+|-----------------------------|----------------------------------|-----------|
+| `read_count`                | `read_count`                     | `count`   |
+| `avg_temp_c`                | `avg_temperature`                | `degC`    |
+| `avg_humidity_pct`          | `avg_humidity_pct`               | `percent` |
+
+Each mirrored row carries `source = "tag"` and is published as
+`Topic.TELEMETRY_RECORDED` after `session.commit()`, which is what the
+`telemetry.threshold` rule engine subscribes to
+([ADR-015 §2](../adr/015-telemetry-rules-and-deprecation.md)).
+
+**Subject resolution** uses the EPC → `(subject_kind, subject_id)`
+cached bindings (`asset_tag_bindings`, `stock_items`, `lots`). One v2
+`t=1` carrying `tmp` on an EPC bound to both a stock_item and a lot
+produces **two** `telemetry_readings` rows (one per subject) and **two**
+`TELEMETRY_RECORDED` events.
+
+**Gating** is per-tenant via `telemetry_subject_kinds` (TTL-cached
+`SUBJECT_KINDS_CACHE`). A tenant that has not opted `stock_item` in
+will not get stock_item-scoped telemetry rows even when the EPC binds
+to one.
+
+**Telemetry models are not consulted on this path.** The wire→metric
+mapping above is fixed by this spec. Telemetry models
+([ADR-013](../adr/013-telemetry-subject-scoping.md)) remain the source
+of truth for:
+
+1. external telemetry validation (`POST /telemetry/readings/ingest`,
+   MQTT `devices/{id}/telemetry`), and
+2. the metric-name dropdown in the rule-creation UI — operators
+   building a `telemetry.threshold` rule on `avg_temperature` see the
+   same name that v2-derived rows carry, so cold-chain rules on
+   sensor-tag telemetry work without any extra producer.
+
+See [ADR-015 §2](../adr/015-telemetry-rules-and-deprecation.md) for
+the full four-producer table; the v2 path is producer #1
+(`_mirror_tag_borne_sensors`, `source="tag"`).
+
 ---
 
 ## 5. Examples

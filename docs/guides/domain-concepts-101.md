@@ -257,6 +257,46 @@ Device → tag_reads → binding (EPC) → StockItem → Lot → Product
 
 Subject-scoped telemetry fan-out (Sprint 19 work) writes the same temperature reading to **three telemetry rows**: one keyed on `device`, one on `stock_item`, one on `lot` — so a cold-chain rule on `lot.temperature_c > 8°C` fires for **the lot as a whole** even though only one unit's tag was scanned.
 
+#### How a sensor reading on a tag becomes an alert
+
+```
+   Sensor-tag MQTT (v2)                External telemetry
+   tenants/<t>/devices/<d>/tag-reads   tenants/<t>/devices/<d>/telemetry
+   {epc, ts, tmp, hum, cnt, ...}       {subject_kind, metric, value, ...}
+              |                                    |
+              v                                    |
+   MqttSubscriber (v2 dispatch)                    |
+              |                                    |
+              v                                    |
+   IngestionService.ingest_reading                 |
+              |                                    |
+     +--------+--------+                           |
+     v                 v                           |
+   tag_reads        _mirror_tag_borne_sensors      |
+   tag_presence            |                       |
+                           v                       v
+                   +----------------------------------+
+                   |       telemetry_readings         |
+                   | (subject_kind, metric, value...) |
+                   +----------------+-----------------+
+                                    v
+                       Topic.TELEMETRY_RECORDED
+                                    v
+                    rules engine (telemetry.threshold)
+                                    v
+                                  alert
+```
+
+Two pipes, one bridge. Sensor-tag readings (cold-chain stickers, etc.)
+ride the v2 tag-reads pipe and get mirrored into `telemetry_readings`
+automatically — you do **not** stand up a second telemetry producer
+for them. External telemetry (gateways, separate sensor devices) uses
+the dedicated telemetry pipe. Both converge at `telemetry_readings`,
+and a `telemetry.threshold` rule on `avg_temperature` fires regardless
+of which pipe the value came in on. The wire→metric mapping for the
+v2 path is fixed by [edge-wire-format-v2 §4.6](../design/edge-wire-format-v2.md);
+the full four-producer list is in [ADR-015 §2](../adr/015-telemetry-rules-and-deprecation.md).
+
 ---
 
 ## End-to-end workflow comparison

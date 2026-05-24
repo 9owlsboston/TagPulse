@@ -67,7 +67,7 @@ the same `Event`:
 
 | Producer                                                  | Source value | Subject kind   |
 |-----------------------------------------------------------|--------------|----------------|
-| `IngestionService._mirror_tag_borne_sensors` (fan-out)    | `"tag"`      | asset/lot/stock_item |
+| `IngestionService._mirror_tag_borne_sensors` (fan-out from v1 HTTP **and** v2 MQTT `tag-reads`; see [edge-wire-format-v2 §4.6](../design/edge-wire-format-v2.md)) | `"tag"` | asset/lot/stock_item |
 | `POST /telemetry/readings/ingest`                         | `"external"` | any            |
 | `MqttSubscriber._handle_subject_telemetry`                | `"external"` | any            |
 | `TelemetryService._process_reading_with_response` + `ingest_location` | `"device"` | device         |
