@@ -37,6 +37,7 @@ import asyncpg
 import httpx
 
 from tagpulse.core.user_auth import generate_api_key
+from tagpulse.services.tags import RESERVED_LABEL_KEYS
 
 API_URL = os.environ.get("TAGPULSE_API_URL", "http://localhost:8000")
 DB_URL = os.environ.get(
@@ -80,12 +81,10 @@ DEFAULT_ADMIN_NAME = "Admin"
 # labels, not a table"; Sprint 50 Phase A3). Migration 045 backfills these
 # for existing tenants; this script's upsert_tenant() seeds them for new
 # tenants the same way the future tenant-provisioning service will.
-_RESERVED_TAG_BATCH_LABEL_KEYS: tuple[str, ...] = (
-    "batch",
-    "batch.received_at",
-    "batch.description",
-    "batch.supplier",
-)
+# The canonical key set lives on :data:`tagpulse.services.tags.RESERVED_LABEL_KEYS`
+# (the labels-API enforcement also reads from there) — imported above to
+# keep this script as the single source of truth's *consumer*, never a
+# parallel definition.
 
 
 async def _seed_reserved_tag_labels(conn: asyncpg.Connection, tenant_id: UUID) -> None:
@@ -94,7 +93,7 @@ async def _seed_reserved_tag_labels(conn: asyncpg.Connection, tenant_id: UUID) -
     Idempotent — uses WHERE NOT EXISTS against the lower(key) functional
     unique index from migration 039. Safe to call on every upsert.
     """
-    for key in _RESERVED_TAG_BATCH_LABEL_KEYS:
+    for key in sorted(RESERVED_LABEL_KEYS):
         await conn.execute(
             """
             INSERT INTO labels (tenant_id, entity_type, key, created_at, updated_at)
