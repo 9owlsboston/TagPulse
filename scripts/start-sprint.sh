@@ -70,6 +70,25 @@ git pull --ff-only
 echo "==> Creating branch $branch"
 git checkout -b "$branch"
 
+# Bump the docs/roadmap.md current-sprint badge so the rest of the org
+# always knows which sprint is live. Idempotent — re-running on a branch
+# that already bumped the badge is a no-op. README.md just points at this
+# badge, so this single edit keeps both docs in sync.
+roadmap="docs/roadmap.md"
+if [[ -f "$roadmap" ]] && grep -q "current-sprint:start" "$roadmap"; then
+    readable_topic="${topic//-/ }"
+    new_badge="**Current sprint:** ${NN} — ${readable_topic} · branch \`${branch}\` (full scope lands in §sprint-${NN} during the sprint)."
+    awk -v new="$new_badge" '
+        /<!-- current-sprint:start -->/ { print; print new; in_block=1; next }
+        /<!-- current-sprint:end -->/   { in_block=0 }
+        !in_block { print }
+    ' "$roadmap" > "${roadmap}.tmp" && mv "${roadmap}.tmp" "$roadmap"
+    if ! git diff --quiet -- "$roadmap"; then
+        echo "==> Bumped current-sprint badge in $roadmap"
+        git add "$roadmap"
+    fi
+fi
+
 if [[ -n "$stash_ref" ]]; then
     echo "==> Popping carried changes onto $branch"
     git stash pop
