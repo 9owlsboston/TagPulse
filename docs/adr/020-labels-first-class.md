@@ -2,7 +2,7 @@
 
 - Status: **Accepted (Sprint 35, May 2026)** — ratified at the start of the implementing sprint; the Open Questions section is closed inline below.
 - Implements: gap 2.2 in the external schema/API audit notes (held locally)
-- Related: [reference-design-remediation plan](../design/reference-design-remediation.md), [data-models.md](../data-models.md) (`metadata` JSONB on every tenant table), ADR [019 Categories](019-categories.md) (sibling catalog pattern; implementation template), ADR [021 Configurable Sensing Events](021-configurable-sensing-events.md) (downstream consumer — Label filters in event scoping), ADR [023 Outbound Connections](023-outbound-connections-mqtt-kafka.md) (downstream consumer — envelope `labels[]` field, gap 2.9)
+- Related: [reference-design-remediation plan](../design/reference-design-remediation.md), [data-models.md](../data-models.md) (`metadata` JSONB on every tenant table), ADR [019 Categories](019-categories.md) (sibling catalog pattern; implementation template), ADR [021 Configurable Sensing Events](021-configurable-sensing-events.md) (downstream consumer — Label filters in event scoping), ADR [023 Outbound Connections](023-outbound-connections-mqtt-kafka.md) (downstream consumer — envelope `labels[]` field, gap 2.9), ADR [028 Tags as a first-class entity](028-tags-as-first-class-entity.md) (downstream consumer — reserves the `batch.*` key namespace on `tags` entities; see ADR 028 §"Batches: labels, not a table")
 
 ## Context
 
