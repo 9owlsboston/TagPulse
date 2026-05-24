@@ -9427,6 +9427,107 @@
         ]
       }
     },
+    "/bulk-operations": {
+      "get": {
+        "description": "List pending bulk operations for the current tenant.\n\nPowers the Phase F admin inbox UI (`/admin/pending-bulk-operations`).\nResults are ordered newest-first. The ``payload`` bytes are\nintentionally omitted from the response model \u2014 operator B reviews\nby ``sample`` + ``row_count`` (the same preview operator A saw on\ndry-run) and fetches the full payload only via the per-id GET.",
+        "operationId": "list_pending_bulk_operations_bulk_operations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(pending|approved|rejected|executed|expired)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "operation",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Operation"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PendingBulkOperationResponse"
+                  },
+                  "title": "Response List Pending Bulk Operations Bulk Operations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List Pending Bulk Operations",
+        "tags": [
+          "bulk-operations"
+        ]
+      }
+    },
     "/bulk-operations/{pending_id}": {
       "get": {
         "description": "Fetch a queued bulk op so the reviewing admin can inspect it.",
