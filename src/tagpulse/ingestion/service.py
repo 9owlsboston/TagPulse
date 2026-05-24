@@ -339,24 +339,32 @@ class IngestionService:
         read: TagReadCreate,
         tag_read_id: uuid.UUID,
     ) -> None:
-        """Mirror declared numeric tag_data keys into telemetry rows.
+        """Mirror declared numeric tag-borne sensor values into telemetry rows.
 
         Per [docs/design/rfid-tag-data-model.md §6 / D4]: tag-borne sensor
         readings are written to the telemetry pipeline with provenance
         metadata so analytics treat them uniformly with device-borne
         metrics.
 
+        Source columns (Sprint 53 phase I): numeric values are collected
+        from BOTH ``read.sensor_data`` (the structured, typed sensor blob
+        populated by wire-format parsers — e.g. v2 t=0/t=1 ``cnt``/``tmp``
+        /``hum`` mapped to ``read_count``/``temperature_c``/``humidity_pct``
+        in :func:`tagpulse.ingestion.mqtt_subscriber._wm_sensor_data`) and
+        ``read.tag_data`` (free-form tag memory inlined by HTTP clients
+        and v1 callers). Keys prefixed with ``_`` are skipped. On
+        collision, ``tag_data`` overrides ``sensor_data`` (explicit
+        client-supplied value wins).
+
         Sprint 19 fan-out: in addition to the device-scoped
         ``telemetry_readings`` row (subject_kind='device') written via
-        ``telemetry_service.ingest_reading``, each numeric tag_data key
-        also lands as one ``telemetry_readings`` row per resolved
-        subject (asset / stock_item / lot) the tenant has opted into
-        via ``tenants.telemetry_subject_kinds``. Resolution is best-
-        effort: an unresolved subject is logged at INFO level
+        ``telemetry_service.ingest_reading``, each numeric key also lands
+        as one ``telemetry_readings`` row per resolved subject (asset /
+        stock_item / lot) the tenant has opted into via
+        ``tenants.telemetry_subject_kinds``. Resolution is best-effort:
+        an unresolved subject is logged at INFO level
         (``telemetry.subject_unresolved``) and skipped — never an error.
         """
-        if not read.tag_data:
-            return
         provenance: dict[str, Any] = {
             "source": "tag",
             "tag_read_id": str(tag_read_id),
@@ -366,11 +374,18 @@ class IngestionService:
         if read.identity and read.identity.tid:
             provenance["tid"] = read.identity.tid
 
-        numeric_items = [
-            (k, float(v))
-            for k, v in read.tag_data.items()
-            if not k.startswith("_") and isinstance(v, int | float)
-        ]
+        # Collect numerics from sensor_data first, then let tag_data override on key collision.
+        merged: dict[str, float] = {}
+        for blob in (read.sensor_data, read.tag_data):
+            if not blob:
+                continue
+            for k, v in blob.items():
+                if k.startswith("_"):
+                    continue
+                if isinstance(v, bool) or not isinstance(v, int | float):
+                    continue
+                merged[k] = float(v)
+        numeric_items = list(merged.items())
         if not numeric_items:
             return
 

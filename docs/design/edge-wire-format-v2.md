@@ -390,13 +390,22 @@ Failure → reject, DLQ with `reason='device_not_found'`. The MQTT JWT's `device
 does not itself define: `IngestionService._mirror_tag_borne_sensors`
 ([`src/tagpulse/ingestion/service.py`](../../src/tagpulse/ingestion/service.py))
 writes one `telemetry_readings` row per **opted-in subject × tag-borne
-metric**, using a fixed mapping:
+metric**. The bridge merges numeric values from both
+`tag_reads.sensor_data` (populated by the v2 parser
+[`_wm_sensor_data`](../../src/tagpulse/ingestion/mqtt_subscriber.py))
+and `tag_reads.tag_data` (used by HTTP / v1 clients), with
+`tag_data` overriding on key collision. Wire → storage → telemetry
+mapping for v2:
 
-| `tag_reads.sensor_data` key | `telemetry_readings.metric_name` | `unit`    |
-|-----------------------------|----------------------------------|-----------|
-| `read_count`                | `read_count`                     | `count`   |
-| `avg_temp_c`                | `avg_temperature`                | `degC`    |
-| `avg_humidity_pct`          | `avg_humidity_pct`               | `percent` |
+| Wire field (v2)  | `tag_reads.sensor_data` key | `telemetry_readings.metric_name` | Unit (by convention) |
+|------------------|-----------------------------|----------------------------------|----------------------|
+| `cnt`            | `read_count`                | `read_count`                     | count                |
+| `tmp`            | `temperature_c`             | `temperature_c`                  | °C                   |
+| `hum`            | `humidity_pct`              | `humidity_pct`                   | % RH                 |
+
+Units are conventional (encoded in the key suffix) — there is no
+explicit `unit` column on `telemetry_readings` today. Rule definitions
+and chart presets must agree on the key↔unit convention; see §8 Q12.
 
 Each mirrored row carries `source = "tag"` and is published as
 `Topic.TELEMETRY_RECORDED` after `session.commit()`, which is what the
@@ -415,14 +424,15 @@ will not get stock_item-scoped telemetry rows even when the EPC binds
 to one.
 
 **Telemetry models are not consulted on this path.** The wire→metric
-mapping above is fixed by this spec. Telemetry models
+mapping above is fixed by the wire-format parser (`_wm_sensor_data`)
+plus the bridge. Telemetry models
 ([ADR-013](../adr/013-telemetry-subject-scoping.md)) remain the source
 of truth for:
 
 1. external telemetry validation (`POST /telemetry/readings/ingest`,
    MQTT `devices/{id}/telemetry`), and
 2. the metric-name dropdown in the rule-creation UI — operators
-   building a `telemetry.threshold` rule on `avg_temperature` see the
+   building a `telemetry.threshold` rule on `temperature_c` see the
    same name that v2-derived rows carry, so cold-chain rules on
    sensor-tag telemetry work without any extra producer.
 

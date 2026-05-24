@@ -236,6 +236,73 @@ async def test_subject_fanout_writes_one_row_per_opted_in_subject() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subject_fanout_mirrors_v2_sensor_data_blob() -> None:
+    """Sprint 53 phase I: v2 wire-mapped ``sensor_data`` (no ``tag_data``)
+    must also fan out to subject-scoped telemetry rows.
+
+    The MQTT v2 parser puts ``cnt``/``tmp``/``hum`` into ``sensor_data``
+    as ``read_count``/``temperature_c``/``humidity_pct`` (see
+    ``mqtt_subscriber._wm_sensor_data``). Before phase I the bridge
+    only iterated ``tag_data``, so v2-borne sensor reads never reached
+    ``telemetry_readings`` and ``telemetry.threshold`` rules could not
+    fire on them.
+    """
+    asset_id = uuid4()
+    tenant_id = uuid4()
+    readings_repo = FakeTelemetryReadingsRepo()
+    service = IngestionService(
+        repo=FakeTagReadRepo(),
+        event_bus=AsyncEventBus(capacity=100),
+        binding_repo=FakeBindingRepo(asset_id=asset_id),  # type: ignore[arg-type]
+        stock_repo=FakeStockRepo(stock_id=None, lot_id=None),  # type: ignore[arg-type]
+        tenant_repo=FakeTenantRepo(kinds=["device", "asset"]),  # type: ignore[arg-type]
+        telemetry_readings_repo=readings_repo,  # type: ignore[arg-type]
+    )
+    read = TagReadCreate(
+        device_id=uuid4(),
+        tag_id="EPC-V2",
+        timestamp=datetime.now(UTC),
+        signal_strength=-48.0,
+        sensor_data={"read_count": 2, "temperature_c": 23.45, "humidity_pct": 41.2},
+        identity=Identity(epc="urn:epc:id:sgtin:00000.1.2", epc_hex=None),
+    )
+    await service._mirror_tag_borne_sensors(tenant_id, read, tag_read_id=uuid4())
+    metrics = sorted(i["metric_name"] for i in readings_repo.inserts)
+    assert metrics == ["humidity_pct", "read_count", "temperature_c"]
+    assert all(i["subject_kind"] == "asset" for i in readings_repo.inserts)
+    assert all(i["source"] == "tag" for i in readings_repo.inserts)
+
+
+@pytest.mark.asyncio
+async def test_subject_fanout_tag_data_overrides_sensor_data_on_collision() -> None:
+    """When the same metric key appears in both blobs, ``tag_data`` wins —
+    explicit client-supplied value beats the wire-parser default."""
+    asset_id = uuid4()
+    readings_repo = FakeTelemetryReadingsRepo()
+    service = IngestionService(
+        repo=FakeTagReadRepo(),
+        event_bus=AsyncEventBus(capacity=100),
+        binding_repo=FakeBindingRepo(asset_id=asset_id),  # type: ignore[arg-type]
+        stock_repo=FakeStockRepo(stock_id=None, lot_id=None),  # type: ignore[arg-type]
+        tenant_repo=FakeTenantRepo(kinds=["device", "asset"]),  # type: ignore[arg-type]
+        telemetry_readings_repo=readings_repo,  # type: ignore[arg-type]
+    )
+    read = TagReadCreate(
+        device_id=uuid4(),
+        tag_id="EPC-COL",
+        timestamp=datetime.now(UTC),
+        signal_strength=-50.0,
+        sensor_data={"temperature_c": 4.0},
+        tag_data={"temperature_c": 9.9},
+        identity=Identity(epc="urn:epc:id:sgtin:00000.1.3", epc_hex=None),
+    )
+    await service._mirror_tag_borne_sensors(uuid4(), read, tag_read_id=uuid4())
+    rows = [i for i in readings_repo.inserts if i["metric_name"] == "temperature_c"]
+    assert len(rows) == 1, "no double-fan-out on key collision"
+    assert rows[0]["metric_value"] == 9.9
+
+
+@pytest.mark.asyncio
 async def test_subject_fanout_skips_when_tenant_not_opted_in() -> None:
     """default ``["device"]`` only → zero subject inserts."""
     readings_repo = FakeTelemetryReadingsRepo()
