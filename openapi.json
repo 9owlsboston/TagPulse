@@ -2190,7 +2190,8 @@
               "site",
               "zone",
               "device",
-              "category"
+              "category",
+              "tag"
             ],
             "title": "Entity Type",
             "type": "string"
@@ -2243,7 +2244,8 @@
               "site",
               "zone",
               "device",
-              "category"
+              "category",
+              "tag"
             ],
             "title": "Entity Type",
             "type": "string"
@@ -2300,7 +2302,8 @@
               "site",
               "zone",
               "device",
-              "category"
+              "category",
+              "tag"
             ],
             "title": "Entity Type",
             "type": "string"
@@ -4874,6 +4877,45 @@
         "title": "StockMovementResponse",
         "type": "object"
       },
+      "TagCreate": {
+        "description": "Create one tag registry row (Phase B, single-row path).\n\n``source`` is constrained to operator-driven values \u2014 ``transfer_in``\nis reserved for the transfer-completion path that writes the row\nserver-side, not via this endpoint.",
+        "properties": {
+          "epc_hex": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[0-9A-F]{16,128}$",
+            "title": "Epc Hex",
+            "type": "string"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "source": {
+            "default": "api",
+            "enum": [
+              "csv_import",
+              "api",
+              "backfill"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "epc_hex"
+        ],
+        "title": "TagCreate",
+        "type": "object"
+      },
       "TagDataMappingCreate": {
         "properties": {
           "scope_id": {
@@ -5336,6 +5378,265 @@
           "created_at"
         ],
         "title": "TagReadResponse",
+        "type": "object"
+      },
+      "TagResponse": {
+        "description": "Persisted tag registry row.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "epc_hex": {
+            "title": "Epc Hex",
+            "type": "string"
+          },
+          "first_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seen At"
+          },
+          "gs1_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gs1 Uri"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "metadata_": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "source": {
+            "enum": [
+              "csv_import",
+              "api",
+              "backfill",
+              "transfer_in"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "registered",
+              "active",
+              "retired",
+              "defective",
+              "transferred_out"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "epc_hex",
+          "gs1_uri",
+          "status",
+          "source",
+          "first_seen_at",
+          "last_seen_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TagResponse",
+        "type": "object"
+      },
+      "TagTransferRequest": {
+        "description": "Initiate a cross-tenant transfer of one or more EPCs.\n\nAll EPCs in one request share a server-generated ``request_id``.\nThe receiving tenant is identified by slug. Phase B creates rows\nin ``status='requested'`` only \u2014 the acknowledgement /\ncompletion path lands in a later phase.",
+        "properties": {
+          "epcs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Epcs",
+            "type": "array"
+          },
+          "to_tenant_slug": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "To Tenant Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to_tenant_slug",
+          "epcs"
+        ],
+        "title": "TagTransferRequest",
+        "type": "object"
+      },
+      "TagTransferResponse": {
+        "description": "Persisted tag_transfer row (one EPC of a request).",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "epc_hex": {
+            "title": "Epc Hex",
+            "type": "string"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "from_tenant_id": {
+            "format": "uuid",
+            "title": "From Tenant Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by": {
+            "format": "uuid",
+            "title": "Requested By",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "requested",
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "to_tenant_id": {
+            "format": "uuid",
+            "title": "To Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "request_id",
+          "from_tenant_id",
+          "to_tenant_id",
+          "epc_hex",
+          "status",
+          "failure_reason",
+          "requested_by",
+          "requested_at",
+          "completed_at"
+        ],
+        "title": "TagTransferResponse",
+        "type": "object"
+      },
+      "TagUpdate": {
+        "description": "Patch a tag registry row.\n\nOnly ``status`` and ``metadata`` are operator-mutable here. The\nADR-028 status-transition rules are enforced in the service\nlayer; the schema accepts the full enum so an admin can flip\n``registered`` / ``active`` \u2192 ``retired`` / ``defective``. The\nregistrar worker is the only writer that may set ``active`` and\nthe transfer flow is the only writer that may set\n``transferred_out`` \u2014 both rejected here in the service layer.\n\n``epc_hex`` is immutable (it's the natural key). ``source``,\n``first_seen_at``, ``last_seen_at``, ``gs1_uri`` are all\nsystem-owned. There is intentionally no ``batch_id`` field \u2014\nbatch grouping goes through the ``entity_labels`` API per\nADR 028 OQ 5.",
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "registered",
+                  "active",
+                  "retired",
+                  "defective",
+                  "transferred_out"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "TagUpdate",
         "type": "object"
       },
       "TelemetryAggregateBucket": {
@@ -10072,7 +10373,8 @@
                     "site",
                     "zone",
                     "device",
-                    "category"
+                    "category",
+                    "tag"
                   ],
                   "type": "string"
                 },
@@ -13081,6 +13383,508 @@
         "summary": "Unique Tags Per Window",
         "tags": [
           "query"
+        ]
+      }
+    },
+    "/tag-transfers": {
+      "get": {
+        "operationId": "list_tag_transfers_tag_transfers_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(in|out)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Direction"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagTransferResponse"
+                  },
+                  "title": "Response List Tag Transfers Tag Transfers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List Tag Transfers",
+        "tags": [
+          "tags"
+        ]
+      },
+      "post": {
+        "description": "Initiate a cross-tenant transfer.\n\nValidation:\n  - Every EPC must be owned by the calling tenant and in\n    ``status='active'`` (only active tags can transfer out;\n    ``registered`` tags haven't been observed yet and\n    terminal-state tags can't move).\n  - The receiving tenant must exist and be ``active``.\n  - Self-transfers (``from == to``) are rejected.\n\nOn success, writes one ``tag_transfers`` row per EPC, all\nsharing one server-generated ``request_id``, in\n``status='requested'``. Phase B does **not** flip the source\ntag's status \u2014 that happens at acknowledgement / completion in\nthe receiving-tenant flow (Phase C3).",
+        "operationId": "create_tag_transfer_tag_transfers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagTransferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagTransferResponse"
+                  },
+                  "title": "Response Create Tag Transfer Tag Transfers Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Create Tag Transfer",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tag-transfers/{transfer_id}": {
+      "get": {
+        "operationId": "get_tag_transfer_tag_transfers__transfer_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transfer_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Transfer Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagTransferResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Tag Transfer",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags": {
+      "get": {
+        "description": "List the calling tenant's tag registry rows.",
+        "operationId": "list_tags_tags_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "epc_prefix",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Epc Prefix"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bound",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Bound"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagResponse"
+                  },
+                  "title": "Response List Tags Tags Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List Tags",
+        "tags": [
+          "tags"
+        ]
+      },
+      "post": {
+        "description": "Create a tag in ``status='registered'``.\n\nThe schema's regex runs against the *normalised* value so we\nrewrite the payload before handing it to the repo. ``gs1_uri``\nis derived in the repo from the same normalised value.",
+        "operationId": "create_tag_tags_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Create Tag",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags/{epc_hex}": {
+      "get": {
+        "description": "Lookup by canonical EPC hex (case-insensitive in path).",
+        "operationId": "get_tag_by_epc_tags__epc_hex__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epc_hex",
+            "required": true,
+            "schema": {
+              "title": "Epc Hex",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Tag By Epc",
+        "tags": [
+          "tags"
+        ]
+      }
+    },
+    "/tags/{tag_id}": {
+      "delete": {
+        "description": "Hard-delete a tag. Admin only. 409 if still bound to a stock item.",
+        "operationId": "delete_tag_tags__tag_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tag Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Delete Tag",
+        "tags": [
+          "tags"
+        ]
+      },
+      "patch": {
+        "description": "Patch ``status`` and/or ``metadata``.\n\n``epc_hex`` is intentionally absent from :class:`TagUpdate` \u2014\nit's the natural key. ``batch_id`` / category-style grouping\ngoes through ``POST /tags/{id}/labels`` (per ADR 028 OQ 5).",
+        "operationId": "update_tag_tags__tag_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tag Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Update Tag",
+        "tags": [
+          "tags"
         ]
       }
     },
