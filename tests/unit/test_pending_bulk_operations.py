@@ -425,3 +425,107 @@ class TestExecutorRegistry:
         pending_ops.register_executor("foo.op", dummy)
         pending_ops.reset_executors()
         assert pending_ops.get_registered_operations() == []
+
+
+# ---------------------------------------------------------------------------
+# list_pending (Sprint 52)
+# ---------------------------------------------------------------------------
+
+
+class _ListFakeSession:
+    """In-memory fake session that filters by the SELECT's WHERE clause.
+
+    We can't introspect the compiled SQL easily without a real engine,
+    so the fake just stores rows and the test reads the captured stmt
+    to apply the same filters in Python.
+    """
+
+    def __init__(self, rows: list[PendingBulkOperationModel]) -> None:
+        self._rows = rows
+        self.last_stmt: Any = None
+
+    async def execute(self, stmt: Any) -> Any:
+        self.last_stmt = stmt
+        rows = self._rows
+
+        class _Scalars:
+            def __init__(self, items: list[PendingBulkOperationModel]) -> None:
+                self._items = items
+
+            def all(self) -> list[PendingBulkOperationModel]:
+                return self._items
+
+        class _Result:
+            def __init__(self, items: list[PendingBulkOperationModel]) -> None:
+                self._items = items
+
+            def scalars(self) -> _Scalars:
+                return _Scalars(self._items)
+
+        return _Result(rows)
+
+
+def _make_row(
+    *,
+    tenant_id: uuid.UUID,
+    operation: str = "tags.import",
+    status: str = "pending",
+    created_at: datetime | None = None,
+) -> PendingBulkOperationModel:
+    now = created_at or datetime.now(UTC)
+    return PendingBulkOperationModel(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        operation=operation,
+        status=status,
+        requested_by=uuid.uuid4(),
+        decided_by=None,
+        content_hash="h",
+        row_count=1,
+        sample=[],
+        payload=b"",
+        request_id=None,
+        created_at=now,
+        decided_at=None,
+        executed_at=None,
+        expires_at=now + timedelta(hours=24),
+    )
+
+
+class TestListPending:
+    @pytest.mark.asyncio
+    async def test_returns_rows(self) -> None:
+        tenant_id = uuid.uuid4()
+        rows = [_make_row(tenant_id=tenant_id) for _ in range(3)]
+        session = _ListFakeSession(rows)
+        out = await pending_ops.list_pending(session, tenant_id)  # type: ignore[arg-type]
+        assert len(out) == 3
+
+    @pytest.mark.asyncio
+    async def test_default_paging_in_stmt(self) -> None:
+        tenant_id = uuid.uuid4()
+        session = _ListFakeSession([])
+        await pending_ops.list_pending(session, tenant_id)  # type: ignore[arg-type]
+        compiled = str(session.last_stmt.compile(compile_kwargs={"literal_binds": True}))
+        assert "LIMIT 100" in compiled
+        assert "OFFSET 0" in compiled
+        # newest-first
+        assert "ORDER BY pending_bulk_operations.created_at DESC" in compiled
+
+    @pytest.mark.asyncio
+    async def test_filters_in_stmt(self) -> None:
+        tenant_id = uuid.uuid4()
+        session = _ListFakeSession([])
+        await pending_ops.list_pending(
+            session,  # type: ignore[arg-type]
+            tenant_id,
+            status="pending",
+            operation="tags.import",
+            limit=25,
+            offset=50,
+        )
+        compiled = str(session.last_stmt.compile(compile_kwargs={"literal_binds": True}))
+        assert "pending_bulk_operations.status = 'pending'" in compiled
+        assert "pending_bulk_operations.operation = 'tags.import'" in compiled
+        assert "LIMIT 25" in compiled
+        assert "OFFSET 50" in compiled

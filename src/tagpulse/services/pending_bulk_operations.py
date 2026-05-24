@@ -109,6 +109,35 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+async def list_pending(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    status: str | None = None,
+    operation: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[PendingBulkOperationModel]:
+    """List ``pending_bulk_operations`` rows for a tenant.
+
+    Powers the Phase F admin inbox (``GET /bulk-operations``). Filters
+    are AND-combined; both are optional. Results are ordered
+    ``created_at DESC`` so the inbox shows newest first. ``payload``
+    bytes are NOT projected away here — the route serialises through
+    :class:`PendingBulkOperationResponse` which omits ``payload``, so
+    the bytes never leave the process.
+    """
+    stmt = select(PendingBulkOperationModel).where(
+        PendingBulkOperationModel.tenant_id == tenant_id,
+    )
+    if status is not None:
+        stmt = stmt.where(PendingBulkOperationModel.status == status)
+    if operation is not None:
+        stmt = stmt.where(PendingBulkOperationModel.operation == operation)
+    stmt = stmt.order_by(PendingBulkOperationModel.created_at.desc()).limit(limit).offset(offset)
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def create_pending(
     session: AsyncSession,
     *,

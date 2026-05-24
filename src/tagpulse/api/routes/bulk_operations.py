@@ -5,9 +5,12 @@ a second admin reviews and approves (or rejects) a bulk op that
 operator A queued via ``POST /tags/import`` (or any future bulk
 endpoint whose payload meets ``tenants.tag_bulk_two_person_threshold``).
 
-Endpoints (all admin-only, all tenant-scoped via the standard
-``require_role("admin")`` + RLS plumbing):
+Endpoints (all admin-or-editor, all tenant-scoped via the standard
+``require_role`` + RLS plumbing):
 
+- ``GET  /bulk-operations``              — Sprint 52. Lists pending
+  bulk ops for the current tenant. Filters: ``status``, ``operation``,
+  ``limit``, ``offset``. Powers the Phase F admin inbox UI.
 - ``GET  /bulk-operations/{id}``         — fetch the pending row so
   operator B can review it before deciding. Returns the row's
   metadata (operation, requester, sample, row_count) but
@@ -22,11 +25,6 @@ Endpoints (all admin-only, all tenant-scoped via the standard
   Self-rejection is also blocked (symmetry with approve; the
   requester should ask their colleague to reject for them, which
   keeps the audit trail clean).
-
-The list endpoint (``GET /bulk-operations?status=pending``) is
-intentionally out of scope for C3 — operators query
-``pending_bulk_operations`` directly via the admin UI's existing
-audit-log surface until the C5 unified shape lands.
 """
 
 from __future__ import annotations
@@ -34,7 +32,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -111,6 +109,38 @@ def _outcome_to_http(outcome: pending_ops.PendingDecisionOutcome) -> int:
     if outcome is pending_ops.PendingDecisionOutcome.SELF_APPROVAL:
         return status.HTTP_403_FORBIDDEN
     return status.HTTP_409_CONFLICT
+
+
+@router.get("", response_model=list[PendingBulkOperationResponse])
+async def list_pending_bulk_operations(
+    status_filter: str | None = Query(
+        default=None,
+        alias="status",
+        pattern="^(pending|approved|rejected|executed|expired)$",
+    ),
+    operation: str | None = Query(default=None, min_length=1, max_length=64),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    user: AuthenticatedUser = require_role("admin", "editor"),
+    session: AsyncSession = Depends(get_session),
+) -> list[PendingBulkOperationResponse]:
+    """List pending bulk operations for the current tenant.
+
+    Powers the Phase F admin inbox UI (`/admin/pending-bulk-operations`).
+    Results are ordered newest-first. The ``payload`` bytes are
+    intentionally omitted from the response model — operator B reviews
+    by ``sample`` + ``row_count`` (the same preview operator A saw on
+    dry-run) and fetches the full payload only via the per-id GET.
+    """
+    rows = await pending_ops.list_pending(
+        session,
+        user.tenant_id,
+        status=status_filter,
+        operation=operation,
+        limit=limit,
+        offset=offset,
+    )
+    return [_to_response(row) for row in rows]
 
 
 @router.get("/{pending_id}", response_model=PendingBulkOperationResponse)
