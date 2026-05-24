@@ -1,6 +1,6 @@
 # ADR-028: Tags as a first-class entity
 
-- Status: **Accepted (Sprint 50, May 2026)** — all five open questions resolved inline; ready for implementation.
+- Status: **Implemented (Sprint 50, May 2026)** — all five open questions resolved inline at v0.1–v0.5; full Phase A–E implementation landed under Sprint 50 (`sprint-50/tag-registry` branch). See [Decision history](#decision-history) v1.0 for the per-phase commit / CHANGELOG cross-references.
 - Supersedes in part: the "no `tags` table" position documented in
   [docs/data-models.md §"Where is the tag?"](../data-models.md#where-is-the-tag-and-why-theres-no-tags-table).
   That position remains correct for **read ingestion**; this ADR adds a
@@ -511,3 +511,56 @@ table" in the Decision section for full details.
   Range-optimization for sequential reels deferred under YAGNI.
   **All five open questions now resolved — ADR is ready for
   promotion to Accepted.**
+- v1.0 (2026-05-23, **Implemented**): Sprint 50 Phases A–E
+  shipped on branch `sprint-50/tag-registry`; ADR promoted from
+  Accepted to Implemented under Phase F.
+  - **Phase A — Schema & migration.** `tags`, `tag_transfers`,
+    RLS, `tag_reads.tag_known`, reserved `batch.*` label-key
+    namespace with collision-refusal migration. Migrations
+    043 (`tag_registry`), 044 (`tag_reads_tag_known`), 045
+    (`tag_label_namespace`). Collision runbook:
+    [reserved-label-key-collision.md](../runbooks/reserved-label-key-collision.md).
+  - **Phase B — Read/write API.** `GET/POST/PATCH/DELETE
+    /v1/tenants/{slug}/tags`, `GET /v1/tenants/{slug}/tags/{epc_hex}`,
+    `POST /v1/tenants/{slug}/tag-transfers`. Service layer in
+    `src/tagpulse/services/tags.py`. List filters: `?status`,
+    `?labels[batch]=`, `?epc_prefix`, `?bound`. PATCH does not
+    accept `batch_id` (batches go through `entity_labels`).
+  - **Phase C — Bulk import + governance.** `POST
+    /v1/tenants/{slug}/tags/import` (CSV, 10 000-row cap → 413,
+    per-tenant rate limit `tenants.tag_bulk_import_rate_limit`,
+    dry-run + confirmation token, two-person approval above
+    `tenants.tag_bulk_two_person_threshold` via
+    `pending_bulk_operations`, scope-required filters on bulk
+    mutations, unified audit log entries
+    `tags.import` / `tags.bulk_patch` / `tags.bulk_retire` /
+    `tag-transfers.request`). Migrations 046–048.
+  - **Phase D — Registrar worker + `tag_known` population.**
+    `src/tagpulse/workers/tag_registrar_worker.py` is the
+    sole writer of `tag_known`; promotes `registered → active`
+    on first matching read; never auto-creates `tags` rows.
+    Soft-asset worker (ADR 022) reads the registry directly.
+  - **Phase E — Reconciliation reports (governance §5).**
+    `GET /v1/tenants/{slug}/tags/reconciliation/{view}` with
+    JSON + CSV export for the three views
+    (`registered-unread`, `unregistered-reading`,
+    `bindings-on-retired`). Service module
+    `src/tagpulse/services/tag_reconciliation.py`. Operator
+    guide: [runbooks/tag-registry-operations.md](../runbooks/tag-registry-operations.md).
+  - **Phase F — Docs (this entry).** ADR 028 status flip
+    Accepted → Implemented; [reference-design-remediation.md](../design/reference-design-remediation.md)
+    row 2.14 flipped to Done; [docs/roadmap.md](../roadmap.md)
+    Sprint 50 marked `(shipped)`;
+    [docs/data-models.md](../data-models.md) gained the
+    "Tag registry (Sprint 50+)" section plus `tags` /
+    `tag_transfers` / `pending_bulk_operations` table entries
+    and the `tag_reads.tag_known` column note; operator
+    runbook [tag-registry-operations.md](../runbooks/tag-registry-operations.md)
+    added.
+  - **Phase G — Validation (deferred to a follow-up sprint).**
+    Registrar-worker integration test, reconciliation worker
+    emitting Prometheus gauges, and live-Postgres integration
+    tests for the bulk-import + two-person flow remain
+    out-of-scope for Sprint 50. The unit-test suite (1335
+    passing) covers the schema, service layer, governance
+    invariants, and reconciliation queries.

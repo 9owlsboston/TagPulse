@@ -52,9 +52,11 @@ All tenant-scoped tables enforce isolation via:
 
 ## Where is the "tag"? (and why there's no `tags` table)
 
+> **Sprint 50 update (ADR 028).** This section described the pre-Sprint-50 design. A `tags` table now exists as an **identity / ownership** layer above the bindings + reads model below — operator-driven (CSV import, lifecycle status, cross-tenant transfers), **never on the ingest hot path**. See [Tag registry (Sprint 50+)](#tag-registry-sprint-50) below and [ADR 028](adr/028-tags-as-first-class-entity.md). The "no Tag entity on the ingest hot path" trade-offs in this section remain accurate — `tag_reads` writes still touch zero rows in `tags`.
+
 A common new-contributor question: *we have devices, assets, sites, zones, telemetry — where do RFID tags live?*
 
-**TagPulse intentionally has no first-class `Tag` entity.** A "tag" is a *value* (an EPC / TID / device-emitted string), not a row. It's resolved into business meaning through three independent layers, each with its own lifecycle:
+**The TagPulse ingest path has no first-class `Tag` entity.** A "tag" is a *value* (an EPC / TID / device-emitted string), not a row. It's resolved into business meaning through three independent layers, each with its own lifecycle:
 
 | Where the tag value lives | What it is | Lifecycle |
 |--------------------------|------------|-----------|
@@ -99,6 +101,21 @@ Three deliberate trade-offs:
 | **Map** | `assets` ⨝ `asset_current_location` ⨝ `zones` (geofence polygons) |
 
 For the deeper EPC/TID/sensor-data primer (what each chunk of an RFID tag carries on the wire) see [design/rfid-tag-data-model.md](design/rfid-tag-data-model.md).
+
+### Tag registry (Sprint 50+)
+
+Sprint 50 added a `tags` table on top of the three layers above. It does **not** replace any of them — ingest still appends to `tag_reads` with zero lookups, and asset attribution still flows through `asset_tag_bindings`. The registry answers operator-facing questions the bindings-only model could not: *"What EPCs does this tenant own?"*, *"Is this reading from a tag we registered or a stray?"*, *"Did the supplier transfer this reel to us yet?"*. Per [ADR 028](adr/028-tags-as-first-class-entity.md).
+
+| Table / column | Purpose | Hot path? |
+|---|---|---|
+| [`tags`](#tags) | Per-`(tenant, epc_hex)` identity + lifecycle status (`registered` → `active` → `retired`/`defective`/`transferred_out`). Populated by CSV import, API, or transfer-in. | **No** — never queried on ingest. |
+| [`tag_transfers`](#tag_transfers) | Append-only cross-tenant transfer audit log (one row per EPC; `request_id` groups a batch). | No — admin-only flow. |
+| `tag_reads.tag_known` | Three-valued (`NULL` / `TRUE` / `FALSE`) classification written **only** by the background registrar worker. | **Read-only on hot path** (write happens off the ingest critical path). |
+| `pending_bulk_operations` | Two-person-approval staging for bulk ops above the tenant's `tag_bulk_two_person_threshold` (default 10 000). | No. |
+| `audit_logs.action ∈ {tags.import, tags.bulk_patch, tags.bulk_retire, tag-transfers.request}` | Unified bulk-op audit trail (governance §7). | No. |
+| **Reserved label keys** (`batch`, `batch.received_at`, `batch.description`, `batch.supplier`) under `entity_type='tag'` | Batch grouping via [ADR 020 labels](adr/020-labels-first-class.md) — **no `tag_batches` table**. The reservation is namespace-wide across all entity types; migration 045 enforces it. Collision handling: see [runbooks/reserved-label-key-collision.md](runbooks/reserved-label-key-collision.md). | No. |
+
+Operator workflows for the registry (CSV bulk import, dry-run + two-person flow, reconciliation reports) live in [runbooks/tag-registry-operations.md](runbooks/tag-registry-operations.md).
 
 ---
 
@@ -180,9 +197,60 @@ Time-series RFID tag read events. Partitioned by `timestamp` via TimescaleDB.
 | `location_source` | VARCHAR(20) | NULLABLE | `gps` \| `fixed` \| `inferred` |
 | `sensor_data` | JSONB | NULLABLE | Optional sensor payload |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | When ingested |
+| `tag_known` | BOOLEAN | NULLABLE | Sprint 50 / ADR 028. Three-valued: `NULL` = not yet classified; `TRUE` = EPC present in `tags` with `status ∈ {registered, active}`; `FALSE` = unknown / terminal-status / null-EPC read. Sole writer is the tag-registrar worker (`src/tagpulse/workers/tag_registrar_worker.py`); ingest hot path never reads or writes this column. |
 
 **RLS:** Yes (migration 007)
-**Migration:** 001, 003, 005, 016
+**Migration:** 001, 003, 005, 016, 044
+
+---
+
+### tags
+
+Per-`(tenant_id, epc_hex)` identity / ownership row (Sprint 50, [ADR 028](adr/028-tags-as-first-class-entity.md)). Operator-driven — created via CSV import, API, backfill, or transfer-in; **never** auto-created on first read.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | UUID | PK | |
+| `tenant_id` | UUID | FK → tenants.id, NOT NULL | |
+| `epc_hex` | VARCHAR(128) | NOT NULL | Canonical uppercase hex, no separators. `ck_tags_epc_hex_format`: `^[0-9A-F]{16,128}$`. |
+| `gs1_uri` | TEXT | NULLABLE | Denormalized lenient GS1 parse (e.g. `urn:epc:id:sgtin:…`); `NULL` for raw / proprietary / unparseable EPCs. Partial index `ix_tags_tenant_gs1_uri` covers the populated subset. |
+| `status` | VARCHAR(16) | NOT NULL | `registered` \| `active` \| `retired` \| `defective` \| `transferred_out`. Transitions enforced in `tagpulse.services.tags`. |
+| `source` | VARCHAR(16) | NOT NULL | `csv_import` \| `api` \| `backfill` \| `transfer_in`. (No `first_read` — ADR 028 OQ 3 resolution.) |
+| `first_seen_at` | TIMESTAMPTZ | NULLABLE | First read after registration; written by registrar worker. |
+| `last_seen_at` | TIMESTAMPTZ | NULLABLE | Most recent read; written by registrar worker. |
+| `metadata` | JSONB | NULLABLE | Free-form operator metadata (not used by the platform). |
+| `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, auto | |
+
+**Unique constraint:** `uq_tags_tenant_epc` `(tenant_id, epc_hex)`
+**RLS:** Yes
+**Migration:** 043
+
+### tag_transfers
+
+Cross-tenant transfer audit log (Sprint 50, [ADR 028](adr/028-tags-as-first-class-entity.md) §"Cross-tenant transfer"). Append-only — one row per EPC; all rows from one operator request share `request_id`. The row names both sides (`from_tenant_id`, `to_tenant_id`) and the RLS policy `tenant_isolation_tag_transfers` lets either side see it.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | UUID | PK | |
+| `request_id` | UUID | NOT NULL | Groups a batch of EPCs from one operator action. |
+| `from_tenant_id` | UUID | FK → tenants.id, NOT NULL | |
+| `to_tenant_id` | UUID | FK → tenants.id, NOT NULL | |
+| `epc_hex` | VARCHAR(128) | NOT NULL | Same canonical form as `tags.epc_hex`. |
+| `status` | VARCHAR(16) | NOT NULL | `requested` \| `completed` \| `failed`. Cross-column invariants enforced by `ck_tag_transfers_terminal_failure_reason` and `ck_tag_transfers_completed_at`. |
+| `failure_reason` | TEXT | NULLABLE | NOT NULL when `status='failed'`. |
+| `requested_by` | UUID | FK → users.id, NOT NULL | Initiating admin. |
+| `requested_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
+| `completed_at` | TIMESTAMPTZ | NULLABLE | NOT NULL when `status='completed'`. |
+
+**RLS:** Yes (both sides can read)
+**Migration:** 043
+
+### pending_bulk_operations
+
+Two-person-approval staging table for tag bulk ops above the tenant's `tag_bulk_two_person_threshold` (Sprint 50 Phase C3, ADR 028 §Governance #4). Generic — `operation` discriminates (currently `tags.import`; `tags.bulk_patch` / `tags.bulk_retire` planned). Happy path: `pending → approved → executed`; deny path: `pending → rejected`; timeout: lazy sweep to `expired` on `approve`. The row stashes the raw CSV `payload` plus the dry-run `content_hash` so the approver verifies the stored bytes still match what the first admin previewed.
+
+**Migration:** 047
 
 ---
 
