@@ -58,6 +58,7 @@ from tagpulse.rules.evaluator import RuleEvaluator
 from tagpulse.signaling.periodic_dispatcher import PeriodicSignalingDispatcher
 from tagpulse.workers.dwell_worker import DwellTracker, DwellWorker
 from tagpulse.workers.inventory_rule_worker import InventoryRuleWorker
+from tagpulse.workers.tag_registrar_worker import TagRegistrarWorker
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     inventory_worker: InventoryRuleWorker | None = None
     dwell_worker: DwellWorker | None = None
     dwell_tracker: DwellTracker | None = None
+    tag_registrar_worker: TagRegistrarWorker | None = None
     periodic_signaling_dispatcher: PeriodicSignalingDispatcher | None = None
     alert_delivery: AlertDeliveryService | None = None
     analytics_modules: list[AnalyticsModule] = []
@@ -160,6 +162,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await dwell_worker.start()
         app.state.dwell_tracker = dwell_tracker
         app.state.dwell_worker = dwell_worker
+
+        # Sprint 50 Phase D (ADR 028): tag registrar worker drains
+        # ``tag_reads.tag_known IS NULL``, populates the three-valued
+        # gating column, and promotes ``registered → active`` on first
+        # observed read. Ingest hot path stays free of any ``tags`` reads.
+        tag_registrar_worker = TagRegistrarWorker(
+            session_factory=async_session_factory,
+            interval_s=settings.tag_registrar_interval_s,
+            batch_size=settings.tag_registrar_batch_size,
+        )
+        await tag_registrar_worker.start()
+        app.state.tag_registrar_worker = tag_registrar_worker
 
         # Sprint 41 Phase B3 / ADR-021 v2: PeriodicSignalingDispatcher.
         # Wakes on its loop tick and evaluates ``signaling.*.periodic``
@@ -224,6 +238,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await dwell_worker.stop()
     if inventory_worker is not None:
         await inventory_worker.stop()
+    if tag_registrar_worker is not None:
+        await tag_registrar_worker.stop()
     if periodic_signaling_dispatcher is not None:
         await periodic_signaling_dispatcher.stop()
     await usage_meter.stop()

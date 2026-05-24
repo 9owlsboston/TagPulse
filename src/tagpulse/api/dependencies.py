@@ -96,9 +96,7 @@ async def get_telemetry_readings_repo(
 
 
 async def get_telemetry_service(
-    repo: TimescaleTelemetryReadingsRepository = Depends(
-        get_telemetry_readings_repo
-    ),
+    repo: TimescaleTelemetryReadingsRepository = Depends(get_telemetry_readings_repo),
     device_repo: DeviceRepository = Depends(get_device_repo),
     event_bus: EventBus = Depends(get_event_bus),
     model_service: TelemetryModelService = Depends(get_telemetry_model_service),
@@ -134,6 +132,9 @@ async def get_ingestion_service(
     from tagpulse.repositories.timescaledb.sites_zones import (
         TimescaleZoneRepository,
     )
+    from tagpulse.repositories.timescaledb.tags import (
+        TimescaleTagRepository,
+    )
     from tagpulse.repositories.timescaledb.telemetry import (
         TimescaleTelemetryReadingsRepository,
     )
@@ -155,6 +156,7 @@ async def get_ingestion_service(
         tag_data_mapping_repo=TimescaleTagDataMappingRepository(session),
         tenant_repo=TimescaleTenantRepository(session),
         telemetry_readings_repo=TimescaleTelemetryReadingsRepository(session),
+        tag_repo=TimescaleTagRepository(session),
         usage_meter=usage_meter,
     )
 

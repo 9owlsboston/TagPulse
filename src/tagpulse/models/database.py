@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import (
     CHAR,
     BigInteger,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -144,6 +145,12 @@ class TagReadModel(Base):
     user_memory_hex: Mapped[str | None] = mapped_column(Text, nullable=True)
     tag_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     reader_antenna: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # -- Sprint 50 Phase D (ADR 028 §"Gating"): three-valued tag registry
+    # gate. NULL on insert (ingest never reads ``tags``); flipped to TRUE
+    # / FALSE by :class:`TagRegistrarWorker`. No index by design — the
+    # worker drains a small NULL backlog from the recent hypertable
+    # chunks. See ``migrations/versions/044_tag_reads_tag_known.py``.
+    tag_known: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
