@@ -191,6 +191,10 @@ async def approve_pending_bulk_operation(
             **summary,
         },
         user_id=user.user_id,
+        request_id=row.request_id,
+        count=row.row_count,
+        pending_id=row.id,
+        approved_by=user.user_id,
     )
     response.status_code = status.HTTP_200_OK
     return _to_response(row)
@@ -251,6 +255,8 @@ async def reject_pending_bulk_operation(
             "row_count": row.row_count,
         },
         user_id=user.user_id,
+        count=row.row_count,
+        pending_id=row.id,
     )
     response.status_code = status.HTTP_200_OK
     return _to_response(row)

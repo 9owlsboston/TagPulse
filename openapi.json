@@ -7619,6 +7619,43 @@
             }
           },
           {
+            "description": "Filter to audit entries carrying this bulk-op request_id (Sprint 50 Phase C5, ADR 028 \u00a7Governance #7).",
+            "in": "query",
+            "name": "request_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to audit entries carrying this bulk-op request_id (Sprint 50 Phase C5, ADR 028 \u00a7Governance #7).",
+              "title": "Request Id"
+            }
+          },
+          {
+            "description": "Filter to audit entries scoped to this label batch value (Sprint 50 Phase C5, ADR 028 \u00a7Governance #7).",
+            "in": "query",
+            "name": "batch",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to audit entries scoped to this label batch value (Sprint 50 Phase C5, ADR 028 \u00a7Governance #7).",
+              "title": "Batch"
+            }
+          },
+          {
             "in": "query",
             "name": "limit",
             "required": false,

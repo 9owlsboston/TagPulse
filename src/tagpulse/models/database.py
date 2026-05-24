@@ -434,10 +434,26 @@ class AuditLogModel(Base):
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
     resource_type: Mapped[str] = mapped_column(String(50), nullable=False)
     resource_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     changes: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Sprint 50 Phase C5 — unified bulk-op shape per ADR 028 §Governance #7.
+    # All five columns are NULL for non-bulk-op rows (device tokens,
+    # label changes, etc.). See migration 048.
+    request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    batch: Mapped[str | None] = mapped_column(Text, nullable=True)
+    count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pending_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("pending_bulk_operations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )

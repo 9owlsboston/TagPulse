@@ -532,6 +532,8 @@ async def import_tags(
                 "content_hash": content_hash,
             },
             user_id=user.user_id,
+            count=len(valid_rows),
+            pending_id=pending.id,
         )
         if response is not None:
             response.status_code = status.HTTP_202_ACCEPTED
@@ -612,6 +614,10 @@ async def _execute_tag_import(
         rid,
         changes=changes,
         user_id=actor_user_id,
+        request_id=rid,
+        count=created,
+        pending_id=pending_id,
+        approved_by=approved_by,
     )
     return created, skipped, rid
 
@@ -1005,6 +1011,9 @@ async def _run_bulk_mutation(
             pending.id,
             changes=changes,
             user_id=user.user_id,
+            count=matched,
+            pending_id=pending.id,
+            batch=str(scope_value) if scope_kind == "label_batch" else None,
         )
         if response is not None:
             response.status_code = status.HTTP_202_ACCEPTED
@@ -1106,6 +1115,11 @@ async def _execute_bulk_mutation(
         request_id,
         changes=changes,
         user_id=actor_user_id,
+        request_id=request_id,
+        count=updated,
+        pending_id=pending_id,
+        approved_by=approved_by,
+        batch=str(scope_value) if scope_kind == "label_batch" else None,
     )
     return updated
 
@@ -1394,6 +1408,8 @@ async def create_tag_transfer(
             "epc_count": len(rows),
         },
         user_id=user.user_id,
+        request_id=rows[0].request_id,
+        count=len(rows),
     )
     return rows
 
