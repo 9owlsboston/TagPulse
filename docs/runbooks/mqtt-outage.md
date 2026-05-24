@@ -22,6 +22,14 @@ make doctor ENV=production
 scripts/azd-job.sh production mqtt_canary.py
 ```
 
+> **What the canary actually proves (Sprint 53 F2).** Since the v2 wire
+> format catch-up the canary publishes a per-run v2 `t=1` (appeared)
+> message with a fresh 24-hex-char EPC `CA<…>` and polls `tag_reads`
+> by EPC, so a passing canary verifies the full path: broker →
+> subscriber → v2 dispatch → presence reconciler → DB. A failing
+> canary therefore does not by itself isolate which hop is broken —
+> use the table below + §2 metrics to localize.
+
 | Doctor red                              | Canary | Most likely root cause                                      |
 | --------------------------------------- | ------ | ----------------------------------------------------------- |
 | `mqtt aci state != Running`             | fails  | Mosquitto crashed → §3 restart                              |

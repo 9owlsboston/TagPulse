@@ -139,6 +139,44 @@ Configuration (broker host, tenant, device, password) is read from
 `.tp_paho_edge.env` next to the script — copy `.tp_paho_edge.env.example`
 and fill it in. CLI flags and real env vars override the file.
 
+### v2 wire format (Sprint 46+, ADR-025)
+
+The recipes above emit the **v1** payload shape (`{tag_id, timestamp, …}`).
+The production ingest path now also accepts **v2** envelopes
+(`{t, sn, ts, epc, …}`) that drive the presence reconciler — see
+[../../docs/design/edge-wire-format-v2.md](../../docs/design/edge-wire-format-v2.md)
+for the discriminated union and [ADR-025](../../docs/adr/025-edge-wire-format-v2.md).
+Use `--wire v2 --topic tag-reads` to exercise that branch end-to-end
+(broker → subscriber → v2 dispatch → presence reconciler → DB):
+
+```bash
+# t=1 appeared — writes one tag_reads row per spec §4.4
+python3 examples/paho_smoke_publisher.py --once --wire v2 \
+  --epc-hex E280112233445566778899AA --sn 42
+
+# t=0 snap — writes one tag_reads row per epcs[] entry (lat/lon flow through)
+python3 examples/paho_smoke_publisher.py --once --wire v2 --v2-type snap \
+  --epc-hex E280112233445566778899AA --sn 42 --lat 42.36 --lon -71.06
+
+# t=2 disappeared — no tag_reads row; presence reconciler marks the tag gone
+python3 examples/paho_smoke_publisher.py --once --wire v2 --v2-type disappeared \
+  --epc-hex E280112233445566778899AA --sn 42
+```
+
+Notes:
+- `--wire v2` only works with `--topic tag-reads`; `--topic {location,events}`
+  remain v1-only and the publisher exits 2 if you combine them.
+- `--epc-hex` is validated client-side against spec §6 `invalid_epc`
+  (uppercase hex, even length, 8..124 chars). A bad EPC fails fast instead
+  of producing a silently-DLQ-ed payload.
+- `--sn N` is the per-device sequence number; the subscriber uses it for
+  out-of-order and replay detection. Default `1`.
+- Default `--wire v1` preserves the existing recipes; nothing changes for
+  operators who don't pass the flag.
+- For the production-canary equivalent (in-VNet, run by the D2 alert every
+  5 min), see [`scripts/mqtt_canary.py`](../../scripts/mqtt_canary.py),
+  which publishes a v2 `t=1` per run and polls `tag_reads` by EPC.
+
 ### TLS (port 8883)
 
 Sprint 28 C6 added an optional TLS listener on the dev broker. **TLS is not
