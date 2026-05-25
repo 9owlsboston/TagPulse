@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 53 — Workflow tooling & cross-sprint catch-up · [§sprint-53](#sprint-53--workflow-tooling--cross-sprint-catch-up-pr-72)
+**Current sprint:** 54 — ui overhaul foundation · branch `sprint-54/ui-overhaul-foundation` (full scope lands in §sprint-54 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1394,6 +1394,51 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 - **Audit rows 2, 3, 7, 8, 9, 10, 11, 16, 19, 20, 21** — all retain their original deferral gates; this sprint just records that they were re-reviewed and remain correctly deferred.
 - **Rule taxonomy unification** (audit row #12) — Backlog entry remains canonical; its own ADR + sprint.
 - **Migration squash** (audit row #22) — gated on v1.0 tag; do not squash mid-flight (ADRs cite migration numbers).
+
+---
+
+## Sprint 54 — UI overhaul foundation: design tokens, sectioned nav, dashboard rewrite, list-page pattern ([backend PR #74](https://github.com/9owlsboston/TagPulse/pull/74), [UI PR #62](https://github.com/9owlsboston/TagPulse-UI/pull/62))
+
+**Goal.** Replace the flat 45-route navigation + customizable-but-bland Dashboard + page-by-page list inconsistencies with a coherent operator-first information architecture: **sectioned single left nav + titled KPI tiles with click-through + uniform list-page pattern, dual-theme (light + dark) via design tokens up front**. Roughly 80% UX polish + 20% Dashboard rewrite. Cross-repo: minimal backend (one new endpoint), the bulk lives in `TagPulse-UI`. Full plan: [docs/design/sprint-54-ui-overhaul.md](design/sprint-54-ui-overhaul.md); token architecture: [ADR-029](adr/029-ui-design-tokens.md). Vendor-neutral docs (no third-party product names in committed files).
+
+**Primary users.** Warehouse/floor operator (daily, tablet + desk) and inventory/asset manager (daily, desk). Tablet floor at ≥768 px.
+
+**Three concrete deliverables.** (1) sectioned single left nav (45 routes → ≤4 sections + ≤2 ungrouped top items); (2) titled KPI tiles on a static-grid Dashboard with click-through to pre-filtered list pages, plus pin-to-personalize via LocalStorage (no more `react-grid-layout`); (3) uniform list-page pattern (shared `<ListPageShell>`: title + result count + global search + Add button + collapsible filter drawer) — 3 pages convert this sprint, 3 more in Sprint 55.
+
+**Success metrics** (measured at end of Sprint 55, against baseline pinned to the sprint-54 kickoff commit SHA):
+- **Primary — stopwatch.** 5 operator tasks (find asset by EPC, triage newest open alert, diagnose offline reader, check inventory for product, start tag import). 3 runs each, drop high + low, compare medians. Pass: new ≥30% faster on 4 of 5, none slower by >10%.
+- **Secondary — Lighthouse.** Perf ≥90, A11y ≥95 on Dashboard + Assets + Devices + Alerts in BOTH themes.
+
+### Phases
+
+- **A — 54.1 Design tokens + ThemeProvider rework `[UI]`.** Semantic two-layer token catalog (primitives + roles) per ADR-029, AntD `ConfigProvider` mirror, `/dev/tokens` debug page. Pass bar: token catalog renders, zero hardcoded hex / zero `!important` in `src/components/` + `src/pages/`.
+- **B — 54.2 Sectioned left nav `[UI]`.** 45 routes mapped into ≤4 sections + ≤2 ungrouped top items. `Layout.tsx` sider update, collapsible sections, active-route highlight. Pass bar: all 45 routes still reachable; section grouping reviewed against ops-user task flow.
+- **C — 54.3 Backend `GET /dashboard/summary` (backend-first).** Tenant-scoped aggregator returning 8 counts (`devices_online`, `devices_total`, `alerts_open_24h`, `reads_per_hour_now`, `assets_active`, `tag_transfers_in_flight`, `tag_recon_backlog`, `low_stock_count`). Service + route + integration test + contract test; regenerate `openapi.json`. Pass bar: p95 ≤200 ms on dev data; UI PR records backend SHA `openapi.json` was generated against.
+- **D — 54.4 Dashboard rewrite `[UI]`.** Remove `react-grid-layout`. Static 4-col desktop / 2-col tablet grid. 8 tiles fed by `/dashboard/summary`. Click-through to pre-filtered list pages; pin-to-personalize via LocalStorage. URL-param prefilter audit folded in here (add any missing `?status=` / `?since=` parsers inline). **Stopwatch BASELINE recorded against `main` before merging this phase.** Pass bar: 8 tiles render in both themes; all click-throughs land on pre-filtered list pages; pin order persists across reload.
+- **E — 54.5 Convert 3 list pages with shared `<ListPageShell>` `[UI]`.** AssetList + TagList + AlertHistory. Extract shell + facet-filter primitives. Pass bar: 3 pages match the pattern; tablet visual review at 1024×768 + 768×1024; Lighthouse a11y ≥95 in both themes.
+
+### Out of scope
+
+- Internationalisation / RTL; custom illustrations; onboarding tour; new chart library; animations beyond AntD defaults; WCAG audit beyond Lighthouse; phone responsive (<768 px); database / API redesign beyond the one `/dashboard/summary` endpoint.
+- **14 admin-area list pages** (audit logs, tenants, role assignments, webhook subscriptions, etc.) — recorded in [docs/backlog.md](backlog.md) and pre-scheduled as Sprint 56. Sprint 55 converts only the 3 remaining ops list pages.
+
+---
+
+## Sprint 55 — UI overhaul completion: 3 more list pages + polish + measurement (planned)
+
+**Goal.** Complete the operator-side list-page conversion started in Sprint 54.5, polish the converted surfaces (empty states, loading skeletons, error copy, tablet sweep), and measure the result against both success-metric pass bars. Cross-repo: UI-only (no backend change planned). Reads from the same design doc as Sprint 54: [docs/design/sprint-54-ui-overhaul.md](design/sprint-54-ui-overhaul.md).
+
+### Phases
+
+- **A — 55.1 Convert 3 remaining ops list pages `[UI]`.** DeviceList + ProductList + StockLevels — same `<ListPageShell>` pattern as Sprint 54.5. Pass bar: 3 pages match; tablet visual review.
+- **B — 55.2 Polish `[UI]`.** Empty-state copy + iconography; loading skeletons; error copy; tablet sweep across all 6 converted pages. Pass bar: visual review checklist green; no layout overflow at 768×1024.
+- **C — 55.3 Stopwatch (new) + Lighthouse `[UI]`.** Re-run the 5 stopwatch tasks against the sprint-55 final commit; record medians. Run Lighthouse on Dashboard + Assets + Devices + Alerts in both themes. Pass bar: primary (4 of 5 tasks ≥30% faster, none slower >10%) and secondary (Perf ≥90, A11y ≥95) both met; numbers recorded in the sprint-55 PR body.
+- **D — 55.4 Backlog drain + Sprint 56 entry.** Promote the 14-admin-list-pages backlog item (added at Sprint 54 kickoff) into a Sprint 56 entry in this roadmap for admin list-page conversion. Pass bar: roadmap and backlog reflect what's done and what's next.
+
+### Out of scope
+
+- Anything in Sprint 54's OOS list still applies.
+- The 14 admin-area list pages remain deferred to Sprint 56.
 
 ---
 

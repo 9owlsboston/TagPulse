@@ -38,3 +38,30 @@ def test_response_serialises_tracking_modes() -> None:
     dumped = cfg.model_dump()
     assert dumped["tracking_modes"] == ["asset", "inventory"]
     assert dumped["slug"] == "acme"
+
+
+# Sprint 54 Phase 54.3: per-tenant low_stock_threshold powering
+# DashboardSummary.low_stock_count. Bounds enforced on the Field
+# so operator typos surface as 422 before we touch the row.
+
+
+def test_update_accepts_low_stock_threshold() -> None:
+    payload = TenantConfigUpdate(low_stock_threshold=5)
+    assert payload.low_stock_threshold == 5
+
+
+@pytest.mark.parametrize("bad", [0, -1, 10_001])
+def test_update_rejects_out_of_bounds_low_stock_threshold(bad: int) -> None:
+    with pytest.raises(ValueError):
+        TenantConfigUpdate(low_stock_threshold=bad)
+
+
+def test_response_includes_low_stock_threshold_default() -> None:
+    cfg = TenantConfig(
+        id="00000000-0000-0000-0000-000000000001",
+        name="Acme",
+        slug="acme",
+        plan="standard",
+        tracking_modes=["asset"],
+    )
+    assert cfg.low_stock_threshold == 3

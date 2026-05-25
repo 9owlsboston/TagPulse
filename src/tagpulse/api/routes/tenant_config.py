@@ -46,6 +46,8 @@ class TenantConfig(BaseModel):
         default_factory=lambda: ["device"]  # type: ignore[arg-type]
     )
     rate_limit_overrides: dict[str, int] | None = None
+    # Sprint 54 Phase 54.3: powers ``low_stock_count`` on /dashboard/summary.
+    low_stock_threshold: int = 3
 
 
 class TenantConfigUpdate(BaseModel):
@@ -55,16 +57,17 @@ class TenantConfigUpdate(BaseModel):
     provided are written. Sprint 19 added ``telemetry_subject_kinds``;
     Sprint 22 added ``rate_limit_overrides`` (per-tenant ceilings —
     keys ∈ ``{ingest, read, write, admin}``, values are
-    requests-per-minute; pass ``{}`` to clear all overrides).
+    requests-per-minute; pass ``{}`` to clear all overrides). Sprint 54
+    added ``low_stock_threshold`` (1..10_000, default 3) — see the
+    ``low_stock_count`` field on ``GET /dashboard/summary``.
     """
 
-    tracking_modes: list[TrackingMode] | None = Field(
-        default=None, min_length=1, max_length=2
-    )
+    tracking_modes: list[TrackingMode] | None = Field(default=None, min_length=1, max_length=2)
     telemetry_subject_kinds: list[TelemetrySubjectKind] | None = Field(
         default=None, min_length=1, max_length=5
     )
     rate_limit_overrides: dict[str, int] | None = None
+    low_stock_threshold: int | None = Field(default=None, ge=1, le=10_000)
 
 
 def _to_response(row: TenantModel) -> TenantConfig:
@@ -77,6 +80,7 @@ def _to_response(row: TenantModel) -> TenantConfig:
         tracking_modes=list(row.tracking_modes),  # type: ignore[arg-type]
         telemetry_subject_kinds=list(row.telemetry_subject_kinds),  # type: ignore[arg-type]
         rate_limit_overrides=overrides,
+        low_stock_threshold=row.low_stock_threshold,
     )
 
 
@@ -99,9 +103,7 @@ async def update_tenant_config(
     session: AsyncSession = Depends(get_session),
 ) -> TenantConfig:
     """Update tenant feature flags (admin only). Deduplicated and audited."""
-    row = await session.scalar(
-        select(TenantModel).where(TenantModel.id == user.tenant_id)
-    )
+    row = await session.scalar(select(TenantModel).where(TenantModel.id == user.tenant_id))
     if row is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
@@ -152,9 +154,7 @@ async def update_tenant_config(
                 )
         new_overrides = dict(body.rate_limit_overrides) or None
         old_overrides = (
-            dict(row.rate_limit_overrides)
-            if isinstance(row.rate_limit_overrides, dict)
-            else None
+            dict(row.rate_limit_overrides) if isinstance(row.rate_limit_overrides, dict) else None
         )
         if new_overrides != old_overrides:
             row.rate_limit_overrides = new_overrides
@@ -163,6 +163,19 @@ async def update_tenant_config(
                 "to": new_overrides,
             }
             RATE_LIMITER.invalidate(user.tenant_id)
+
+    if body.low_stock_threshold is not None:
+        # Sprint 54 Phase 54.3: bounds validation lives on the Pydantic
+        # Field (ge=1, le=10_000) — 422 surfaces operator typos before
+        # we touch the row.
+        old_threshold = row.low_stock_threshold
+        new_threshold = body.low_stock_threshold
+        if new_threshold != old_threshold:
+            row.low_stock_threshold = new_threshold
+            changes["low_stock_threshold"] = {
+                "from": old_threshold,
+                "to": new_threshold,
+            }
 
     if changes:
         await session.flush()
@@ -197,9 +210,7 @@ async def get_map_config(
     session: AsyncSession = Depends(get_session),
 ) -> MapConfigResponse:
     """Resolved tile-provider config for the calling tenant (any role)."""
-    row = await session.scalar(
-        select(TenantModel).where(TenantModel.id == tenant.id)
-    )
+    row = await session.scalar(select(TenantModel).where(TenantModel.id == tenant.id))
     if row is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
     try:
@@ -215,9 +226,7 @@ async def update_map_config(
     session: AsyncSession = Depends(get_session),
 ) -> MapConfigResponse:
     """Set the tile provider for the calling tenant (admin only)."""
-    row = await session.scalar(
-        select(TenantModel).where(TenantModel.id == user.tenant_id)
-    )
+    row = await session.scalar(select(TenantModel).where(TenantModel.id == user.tenant_id))
     if row is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
     # Validate first so we never persist a blob the resolver can't render.

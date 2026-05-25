@@ -72,6 +72,12 @@ class TenantModel(Base):
     tag_bulk_two_person_threshold: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="10000"
     )
+    # -- Sprint 54 Phase 54.3: per-tenant threshold powering the
+    # ``low_stock_count`` field on ``GET /dashboard/summary``. A product
+    # is "low" when its count of active stock_items (``state='in_stock'
+    # AND consumed_at IS NULL``) is strictly less than this value.
+    # Default 3 per Sprint 54 planning; overridable via PATCH /tenant/config. --
+    low_stock_threshold: Mapped[int] = mapped_column(Integer, nullable=False, server_default="3")
     # -- Sprint 33 QW6: per-tenant branding (NULL = use system defaults).
     # See docs/design/reference-design-remediation.md §3.3. --
     logo_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
