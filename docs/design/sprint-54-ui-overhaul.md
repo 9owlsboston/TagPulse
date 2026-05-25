@@ -80,14 +80,14 @@ Run Lighthouse on the Dashboard + Assets + Devices + Alerts pages, in **both the
 
 | Field | Source |
 |---|---|
-| `devices_online` | `devices` filtered by recent heartbeat |
+| `devices_online` | `devices` with `last_seen > now() - 5 min` AND `connection_state = 'connected'` (strict AND — the stringly-typed column drifts when MQTT misses a disconnect) |
 | `devices_total` | `devices` count |
-| `alerts_open_24h` | `alerts` where status='open' AND created_at > now() - 24h |
-| `reads_per_hour_now` | `tag_reads` count in last 60 min |
-| `assets_active` | `assets` where retired_at IS NULL |
-| `transfers_in_flight` | `tag_transfers` where status IN ('pending','in_transit') |
-| `recon_backlog` | sum of `tag_reconciliation` row counts across 3 views |
-| `low_stock_count` | `stock_levels` rows under threshold |
+| `alerts_open_24h` | `alerts` where `status = 'open'` AND `triggered_at > now() - 24h` |
+| `reads_per_hour_now` | `tag_reads` count where `timestamp > now() - 1h` |
+| `assets_active` | `assets` where `status = 'active'` |
+| `tag_transfers_in_flight` | `tag_transfers` where `status = 'requested'` AND (`from_tenant_id = :t` OR `to_tenant_id = :t`) |
+| `tag_recon_backlog` | sum of the three `tag_reconciliation` views (registered-unread + unregistered-reading + bindings-on-retired), 7-day staleness window |
+| `low_stock_count` | DISTINCT `stock_items.product_id` where active (`state='in_stock' AND consumed_at IS NULL`) count is strictly less than `tenants.low_stock_threshold` (default 3; per-tenant via `PATCH /tenant/config`) |
 
 Constraints: tenant-scoped via existing RLS, p95 ≤200 ms on dev data, integration test + contract test, regenerates `openapi.json` in the backend PR.
 
