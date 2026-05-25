@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Start a new sprint: branch off main + open a draft PR.
 #
-# Usage:  scripts/start-sprint.sh [--carry] <NN> <topic-slug> ["PR title"]
+# Usage:  scripts/start-sprint.sh [--carry] [--with-ui] <NN> <topic-slug> ["PR title"]
 # Example: scripts/start-sprint.sh 23 anomaly-detection
 #          scripts/start-sprint.sh 23 anomaly-detection "feat(sprint-23): anomaly detection"
 #          scripts/start-sprint.sh --carry 23 anomaly-detection
+#          scripts/start-sprint.sh --with-ui 54 data-ops-menu
 #
 # Default mode: requires a clean tree. The new sprint-NN/<topic> branch is
 # the canonical place for sprint planning artifacts (ADRs, design docs,
@@ -15,17 +16,31 @@
 # branch, --carry stashes the in-flight changes, creates the branch, then
 # pops the stash so the WIP comes along. Tracked + untracked files are
 # carried; ignored files are not.
+#
+# --with-ui mode: after the backend branch + draft PR exist, also create
+# a matching sprint-NN/<topic> branch + draft PR in TagPulse-UI at
+# $TAGPULSE_UI_PATH (default ~/ws/TagPulse-UI) and cross-link the two
+# PRs. Use for sprints that need parallel backend + UI work; skip when
+# the sprint is backend-only. Requires gh authenticated for both repos.
 
 set -euo pipefail
 
 CARRY=0
-if [[ "${1:-}" == "--carry" ]]; then
-    CARRY=1
-    shift
-fi
+WITH_UI=0
+while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+        --carry)    CARRY=1; shift ;;
+        --with-ui)  WITH_UI=1; shift ;;
+        *)
+            echo "Unknown flag: $1" >&2
+            echo "Usage: $0 [--carry] [--with-ui] <NN> <topic-slug> [\"PR title\"]" >&2
+            exit 1
+            ;;
+    esac
+done
 
 if [[ $# -lt 2 ]]; then
-    echo "Usage: $0 [--carry] <NN> <topic-slug> [\"PR title\"]" >&2
+    echo "Usage: $0 [--carry] [--with-ui] <NN> <topic-slug> [\"PR title\"]" >&2
     exit 1
 fi
 
@@ -103,16 +118,66 @@ fi
 echo "==> Pushing branch + creating draft PR"
 git push -u origin "$branch"
 
-gh pr create --draft --base main --head "$branch" \
-    --title "$title" \
-    --body "Sprint ${NN} workstream. See \`docs/roadmap.md\` for scope.
+backend_pr_body="Sprint ${NN} workstream. See \`docs/roadmap.md\` for scope.
+
+## Cross-repo plan
+_Fill in even when the answer is 'backend only' — explicit beats implicit._
+
+- Backend: _TBD_
+- UI: _TBD_
+- OpenAPI: _change expected? regenerate \`openapi.json\` in this PR if yes_
+- Merge order: _backend first when contract changes; otherwise independent_
 
 ## Checklist
 - [ ] Implementation complete
 - [ ] Tests added / updated
 - [ ] \`make check\` clean
 - [ ] CHANGELOG updated under \`## Unreleased\`
-- [ ] Roadmap status updated in \`docs/roadmap.md\`"
+- [ ] Roadmap status updated in \`docs/roadmap.md\`
+- [ ] \`openapi.json\` regenerated (if API surface changed)"
+
+backend_pr_url=$(gh pr create --draft --base main --head "$branch" \
+    --title "$title" \
+    --body "$backend_pr_body")
+echo "==> Backend PR: $backend_pr_url"
+
+if (( WITH_UI )); then
+    ui_path="${TAGPULSE_UI_PATH:-$HOME/ws/TagPulse-UI}"
+    if [[ ! -d "$ui_path/.git" ]]; then
+        echo "==> --with-ui requested but $ui_path is not a git repo; skipping" >&2
+        echo "    set TAGPULSE_UI_PATH or clone TagPulse-UI to ~/ws/TagPulse-UI" >&2
+    else
+        ui_title="${title/feat(sprint-${NN})/feat(sprint-${NN})}"  # passthrough; user may rename
+        echo "==> Creating matching UI branch at $ui_path"
+        (
+            cd "$ui_path"
+            if [[ -n $(git status --porcelain) ]]; then
+                echo "    UI working tree not clean; aborting UI branch creation" >&2
+                exit 1
+            fi
+            git checkout main
+            git pull --ff-only
+            git checkout -b "$branch"
+            git commit --allow-empty -m "chore(sprint-${NN}): start UI branch"
+            git push -u origin "$branch"
+            ui_pr_url=$(gh pr create --draft --base main --head "$branch" \
+                --title "$ui_title" \
+                --body "Sprint ${NN} UI workstream. Paired with backend PR: $backend_pr_url
+
+## Cross-repo plan
+See backend PR for the canonical plan: $backend_pr_url
+
+## Checklist
+- [ ] Implementation complete
+- [ ] Tests added / updated
+- [ ] \`npm run check\` clean
+- [ ] CHANGELOG updated under \`## Unreleased\`
+- [ ] \`openapi.json\` regenerated against backend PR's contract (record backend SHA below)
+- [ ] Backend SHA \`openapi.json\` was generated against: _\`<sha>\`_")
+            echo "    UI PR: $ui_pr_url"
+        ) || echo "==> UI branch creation failed; backend branch is still good" >&2
+    fi
+fi
 
 echo ""
 echo "Done. You're now on $branch with a draft PR."
