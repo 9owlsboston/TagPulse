@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 54 — ui overhaul foundation · branch `sprint-54/ui-overhaul-foundation` (full scope lands in §sprint-54 during the sprint).
+**Current sprint:** 54 — dashboard tiles followup · branch `sprint-54/dashboard-tiles-followup` (full scope lands in §sprint-54 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.

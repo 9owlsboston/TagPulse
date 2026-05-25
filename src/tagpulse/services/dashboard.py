@@ -1,7 +1,7 @@
 """Dashboard summary aggregate (Sprint 54 Phase 54.3).
 
 One tenant-scoped read powering the operator landing page's KPI
-tiles. Eight aggregate queries plus a per-tenant threshold lookup
+tiles. Eleven aggregate queries plus a per-tenant config lookup
 returned as :class:`DashboardSummary`. Field semantics are
 documented on the schema; this module owns the SQL.
 
@@ -35,11 +35,13 @@ from tagpulse.models.database import (
     AlertModel,
     AssetModel,
     DeviceModel,
+    SiteModel,
     StockItemModel,
     TagModel,
     TagReadModel,
     TagTransferModel,
     TenantModel,
+    ZoneModel,
 )
 from tagpulse.models.schemas import DashboardSummary
 
@@ -67,10 +69,11 @@ async def get_summary(
 ) -> DashboardSummary:
     """Compute one ``DashboardSummary`` for the calling tenant.
 
-    Issues nine queries (eight aggregates + one tenant row for the
-    low-stock threshold). All filter on ``tenant_id`` — RLS would
-    catch a miss, but explicit predicates keep the plans tight and
-    let the tests assert isolation without RLS.
+    Issues twelve queries (eleven aggregates + one tenant row for the
+    low-stock threshold and tag-counting mode). All filter on
+    ``tenant_id`` — RLS would catch a miss, but explicit predicates
+    keep the plans tight and let the tests assert isolation without
+    RLS.
     """
     now = datetime.now(UTC)
     online_cutoff = now - _ONLINE_WINDOW
@@ -78,10 +81,13 @@ async def get_summary(
     alerts_cutoff = now - _ALERTS_WINDOW
     recon_cutoff = now - timedelta(days=_RECON_LOOKBACK_DAYS)
 
-    # Tenant row first — controls the low-stock threshold below.
-    threshold_stmt = select(TenantModel.low_stock_threshold).where(TenantModel.id == tenant_id)
-    threshold_row = await session.execute(threshold_stmt)
-    low_stock_threshold = threshold_row.scalar_one()
+    # Tenant row first — controls the low-stock threshold + the
+    # tag-counting predicate selected for ``tags_total`` below.
+    tenant_stmt = select(
+        TenantModel.low_stock_threshold,
+        TenantModel.dashboard_tags_count_mode,
+    ).where(TenantModel.id == tenant_id)
+    low_stock_threshold, tags_count_mode = (await session.execute(tenant_stmt)).one()
 
     devices_online_stmt = select(func.count()).where(
         DeviceModel.tenant_id == tenant_id,
@@ -163,6 +169,19 @@ async def get_summary(
     )
     low_stock_stmt = select(func.count()).select_from(low_stock_inner)
 
+    # tags_total — predicate picked by tenant config. Default ``"live"``
+    # matches the Tags page's default filter; ``"all"`` and
+    # ``"non_terminal"`` are the documented alternatives.
+    tags_total_stmt = select(func.count()).where(TagModel.tenant_id == tenant_id)
+    if tags_count_mode == "live":
+        tags_total_stmt = tags_total_stmt.where(TagModel.status.in_(_LIVE_TAG_STATUSES))
+    elif tags_count_mode == "non_terminal":
+        tags_total_stmt = tags_total_stmt.where(TagModel.status.notin_(_TERMINAL_TAG_STATUSES))
+    # ``"all"`` falls through with no extra predicate.
+
+    sites_total_stmt = select(func.count()).where(SiteModel.tenant_id == tenant_id)
+    zones_total_stmt = select(func.count()).where(ZoneModel.tenant_id == tenant_id)
+
     devices_online = (await session.execute(devices_online_stmt)).scalar_one()
     devices_total = (await session.execute(devices_total_stmt)).scalar_one()
     alerts_open_24h = (await session.execute(alerts_open_stmt)).scalar_one()
@@ -173,6 +192,9 @@ async def get_summary(
     unregistered_reading = (await session.execute(unregistered_reading_stmt)).scalar_one()
     bindings_on_retired = (await session.execute(bindings_on_retired_stmt)).scalar_one()
     low_stock_count = (await session.execute(low_stock_stmt)).scalar_one()
+    tags_total = (await session.execute(tags_total_stmt)).scalar_one()
+    sites_total = (await session.execute(sites_total_stmt)).scalar_one()
+    zones_total = (await session.execute(zones_total_stmt)).scalar_one()
 
     tag_recon_backlog = (
         int(registered_unread) + int(unregistered_reading) + int(bindings_on_retired)
@@ -188,4 +210,7 @@ async def get_summary(
         tag_transfers_in_flight=int(tag_transfers_in_flight),
         tag_recon_backlog=tag_recon_backlog,
         low_stock_count=int(low_stock_count),
+        tags_total=int(tags_total),
+        sites_total=int(sites_total),
+        zones_total=int(zones_total),
     )

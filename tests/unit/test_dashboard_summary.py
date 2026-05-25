@@ -71,6 +71,9 @@ def _fixed_summary() -> DashboardSummary:
         tag_transfers_in_flight=2,
         tag_recon_backlog=15,
         low_stock_count=4,
+        tags_total=128,
+        sites_total=5,
+        zones_total=11,
     )
 
 
@@ -106,6 +109,9 @@ async def test_summary_returns_service_payload(
         "tag_transfers_in_flight",
         "tag_recon_backlog",
         "low_stock_count",
+        "tags_total",
+        "sites_total",
+        "zones_total",
     }
     assert body["devices_online"] == 7
     assert body["devices_total"] == 10
@@ -115,6 +121,9 @@ async def test_summary_returns_service_payload(
     assert body["tag_transfers_in_flight"] == 2
     assert body["tag_recon_backlog"] == 15
     assert body["low_stock_count"] == 4
+    assert body["tags_total"] == 128
+    assert body["sites_total"] == 5
+    assert body["zones_total"] == 11
     assert body["generated_at"].startswith("2026-05-24T12:00:00")
     # tenant_id from the auth dep must flow into the service call.
     assert captured["tenant_id"] == tenant_id

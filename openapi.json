@@ -1014,7 +1014,7 @@
         "type": "object"
       },
       "DashboardSummary": {
-        "description": "Aggregate counts powering the operator landing page.\n\nSprint 54 Phase 54.3 \u2014 one tenant-scoped read per page load.\nAll counts are point-in-time at ``generated_at``; clients use\nthat timestamp for cache-busting / staleness display on the\nKPI tiles. Field semantics:\n\n- ``devices_online`` \u2014 devices whose ``last_seen`` is within\n  the last 5 minutes AND whose ``connection_state`` is\n  ``'connected'``. Strict AND because the stringly-typed\n  column drifts when the MQTT subscriber misses a disconnect.\n- ``devices_total`` \u2014 all devices for the tenant.\n- ``alerts_open_24h`` \u2014 alerts with ``status='open'`` and\n  ``triggered_at > now() - 24h``.\n- ``reads_per_hour_now`` \u2014 ``tag_reads`` rows with\n  ``timestamp > now() - 1h``.\n- ``assets_active`` \u2014 assets with ``status='active'``.\n- ``tag_transfers_in_flight`` \u2014 cross-tenant tag-ownership\n  handoffs (ADR 028) in ``status='requested'``, counted on\n  either side via ``from_tenant_id = :t OR to_tenant_id = :t``.\n- ``tag_recon_backlog`` \u2014 sum of the three ADR 028 \u00a7Governance\n  #5 reconciliation views (registered-unread, unregistered-\n  reading, bindings-on-retired) for the tenant. Operator\n  hygiene worklist size; not an alert.\n- ``low_stock_count`` \u2014 distinct products with fewer than\n  ``tenants.low_stock_threshold`` active stock_items\n  (``state='in_stock' AND consumed_at IS NULL``). Default\n  threshold 3; overridable via ``PATCH /tenant/config``.",
+        "description": "Aggregate counts powering the operator landing page.\n\nSprint 54 Phase 54.3 \u2014 one tenant-scoped read per page load.\nAll counts are point-in-time at ``generated_at``; clients use\nthat timestamp for cache-busting / staleness display on the\nKPI tiles. Field semantics:\n\n- ``devices_online`` \u2014 devices whose ``last_seen`` is within\n  the last 5 minutes AND whose ``connection_state`` is\n  ``'connected'``. Strict AND because the stringly-typed\n  column drifts when the MQTT subscriber misses a disconnect.\n- ``devices_total`` \u2014 all devices for the tenant.\n- ``alerts_open_24h`` \u2014 alerts with ``status='open'`` and\n  ``triggered_at > now() - 24h``.\n- ``reads_per_hour_now`` \u2014 ``tag_reads`` rows with\n  ``timestamp > now() - 1h``.\n- ``assets_active`` \u2014 assets with ``status='active'``.\n- ``tag_transfers_in_flight`` \u2014 cross-tenant tag-ownership\n  handoffs (ADR 028) in ``status='requested'``, counted on\n  either side via ``from_tenant_id = :t OR to_tenant_id = :t``.\n- ``tag_recon_backlog`` \u2014 sum of the three ADR 028 \u00a7Governance\n  #5 reconciliation views (registered-unread, unregistered-\n  reading, bindings-on-retired) for the tenant. Operator\n  hygiene worklist size; not an alert.\n- ``low_stock_count`` \u2014 distinct products with fewer than\n  ``tenants.low_stock_threshold`` active stock_items\n  (``state='in_stock' AND consumed_at IS NULL``). Default\n  threshold 3; overridable via ``PATCH /tenant/config``.\n- ``tags_total`` \u2014 tags for the tenant. Predicate is selected\n  by ``tenants.dashboard_tags_count_mode`` \u2014 ``\"all\"`` counts\n  every row, ``\"live\"`` (default) counts\n  ``status IN ('registered', 'active')``, ``\"non_terminal\"``\n  counts ``status NOT IN ('retired', 'defective',\n  'transferred_out')``. Overridable via ``PATCH /tenant/config``.\n- ``sites_total`` \u2014 count of rows in ``sites`` for the tenant.\n- ``zones_total`` \u2014 count of rows in ``zones`` for the tenant.\n  The Locations KPI tile renders the (sites, zones) pair as one\n  grouped tile.",
         "properties": {
           "alerts_open_24h": {
             "title": "Alerts Open 24H",
@@ -1045,12 +1045,24 @@
             "title": "Reads Per Hour Now",
             "type": "integer"
           },
+          "sites_total": {
+            "title": "Sites Total",
+            "type": "integer"
+          },
           "tag_recon_backlog": {
             "title": "Tag Recon Backlog",
             "type": "integer"
           },
           "tag_transfers_in_flight": {
             "title": "Tag Transfers In Flight",
+            "type": "integer"
+          },
+          "tags_total": {
+            "title": "Tags Total",
+            "type": "integer"
+          },
+          "zones_total": {
+            "title": "Zones Total",
             "type": "integer"
           }
         },
@@ -1063,7 +1075,10 @@
           "assets_active",
           "tag_transfers_in_flight",
           "tag_recon_backlog",
-          "low_stock_count"
+          "low_stock_count",
+          "tags_total",
+          "sites_total",
+          "zones_total"
         ],
         "title": "DashboardSummary",
         "type": "object"
@@ -6875,6 +6890,16 @@
       "TenantConfig": {
         "description": "Read-only view of tenant-scoped feature flags.",
         "properties": {
+          "dashboard_tags_count_mode": {
+            "default": "live",
+            "enum": [
+              "all",
+              "live",
+              "non_terminal"
+            ],
+            "title": "Dashboard Tags Count Mode",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -6949,6 +6974,22 @@
       "TenantConfigUpdate": {
         "description": "Admin-only payload for toggling tenant feature flags.\n\nAll fields are optional; PATCH semantics \u2014 only fields explicitly\nprovided are written. Sprint 19 added ``telemetry_subject_kinds``;\nSprint 22 added ``rate_limit_overrides`` (per-tenant ceilings \u2014\nkeys \u2208 ``{ingest, read, write, admin}``, values are\nrequests-per-minute; pass ``{}`` to clear all overrides). Sprint 54\nadded ``low_stock_threshold`` (1..10_000, default 3) \u2014 see the\n``low_stock_count`` field on ``GET /dashboard/summary``.",
         "properties": {
+          "dashboard_tags_count_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "all",
+                  "live",
+                  "non_terminal"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dashboard Tags Count Mode"
+          },
           "low_stock_threshold": {
             "anyOf": [
               {
