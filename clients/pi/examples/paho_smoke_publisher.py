@@ -44,7 +44,19 @@ Usage:
     python3 paho_smoke_publisher.py --topic location \\
       --track tracks/boston-loop.csv --track-interp 1
 
-Wire-format reference: docs/design/edge-device-contract.md
+    # v2 wire format (Sprint 46+, ADR-025) — exercise the presence dispatch:
+    #   appeared (t=1, writes one tag_reads row per spec §4.4)
+    python3 paho_smoke_publisher.py --once --wire v2 \\
+      --epc-hex E280112233445566778899AA --sn 42
+    #   snap (t=0, writes one tag_reads row per epcs[] entry)
+    python3 paho_smoke_publisher.py --once --wire v2 --v2-type snap \\
+      --epc-hex E280112233445566778899AA --sn 42 --lat 42.36 --lon -71.06
+    #   disappeared (t=2, no tag_reads row; reconciler marks gone)
+    python3 paho_smoke_publisher.py --once --wire v2 --v2-type disappeared \\
+      --epc-hex E280112233445566778899AA --sn 42
+
+Wire-format reference: docs/design/edge-device-contract.md (v1) and
+docs/design/edge-wire-format-v2.md (v2).
 """
 
 from __future__ import annotations
@@ -132,6 +144,76 @@ def load_env(explicit: str | None) -> tuple[dict[str, str], Path | None]:
 # --------------------------------------------------------------------------- #
 # Payload builders (one per supported MQTT sub-topic)
 # --------------------------------------------------------------------------- #
+
+
+def _normalize_v2_epc(value: str | None) -> str:
+    """Coerce ``value`` into a valid v2 EPC (uppercase hex, even, 8..124 chars).
+
+    Used by the ``--wire v2`` builders below. The v2 subscriber rejects
+    invalid EPCs with the ``invalid_epc`` reason per spec §6, so the
+    smoke publisher mirrors :mod:`tagpulse.ingestion.wm_wire_format`
+    validation here to fail loudly client-side instead of producing a
+    silently-DLQ-ed payload.
+    """
+    epc = (value or f"E280{uuid.uuid4().hex[:20].upper()}").strip().upper()
+    if len(epc) < 8 or len(epc) > 124 or len(epc) % 2 != 0:
+        sys.exit(f"--epc-hex {epc!r} must be uppercase hex, 8..124 chars, even length")
+    try:
+        int(epc, 16)
+    except ValueError:
+        sys.exit(f"--epc-hex {epc!r} must be hexadecimal")
+    return epc
+
+
+def make_v2_tag_read_payload(args: argparse.Namespace) -> dict:
+    """`tag-reads` topic in **v2 wire format** (Sprint 46 / ADR-025).
+
+    Emits one ``t=0`` snap, ``t=1`` appeared, or ``t=2`` disappeared
+    message per call, matching the discriminated union enforced by the
+    backend subscriber (:mod:`tagpulse.ingestion.wm_wire_format`).
+    Useful for exercising the v2 dispatch branch and the presence
+    reconciler from outside the conformance harness.
+
+    Schema reference: docs/design/edge-wire-format-v2.md §2.2.
+    """
+    if args.topic != "tag-reads":
+        sys.exit("--wire v2 only applies to --topic tag-reads")
+    epc = _normalize_v2_epc(args.epc_hex)
+    ts_ms = int(time.time() * 1000)
+    if args.v2_type == "disappeared":
+        # Spec §2.2: t=2 carries epc only; lat/lon/an MAY be omitted.
+        return {"t": 2, "sn": args.sn, "ts": ts_ms, "epc": epc}
+    rssi = int(args.rssi) if args.rssi is not None else -55
+    entry: dict = {
+        "an": args.antenna,
+        "epc": epc,
+        "rssi": rssi,
+        "cnt": 1,
+    }
+    # Sensor key omission mirrors the spec §6 explicit_null rejection rule.
+    if args.temp_c is not None:
+        entry["tmp"] = args.temp_c
+    if args.humidity is not None:
+        entry["hum"] = args.humidity
+    if args.v2_type == "snap":
+        return {
+            "t": 0,
+            "sn": args.sn,
+            "ts": ts_ms,
+            "lat": args.lat,
+            "lon": args.lon,
+            "epcs": [entry],
+        }
+    # v2-type appeared (default)
+    appeared = {
+        "t": 1,
+        "sn": args.sn,
+        "ts": ts_ms,
+        "lat": args.lat,
+        "lon": args.lon,
+        **entry,
+    }
+    return appeared
 
 
 def make_tag_read_payload(args: argparse.Namespace) -> dict:
@@ -411,6 +493,25 @@ def main() -> int:
     ap.add_argument(
         "--detail", action="append", metavar="KEY=VAL", help="events.details entry, repeatable"
     )
+    # v2 wire format (Sprint 46+, ADR-025; --topic tag-reads only)
+    ap.add_argument(
+        "--wire",
+        default="v1",
+        choices=["v1", "v2"],
+        help="v1 = legacy TagReadCreate shape (default); v2 = WM presence wire format",
+    )
+    ap.add_argument(
+        "--v2-type",
+        default="appeared",
+        choices=["snap", "appeared", "disappeared"],
+        help="which v2 message to emit (t=0/1/2); only used when --wire v2",
+    )
+    ap.add_argument(
+        "--sn",
+        type=int,
+        default=1,
+        help="v2 wire envelope sn (device serial, int); --wire v2 only",
+    )
     # Loop
     ap.add_argument("--qos", type=int, default=1, choices=[0, 1, 2])
     ap.add_argument("--interval", type=float, default=2.0, help="seconds between publishes")
@@ -470,11 +571,14 @@ def main() -> int:
     client_id = f"tp-paho-edge-{uuid.uuid4().hex[:8]}"
 
     builders: dict[str, Callable[[argparse.Namespace], dict]] = {
-        "tag-reads": make_tag_read_payload,
+        "tag-reads": make_v2_tag_read_payload if args.wire == "v2" else make_tag_read_payload,
         "location": make_location_payload,
         "events": make_event_payload,
     }
     builder = builders[args.topic]
+
+    if args.wire == "v2" and args.topic != "tag-reads":
+        sys.exit("--wire v2 requires --topic tag-reads")
 
     track: list[Waypoint] | None = None
     if args.track is not None:

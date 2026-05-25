@@ -147,3 +147,4 @@ az container exec -g tp${env}-rg -n tp${env}-mqtt --exec-command /bin/sh
 - Developer / laptop on-ramp: [quickstart.md](quickstart.md)
 - All runbooks: [runbooks/README.md](runbooks/README.md)
 - SLOs: [observability/slos.md](observability/slos.md)
+- Edge / Pi reference client (v2 wire format, smoke publisher, canary, TLS handshake recipes): [../clients/pi/README.md](../clients/pi/README.md)

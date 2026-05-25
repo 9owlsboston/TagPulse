@@ -57,7 +57,7 @@ Shape 3 — Mixed fleet (the realistic deployment):
 
 **Why this matters for the spec.** Several v2 features (snap-on-reconnect, empty-cycle snap with `epcs:[]`, NTP clock, rate limiting, offline buffering, dedup) require *some* producer-side state and intelligence. v2 assigns those responsibilities to **"the producer,"** not to "the reader." Whoever terminates MQTT — embedded firmware or Pi gateway — owns them.
 
-**The Pi-gateway reference implementation** (`clients/pi/tagpulse_edge/`) already handles all producer-side responsibilities: cycle aggregation from a per-read input stream, diff state, MQTT QoS 1, reconnect with backoff, NTP-grade clocking, SQLite ring-buffer offline storage, ENTER/EXIT dedup, heartbeat. For Shape 2 / Shape 3 deployments it is the reference, and the v2 spec is its *output* contract.
+**The Pi-gateway reference implementation** (`clients/pi/tagpulse_edge/`) already handles all producer-side responsibilities: cycle aggregation from a per-read input stream, diff state, MQTT QoS 1, reconnect with backoff, NTP-grade clocking, SQLite ring-buffer offline storage, ENTER/EXIT dedup, heartbeat. For Shape 2 / Shape 3 deployments it is the reference, and the v2 spec is its *output* contract. Operator-facing recipes for that implementation — smoke publisher, canary, TLS handshake, KV CA pull — live in [`clients/pi/README.md`](../../clients/pi/README.md) (§v2 wire format).
 
 **For WM specifically.** WM's experimental reader emits a native LAN-side format (per-read CSV rows, per-antenna headers — see `docs/design/reader-to-edge-contract.md`). In current deployments that stream is consumed by a `tagpulse_edge` Pi gateway, which produces v2 MQTT. WM remains the **protocol co-designer** for v2 — they brought the delta concept and understand the cellular bandwidth pain point — even when they are not the MQTT terminator in production. If WM ships a SKU that terminates MQTT itself in the future (Shape 1), the same v2 spec applies unchanged.
 
@@ -382,6 +382,63 @@ Two-stage lookup, both per-tenant:
 2. **Fallback:** if `sn` is uuid-shaped, attempt direct match on `devices.id`.
 
 Failure → reject, DLQ with `reason='device_not_found'`. The MQTT JWT's `device_id` claim MUST match the resolved `device_id` — mismatch → reject, DLQ with `reason='sn_jwt_mismatch'`. This is the load-bearing identity guarantee; the wire `sn` is for human convenience, the JWT is the trust root.
+
+### 4.6 Downstream fan-out to `telemetry_readings`
+
+§4.4 stops at the `tag_reads` insert. For tag-borne sensor fields
+(`cnt`, `tmp`, `hum`), there is one more hop the v2 spec relies on but
+does not itself define: `IngestionService._mirror_tag_borne_sensors`
+([`src/tagpulse/ingestion/service.py`](../../src/tagpulse/ingestion/service.py))
+writes one `telemetry_readings` row per **opted-in subject × tag-borne
+metric**. The bridge merges numeric values from both
+`tag_reads.sensor_data` (populated by the v2 parser
+[`_wm_sensor_data`](../../src/tagpulse/ingestion/mqtt_subscriber.py))
+and `tag_reads.tag_data` (used by HTTP / v1 clients), with
+`tag_data` overriding on key collision. Wire → storage → telemetry
+mapping for v2:
+
+| Wire field (v2)  | `tag_reads.sensor_data` key | `telemetry_readings.metric_name` | Unit (by convention) |
+|------------------|-----------------------------|----------------------------------|----------------------|
+| `cnt`            | `read_count`                | `read_count`                     | count                |
+| `tmp`            | `temperature_c`             | `temperature_c`                  | °C                   |
+| `hum`            | `humidity_pct`              | `humidity_pct`                   | % RH                 |
+
+Units are conventional (encoded in the key suffix) — there is no
+explicit `unit` column on `telemetry_readings` today. Rule definitions
+and chart presets must agree on the key↔unit convention; see §8 Q12.
+
+Each mirrored row carries `source = "tag"` and is published as
+`Topic.TELEMETRY_RECORDED` after `session.commit()`, which is what the
+`telemetry.threshold` rule engine subscribes to
+([ADR-015 §2](../adr/015-telemetry-rules-and-deprecation.md)).
+
+**Subject resolution** uses the EPC → `(subject_kind, subject_id)`
+cached bindings (`asset_tag_bindings`, `stock_items`, `lots`). One v2
+`t=1` carrying `tmp` on an EPC bound to both a stock_item and a lot
+produces **two** `telemetry_readings` rows (one per subject) and **two**
+`TELEMETRY_RECORDED` events.
+
+**Gating** is per-tenant via `telemetry_subject_kinds` (TTL-cached
+`SUBJECT_KINDS_CACHE`). A tenant that has not opted `stock_item` in
+will not get stock_item-scoped telemetry rows even when the EPC binds
+to one.
+
+**Telemetry models are not consulted on this path.** The wire→metric
+mapping above is fixed by the wire-format parser (`_wm_sensor_data`)
+plus the bridge. Telemetry models
+([ADR-013](../adr/013-telemetry-subject-scoping.md)) remain the source
+of truth for:
+
+1. external telemetry validation (`POST /telemetry/readings/ingest`,
+   MQTT `devices/{id}/telemetry`), and
+2. the metric-name dropdown in the rule-creation UI — operators
+   building a `telemetry.threshold` rule on `temperature_c` see the
+   same name that v2-derived rows carry, so cold-chain rules on
+   sensor-tag telemetry work without any extra producer.
+
+See [ADR-015 §2](../adr/015-telemetry-rules-and-deprecation.md) for
+the full four-producer table; the v2 path is producer #1
+(`_mirror_tag_borne_sensors`, `source="tag"`).
 
 ---
 

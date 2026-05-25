@@ -90,7 +90,9 @@ if [[ "$TARGET" == "--list" ]]; then
   # Print the full list (one name per line).
   printf '%s\n' "$PAYLOAD"
 else
-  # Single secret value — last line of the sentinel block (defensive against
-  # any wrapped/duplicated lines in the log tail).
-  printf '%s\n' "$(echo "$PAYLOAD" | tail -1)"
+  # Single secret value — print the entire sentinel block. Multi-line secrets
+  # (e.g. PEM-encoded CA bundles like `mqtt-tls-ca`) must be preserved verbatim;
+  # the awk extraction above is already sentinel-bounded so no further trimming
+  # is needed.
+  printf '%s\n' "$PAYLOAD"
 fi

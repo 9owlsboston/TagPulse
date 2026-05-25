@@ -186,6 +186,27 @@ stock_item_auto_create_blocked_counter = meter.create_counter(
     unit="reads",
 )
 
+# -- Sprint 53 Phase D: Sprint 50 Phase G reconciliation observability --
+# Closes the Sprint 50 Phase G gap noted in ADR 028 v1.0
+# ("reconciliation worker emitting Prometheus gauges" deferred). The
+# route handler in src/tagpulse/api/routes/tags.py bumps this counter
+# by len(rows) after each successful reconciliation query, labelled by
+# the view name. Best-effort: the route wraps the .add() call in
+# try/except so an instrumentation failure cannot break the response
+# (mirrors Sprint 46 Phase E counter convention).
+tag_reconciliation_rows_returned_counter = meter.create_counter(
+    "tagpulse_tag_reconciliation_rows_returned_total",
+    description=(
+        "Reconciliation-view rows surfaced to operators. Labelled by "
+        "'view' (registered-unread | unregistered-reading | "
+        "bindings-on-retired). A monotonically rising series with a flat "
+        "tail indicates operators have stopped reviewing the queue; a "
+        "sudden spike on 'unregistered-reading' usually means a new "
+        "reel was deployed without a prior CSV import. ADR 028 Phase E."
+    ),
+    unit="rows",
+)
+
 # -- Sprint 16: edge contract & identity hardening --
 events_rejected_clock_counter = meter.create_counter(
     "tagpulse_events_rejected_clock_total",

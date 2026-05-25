@@ -40,6 +40,7 @@ scope through ``get_current_tenant`` and skips the slug in the URL.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
@@ -67,6 +68,7 @@ from tagpulse.core.bulk_confirmation_tokens import (
     DEFAULT_TTL_SECONDS,
     ConfirmationOutcome,
 )
+from tagpulse.core.otel_metrics import tag_reconciliation_rows_returned_counter
 from tagpulse.core.tag_import_rate_limit import TAG_IMPORT_LIMITER
 from tagpulse.core.tenant_auth import Tenant, get_current_tenant
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
@@ -1529,6 +1531,12 @@ async def get_reconciliation_view(
                 offset=offset,
             )
         )
+
+    # Sprint 53 Phase D: surface row volume per view. Best-effort —
+    # OTel exceptions must not break the response (mirrors the
+    # Sprint 46 Phase E counter convention).
+    with contextlib.suppress(Exception):
+        tag_reconciliation_rows_returned_counter.add(len(rows), attributes={"view": view})
 
     if format == "csv":
         body = tag_reconciliation.rows_to_csv(view, rows)

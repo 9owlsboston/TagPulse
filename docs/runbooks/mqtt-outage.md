@@ -22,6 +22,14 @@ make doctor ENV=production
 scripts/azd-job.sh production mqtt_canary.py
 ```
 
+> **What the canary actually proves (Sprint 53 F2).** Since the v2 wire
+> format catch-up the canary publishes a per-run v2 `t=1` (appeared)
+> message with a fresh 24-hex-char EPC `CA<…>` and polls `tag_reads`
+> by EPC, so a passing canary verifies the full path: broker →
+> subscriber → v2 dispatch → presence reconciler → DB. A failing
+> canary therefore does not by itself isolate which hop is broken —
+> use the table below + §2 metrics to localize.
+
 | Doctor red                              | Canary | Most likely root cause                                      |
 | --------------------------------------- | ------ | ----------------------------------------------------------- |
 | `mqtt aci state != Running`             | fails  | Mosquitto crashed → §3 restart                              |
@@ -137,3 +145,8 @@ worker so the subscriber picks up the new env var.
   device, the gauge can legitimately reach 300s+. The alert excludes
   `dev` for this reason; staging/production must keep a synthetic
   publisher running (the canary, on a 5-min schedule).
+
+## Related
+
+- Canary and v2 smoke publisher recipes (how to manually re-establish a
+  trickle of ingest while debugging): [../../clients/pi/README.md](../../clients/pi/README.md) — see the "v2 wire format" section for `paho_smoke_publisher.py --wire v2` and `mqtt_canary.py` invocations, plus the TLS handshake / KV CA pull notes if `:8883` is the suspect path.

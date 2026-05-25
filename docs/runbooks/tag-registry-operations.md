@@ -24,6 +24,39 @@ asynchronously by the registrar worker.
 
 ---
 
+## 0. Operator UI quick reference
+
+Sprint 51 shipped the operator-facing UI surface in the sibling
+`TagPulse-UI` repo. Every workflow below has both an API path (used
+in §1–§4 of this runbook) and a UI screen. Pick whichever fits the
+on-call task; the API contracts are unchanged, so a workflow started
+in the UI can be inspected or recovered from the CLI.
+
+| Workflow | UI screen | API equivalent | Required role |
+|---|---|---|---|
+| Bulk CSV import (§1) | `/tags/import` — dry-run preview, then **Apply** | `POST /v1/tenants/{slug}/tags/import` | admin |
+| Tag detail + status lifecycle (§2) | `/tags/:epc_hex` — status dropdown, label editor (reserved `batch.*` shown read-only) | `PATCH /v1/tenants/{slug}/tags/{epc_hex}` | admin / editor |
+| Two-person approval queue (§3) | `/admin/pending-bulk-operations` — approve / reject with reason field | `POST /v1/tenants/{slug}/pending-bulk-operations/{id}/approve` (or `/reject`) | admin (and **not** the requester — server-enforced) |
+| Reconciliation views (§4) | `/tags/reconciliation/registered-unread`, `/tags/reconciliation/unregistered-reading`, `/tags/reconciliation/bindings-on-retired` — sortable tables + **Download CSV** | `GET /v1/tenants/{slug}/tags/reconciliation/{view}[?format=csv]` | admin / editor / viewer |
+| Cross-tenant transfer (§2) | `/tags/transfers/new` | `POST /v1/tenants/{slug}/tag-transfers` | admin |
+
+**Choosing UI vs API:**
+
+- Use the **UI** for ad-hoc operator work — onboarding a reel, reviewing
+  the morning's reconciliation reports, approving a pending bulk op.
+  Dry-run + confirmation-token handshake is automatic.
+- Use the **API** for automation (CI pipelines that import nightly CSVs,
+  periodic reconciliation CSV exports to S3, etc.) and for any incident
+  where the UI is unavailable. The two-person rule, rate limits, and
+  `RESERVED_LABEL_KEYS` guard fire identically from both surfaces.
+
+**Audit trail:** UI actions produce the same `audit_log` rows
+(`tags.import`, `tags.bulk_patch`, `tags.bulk_retire`,
+`tag-transfers.request`) as direct API calls. The `actor_user_id` is
+the logged-in operator in both cases; there is no synthetic "UI" actor.
+
+---
+
 ## 1. Bulk CSV import
 
 **Endpoint:** `POST /v1/tenants/{slug}/tags/import` (admin role).

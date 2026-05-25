@@ -50,6 +50,32 @@ It enforces: clean tree, `sprint-NN/<topic>` branch name, draft PR with the
 standard checklist. Use it for the **kickoff PR only** — once scope is
 agreed, do the actual work in normal small PRs.
 
+### Planning artifacts and the chicken-and-egg
+
+Our guidelines say *"check the roadmap, write an ADR or design doc for
+non-obvious decisions before coding."* The sprint helper says *"clean tree
+before branching."* Reconcile them like this:
+
+- **The `sprint-NN/<topic>` branch is the planning branch.** Run
+  `start-sprint.sh` from a clean `main` *first*, then make ADRs,
+  `docs/design/...`, and roadmap edits the first commits on the new branch.
+  They ride into the draft kickoff PR and get reviewed alongside the
+  scope. This is the default flow.
+- **If you already started planning on `main`** (it happens), re-run with
+  `--carry`:
+
+  ```bash
+  scripts/start-sprint.sh --carry 29 my-topic
+  ```
+
+  The script stashes the in-flight tracked + untracked changes, creates
+  `sprint-NN/<topic>`, pops the stash, and commits the carried files as
+  `chore(sprint-NN): start branch with planning artifacts`. `--carry` only
+  works from `main`.
+
+Either way, planning artifacts land on the kickoff branch — never on `main`
+directly.
+
 ### During the sprint
 
 For each piece of work:

@@ -279,3 +279,86 @@ async def test_viewer_role_permitted(monkeypatch: pytest.MonkeyPatch) -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.get("/tags/reconciliation/registered-unread")
     assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Sprint 53 Phase D — tagpulse_tag_reconciliation_rows_returned_total
+# ---------------------------------------------------------------------------
+
+
+class _RecordingCounter:
+    """Drop-in stand-in for the OTel Counter used by the route handler."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, dict[str, Any]]] = []
+
+    def add(self, amount: int, attributes: dict[str, Any] | None = None) -> None:
+        self.calls.append((amount, dict(attributes or {})))
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_counter_bumped_by_row_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each successful query bumps the counter by ``len(rows)`` with
+    the view label, so operators can chart per-view throughput."""
+
+    async def _stub(*args: Any, **kwargs: Any) -> list[RegisteredUnreadRow]:
+        return [
+            RegisteredUnreadRow(
+                tag_id=uuid4(),
+                epc_hex=f"ABCDEF012345678{i}",
+                status="registered",
+                source="csv_import",
+                first_seen_at=None,
+                last_seen_at=None,
+                created_at=datetime(2026, 5, 23, tzinfo=UTC),
+            )
+            for i in range(3)
+        ]
+
+    recorder = _RecordingCounter()
+    monkeypatch.setattr(tags_routes, "tag_reconciliation_rows_returned_counter", recorder)
+    monkeypatch.setattr(tag_reconciliation, "query_registered_unread", _stub)
+
+    app, _ = _make_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        r = await client.get("/tags/reconciliation/registered-unread")
+
+    assert r.status_code == 200
+    assert recorder.calls == [(3, {"view": "registered-unread"})]
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_counter_failure_does_not_break_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Instrumentation must never surface as a 500 — the route swallows
+    OTel exceptions per Sprint 46 Phase E convention."""
+
+    async def _stub(*args: Any, **kwargs: Any) -> list[UnregisteredReadingRow]:
+        return [
+            UnregisteredReadingRow(
+                tag_id="DEADBEEF",
+                last_seen_at=datetime(2026, 5, 23, tzinfo=UTC),
+                read_count=1,
+            )
+        ]
+
+    class _ExplodingCounter:
+        def add(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("otel sdk down")
+
+    monkeypatch.setattr(
+        tags_routes, "tag_reconciliation_rows_returned_counter", _ExplodingCounter()
+    )
+    monkeypatch.setattr(tag_reconciliation, "query_unregistered_reading", _stub)
+
+    app, _ = _make_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        r = await client.get("/tags/reconciliation/unregistered-reading")
+
+    assert r.status_code == 200
+    assert r.json()[0]["tag_id"] == "DEADBEEF"
