@@ -29,15 +29,11 @@ class TestCheckClockWindow:
 
     def test_too_old_rejected(self) -> None:
         now = datetime.now(UTC)
-        assert (
-            check_clock_window(now - timedelta(hours=25)) == REASON_TOO_OLD
-        )
+        assert check_clock_window(now - timedelta(hours=25)) == REASON_TOO_OLD
 
     def test_in_future_rejected(self) -> None:
         now = datetime.now(UTC)
-        assert (
-            check_clock_window(now + timedelta(minutes=10)) == REASON_IN_FUTURE
-        )
+        assert check_clock_window(now + timedelta(minutes=10)) == REASON_IN_FUTURE
 
     def test_naive_timestamp_treated_as_utc(self) -> None:
         now = datetime.now(UTC)
@@ -46,9 +42,7 @@ class TestCheckClockWindow:
 
     def test_boundary_24h_minus_one_second_accepted(self) -> None:
         now = datetime.now(UTC)
-        assert (
-            check_clock_window(now - timedelta(hours=24, seconds=-1)) is None
-        )
+        assert check_clock_window(now - timedelta(hours=24, seconds=-1)) is None
 
 
 class _FakeRepo:
@@ -118,17 +112,13 @@ class TestIngestRejectsOutOfWindow:
     ) -> None:
         now = datetime.now(UTC)
         good = TagReadCreate(device_id=uuid4(), tag_id="OK", timestamp=now)
-        bad_old = TagReadCreate(
-            device_id=uuid4(), tag_id="OLD", timestamp=now - timedelta(days=2)
-        )
+        bad_old = TagReadCreate(device_id=uuid4(), tag_id="OLD", timestamp=now - timedelta(days=2))
         bad_future = TagReadCreate(
             device_id=uuid4(),
             tag_id="FUT",
             timestamp=now + timedelta(minutes=30),
         )
-        ingested, rejected = await service.ingest_batch(
-            uuid4(), [good, bad_old, bad_future]
-        )
+        ingested, rejected = await service.ingest_batch(uuid4(), [good, bad_old, bad_future])
         assert ingested == 1
         assert rejected == 2
         assert len(repo.reads) == 1
@@ -140,9 +130,7 @@ class TestIngestRejectsOutOfWindow:
 
 class TestEventBusUnaffectedByRejection:
     @pytest.mark.asyncio
-    async def test_no_publish_on_rejection(
-        self, service: IngestionService
-    ) -> None:
+    async def test_no_publish_on_rejection(self, service: IngestionService) -> None:
         old_ts = datetime.now(UTC) - timedelta(hours=48)
         read = TagReadCreate(device_id=uuid4(), tag_id="T", timestamp=old_ts)
         with pytest.raises(ClockRejectionError):
@@ -165,9 +153,7 @@ class TestObserveMode:
         from tagpulse.core import config as config_module
         from tagpulse.ingestion import service as service_module
 
-        monkeypatch.setattr(
-            service_module.settings, "ingest_clock_enforce", False, raising=True
-        )
+        monkeypatch.setattr(service_module.settings, "ingest_clock_enforce", False, raising=True)
         # Sanity that we hit the same Settings object the service module uses
         assert config_module.settings.ingest_clock_enforce is False
 
@@ -189,16 +175,10 @@ class TestObserveMode:
     ) -> None:
         from tagpulse.ingestion import service as service_module
 
-        monkeypatch.setattr(
-            service_module.settings, "ingest_clock_enforce", False, raising=True
-        )
+        monkeypatch.setattr(service_module.settings, "ingest_clock_enforce", False, raising=True)
         now = datetime.now(UTC)
         good = TagReadCreate(device_id=uuid4(), tag_id="OK", timestamp=now)
-        bad_old = TagReadCreate(
-            device_id=uuid4(), tag_id="OLD", timestamp=now - timedelta(days=2)
-        )
-        ingested, rejected = await service.ingest_batch(
-            uuid4(), [good, bad_old]
-        )
+        bad_old = TagReadCreate(device_id=uuid4(), tag_id="OLD", timestamp=now - timedelta(days=2))
+        ingested, rejected = await service.ingest_batch(uuid4(), [good, bad_old])
         assert ingested == 2
         assert rejected == 1

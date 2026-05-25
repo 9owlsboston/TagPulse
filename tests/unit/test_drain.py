@@ -30,6 +30,7 @@ class TestEventBusDrain:
 
         # Give consumer time to process some
         import asyncio
+
         await asyncio.sleep(0.2)
 
         # Drain remaining

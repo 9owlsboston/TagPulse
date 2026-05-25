@@ -137,4 +137,3 @@ async def test_list_category_ids_literal_binds_each_uuid() -> None:
     sql = str(compiled).lower()
     for cid in cids:
         assert str(cid) in sql
-

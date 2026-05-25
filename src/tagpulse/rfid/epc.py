@@ -196,9 +196,7 @@ def _decode_sgtin_198(bits: _BitReader) -> dict[str, Any]:
 
 
 def _decode_sscc_96(bits: _BitReader) -> dict[str, Any]:
-    filter_bits, cp, serial_ref, cp_digits, sr_digits = _read_partition(
-        bits, _SSCC_PARTITIONS
-    )
+    filter_bits, cp, serial_ref, cp_digits, sr_digits = _read_partition(bits, _SSCC_PARTITIONS)
     bits.read(24)  # reserved
     company_prefix = str(cp).zfill(cp_digits)
     serial = str(serial_ref).zfill(sr_digits)

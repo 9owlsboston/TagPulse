@@ -39,14 +39,14 @@ async def stream_events(
             if event_tenant != str(tenant.id):
                 return
             try:
-                queue.put_nowait({
-                    "event": event.topic.value,
-                    "data": event.payload,
-                })
-            except asyncio.QueueFull:
-                logger.warning(
-                    "SSE queue full for tenant %s, dropping event", tenant.id
+                queue.put_nowait(
+                    {
+                        "event": event.topic.value,
+                        "data": event.payload,
+                    }
                 )
+            except asyncio.QueueFull:
+                logger.warning("SSE queue full for tenant %s, dropping event", tenant.id)
 
         # Subscribe to all requested topics
         from tagpulse.events.protocol import Topic
@@ -61,9 +61,7 @@ async def stream_events(
 
         # Record SSE connection
         if hasattr(request.app.state, "usage_meter"):
-            request.app.state.usage_meter.record(
-                tenant.id, "sse_connections", "connections"
-            )
+            request.app.state.usage_meter.record(tenant.id, "sse_connections", "connections")
 
         try:
             while True:

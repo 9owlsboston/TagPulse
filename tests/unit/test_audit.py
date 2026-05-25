@@ -1,6 +1,5 @@
 """Unit tests for AuditLogger."""
 
-
 from tagpulse.core.audit import AuditLogger
 
 

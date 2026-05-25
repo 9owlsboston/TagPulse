@@ -83,9 +83,7 @@ async def _read_csv(upload: UploadFile) -> list[dict[str, str]]:
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise HTTPException(
-            status_code=400, detail=f"CSV is not valid UTF-8: {exc}"
-        ) from None
+        raise HTTPException(status_code=400, detail=f"CSV is not valid UTF-8: {exc}") from None
     reader = csv.DictReader(io.StringIO(text))
     rows = list(reader)
     if len(rows) > MAX_ROWS:
@@ -181,11 +179,7 @@ async def import_lots(
         product_id = sku_to_id.get(sku) if sku in sku_to_id else by_sku.get(sku)
         sku_to_id[sku] = product_id
         if product_id is None:
-            errors.append(
-                RowError(
-                    row=idx, sku=sku, error=f"unknown product_sku: {sku}"
-                )
-            )
+            errors.append(RowError(row=idx, sku=sku, error=f"unknown product_sku: {sku}"))
             continue
         try:
             manufactured_at = _parse_dt(_norm(row.get("manufactured_at")))
@@ -199,16 +193,10 @@ async def import_lots(
             errors.append(RowError(row=idx, sku=sku, error=str(exc)))
             continue
         try:
-            await service.create_lot(
-                user.tenant_id, user.user_id, product_id, payload
-            )
+            await service.create_lot(user.tenant_id, user.user_id, product_id, payload)
             created += 1
         except ProductNotFoundError:
-            errors.append(
-                RowError(
-                    row=idx, sku=sku, error=f"product not found: {sku}"
-                )
-            )
+            errors.append(RowError(row=idx, sku=sku, error=f"product not found: {sku}"))
         except ValueError as exc:
             skipped += 1
             logger.debug("lot import skip row %d: %s", idx, exc)
@@ -227,9 +215,7 @@ async def import_lots(
 async def import_stock_items(
     upload: UploadFile = File(
         ...,
-        description=(
-            "CSV: product_sku,lot_code,binding_value,binding_kind"
-        ),
+        description=("CSV: product_sku,lot_code,binding_value,binding_kind"),
     ),
     preflight: bool = Query(
         default=False,
@@ -250,9 +236,7 @@ async def import_stock_items(
             binding_value = _norm(row.get("binding_value"))
             if not binding_value:
                 continue
-            count = await binding_repo.count_other_tenant_collisions(
-                user.tenant_id, binding_value
-            )
+            count = await binding_repo.count_other_tenant_collisions(user.tenant_id, binding_value)
             if count > 0:
                 collisions.append(
                     CollisionPreflightRow(
@@ -284,11 +268,7 @@ async def import_stock_items(
             continue
         product_id = by_sku.get(sku)
         if product_id is None:
-            errors.append(
-                RowError(
-                    row=idx, sku=sku, error=f"unknown product_sku: {sku}"
-                )
-            )
+            errors.append(RowError(row=idx, sku=sku, error=f"unknown product_sku: {sku}"))
             continue
         lot_id: UUID | None = None
         if lot_code:
@@ -318,16 +298,10 @@ async def import_stock_items(
             errors.append(RowError(row=idx, sku=sku, error=str(exc)))
             continue
         try:
-            await service.create_stock_item(
-                user.tenant_id, user.user_id, payload
-            )
+            await service.create_stock_item(user.tenant_id, user.user_id, payload)
             created += 1
         except ProductNotFoundError:
-            errors.append(
-                RowError(
-                    row=idx, sku=sku, error=f"product not found: {sku}"
-                )
-            )
+            errors.append(RowError(row=idx, sku=sku, error=f"product not found: {sku}"))
         except ValueError as exc:
             # Active binding collision in this tenant — skip.
             skipped += 1

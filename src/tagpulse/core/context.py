@@ -23,9 +23,7 @@ from contextvars import ContextVar
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-db_session_var: ContextVar[AsyncSession | None] = ContextVar(
-    "tagpulse_db_session", default=None
-)
+db_session_var: ContextVar[AsyncSession | None] = ContextVar("tagpulse_db_session", default=None)
 current_tenant_var: ContextVar[uuid.UUID | None] = ContextVar(
     "tagpulse_current_tenant", default=None
 )

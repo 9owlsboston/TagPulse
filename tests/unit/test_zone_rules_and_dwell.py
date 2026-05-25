@@ -130,9 +130,7 @@ async def test_zone_entered_fires_for_matching_zone(
         condition_config={"zone_id": str(zone), "cooldown_s": 0},
     )
     fake_rules = _FakeRulesService([rule])
-    monkeypatch.setattr(
-        "tagpulse.rules.evaluator.RulesService", lambda session: fake_rules
-    )
+    monkeypatch.setattr("tagpulse.rules.evaluator.RulesService", lambda session: fake_rules)
     bus = _FakeBus()
     meter = _FakeMeter()
     evaluator = RuleEvaluator(
@@ -172,9 +170,7 @@ async def test_zone_entered_respects_cooldown(
         condition_config={"zone_id": str(zone), "cooldown_s": 60},
     )
     fake_rules = _FakeRulesService([rule])
-    monkeypatch.setattr(
-        "tagpulse.rules.evaluator.RulesService", lambda session: fake_rules
-    )
+    monkeypatch.setattr("tagpulse.rules.evaluator.RulesService", lambda session: fake_rules)
     evaluator = RuleEvaluator(
         session_factory=lambda: _DummyCtx(),  # type: ignore[arg-type]
         event_bus=_FakeBus(),  # type: ignore[arg-type]
@@ -214,9 +210,7 @@ async def test_zone_exited_fires_for_from_zone(
         condition_config={"zone_id": str(zone), "cooldown_s": 0},
     )
     fake_rules = _FakeRulesService([rule])
-    monkeypatch.setattr(
-        "tagpulse.rules.evaluator.RulesService", lambda session: fake_rules
-    )
+    monkeypatch.setattr("tagpulse.rules.evaluator.RulesService", lambda session: fake_rules)
     bus = _FakeBus()
     evaluator = RuleEvaluator(
         session_factory=lambda: _DummyCtx(),  # type: ignore[arg-type]
@@ -257,9 +251,7 @@ async def test_zone_subject_kinds_filter(
         },
     )
     fake_rules = _FakeRulesService([rule])
-    monkeypatch.setattr(
-        "tagpulse.rules.evaluator.RulesService", lambda session: fake_rules
-    )
+    monkeypatch.setattr("tagpulse.rules.evaluator.RulesService", lambda session: fake_rules)
     evaluator = RuleEvaluator(
         session_factory=lambda: _DummyCtx(),  # type: ignore[arg-type]
         event_bus=_FakeBus(),  # type: ignore[arg-type]
@@ -334,9 +326,7 @@ async def test_dwell_worker_fires_when_threshold_exceeded(
         },
     )
     fake_rules = _FakeRulesService([rule])
-    monkeypatch.setattr(
-        "tagpulse.workers.dwell_worker.RulesService", lambda session: fake_rules
-    )
+    monkeypatch.setattr("tagpulse.workers.dwell_worker.RulesService", lambda session: fake_rules)
     tracker = DwellTracker()
     # Subject entered zone 10 minutes ago — well past the 5-minute threshold.
     entered_at = datetime.now(UTC) - timedelta(minutes=10)
@@ -384,9 +374,7 @@ async def test_dwell_worker_skips_when_below_threshold(
         },
     )
     fake_rules = _FakeRulesService([rule])
-    monkeypatch.setattr(
-        "tagpulse.workers.dwell_worker.RulesService", lambda session: fake_rules
-    )
+    monkeypatch.setattr("tagpulse.workers.dwell_worker.RulesService", lambda session: fake_rules)
     tracker = DwellTracker()
     entered_at = datetime.now(UTC) - timedelta(minutes=5)
     await tracker.on_subject_zone_changed(

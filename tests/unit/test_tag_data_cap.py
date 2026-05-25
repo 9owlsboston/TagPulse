@@ -21,16 +21,12 @@ class TestCapTagData:
         # Build a payload well over 4 KB (compact JSON encoding is what
         # cap_tag_data measures against).
         payload: dict[str, object] = {f"k{i}": "x" * 100 for i in range(60)}
-        encoded_size = len(
-            json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        )
+        encoded_size = len(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
         assert encoded_size > TAG_DATA_MAX_BYTES
         result = cap_tag_data(payload, tenant_id=str(uuid4()))
         assert result.get("_truncated") is True
         # Final payload (compact) must fit within the cap.
-        capped_size = len(
-            json.dumps(result, separators=(",", ":")).encode("utf-8")
-        )
+        capped_size = len(json.dumps(result, separators=(",", ":")).encode("utf-8"))
         assert capped_size <= TAG_DATA_MAX_BYTES
         # Some keys should have been dropped.
         assert len(result) < len(payload) + 1

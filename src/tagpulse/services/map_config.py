@@ -23,12 +23,9 @@ from pydantic import BaseModel, Field
 # given OSM's tile-usage policy.
 _DEFAULT_PROVIDER: dict[str, Any] = {
     "kind": "osm",
-    "tile_url_template": (
-        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-    ),
+    "tile_url_template": ("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"),
     "attribution": (
-        '&copy; <a href="https://www.openstreetmap.org/copyright">'
-        "OpenStreetMap</a> contributors"
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     ),
     "max_zoom": 19,
     "subdomains": ["a", "b", "c"],
@@ -97,8 +94,7 @@ def _resolve_maptiler(stored: dict[str, Any]) -> MapConfigResponse:
     return MapConfigResponse(
         kind="maptiler",
         tile_url_template=(
-            f"https://api.maptiler.com/maps/{style}/256/{{z}}/{{x}}/{{y}}.png"
-            f"?key={key}"
+            f"https://api.maptiler.com/maps/{style}/256/{{z}}/{{x}}/{{y}}.png?key={key}"
         ),
         attribution=(
             '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> '
@@ -112,9 +108,7 @@ def _resolve_maptiler(stored: dict[str, Any]) -> MapConfigResponse:
 def _resolve_self_hosted(stored: dict[str, Any]) -> MapConfigResponse:
     template = stored.get("tile_url_template")
     if not template:
-        raise MapConfigError(
-            "self_hosted tile_provider requires 'tile_url_template'"
-        )
+        raise MapConfigError("self_hosted tile_provider requires 'tile_url_template'")
     return MapConfigResponse(
         kind="self_hosted",
         tile_url_template=template,

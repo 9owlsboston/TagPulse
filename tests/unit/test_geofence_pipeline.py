@@ -71,9 +71,7 @@ class _FakeRulesService:
     async def get_active_rules_by_condition_type(
         self, tenant_id: UUID, condition_type: str
     ) -> list[RuleResponse]:
-        return [
-            r for r in self._rules if r.condition_type == condition_type
-        ]
+        return [r for r in self._rules if r.condition_type == condition_type]
 
     async def create_alert(
         self,
@@ -122,9 +120,7 @@ class _Session:
 # ---------------------------------------------------------------------------
 
 
-def _make_zone(
-    tenant_id: UUID, *, name: str = "z1"
-) -> ZoneResponse:
+def _make_zone(tenant_id: UUID, *, name: str = "z1") -> ZoneResponse:
     """Square geofence covering (47.60, -122.34) — (47.61, -122.33)."""
     return ZoneResponse(
         id=uuid4(),
@@ -257,11 +253,7 @@ async def test_geofence_emits_event_only_on_transition(
         tag_read_id=uuid4(),
     )
 
-    geofence_events = [
-        e
-        for e in bus.events
-        if e.payload.get("zone_kind") == "geofence"
-    ]
+    geofence_events = [e for e in bus.events if e.payload.get("zone_kind") == "geofence"]
     assert len(geofence_events) == 2
     assert geofence_events[0].payload["from_zone_id"] is None
     assert geofence_events[0].payload["to_zone_id"] == str(zone.id)
@@ -326,11 +318,7 @@ async def test_geofence_pipeline_to_alert(
     )
 
     # Replay the geofence event into the evaluator.
-    transitions = [
-        e
-        for e in bus.events
-        if e.payload.get("zone_kind") == "geofence"
-    ]
+    transitions = [e for e in bus.events if e.payload.get("zone_kind") == "geofence"]
     assert len(transitions) == 1
     await evaluator.on_subject_zone_changed(transitions[0])
 

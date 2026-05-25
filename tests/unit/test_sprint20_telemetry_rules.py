@@ -33,9 +33,7 @@ class _FakeMeter:
     def __init__(self) -> None:
         self.records: list[tuple[Any, str, str]] = []
 
-    def record(
-        self, tenant_id: UUID, dimension: str, unit: str, count: int = 1
-    ) -> None:
+    def record(self, tenant_id: UUID, dimension: str, unit: str, count: int = 1) -> None:
         self.records.append((tenant_id, dimension, unit))
 
 
@@ -264,9 +262,7 @@ async def test_on_telemetry_recorded_fires_alert_on_breach(
         },
     )
     fake_rules = _FakeRulesService([rule])
-    monkeypatch.setattr(
-        "tagpulse.rules.evaluator.RulesService", lambda session: fake_rules
-    )
+    monkeypatch.setattr("tagpulse.rules.evaluator.RulesService", lambda session: fake_rules)
     bus = _FakeBus()
     evaluator = RuleEvaluator(
         session_factory=lambda: _DummyCtx(),  # type: ignore[arg-type]
@@ -306,9 +302,7 @@ async def test_on_telemetry_recorded_no_alert_when_under_threshold(
         },
     )
     fake_rules = _FakeRulesService([rule])
-    monkeypatch.setattr(
-        "tagpulse.rules.evaluator.RulesService", lambda session: fake_rules
-    )
+    monkeypatch.setattr("tagpulse.rules.evaluator.RulesService", lambda session: fake_rules)
     evaluator = RuleEvaluator(
         session_factory=lambda: _DummyCtx(),  # type: ignore[arg-type]
         event_bus=_FakeBus(),  # type: ignore[arg-type]
@@ -346,9 +340,7 @@ async def test_on_telemetry_recorded_per_subject_cooldown(
         },
     )
     fake_rules = _FakeRulesService([rule])
-    monkeypatch.setattr(
-        "tagpulse.rules.evaluator.RulesService", lambda session: fake_rules
-    )
+    monkeypatch.setattr("tagpulse.rules.evaluator.RulesService", lambda session: fake_rules)
     evaluator = RuleEvaluator(
         session_factory=lambda: _DummyCtx(),  # type: ignore[arg-type]
         event_bus=_FakeBus(),  # type: ignore[arg-type]
@@ -404,9 +396,7 @@ async def test_on_telemetry_recorded_no_match_skips(
         },
     )
     fake_rules = _FakeRulesService([rule])
-    monkeypatch.setattr(
-        "tagpulse.rules.evaluator.RulesService", lambda session: fake_rules
-    )
+    monkeypatch.setattr("tagpulse.rules.evaluator.RulesService", lambda session: fake_rules)
     evaluator = RuleEvaluator(
         session_factory=lambda: _DummyCtx(),  # type: ignore[arg-type]
         event_bus=_FakeBus(),  # type: ignore[arg-type]

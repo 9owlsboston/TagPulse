@@ -41,9 +41,7 @@ def test_maptiler_requires_api_key() -> None:
 
 
 def test_maptiler_renders_template() -> None:
-    cfg = resolve_map_config(
-        {"kind": "maptiler", "api_key": "sk.test", "style": "topo-v2"}
-    )
+    cfg = resolve_map_config({"kind": "maptiler", "api_key": "sk.test", "style": "topo-v2"})
     assert "topo-v2" in cfg.tile_url_template
     assert "key=sk.test" in cfg.tile_url_template
 

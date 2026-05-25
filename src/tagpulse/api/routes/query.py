@@ -60,9 +60,7 @@ async def reads_per_hour(
     service: QueryService = Depends(get_query_service),
 ) -> list[ReadsPerHour]:
     """Get read counts per device per hour."""
-    return await service.reads_per_hour(
-        tenant.id, device_id=device_id, start=start, end=end
-    )
+    return await service.reads_per_hour(tenant.id, device_id=device_id, start=start, end=end)
 
 
 @router.get("/tag-reads/unique-tags", response_model=list[UniqueTagsPerWindow])

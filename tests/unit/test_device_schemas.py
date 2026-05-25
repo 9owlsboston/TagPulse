@@ -1,6 +1,5 @@
 """Unit tests for device Pydantic schemas."""
 
-
 import pytest
 from pydantic import ValidationError
 

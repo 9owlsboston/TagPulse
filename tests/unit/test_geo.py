@@ -151,9 +151,9 @@ def test_concave_polygon_excludes_notch() -> None:
         ],
     }
     ring = validate_polygon(poly)
-    assert point_in_polygon(1, 1, ring) is True   # in the L
+    assert point_in_polygon(1, 1, ring) is True  # in the L
     assert point_in_polygon(3, 3, ring) is False  # in the notch
-    assert point_in_polygon(3, 1, ring) is True   # in the foot
+    assert point_in_polygon(3, 1, ring) is True  # in the foot
 
 
 def test_point_on_vertex_or_edge_is_deterministic() -> None:

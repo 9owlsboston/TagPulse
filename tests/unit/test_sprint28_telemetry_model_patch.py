@@ -74,9 +74,7 @@ class _FakeService:
         return updated
 
 
-def _make_app(
-    fake: _FakeService, *, role: str = "editor"
-) -> tuple[FastAPI, UUID, UUID]:
+def _make_app(fake: _FakeService, *, role: str = "editor") -> tuple[FastAPI, UUID, UUID]:
     tenant_id = uuid4()
     user_id = uuid4()
     app = FastAPI()
@@ -104,9 +102,7 @@ def _seed_model(tenant_id: UUID) -> TelemetryModelResponse:
         id=uuid4(),
         subject_kind="device",
         device_type="rfid-reader",
-        metrics=[
-            MetricDefinition(name="temperature", unit="C", min_value=-40, max_value=85)
-        ],
+        metrics=[MetricDefinition(name="temperature", unit="C", min_value=-40, max_value=85)],
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
     )
@@ -126,9 +122,7 @@ async def test_patch_updates_metrics_and_audits() -> None:
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        r = await client.patch(
-            f"/telemetry-models/{model.id}", json={"metrics": new_metrics}
-        )
+        r = await client.patch(f"/telemetry-models/{model.id}", json={"metrics": new_metrics})
 
     assert r.status_code == 200
     body = r.json()
@@ -188,9 +182,7 @@ async def test_patch_rejects_empty_metrics_list() -> None:
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        r = await client.patch(
-            f"/telemetry-models/{model.id}", json={"metrics": []}
-        )
+        r = await client.patch(f"/telemetry-models/{model.id}", json={"metrics": []})
     assert r.status_code == 422
 
 

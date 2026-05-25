@@ -37,21 +37,15 @@ class TestIntegrationCreate:
 
     def test_invalid_type(self) -> None:
         with pytest.raises(ValidationError):
-            IntegrationCreate(
-                name="Bad", type="ftp", events=["x"], config={}
-            )
+            IntegrationCreate(name="Bad", type="ftp", events=["x"], config={})
 
     def test_empty_name_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            IntegrationCreate(
-                name="", type="webhook", events=["x"], config={}
-            )
+            IntegrationCreate(name="", type="webhook", events=["x"], config={})
 
     def test_empty_events_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            IntegrationCreate(
-                name="X", type="webhook", events=[], config={}
-            )
+            IntegrationCreate(name="X", type="webhook", events=[], config={})
 
 
 class TestIntegrationUpdate:

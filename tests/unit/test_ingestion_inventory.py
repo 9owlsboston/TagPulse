@@ -178,9 +178,7 @@ class FakeStockRepo:
         if item is None:
             return None
         prev_zone = item.current_zone_id
-        new = item.model_copy(
-            update={"current_zone_id": zone_id, "last_seen_at": observed_at}
-        )
+        new = item.model_copy(update={"current_zone_id": zone_id, "last_seen_at": observed_at})
         self.items[stock_item_id] = new
         self.observations.append((stock_item_id, zone_id))
         return prev_zone, zone_id
@@ -220,8 +218,13 @@ class FakeLotRepo:
         self._lots = lots
 
     async def list_for_product(  # type: ignore[no-untyped-def]
-        self, tenant_id, product_id, *,
-        expiring_within_days=None, limit=100, offset=0,
+        self,
+        tenant_id,
+        product_id,
+        *,
+        expiring_within_days=None,
+        limit=100,
+        offset=0,
     ) -> list[LotResponse]:
         return [lot for lot in self._lots if lot.product_id == product_id]
 
@@ -303,9 +306,7 @@ def test_gtin14_helper_matches_test_fixture() -> None:
     """Lock the GTIN-14 derivation against the test fixture."""
     from tagpulse.rfid.epc import gtin14_from_decoded
 
-    assert (
-        gtin14_from_decoded(_sgtin_identity().epc_decoded) == GTIN
-    )
+    assert gtin14_from_decoded(_sgtin_identity().epc_decoded) == GTIN
 
 
 @pytest.mark.asyncio
@@ -428,9 +429,7 @@ async def test_lot_inferred_from_tag_data_via_mapping() -> None:
         lot_repo=FakeLotRepo([lot]),  # type: ignore[arg-type]
         tag_data_mapping_repo=FakeMappingRepo([mapping]),  # type: ignore[arg-type]
     )
-    await svc.ingest(
-        tenant, _read(uuid4(), tag_data={"lot_code": "LOT-2026-04"})
-    )
+    await svc.ingest(tenant, _read(uuid4(), tag_data={"lot_code": "LOT-2026-04"}))
     [item] = list(stock.items.values())
     assert item.lot_id == lot.id
 
@@ -593,7 +592,7 @@ async def test_first_zone_emits_enter_movement_type() -> None:
         movement_repo=movements,  # type: ignore[arg-type]
     )
     await svc.ingest(tenant, _read(reader_blind))  # seed prev=None
-    await svc.ingest(tenant, _read(reader_a))     # transition None -> zone_a
+    await svc.ingest(tenant, _read(reader_a))  # transition None -> zone_a
     assert len(movements.rows) == 1
     assert movements.rows[0]["movement_type"] == "enter"
     assert movements.rows[0]["from_zone_id"] is None

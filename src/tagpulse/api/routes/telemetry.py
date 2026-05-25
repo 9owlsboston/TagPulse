@@ -66,9 +66,7 @@ async def list_telemetry(
     )
 
 
-@router.get(
-    "/telemetry/quarantine", response_model=list[TelemetryQuarantineResponse]
-)
+@router.get("/telemetry/quarantine", response_model=list[TelemetryQuarantineResponse])
 async def list_telemetry_quarantine(
     device_id: UUID | None = Query(default=None),
     reason: str | None = Query(
@@ -94,9 +92,7 @@ async def list_telemetry_quarantine(
 # -- Sprint 19: subject-scoped telemetry surface --
 
 
-@router.get(
-    "/telemetry/readings", response_model=list[TelemetryReadingResponse]
-)
+@router.get("/telemetry/readings", response_model=list[TelemetryReadingResponse])
 async def list_telemetry_readings(
     subject_kind: SubjectKindParam = Query(...),
     subject_id: UUID = Query(...),
@@ -105,9 +101,7 @@ async def list_telemetry_readings(
     end: datetime | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=1000),
     tenant: Tenant = Depends(get_current_tenant),
-    repo: TimescaleTelemetryReadingsRepository = Depends(
-        get_telemetry_readings_repo
-    ),
+    repo: TimescaleTelemetryReadingsRepository = Depends(get_telemetry_readings_repo),
 ) -> list[TelemetryReadingResponse]:
     """Subject-scoped telemetry query (Sprint 19).
 
@@ -147,15 +141,11 @@ async def list_telemetry_aggregates(
     start: datetime = Query(...),
     end: datetime = Query(...),
     tenant: Tenant = Depends(get_current_tenant),
-    repo: TimescaleTelemetryReadingsRepository = Depends(
-        get_telemetry_readings_repo
-    ),
+    repo: TimescaleTelemetryReadingsRepository = Depends(get_telemetry_readings_repo),
 ) -> list[TelemetryAggregateBucket]:
     """Time-bucketed avg/min/max/count for a single subject + metric."""
     if end <= start:
-        raise HTTPException(
-            status_code=400, detail="end must be after start"
-        )
+        raise HTTPException(status_code=400, detail="end must be after start")
     return await repo.aggregate(
         tenant_id=tenant.id,
         subject_kind=subject_kind,
@@ -175,9 +165,7 @@ async def list_telemetry_aggregates(
 async def ingest_telemetry_readings(
     body: TelemetryReadingsBatch,
     user: AuthenticatedUser = require_role("admin", "editor"),
-    repo: TimescaleTelemetryReadingsRepository = Depends(
-        get_telemetry_readings_repo
-    ),
+    repo: TimescaleTelemetryReadingsRepository = Depends(get_telemetry_readings_repo),
     event_bus: EventBus = Depends(get_event_bus),
 ) -> list[TelemetryReadingResponse]:
     """Direct subject-scoped telemetry write (admin/editor only).
@@ -217,11 +205,7 @@ async def ingest_telemetry_readings(
                         "metric_name": reading.metric_name,
                         "metric_value": reading.metric_value,
                         "unit": reading.unit,
-                        "device_id": (
-                            str(reading.device_id)
-                            if reading.device_id
-                            else None
-                        ),
+                        "device_id": (str(reading.device_id) if reading.device_id else None),
                         "source": reading.source,
                         "timestamp": row.timestamp.isoformat(),
                     },

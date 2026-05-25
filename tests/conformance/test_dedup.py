@@ -6,7 +6,6 @@ a candidate device exposes a test harness on `localhost`, real round-trip
 tests land here.
 """
 
-
 # Per docs/design/edge-device-contract.md §3.3 + §3.9.
 SPEC_DEFAULT_DEDUP_WINDOW_S = 5
 SPEC_DEFAULT_EXIT_TIMEOUT_S = 10

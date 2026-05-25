@@ -66,9 +66,7 @@ class TestAlertDelivery:
         await delivery_service.on_alert_triggered(event)
         await delivery_service.stop()
 
-    async def test_email_logs_intent(
-        self, delivery_service: AlertDeliveryService
-    ) -> None:
+    async def test_email_logs_intent(self, delivery_service: AlertDeliveryService) -> None:
         event = Event(
             id=uuid4(),
             topic=Topic.ALERT_TRIGGERED,

@@ -67,9 +67,7 @@ def test_no_category_filter(client: TestClient, stub: _StubAssetService) -> None
     assert stub.last_kwargs["category_ids"] is None
 
 
-def test_legacy_singular_category_id(
-    client: TestClient, stub: _StubAssetService
-) -> None:
+def test_legacy_singular_category_id(client: TestClient, stub: _StubAssetService) -> None:
     """``?category_id=<uuid>`` still flows through (backwards compat)."""
     cid = uuid4()
     response = client.get("/v1/assets", params={"category_id": str(cid)})
@@ -79,9 +77,7 @@ def test_legacy_singular_category_id(
     assert stub.last_kwargs["category_ids"] is None
 
 
-def test_plural_category_ids_single_value(
-    client: TestClient, stub: _StubAssetService
-) -> None:
+def test_plural_category_ids_single_value(client: TestClient, stub: _StubAssetService) -> None:
     """``?category_ids=<uuid>`` (one value) becomes a one-element list."""
     cid = uuid4()
     response = client.get("/v1/assets", params={"category_ids": str(cid)})
@@ -91,9 +87,7 @@ def test_plural_category_ids_single_value(
     assert stub.last_kwargs["category_ids"] == [cid]
 
 
-def test_plural_category_ids_multiple_values(
-    client: TestClient, stub: _StubAssetService
-) -> None:
+def test_plural_category_ids_multiple_values(client: TestClient, stub: _StubAssetService) -> None:
     """``?category_ids=A&category_ids=B`` => ``[A, B]``."""
     a, b = uuid4(), uuid4()
     response = client.get(
@@ -117,9 +111,7 @@ def test_invalid_uuid_in_category_ids_returns_422(
     assert stub.last_kwargs is None  # never reached the service
 
 
-def test_both_singular_and_plural_accepted(
-    client: TestClient, stub: _StubAssetService
-) -> None:
+def test_both_singular_and_plural_accepted(client: TestClient, stub: _StubAssetService) -> None:
     """When both are supplied the route forwards both; the service layer
     is responsible for the union semantics. This test only pins that the
     route doesn't 400 the combination."""

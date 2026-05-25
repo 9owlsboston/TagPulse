@@ -120,6 +120,7 @@ class TestRateLimiter:
 
         monkeypatch.setattr(rl_mod.settings, "rate_limit_read_per_min", 3)
         limiter = RateLimiter()
+
         # No DB lookup — patch the override fetch to avoid touching SQL.
         async def _no_overrides(_: uuid.UUID) -> dict[str, int]:
             return {}
@@ -151,9 +152,7 @@ class TestRateLimiter:
         assert (await limiter.check(b, "read"))[0] is True
 
     @pytest.mark.asyncio
-    async def test_override_supersedes_global(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_override_supersedes_global(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from tagpulse.core import rate_limit as rl_mod
 
         monkeypatch.setattr(rl_mod.settings, "rate_limit_read_per_min", 1)
@@ -199,17 +198,13 @@ class TestRateLimitMiddleware:
         for _ in range(10):
             assert client.get("/health").status_code == 200
 
-    def test_no_tenant_header_passes_through(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_tenant_header_passes_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
         client = self._build(monkeypatch)
         # Without X-Tenant-ID we have no quota anchor — limiter abstains.
         for _ in range(5):
             assert client.get("/devices").status_code == 200
 
-    def test_per_tenant_429_after_limit(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_per_tenant_429_after_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
         client = self._build(monkeypatch)
         tid = str(uuid.uuid4())
         headers = {"X-Tenant-ID": tid}

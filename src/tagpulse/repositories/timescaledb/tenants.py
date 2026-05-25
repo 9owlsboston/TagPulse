@@ -27,18 +27,14 @@ class TimescaleTenantRepository:
         A missing tenant is treated as the safe default so a stale event from
         a freshly-deleted tenant doesn't raise.
         """
-        stmt = select(TenantModel.tracking_modes).where(
-            TenantModel.id == tenant_id
-        )
+        stmt = select(TenantModel.tracking_modes).where(TenantModel.id == tenant_id)
         result = await self._session.execute(stmt)
         modes = result.scalar_one_or_none()
         if modes is None:
             return ["asset"]
         return list(modes)
 
-    async def get_telemetry_subject_kinds(
-        self, tenant_id: uuid.UUID
-    ) -> list[str]:
+    async def get_telemetry_subject_kinds(self, tenant_id: uuid.UUID) -> list[str]:
         """Return ``tenants.telemetry_subject_kinds`` for a tenant.
 
         Defaults to ``['device']`` for an unknown tenant — same safe
@@ -46,9 +42,7 @@ class TimescaleTenantRepository:
         ingest pipeline uses this to decide which non-device subject
         rows to fan out into ``telemetry_readings``.
         """
-        stmt = select(TenantModel.telemetry_subject_kinds).where(
-            TenantModel.id == tenant_id
-        )
+        stmt = select(TenantModel.telemetry_subject_kinds).where(TenantModel.id == tenant_id)
         result = await self._session.execute(stmt)
         kinds = result.scalar_one_or_none()
         if kinds is None:

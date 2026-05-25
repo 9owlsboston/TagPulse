@@ -112,9 +112,7 @@ class ReadFrequencyModule(AnalyticsModule):
                     )
 
                 await session.commit()
-                logger.debug(
-                    "ReadFrequencyModule flushed %d devices", len(snapshot)
-                )
+                logger.debug("ReadFrequencyModule flushed %d devices", len(snapshot))
         except (SQLAlchemyError, OSError):
             # Put data back for retry
             for key, cnt in snapshot.items():

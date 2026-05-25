@@ -36,9 +36,7 @@ class FakeTagReadRepository:
     ) -> list[TagReadResponse]:
         return [await self.insert(tenant_id, read) for read in reads]
 
-    async def record_rejection(
-        self, tenant_id: UUID, read: TagReadCreate, reason: str
-    ) -> None:
+    async def record_rejection(self, tenant_id: UUID, read: TagReadCreate, reason: str) -> None:
         self.rejections.append((tenant_id, read, reason))
 
     async def query(

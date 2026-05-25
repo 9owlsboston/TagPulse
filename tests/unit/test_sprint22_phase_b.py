@@ -78,9 +78,7 @@ class TestDockerfileTargets:
 
     def test_migrations_target_runs_alembic(self) -> None:
         dockerfile = (REPO_ROOT / "Dockerfile").read_text()
-        migrations_stage = dockerfile.split("AS migrations", 1)[1].split(
-            "FROM ", 1
-        )[0]
+        migrations_stage = dockerfile.split("AS migrations", 1)[1].split("FROM ", 1)[0]
         assert "alembic" in migrations_stage.lower()
 
 
@@ -155,9 +153,7 @@ class TestHelmChart:
     def test_migrations_job_template_has_helm_hook(self) -> None:
         # Pre-rollout hook is non-negotiable; without it api/worker can roll
         # before the schema is upgraded and crash on startup.
-        template = (
-            self.CHART_DIR / "templates" / "migrations-job.yaml"
-        ).read_text()
+        template = (self.CHART_DIR / "templates" / "migrations-job.yaml").read_text()
         assert "helm.sh/hook" in template
         assert "pre-install" in template
         assert "pre-upgrade" in template

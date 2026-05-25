@@ -23,9 +23,7 @@ class IntegrationService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(
-        self, tenant_id: uuid.UUID, body: IntegrationCreate
-    ) -> IntegrationResponse:
+    async def create(self, tenant_id: uuid.UUID, body: IntegrationCreate) -> IntegrationResponse:
         row = IntegrationModel(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
@@ -41,13 +39,13 @@ class IntegrationService:
         await self._session.flush()
         logger.info(
             "Integration created: id=%s name=%s type=%s",
-            row.id, row.name, row.type,
+            row.id,
+            row.name,
+            row.type,
         )
         return _to_response(row)
 
-    async def list_all(
-        self, tenant_id: uuid.UUID
-    ) -> list[IntegrationResponse]:
+    async def list_all(self, tenant_id: uuid.UUID) -> list[IntegrationResponse]:
         stmt = (
             select(IntegrationModel)
             .where(IntegrationModel.tenant_id == tenant_id)
@@ -87,9 +85,7 @@ class IntegrationService:
         logger.info("Integration updated: id=%s", integration_id)
         return _to_response(row)
 
-    async def delete_integration(
-        self, tenant_id: uuid.UUID, integration_id: uuid.UUID
-    ) -> bool:
+    async def delete_integration(self, tenant_id: uuid.UUID, integration_id: uuid.UUID) -> bool:
         stmt = (
             delete(IntegrationModel)
             .where(

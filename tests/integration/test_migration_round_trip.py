@@ -58,16 +58,10 @@ def _alembic(args: list[str]) -> subprocess.CompletedProcess[str]:
 def test_alembic_upgrade_downgrade_upgrade_round_trip() -> None:
     """Full chain must upgrade, downgrade one step, then upgrade again."""
     up = _alembic(["upgrade", "head"])
-    assert up.returncode == 0, (
-        f"initial upgrade failed:\nstdout={up.stdout}\nstderr={up.stderr}"
-    )
+    assert up.returncode == 0, f"initial upgrade failed:\nstdout={up.stdout}\nstderr={up.stderr}"
 
     down = _alembic(["downgrade", "-1"])
-    assert down.returncode == 0, (
-        f"downgrade -1 failed:\nstdout={down.stdout}\nstderr={down.stderr}"
-    )
+    assert down.returncode == 0, f"downgrade -1 failed:\nstdout={down.stdout}\nstderr={down.stderr}"
 
     up2 = _alembic(["upgrade", "head"])
-    assert up2.returncode == 0, (
-        f"re-upgrade failed:\nstdout={up2.stdout}\nstderr={up2.stderr}"
-    )
+    assert up2.returncode == 0, f"re-upgrade failed:\nstdout={up2.stdout}\nstderr={up2.stderr}"

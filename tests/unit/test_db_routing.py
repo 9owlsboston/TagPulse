@@ -34,9 +34,7 @@ def test_registry_requires_shared_default() -> None:
 
 
 def test_registry_unknown_key_raises() -> None:
-    reg = PoolRegistry(
-        {"shared_default": PoolEntry("shared_default", "sqlite+aiosqlite://")}
-    )
+    reg = PoolRegistry({"shared_default": PoolEntry("shared_default", "sqlite+aiosqlite://")})
     with pytest.raises(KeyError, match="db_pool_key"):
         reg.sessionmaker_for("does_not_exist")
 
@@ -141,10 +139,7 @@ async def test_tenant_context_binds_and_resets() -> None:
     assert fake.committed is True
     assert fake.rolled_back is False
     # First call must set the RLS GUC for the new tenant.
-    assert any(
-        "set_config" in stmt and params["tid"] == str(tid)
-        for stmt, params in fake.executed
-    )
+    assert any("set_config" in stmt and params["tid"] == str(tid) for stmt, params in fake.executed)
 
 
 async def test_tenant_context_rolls_back_on_exception() -> None:

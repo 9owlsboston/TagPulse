@@ -45,9 +45,9 @@ class AdminRepository:
         tenants land in each pool before kicking off a ``pg_dump`` -filtered
         data move.
         """
-        stmt = select(
-            TenantModel.id, TenantModel.slug, TenantModel.db_pool_key
-        ).order_by(TenantModel.slug)
+        stmt = select(TenantModel.id, TenantModel.slug, TenantModel.db_pool_key).order_by(
+            TenantModel.slug
+        )
         if db_pool_key is not None:
             stmt = stmt.where(TenantModel.db_pool_key == db_pool_key)
         result = await self._session.execute(stmt)

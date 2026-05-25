@@ -113,9 +113,8 @@ class UsageMeter:
         usage_stmt = select(TenantUsageDetail.quantity).where(
             TenantUsageDetail.tenant_id == tenant_id,
             TenantUsageDetail.dimension == dimension,
-            TenantUsageDetail.usage_date == datetime(
-                today.year, today.month, today.day, tzinfo=UTC
-            ),
+            TenantUsageDetail.usage_date
+            == datetime(today.year, today.month, today.day, tzinfo=UTC),
         )
         usage_result = await session.execute(usage_stmt)
         db_quantity: int = usage_result.scalar_one_or_none() or 0

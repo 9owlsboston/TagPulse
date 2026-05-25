@@ -53,9 +53,7 @@ class DwellTracker:
         session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         # (tenant_id, subject_id) -> (zone_id, entered_at, subject_kind)
-        self._state: dict[
-            tuple[UUID, str], tuple[str | None, datetime, str | None]
-        ] = {}
+        self._state: dict[tuple[UUID, str], tuple[str | None, datetime, str | None]] = {}
         self._max = max_subjects
         # Per (tenant, rule, subject_id) — last alert time, for cooldown.
         self._last_alert: dict[tuple[UUID, UUID, str], datetime] = {}
@@ -169,9 +167,7 @@ class DwellTracker:
             ) in self._state.items()
         ]
 
-    def cooldown_active(
-        self, key: tuple[UUID, UUID, str], now: datetime, cooldown_s: int
-    ) -> bool:
+    def cooldown_active(self, key: tuple[UUID, UUID, str], now: datetime, cooldown_s: int) -> bool:
         last = self._last_alert.get(key)
         if last is None:
             return False
@@ -225,9 +221,7 @@ class DwellWorker:
             return
         now = datetime.now(UTC)
         # Group by tenant for fewer DB roundtrips.
-        by_tenant: dict[
-            UUID, list[tuple[str, str | None, datetime, str | None]]
-        ] = {}
+        by_tenant: dict[UUID, list[tuple[str, str | None, datetime, str | None]]] = {}
         for tenant_id, subject_id, zone_id, entered_at, subject_kind in snapshot:
             if zone_id is None:
                 continue
@@ -236,9 +230,7 @@ class DwellWorker:
             )
         async with self._session_factory() as session:
             for tenant_id, subjects in by_tenant.items():
-                dwell_evaluations_counter.add(
-                    len(subjects), {"tenant_id": str(tenant_id)}
-                )
+                dwell_evaluations_counter.add(len(subjects), {"tenant_id": str(tenant_id)})
                 await self._eval_tenant(session, tenant_id, subjects, now)
             await session.commit()
 
@@ -250,37 +242,25 @@ class DwellWorker:
         now: datetime,
     ) -> None:
         service = RulesService(session)
-        rules = await service.get_active_rules_by_condition_type(
-            tenant_id, "zone.dwell_exceeded"
-        )
+        rules = await service.get_active_rules_by_condition_type(tenant_id, "zone.dwell_exceeded")
         if not rules:
             return
         # Index subjects by zone for fast match against rule.zone_id.
-        by_zone: dict[
-            str, list[tuple[str, datetime, str | None]]
-        ] = {}
+        by_zone: dict[str, list[tuple[str, datetime, str | None]]] = {}
         for subject_id, zone_id, entered_at, subject_kind in subjects:
             assert zone_id is not None  # guarded above
-            by_zone.setdefault(zone_id, []).append(
-                (subject_id, entered_at, subject_kind)
-            )
+            by_zone.setdefault(zone_id, []).append((subject_id, entered_at, subject_kind))
         for rule in rules:
             self._meter.record(tenant_id, "rule_evaluations", "evaluations")
             rule_evaluations.add(1, {"tenant_id": str(tenant_id)})
             zone_id = rule.condition_config.get("zone_id")
-            threshold_minutes = int(
-                rule.condition_config.get("threshold_minutes", 0)
-            )
+            threshold_minutes = int(rule.condition_config.get("threshold_minutes", 0))
             if not zone_id or threshold_minutes <= 0:
                 continue
             allowed_kinds = rule.condition_config.get("subject_kinds")
             cooldown_s = int(rule.condition_config.get("cooldown_s", 300))
             for subject_id, entered_at, subject_kind in by_zone.get(zone_id, []):
-                if (
-                    allowed_kinds
-                    and subject_kind is not None
-                    and subject_kind not in allowed_kinds
-                ):
+                if allowed_kinds and subject_kind is not None and subject_kind not in allowed_kinds:
                     continue
                 if now - entered_at < timedelta(minutes=threshold_minutes):
                     continue

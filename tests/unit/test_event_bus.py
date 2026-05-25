@@ -61,6 +61,7 @@ class TestAsyncEventBus:
 
         # Give consumer task time to process
         import asyncio
+
         await asyncio.sleep(0.1)
 
         assert len(received) == 1
