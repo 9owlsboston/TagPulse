@@ -46,6 +46,8 @@ class TenantConfig(BaseModel):
         default_factory=lambda: ["device"]  # type: ignore[arg-type]
     )
     rate_limit_overrides: dict[str, int] | None = None
+    # Sprint 54 Phase 54.3: powers ``low_stock_count`` on /dashboard/summary.
+    low_stock_threshold: int = 3
 
 
 class TenantConfigUpdate(BaseModel):
@@ -55,7 +57,9 @@ class TenantConfigUpdate(BaseModel):
     provided are written. Sprint 19 added ``telemetry_subject_kinds``;
     Sprint 22 added ``rate_limit_overrides`` (per-tenant ceilings —
     keys ∈ ``{ingest, read, write, admin}``, values are
-    requests-per-minute; pass ``{}`` to clear all overrides).
+    requests-per-minute; pass ``{}`` to clear all overrides). Sprint 54
+    added ``low_stock_threshold`` (1..10_000, default 3) — see the
+    ``low_stock_count`` field on ``GET /dashboard/summary``.
     """
 
     tracking_modes: list[TrackingMode] | None = Field(
@@ -65,6 +69,7 @@ class TenantConfigUpdate(BaseModel):
         default=None, min_length=1, max_length=5
     )
     rate_limit_overrides: dict[str, int] | None = None
+    low_stock_threshold: int | None = Field(default=None, ge=1, le=10_000)
 
 
 def _to_response(row: TenantModel) -> TenantConfig:
@@ -77,6 +82,7 @@ def _to_response(row: TenantModel) -> TenantConfig:
         tracking_modes=list(row.tracking_modes),  # type: ignore[arg-type]
         telemetry_subject_kinds=list(row.telemetry_subject_kinds),  # type: ignore[arg-type]
         rate_limit_overrides=overrides,
+        low_stock_threshold=row.low_stock_threshold,
     )
 
 
@@ -163,6 +169,19 @@ async def update_tenant_config(
                 "to": new_overrides,
             }
             RATE_LIMITER.invalidate(user.tenant_id)
+
+    if body.low_stock_threshold is not None:
+        # Sprint 54 Phase 54.3: bounds validation lives on the Pydantic
+        # Field (ge=1, le=10_000) — 422 surfaces operator typos before
+        # we touch the row.
+        old_threshold = row.low_stock_threshold
+        new_threshold = body.low_stock_threshold
+        if new_threshold != old_threshold:
+            row.low_stock_threshold = new_threshold
+            changes["low_stock_threshold"] = {
+                "from": old_threshold,
+                "to": new_threshold,
+            }
 
     if changes:
         await session.flush()
