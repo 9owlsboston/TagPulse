@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 54 — dashboard tiles followup · branch `sprint-54/dashboard-tiles-followup` (full scope lands in §sprint-54 during the sprint).
+**Current sprint:** 56 — admin list-page conversion (planned) · UI-only; backend roadmap updated via `chore/sprint-55-roadmap-update` to mark Sprint 55 shipped (with §55.C measurement deferred) and add Sprint 56.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1424,21 +1424,43 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 
 ---
 
-## Sprint 55 — UI overhaul completion: 3 more list pages + polish + measurement (planned)
+## Sprint 55 — UI overhaul completion: `<ListPageShell>` + 6-page conversion + polish ([UI PR #69](https://github.com/9owlsboston/TagPulse-UI/pull/69))
 
-**Goal.** Complete the operator-side list-page conversion started in Sprint 54.5, polish the converted surfaces (empty states, loading skeletons, error copy, tablet sweep), and measure the result against both success-metric pass bars. Cross-repo: UI-only (no backend change planned). Reads from the same design doc as Sprint 54: [docs/design/sprint-54-ui-overhaul.md](design/sprint-54-ui-overhaul.md).
+**Goal.** Complete the operator-side list-page conversion started in Sprint 54.5, polish the converted surfaces (empty states, loading skeletons, error copy, tablet sweep), and measure the result against both success-metric pass bars. Cross-repo: UI-only (no backend change). Reads from the same design doc as Sprint 54: [docs/design/sprint-54-ui-overhaul.md](design/sprint-54-ui-overhaul.md).
+
+**Scope correction during sprint.** Sprint 54.5 ("extract `<ListPageShell>` + convert AssetList + TagList + AlertHistory") was planned in §sprint-54 but never shipped — only the foundation 54.1–54.4 made it onto `main`. Sprint 55 absorbed the missing 54.5 work rather than carve out a tiny separate sprint, so this entry covers **all 6 list pages** (AssetList, TagList, AlertHistory + DeviceList, ProductList, StockLevels), not the originally-planned 3.
 
 ### Phases
 
-- **A — 55.1 Convert 3 remaining ops list pages `[UI]`.** DeviceList + ProductList + StockLevels — same `<ListPageShell>` pattern as Sprint 54.5. Pass bar: 3 pages match; tablet visual review.
-- **B — 55.2 Polish `[UI]`.** Empty-state copy + iconography; loading skeletons; error copy; tablet sweep across all 6 converted pages. Pass bar: visual review checklist green; no layout overflow at 768×1024.
-- **C — 55.3 Stopwatch (new) + Lighthouse `[UI]`.** Re-run the 5 stopwatch tasks against the sprint-55 final commit; record medians. Run Lighthouse on Dashboard + Assets + Devices + Alerts in both themes. Pass bar: primary (4 of 5 tasks ≥30% faster, none slower >10%) and secondary (Perf ≥90, A11y ≥95) both met; numbers recorded in the sprint-55 PR body.
-- **D — 55.4 Backlog drain + Sprint 56 entry.** Promote the 14-admin-list-pages backlog item (added at Sprint 54 kickoff) into a Sprint 56 entry in this roadmap for admin list-page conversion. Pass bar: roadmap and backlog reflect what's done and what's next.
+- [shipped] **55.0 Extract `<ListPageShell>` `[UI]`.** Shared component: title + optional count badge + optional primaryAction + toolbar + `<Card>` wrapper + optional aside (right-of-children filter panel). 11 component tests.
+- [shipped] **55.A1 Convert original-S54.5 pages `[UI]`.** AssetList + TagList + AlertHistory.
+- [shipped] **55.A2 Convert original-S55 pages `[UI]`.** DeviceList + ProductList + StockLevels.
+- [shipped] **55.B Polish `[UI]`.** Filter-aware empty states with role-gated CTAs across 5 list pages via the existing `<EmptyState>` helper; tablet aside-wrap fix on `<ListPageShell>` (320px FilterPanel drops below the table at portrait-tablet widths instead of squeezing it).
+- [deferred] **55.C Stopwatch + Lighthouse `[UI]`.** Deferred until realistic tenant data + a continuously-running tag/device simulator are available. Two blockers: (a) the sprint-54 kickoff baseline was never captured (PR #66's `## Stopwatch baseline` section still has `TBD` placeholders), so the primary pass criterion ("4 of 5 tasks ≥30% faster than baseline") has nothing to compare against; (b) Lighthouse Performance and operator-task timings are both noise-dominated on empty/sparse seed data. Re-run protocol tracked in [TagPulse-UI/docs/backlog.md](https://github.com/9owlsboston/TagPulse-UI/blob/main/docs/backlog.md) — capture baseline at the `sprint-54/ui-overhaul-foundation` kickoff SHA, after-numbers on the merged sprint-55 commit, record both in a follow-up doc when data is ready.
+- [shipped] **55.D Backlog drain + Sprint 56 entry.** This entry. 14-admin-list-pages item promoted to §sprint-56 below; drained from [backlog.md](backlog.md).
 
 ### Out of scope
 
 - Anything in Sprint 54's OOS list still applies.
-- The 14 admin-area list pages remain deferred to Sprint 56.
+- The 14 admin-area list pages — promoted to Sprint 56 below.
+
+---
+
+## Sprint 56 — Admin list-page conversion: apply `<ListPageShell>` to 14 admin pages (planned)
+
+**Goal.** Bring the 14 admin-area list pages onto the shared `<ListPageShell>` pattern that the 6 operator pages adopted in Sprint 54.5 + 55. Cross-repo: UI-only (no backend change expected). Same design doc: [docs/design/sprint-54-ui-overhaul.md](design/sprint-54-ui-overhaul.md).
+
+**Pages in scope (14).** Audit logs, tenants, role assignments, webhook subscriptions, and the rest of `src/pages/admin/*` list surfaces — confirmed at sprint kickoff via a `grep -l 'pages/admin' src/pages/admin/*List*.tsx`-style sweep against the merged sprint-55 commit.
+
+### Phases
+
+- **A — 56.1 Convert `[UI]`.** Apply `<ListPageShell>` + `<EmptyState>` (filter-aware copy) + role-gated primary CTAs across the 14 pages. Same pattern as the 6 operator pages — no new shell features needed. Pass bar: 14 pages match the pattern; tablet aside-wrap inherited from Sprint 55; `npm run check` clean.
+- **B — 56.2 Re-run §55.C measurement (if data is ready) `[UI]`.** If realistic tenant data + simulators are in place by sprint kickoff, fold in the deferred §55.C work: capture sprint-54 baseline + post-sprint-56 after-numbers + Lighthouse Perf/A11y on Dashboard/Assets/Devices/Alerts in both themes. Otherwise carry the deferral forward and re-evaluate at Sprint 57 kickoff.
+
+### Out of scope
+
+- Anything in Sprint 54's OOS list still applies.
+- New shell capabilities (column-customization, saved-views, server-side bulk-select). If a 14th-page conversion exposes a real shell gap, file a follow-up; don't extend the shell mid-sprint.
 
 ---
 
