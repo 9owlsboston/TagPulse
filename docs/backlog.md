@@ -20,4 +20,4 @@ Tags: `[backend]`, `[ui]`, `[docs]`, `[ops]`, `[idea]`.
 
 <!-- Add new items above this line. Oldest at bottom; remove when drained. -->
 
-_(empty)_
+- [2026-05-24] 14 admin-area list pages (audit logs, tenants, role assignments, webhook subscriptions, etc.) still on the pre-Sprint-54 pattern — convert to shared `<ListPageShell>` after Sprint 55. Planned as Sprint 56; promote during Sprint 55 Phase D. [ui]
