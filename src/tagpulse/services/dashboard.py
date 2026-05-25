@@ -79,9 +79,7 @@ async def get_summary(
     recon_cutoff = now - timedelta(days=_RECON_LOOKBACK_DAYS)
 
     # Tenant row first — controls the low-stock threshold below.
-    threshold_stmt = select(TenantModel.low_stock_threshold).where(
-        TenantModel.id == tenant_id
-    )
+    threshold_stmt = select(TenantModel.low_stock_threshold).where(TenantModel.id == tenant_id)
     threshold_row = await session.execute(threshold_stmt)
     low_stock_threshold = threshold_row.scalar_one()
 
@@ -126,9 +124,7 @@ async def get_summary(
             TagModel.last_seen_at < recon_cutoff,
         ),
     )
-    unregistered_reading_stmt = select(
-        func.count(func.distinct(TagReadModel.tag_id))
-    ).where(
+    unregistered_reading_stmt = select(func.count(func.distinct(TagReadModel.tag_id))).where(
         TagReadModel.tenant_id == tenant_id,
         TagReadModel.tag_known.is_(False),
         TagReadModel.timestamp >= recon_cutoff,
@@ -174,12 +170,8 @@ async def get_summary(
     assets_active = (await session.execute(assets_active_stmt)).scalar_one()
     tag_transfers_in_flight = (await session.execute(transfers_stmt)).scalar_one()
     registered_unread = (await session.execute(registered_unread_stmt)).scalar_one()
-    unregistered_reading = (
-        await session.execute(unregistered_reading_stmt)
-    ).scalar_one()
-    bindings_on_retired = (
-        await session.execute(bindings_on_retired_stmt)
-    ).scalar_one()
+    unregistered_reading = (await session.execute(unregistered_reading_stmt)).scalar_one()
+    bindings_on_retired = (await session.execute(bindings_on_retired_stmt)).scalar_one()
     low_stock_count = (await session.execute(low_stock_stmt)).scalar_one()
 
     tag_recon_backlog = (
