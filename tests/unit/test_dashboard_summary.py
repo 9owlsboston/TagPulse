@@ -10,11 +10,12 @@ against TimescaleDB. Here we cover:
 - Role gating: ``admin`` / ``editor`` / ``viewer`` succeed; anonymous
   requests are rejected.
 - Schema contract: every field documented in
-  ``docs/design/sprint-54-dashboard-summary.md`` is present and typed.
+  ``docs/design/sprint-54-ui-overhaul.md`` Phase C is present and typed.
 
-Service-layer SQL behaviour is tested in
-``tests/integration/test_dashboard_summary.py`` (added when the
-integration harness grows the seed fixture).
+Service-layer SQL behaviour will be covered by an integration
+test once `tests/integration/` grows past migration round-trips
+(currently the suite's only file); deferred per the same pattern
+as ``tests/unit/test_tag_reconciliation.py``.
 """
 
 from __future__ import annotations

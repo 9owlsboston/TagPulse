@@ -2,7 +2,8 @@
 
 Thin route layer over :mod:`tagpulse.services.dashboard`. The
 landing page calls ``GET /dashboard/summary`` once per page-load
-and renders nine KPI tiles. Open to all logged-in roles
+and renders the Dashboard KPI tiles off the eight aggregate
+counts in :class:`DashboardSummary`. Open to all logged-in roles
 (``admin`` / ``editor`` / ``viewer``) — these are aggregates only,
 not row-level data.
 """
