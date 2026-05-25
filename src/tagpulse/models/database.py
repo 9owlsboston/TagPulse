@@ -78,6 +78,15 @@ class TenantModel(Base):
     # AND consumed_at IS NULL``) is strictly less than this value.
     # Default 3 per Sprint 54 planning; overridable via PATCH /tenant/config. --
     low_stock_threshold: Mapped[int] = mapped_column(Integer, nullable=False, server_default="3")
+    # -- Sprint 54 follow-up: per-tenant tag-counting mode powering the
+    # ``tags_total`` field on ``GET /dashboard/summary``. One of
+    # ``"all"`` | ``"live"`` | ``"non_terminal"``. Default ``"live"``
+    # matches the operator-facing Tags page's default filter. CHECK
+    # constraint at the DB layer; Pydantic enforces the same enum on
+    # PATCH /tenant/config. --
+    dashboard_tags_count_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="live"
+    )
     # -- Sprint 33 QW6: per-tenant branding (NULL = use system defaults).
     # See docs/design/reference-design-remediation.md §3.3. --
     logo_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)

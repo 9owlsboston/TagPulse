@@ -65,3 +65,29 @@ def test_response_includes_low_stock_threshold_default() -> None:
         tracking_modes=["asset"],
     )
     assert cfg.low_stock_threshold == 3
+
+
+# Sprint 54 follow-up: per-tenant dashboard_tags_count_mode powering
+# DashboardSummary.tags_total. Literal validates the enum on PATCH.
+
+
+def test_update_accepts_known_tag_count_modes() -> None:
+    for mode in ("all", "live", "non_terminal"):
+        payload = TenantConfigUpdate(dashboard_tags_count_mode=mode)  # type: ignore[arg-type]
+        assert payload.dashboard_tags_count_mode == mode
+
+
+def test_update_rejects_unknown_tag_count_mode() -> None:
+    with pytest.raises(ValueError):
+        TenantConfigUpdate(dashboard_tags_count_mode="bogus")  # type: ignore[arg-type]
+
+
+def test_response_includes_dashboard_tags_count_mode_default() -> None:
+    cfg = TenantConfig(
+        id="00000000-0000-0000-0000-000000000001",
+        name="Acme",
+        slug="acme",
+        plan="standard",
+        tracking_modes=["asset"],
+    )
+    assert cfg.dashboard_tags_count_mode == "live"

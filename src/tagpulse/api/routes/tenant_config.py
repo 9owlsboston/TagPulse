@@ -32,6 +32,7 @@ router = APIRouter(prefix="/tenant", tags=["tenant"])
 
 TrackingMode = Literal["asset", "inventory"]
 TelemetrySubjectKind = Literal["device", "asset", "lot", "stock_item", "zone"]
+DashboardTagsCountMode = Literal["all", "live", "non_terminal"]
 
 
 class TenantConfig(BaseModel):
@@ -48,6 +49,8 @@ class TenantConfig(BaseModel):
     rate_limit_overrides: dict[str, int] | None = None
     # Sprint 54 Phase 54.3: powers ``low_stock_count`` on /dashboard/summary.
     low_stock_threshold: int = 3
+    # Sprint 54 follow-up: powers ``tags_total`` on /dashboard/summary.
+    dashboard_tags_count_mode: DashboardTagsCountMode = "live"
 
 
 class TenantConfigUpdate(BaseModel):
@@ -68,6 +71,7 @@ class TenantConfigUpdate(BaseModel):
     )
     rate_limit_overrides: dict[str, int] | None = None
     low_stock_threshold: int | None = Field(default=None, ge=1, le=10_000)
+    dashboard_tags_count_mode: DashboardTagsCountMode | None = None
 
 
 def _to_response(row: TenantModel) -> TenantConfig:
@@ -81,6 +85,7 @@ def _to_response(row: TenantModel) -> TenantConfig:
         telemetry_subject_kinds=list(row.telemetry_subject_kinds),  # type: ignore[arg-type]
         rate_limit_overrides=overrides,
         low_stock_threshold=row.low_stock_threshold,
+        dashboard_tags_count_mode=row.dashboard_tags_count_mode,  # type: ignore[arg-type]
     )
 
 
@@ -175,6 +180,18 @@ async def update_tenant_config(
             changes["low_stock_threshold"] = {
                 "from": old_threshold,
                 "to": new_threshold,
+            }
+
+    if body.dashboard_tags_count_mode is not None:
+        # Sprint 54 follow-up: Literal validates the value before we
+        # reach here, so a bad mode surfaces as 422.
+        old_mode = row.dashboard_tags_count_mode
+        new_mode = body.dashboard_tags_count_mode
+        if new_mode != old_mode:
+            row.dashboard_tags_count_mode = new_mode
+            changes["dashboard_tags_count_mode"] = {
+                "from": old_mode,
+                "to": new_mode,
             }
 
     if changes:

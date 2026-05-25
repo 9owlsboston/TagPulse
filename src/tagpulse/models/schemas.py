@@ -1624,6 +1624,16 @@ class DashboardSummary(BaseModel):
       ``tenants.low_stock_threshold`` active stock_items
       (``state='in_stock' AND consumed_at IS NULL``). Default
       threshold 3; overridable via ``PATCH /tenant/config``.
+    - ``tags_total`` — tags for the tenant. Predicate is selected
+      by ``tenants.dashboard_tags_count_mode`` — ``"all"`` counts
+      every row, ``"live"`` (default) counts
+      ``status IN ('registered', 'active')``, ``"non_terminal"``
+      counts ``status NOT IN ('retired', 'defective',
+      'transferred_out')``. Overridable via ``PATCH /tenant/config``.
+    - ``sites_total`` — count of rows in ``sites`` for the tenant.
+    - ``zones_total`` — count of rows in ``zones`` for the tenant.
+      The Locations KPI tile renders the (sites, zones) pair as one
+      grouped tile.
     """
 
     generated_at: datetime
@@ -1635,3 +1645,6 @@ class DashboardSummary(BaseModel):
     tag_transfers_in_flight: int
     tag_recon_backlog: int
     low_stock_count: int
+    tags_total: int
+    sites_total: int
+    zones_total: int
