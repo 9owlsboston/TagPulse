@@ -58,9 +58,7 @@ class TenantConfigUpdate(BaseModel):
     requests-per-minute; pass ``{}`` to clear all overrides).
     """
 
-    tracking_modes: list[TrackingMode] | None = Field(
-        default=None, min_length=1, max_length=2
-    )
+    tracking_modes: list[TrackingMode] | None = Field(default=None, min_length=1, max_length=2)
     telemetry_subject_kinds: list[TelemetrySubjectKind] | None = Field(
         default=None, min_length=1, max_length=5
     )
@@ -99,9 +97,7 @@ async def update_tenant_config(
     session: AsyncSession = Depends(get_session),
 ) -> TenantConfig:
     """Update tenant feature flags (admin only). Deduplicated and audited."""
-    row = await session.scalar(
-        select(TenantModel).where(TenantModel.id == user.tenant_id)
-    )
+    row = await session.scalar(select(TenantModel).where(TenantModel.id == user.tenant_id))
     if row is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
@@ -152,9 +148,7 @@ async def update_tenant_config(
                 )
         new_overrides = dict(body.rate_limit_overrides) or None
         old_overrides = (
-            dict(row.rate_limit_overrides)
-            if isinstance(row.rate_limit_overrides, dict)
-            else None
+            dict(row.rate_limit_overrides) if isinstance(row.rate_limit_overrides, dict) else None
         )
         if new_overrides != old_overrides:
             row.rate_limit_overrides = new_overrides
@@ -197,9 +191,7 @@ async def get_map_config(
     session: AsyncSession = Depends(get_session),
 ) -> MapConfigResponse:
     """Resolved tile-provider config for the calling tenant (any role)."""
-    row = await session.scalar(
-        select(TenantModel).where(TenantModel.id == tenant.id)
-    )
+    row = await session.scalar(select(TenantModel).where(TenantModel.id == tenant.id))
     if row is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
     try:
@@ -215,9 +207,7 @@ async def update_map_config(
     session: AsyncSession = Depends(get_session),
 ) -> MapConfigResponse:
     """Set the tile provider for the calling tenant (admin only)."""
-    row = await session.scalar(
-        select(TenantModel).where(TenantModel.id == user.tenant_id)
-    )
+    row = await session.scalar(select(TenantModel).where(TenantModel.id == user.tenant_id))
     if row is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
     # Validate first so we never persist a blob the resolver can't render.

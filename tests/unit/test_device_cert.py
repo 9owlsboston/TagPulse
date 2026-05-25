@@ -19,9 +19,7 @@ def self_signed_pem() -> tuple[str, str]:
     from cryptography.x509.oid import NameOID
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name(
-        [x509.NameAttribute(NameOID.COMMON_NAME, "test-device.tagpulse.io")]
-    )
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test-device.tagpulse.io")])
     cert = (
         x509.CertificateBuilder()
         .subject_name(name)
@@ -113,9 +111,7 @@ async def test_attach_cert_computes_thumbprint(
     fake_session = _FakeSession(fake_device)
     fake_audit = _FakeAudit()
 
-    monkeypatch.setattr(
-        "tagpulse.api.routes.devices.AuditLogger", lambda _s: fake_audit
-    )
+    monkeypatch.setattr("tagpulse.api.routes.devices.AuditLogger", lambda _s: fake_audit)
 
     response = await attach_device_cert(
         device_id=device_id,
@@ -129,9 +125,7 @@ async def test_attach_cert_computes_thumbprint(
     assert "test-device" in response.subject
     assert fake_device.cert_thumbprint == expected
     assert fake_session.flushed is True
-    assert any(
-        e["action"] == "device.cert_attached" for e in fake_audit.entries
-    )
+    assert any(e["action"] == "device.cert_attached" for e in fake_audit.entries)
 
 
 @pytest.mark.asyncio
@@ -149,9 +143,7 @@ async def test_attach_cert_rejects_invalid_pem(
     fake_device = _FakeDevice(uuid4(), tenant)
     fake_session = _FakeSession(fake_device)
     fake_audit = _FakeAudit()
-    monkeypatch.setattr(
-        "tagpulse.api.routes.devices.AuditLogger", lambda _s: fake_audit
-    )
+    monkeypatch.setattr("tagpulse.api.routes.devices.AuditLogger", lambda _s: fake_audit)
 
     with pytest.raises(HTTPException) as exc_info:
         await attach_device_cert(

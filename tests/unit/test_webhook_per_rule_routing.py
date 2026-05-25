@@ -180,26 +180,16 @@ class TestBroadcastFallback:
         captured: list[str] = []
         dispatcher = _build_dispatcher(
             integrations=[
-                _make_integration_response(
-                    integration_id=int_a, tenant_id=tenant_id, name="a"
-                ),
-                _make_integration_response(
-                    integration_id=int_b, tenant_id=tenant_id, name="b"
-                ),
-                _make_integration_response(
-                    integration_id=int_c, tenant_id=tenant_id, name="c"
-                ),
+                _make_integration_response(integration_id=int_a, tenant_id=tenant_id, name="a"),
+                _make_integration_response(integration_id=int_b, tenant_id=tenant_id, name="b"),
+                _make_integration_response(integration_id=int_c, tenant_id=tenant_id, name="c"),
             ],
-            rule_row=_make_rule_row(
-                rule_id=rule_id, tenant_id=tenant_id, integration_ids=None
-            ),
+            rule_row=_make_rule_row(rule_id=rule_id, tenant_id=tenant_id, integration_ids=None),
             captured_urls=captured,
         )
 
         try:
-            await dispatcher.on_event(
-                _alert_event(tenant_id=tenant_id, rule_id=rule_id)
-            )
+            await dispatcher.on_event(_alert_event(tenant_id=tenant_id, rule_id=rule_id))
         finally:
             await dispatcher.stop()
 
@@ -215,23 +205,15 @@ class TestBroadcastFallback:
         captured: list[str] = []
         dispatcher = _build_dispatcher(
             integrations=[
-                _make_integration_response(
-                    integration_id=int_a, tenant_id=tenant_id, name="a"
-                ),
-                _make_integration_response(
-                    integration_id=int_b, tenant_id=tenant_id, name="b"
-                ),
+                _make_integration_response(integration_id=int_a, tenant_id=tenant_id, name="a"),
+                _make_integration_response(integration_id=int_b, tenant_id=tenant_id, name="b"),
             ],
-            rule_row=_make_rule_row(
-                rule_id=rule_id, tenant_id=tenant_id, integration_ids=[]
-            ),
+            rule_row=_make_rule_row(rule_id=rule_id, tenant_id=tenant_id, integration_ids=[]),
             captured_urls=captured,
         )
 
         try:
-            await dispatcher.on_event(
-                _alert_event(tenant_id=tenant_id, rule_id=rule_id)
-            )
+            await dispatcher.on_event(_alert_event(tenant_id=tenant_id, rule_id=rule_id))
         finally:
             await dispatcher.stop()
 
@@ -256,15 +238,9 @@ class TestPerRuleReplace:
         captured: list[str] = []
         dispatcher = _build_dispatcher(
             integrations=[
-                _make_integration_response(
-                    integration_id=int_a, tenant_id=tenant_id, name="a"
-                ),
-                _make_integration_response(
-                    integration_id=int_b, tenant_id=tenant_id, name="b"
-                ),
-                _make_integration_response(
-                    integration_id=int_c, tenant_id=tenant_id, name="c"
-                ),
+                _make_integration_response(integration_id=int_a, tenant_id=tenant_id, name="a"),
+                _make_integration_response(integration_id=int_b, tenant_id=tenant_id, name="b"),
+                _make_integration_response(integration_id=int_c, tenant_id=tenant_id, name="c"),
             ],
             rule_row=_make_rule_row(
                 rule_id=rule_id,
@@ -275,9 +251,7 @@ class TestPerRuleReplace:
         )
 
         try:
-            await dispatcher.on_event(
-                _alert_event(tenant_id=tenant_id, rule_id=rule_id)
-            )
+            await dispatcher.on_event(_alert_event(tenant_id=tenant_id, rule_id=rule_id))
         finally:
             await dispatcher.stop()
 
@@ -298,12 +272,8 @@ class TestPerRuleReplace:
         captured: list[str] = []
         dispatcher = _build_dispatcher(
             integrations=[
-                _make_integration_response(
-                    integration_id=int_a, tenant_id=tenant_id, name="a"
-                ),
-                _make_integration_response(
-                    integration_id=int_b, tenant_id=tenant_id, name="b"
-                ),
+                _make_integration_response(integration_id=int_a, tenant_id=tenant_id, name="a"),
+                _make_integration_response(integration_id=int_b, tenant_id=tenant_id, name="b"),
             ],
             rule_row=_make_rule_row(
                 rule_id=rule_id,
@@ -314,9 +284,7 @@ class TestPerRuleReplace:
         )
 
         try:
-            await dispatcher.on_event(
-                _alert_event(tenant_id=tenant_id, rule_id=rule_id)
-            )
+            await dispatcher.on_event(_alert_event(tenant_id=tenant_id, rule_id=rule_id))
         finally:
             await dispatcher.stop()
 
@@ -351,9 +319,7 @@ class TestPerRuleReplace:
         )
 
         try:
-            await dispatcher.on_event(
-                _alert_event(tenant_id=tenant_id, rule_id=rule_id)
-            )
+            await dispatcher.on_event(_alert_event(tenant_id=tenant_id, rule_id=rule_id))
         finally:
             await dispatcher.stop()
 
@@ -372,9 +338,7 @@ class TestPerRuleReplaceSignaling:
         "event_type",
         ["location", "geolocation", "geofencing", "temperature"],
     )
-    async def test_signaling_rule_routes_only_to_allowlisted(
-        self, event_type: str
-    ) -> None:
+    async def test_signaling_rule_routes_only_to_allowlisted(self, event_type: str) -> None:
         tenant_id = uuid.uuid4()
         rule_id = uuid.uuid4()
         chosen = uuid.uuid4()
@@ -386,9 +350,7 @@ class TestPerRuleReplaceSignaling:
                 _make_integration_response(
                     integration_id=chosen, tenant_id=tenant_id, name="chosen"
                 ),
-                _make_integration_response(
-                    integration_id=other, tenant_id=tenant_id, name="other"
-                ),
+                _make_integration_response(integration_id=other, tenant_id=tenant_id, name="other"),
             ],
             rule_row=_make_rule_row(
                 rule_id=rule_id,
@@ -400,9 +362,7 @@ class TestPerRuleReplaceSignaling:
         )
 
         try:
-            await dispatcher.on_event(
-                _alert_event(tenant_id=tenant_id, rule_id=rule_id)
-            )
+            await dispatcher.on_event(_alert_event(tenant_id=tenant_id, rule_id=rule_id))
         finally:
             await dispatcher.stop()
 
@@ -425,12 +385,8 @@ class TestFilterDefensivePaths:
         captured: list[str] = []
         dispatcher = _build_dispatcher(
             integrations=[
-                _make_integration_response(
-                    integration_id=int_a, tenant_id=tenant_id, name="a"
-                ),
-                _make_integration_response(
-                    integration_id=int_b, tenant_id=tenant_id, name="b"
-                ),
+                _make_integration_response(integration_id=int_a, tenant_id=tenant_id, name="a"),
+                _make_integration_response(integration_id=int_b, tenant_id=tenant_id, name="b"),
             ],
             rule_row=None,
             captured_urls=captured,
@@ -454,21 +410,15 @@ class TestFilterDefensivePaths:
         captured: list[str] = []
         dispatcher = _build_dispatcher(
             integrations=[
-                _make_integration_response(
-                    integration_id=int_a, tenant_id=tenant_id, name="a"
-                ),
-                _make_integration_response(
-                    integration_id=int_b, tenant_id=tenant_id, name="b"
-                ),
+                _make_integration_response(integration_id=int_a, tenant_id=tenant_id, name="a"),
+                _make_integration_response(integration_id=int_b, tenant_id=tenant_id, name="b"),
             ],
             rule_row=None,  # rule lookup returns None
             captured_urls=captured,
         )
 
         try:
-            await dispatcher.on_event(
-                _alert_event(tenant_id=tenant_id, rule_id=rule_id)
-            )
+            await dispatcher.on_event(_alert_event(tenant_id=tenant_id, rule_id=rule_id))
         finally:
             await dispatcher.stop()
 
@@ -484,12 +434,8 @@ class TestFilterDefensivePaths:
         captured: list[str] = []
         dispatcher = _build_dispatcher(
             integrations=[
-                _make_integration_response(
-                    integration_id=int_a, tenant_id=tenant_id, name="a"
-                ),
-                _make_integration_response(
-                    integration_id=int_b, tenant_id=tenant_id, name="b"
-                ),
+                _make_integration_response(integration_id=int_a, tenant_id=tenant_id, name="a"),
+                _make_integration_response(integration_id=int_b, tenant_id=tenant_id, name="b"),
             ],
             rule_row=None,
             captured_urls=captured,

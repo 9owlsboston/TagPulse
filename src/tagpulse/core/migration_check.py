@@ -62,9 +62,7 @@ async def fetch_db_revision(
 ) -> str | None:
     """Read the current ``alembic_version`` row, or ``None`` if missing."""
     async with session_factory() as session:
-        result = await session.execute(
-            text("SELECT version_num FROM alembic_version LIMIT 1")
-        )
+        result = await session.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
         row = result.scalar_one_or_none()
     if row is None:
         return None

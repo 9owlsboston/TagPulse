@@ -93,10 +93,7 @@ class FakeTagReadRepo:
             bucket = r.timestamp.replace(minute=0, second=0, microsecond=0)
             key = (bucket, r.device_id)
             buckets[key] = buckets.get(key, 0) + 1
-        return [
-            ReadsPerHour(bucket=k[0], device_id=k[1], read_count=v)
-            for k, v in buckets.items()
-        ]
+        return [ReadsPerHour(bucket=k[0], device_id=k[1], read_count=v) for k, v in buckets.items()]
 
     async def unique_tags_per_window(
         self,
@@ -116,16 +113,12 @@ class FakeTagReadRepo:
             key = (bucket, r.device_id)
             buckets.setdefault(key, set()).add(r.tag_id)
         return [
-            UniqueTagsPerWindow(
-                bucket=k[0], device_id=k[1], unique_tags=len(v)
-            )
+            UniqueTagsPerWindow(bucket=k[0], device_id=k[1], unique_tags=len(v))
             for k, v in buckets.items()
         ]
 
     async def count_reads_since(self, tenant_id: UUID, device_id: UUID, since: datetime) -> int:
-        return len(
-            [r for r in self.reads if r.device_id == device_id and r.timestamp >= since]
-        )
+        return len([r for r in self.reads if r.device_id == device_id and r.timestamp >= since])
 
     async def count_alerts_since(self, tenant_id: UUID, device_id: UUID, since: datetime) -> int:
         return 0
@@ -191,16 +184,15 @@ def service(tag_repo: FakeTagReadRepo, device_repo: FakeDeviceRepo) -> QueryServ
 
 
 class TestQueryTagReads:
-    async def test_query_all(
-        self, service: QueryService, tag_repo: FakeTagReadRepo
-    ) -> None:
+    async def test_query_all(self, service: QueryService, tag_repo: FakeTagReadRepo) -> None:
         did = uuid4()
         now = datetime.now(UTC)
         for i in range(5):
-            await tag_repo.insert(TENANT_ID,
+            await tag_repo.insert(
+                TENANT_ID,
                 TagReadCreate(
                     device_id=did, tag_id=f"TAG{i}", timestamp=now - timedelta(minutes=i)
-                )
+                ),
             )
         results = await service.query_tag_reads(TENANT_ID)
         assert len(results) == 5
@@ -216,9 +208,7 @@ class TestQueryTagReads:
         assert len(results) == 1
         assert results[0].device_id == d1
 
-    async def test_query_filter_tag(
-        self, service: QueryService, tag_repo: FakeTagReadRepo
-    ) -> None:
+    async def test_query_filter_tag(self, service: QueryService, tag_repo: FakeTagReadRepo) -> None:
         did = uuid4()
         now = datetime.now(UTC)
         await tag_repo.insert(TENANT_ID, TagReadCreate(device_id=did, tag_id="A", timestamp=now))
@@ -231,23 +221,20 @@ class TestQueryTagReads:
     ) -> None:
         did = uuid4()
         now = datetime.now(UTC)
-        await tag_repo.insert(TENANT_ID,
-            TagReadCreate(device_id=did, tag_id="A", timestamp=now - timedelta(hours=3))
+        await tag_repo.insert(
+            TENANT_ID, TagReadCreate(device_id=did, tag_id="A", timestamp=now - timedelta(hours=3))
         )
-        await tag_repo.insert(TENANT_ID,
-            TagReadCreate(device_id=did, tag_id="B", timestamp=now)
-        )
+        await tag_repo.insert(TENANT_ID, TagReadCreate(device_id=did, tag_id="B", timestamp=now))
         results = await service.query_tag_reads(TENANT_ID, start=now - timedelta(hours=1))
         assert len(results) == 1
 
-    async def test_query_pagination(
-        self, service: QueryService, tag_repo: FakeTagReadRepo
-    ) -> None:
+    async def test_query_pagination(self, service: QueryService, tag_repo: FakeTagReadRepo) -> None:
         did = uuid4()
         now = datetime.now(UTC)
         for i in range(10):
-            await tag_repo.insert(TENANT_ID,
-                TagReadCreate(device_id=did, tag_id=f"T{i}", timestamp=now - timedelta(minutes=i))
+            await tag_repo.insert(
+                TENANT_ID,
+                TagReadCreate(device_id=did, tag_id=f"T{i}", timestamp=now - timedelta(minutes=i)),
             )
         page1 = await service.query_tag_reads(TENANT_ID, limit=3, offset=0)
         page2 = await service.query_tag_reads(TENANT_ID, limit=3, offset=3)
@@ -257,22 +244,18 @@ class TestQueryTagReads:
 
 
 class TestAggregations:
-    async def test_reads_per_hour(
-        self, service: QueryService, tag_repo: FakeTagReadRepo
-    ) -> None:
+    async def test_reads_per_hour(self, service: QueryService, tag_repo: FakeTagReadRepo) -> None:
         did = uuid4()
         now = datetime.now(UTC).replace(minute=30, second=0, microsecond=0)
         for i in range(5):
-            await tag_repo.insert(TENANT_ID,
-                TagReadCreate(device_id=did, tag_id=f"T{i}", timestamp=now)
+            await tag_repo.insert(
+                TENANT_ID, TagReadCreate(device_id=did, tag_id=f"T{i}", timestamp=now)
             )
         result = await service.reads_per_hour(TENANT_ID, device_id=did)
         assert len(result) == 1
         assert result[0].read_count == 5
 
-    async def test_unique_tags(
-        self, service: QueryService, tag_repo: FakeTagReadRepo
-    ) -> None:
+    async def test_unique_tags(self, service: QueryService, tag_repo: FakeTagReadRepo) -> None:
         did = uuid4()
         now = datetime.now(UTC).replace(minute=30, second=0, microsecond=0)
         await tag_repo.insert(TENANT_ID, TagReadCreate(device_id=did, tag_id="A", timestamp=now))
@@ -290,8 +273,9 @@ class TestRecentReads:
         did = uuid4()
         now = datetime.now(UTC)
         for i in range(10):
-            await tag_repo.insert(TENANT_ID,
-                TagReadCreate(device_id=did, tag_id=f"T{i}", timestamp=now - timedelta(minutes=i))
+            await tag_repo.insert(
+                TENANT_ID,
+                TagReadCreate(device_id=did, tag_id=f"T{i}", timestamp=now - timedelta(minutes=i)),
             )
         results = await service.recent_reads(TENANT_ID, did, limit=5)
         assert len(results) == 5
@@ -308,9 +292,7 @@ class TestDeviceHealth:
         d1 = device_repo.add(name="R1", connection_state="online")
         d2 = device_repo.add(name="R2", connection_state="offline")
         now = datetime.now(UTC)
-        await tag_repo.insert(TENANT_ID,
-            TagReadCreate(device_id=d1.id, tag_id="X", timestamp=now)
-        )
+        await tag_repo.insert(TENANT_ID, TagReadCreate(device_id=d1.id, tag_id="X", timestamp=now))
         results = await service.device_health(TENANT_ID)
         assert len(results) == 2
         r1 = next(r for r in results if r.device_id == d1.id)

@@ -4,8 +4,9 @@
 # Default ENV for ops targets — override on the command line: make logs ENV=prod
 ENV ?= dev
 
-lint:        ## Run linter
+lint:        ## Run linter (style + format check)
 	ruff check src tests clients/pi
+	ruff format --check src tests clients/pi
 
 typecheck:   ## Run type checker
 	mypy src

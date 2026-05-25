@@ -64,8 +64,7 @@ class InventoryRuleWorker:
     async def start(self) -> None:
         self._task = asyncio.create_task(self._loop())
         logger.info(
-            "InventoryRuleWorker started "
-            "(below_threshold=%.0fs, expiring_check=%.0fs)",
+            "InventoryRuleWorker started (below_threshold=%.0fs, expiring_check=%.0fs)",
             self._below_interval,
             self._expiring_interval,
         )
@@ -109,9 +108,7 @@ class InventoryRuleWorker:
             return
         stock_repo = TimescaleStockItemRepository(session)
         for rule in rules:
-            self._meter.record(
-                rule.tenant_id, "rule_evaluations", "evaluations"
-            )
+            self._meter.record(rule.tenant_id, "rule_evaluations", "evaluations")
             rule_evaluations.add(1, {"tenant_id": str(rule.tenant_id)})
             cfg = rule.condition_config
             try:
@@ -165,9 +162,7 @@ class InventoryRuleWorker:
             return
         now = datetime.now(UTC)
         for rule in rules:
-            self._meter.record(
-                rule.tenant_id, "rule_evaluations", "evaluations"
-            )
+            self._meter.record(rule.tenant_id, "rule_evaluations", "evaluations")
             rule_evaluations.add(1, {"tenant_id": str(rule.tenant_id)})
             cfg = rule.condition_config
             try:
@@ -187,9 +182,7 @@ class InventoryRuleWorker:
                 try:
                     product_id = UUID(str(product_id_raw))
                 except ValueError:
-                    logger.warning(
-                        "Invalid product_id in expiring rule %s", rule.id
-                    )
+                    logger.warning("Invalid product_id in expiring rule %s", rule.id)
                     continue
                 stmt = stmt.where(LotModel.product_id == product_id)
             result = await session.execute(stmt)
@@ -223,9 +216,7 @@ class InventoryRuleWorker:
         )
         result = await session.execute(stmt)
         for tenant_id, count in result.all():
-            await self._meter.record_snapshot(
-                tenant_id, "stock_items_active", "items", int(count)
-            )
+            await self._meter.record_snapshot(tenant_id, "stock_items_active", "items", int(count))
 
     # ---- alert fan-out ----
 

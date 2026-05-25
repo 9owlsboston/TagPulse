@@ -71,9 +71,7 @@ class TelemetryService:
         self._model_service = model_service
         self._device_repo = device_repo
 
-    async def ingest_batch(
-        self, tenant_id: UUID, batch: TelemetryBatch
-    ) -> dict[str, int]:
+    async def ingest_batch(self, tenant_id: UUID, batch: TelemetryBatch) -> dict[str, int]:
         """Validate and persist a batch of readings. Returns counts."""
         device = (
             await self._device_repo.get(tenant_id, batch.device_id)
@@ -116,9 +114,7 @@ class TelemetryService:
         )
         return response if outcome == "accepted" else None
 
-    async def ingest_location(
-        self, tenant_id: UUID, payload: LocationPayload
-    ) -> None:
+    async def ingest_location(self, tenant_id: UUID, payload: LocationPayload) -> None:
         """Persist a standalone location update as two metric rows (lat/lon)."""
         if not _timestamp_acceptable(payload.timestamp):
             logger.warning(
@@ -151,9 +147,7 @@ class TelemetryService:
             )
         location_updates_counter.add(1, {"tenant_id": str(tenant_id)})
 
-    async def ingest_device_event(
-        self, tenant_id: UUID, payload: DeviceEventPayload
-    ) -> None:
+    async def ingest_device_event(self, tenant_id: UUID, payload: DeviceEventPayload) -> None:
         """Persist a device-side event. v1: log + count; richer storage in Sprint 16."""
         if not _timestamp_acceptable(payload.timestamp):
             logger.warning(
@@ -196,25 +190,19 @@ class TelemetryService:
         metrics_by_name: dict[str, Any],
     ) -> tuple[str, TelemetryResponse | None]:
         if not _timestamp_acceptable(reading.timestamp):
-            await self._quarantine(
-                tenant_id, device_id, reading, QuarantineReason.STALE_TIMESTAMP
-            )
+            await self._quarantine(tenant_id, device_id, reading, QuarantineReason.STALE_TIMESTAMP)
             return "quarantined", None
 
         metric_def = metrics_by_name.get(reading.metric_name)
         if metric_def is None:
-            await self._quarantine(
-                tenant_id, device_id, reading, QuarantineReason.UNKNOWN_METRIC
-            )
+            await self._quarantine(tenant_id, device_id, reading, QuarantineReason.UNKNOWN_METRIC)
             return "quarantined", None
 
         # Range check
         if (metric_def.min_value is not None and reading.metric_value < metric_def.min_value) or (
             metric_def.max_value is not None and reading.metric_value > metric_def.max_value
         ):
-            await self._quarantine(
-                tenant_id, device_id, reading, QuarantineReason.OUT_OF_RANGE
-            )
+            await self._quarantine(tenant_id, device_id, reading, QuarantineReason.OUT_OF_RANGE)
             await self._event_bus.publish(
                 Topic.TELEMETRY_OUT_OF_RANGE,
                 Event(
@@ -243,16 +231,12 @@ class TelemetryService:
                 metric_def.unit,
             )
 
-        response = await self._repo.insert_reading(
-            tenant_id, device_id, reading
-        )
+        response = await self._repo.insert_reading(tenant_id, device_id, reading)
         telemetry_ingestion_counter.add(
             1,
             {"tenant_id": str(tenant_id), "metric_name": reading.metric_name},
         )
-        await self._publish_telemetry_recorded(
-            tenant_id, device_id, response, source="device"
-        )
+        await self._publish_telemetry_recorded(tenant_id, device_id, response, source="device")
         return "accepted", response
 
     async def query(

@@ -15,9 +15,7 @@ from tagpulse.repositories.timescaledb.session import get_session
 
 router = APIRouter(tags=["provisioning"])
 
-provisioning_key_header = APIKeyHeader(
-    name="X-Provisioning-Key", auto_error=False
-)
+provisioning_key_header = APIKeyHeader(name="X-Provisioning-Key", auto_error=False)
 
 
 class ProvisionRequest(BaseModel):
@@ -42,9 +40,7 @@ async def provision_device(
 ) -> dict[str, str]:
     """Self-register a device using a tenant provisioning key."""
     if not key:
-        raise HTTPException(
-            status_code=401, detail="X-Provisioning-Key required"
-        ) from None
+        raise HTTPException(status_code=401, detail="X-Provisioning-Key required") from None
 
     # Find tenant by provisioning key
     prefix = key[:10]
@@ -56,15 +52,11 @@ async def provision_device(
     tenant = result.scalar_one_or_none()
 
     if tenant is None:
-        raise HTTPException(
-            status_code=401, detail="Invalid provisioning key"
-        ) from None
+        raise HTTPException(status_code=401, detail="Invalid provisioning key") from None
 
     key_hash = hashlib.sha256(key.encode()).hexdigest()
     if tenant.provisioning_key_hash != key_hash:
-        raise HTTPException(
-            status_code=401, detail="Invalid provisioning key"
-        ) from None
+        raise HTTPException(status_code=401, detail="Invalid provisioning key") from None
 
     # Create device with pending status
     device = DeviceModel(
@@ -92,9 +84,7 @@ async def check_provision_status(
 ) -> ProvisionStatusResponse:
     """Check provisioning status of a device."""
     if not key:
-        raise HTTPException(
-            status_code=401, detail="X-Provisioning-Key required"
-        ) from None
+        raise HTTPException(status_code=401, detail="X-Provisioning-Key required") from None
 
     prefix = key[:10]
     stmt = select(TenantModel).where(
@@ -113,13 +103,9 @@ async def check_provision_status(
     device_result = await session.execute(device_stmt)
     device = device_result.scalar_one_or_none()
     if device is None:
-        raise HTTPException(
-            status_code=404, detail="Device not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Device not found") from None
 
-    return ProvisionStatusResponse(
-        device_name=device.name, status=device.status
-    )
+    return ProvisionStatusResponse(device_name=device.name, status=device.status)
 
 
 @router.post("/device-registry/{device_id}/approve", status_code=204)
@@ -137,9 +123,7 @@ async def approve_device(
     result = await session.execute(stmt)
     device = result.scalar_one_or_none()
     if device is None:
-        raise HTTPException(
-            status_code=404, detail="Pending device not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Pending device not found") from None
     device.status = "active"
     await session.flush()
 
@@ -159,8 +143,6 @@ async def reject_device(
     result = await session.execute(stmt)
     device = result.scalar_one_or_none()
     if device is None:
-        raise HTTPException(
-            status_code=404, detail="Pending device not found"
-        ) from None
+        raise HTTPException(status_code=404, detail="Pending device not found") from None
     device.status = "rejected"
     await session.flush()

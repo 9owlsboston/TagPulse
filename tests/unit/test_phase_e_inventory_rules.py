@@ -316,8 +316,9 @@ class _FakeStockRepo:
     def __init__(self, levels: list[StockLevelRow]) -> None:
         self._levels = levels
 
-    async def stock_levels(self, tenant_id: UUID, *, product_id: Any = None,
-                           zone_id: Any = None) -> list[StockLevelRow]:
+    async def stock_levels(
+        self, tenant_id: UUID, *, product_id: Any = None, zone_id: Any = None
+    ) -> list[StockLevelRow]:
         return list(self._levels)
 
 

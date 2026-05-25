@@ -56,9 +56,7 @@ def validate_polygon(geojson: dict[str, Any]) -> list[tuple[float, float]]:
             "polygon ring must have at least 4 vertices (3 corners + closing vertex)"
         )
     if len(ring) > _MAX_VERTICES:
-        raise PolygonValidationError(
-            f"polygon ring exceeds {_MAX_VERTICES}-vertex cap"
-        )
+        raise PolygonValidationError(f"polygon ring exceeds {_MAX_VERTICES}-vertex cap")
     out: list[tuple[float, float]] = []
     for i, vertex in enumerate(ring):
         if (
@@ -67,24 +65,16 @@ def validate_polygon(geojson: dict[str, Any]) -> list[tuple[float, float]]:
             or not isinstance(vertex[0], int | float)
             or not isinstance(vertex[1], int | float)
         ):
-            raise PolygonValidationError(
-                f"polygon vertex {i} must be a [lon, lat] pair"
-            )
+            raise PolygonValidationError(f"polygon vertex {i} must be a [lon, lat] pair")
         lon = float(vertex[0])
         lat = float(vertex[1])
         if not (_MIN_LON <= lon <= _MAX_LON):
-            raise PolygonValidationError(
-                f"polygon vertex {i} longitude {lon} out of range"
-            )
+            raise PolygonValidationError(f"polygon vertex {i} longitude {lon} out of range")
         if not (_MIN_LAT <= lat <= _MAX_LAT):
-            raise PolygonValidationError(
-                f"polygon vertex {i} latitude {lat} out of range"
-            )
+            raise PolygonValidationError(f"polygon vertex {i} latitude {lat} out of range")
         out.append((lon, lat))
     if out[0] != out[-1]:
-        raise PolygonValidationError(
-            "polygon ring must be closed (first vertex == last vertex)"
-        )
+        raise PolygonValidationError("polygon ring must be closed (first vertex == last vertex)")
     return out
 
 
@@ -97,9 +87,7 @@ def compute_bbox(
     return (min(lats), max(lats), min(lons), max(lons))
 
 
-def point_in_polygon(
-    lat: float, lon: float, ring: list[tuple[float, float]]
-) -> bool:
+def point_in_polygon(lat: float, lon: float, ring: list[tuple[float, float]]) -> bool:
     """Ray-casting point-in-polygon test.
 
     Returns ``True`` for points strictly inside or on the boundary of the
@@ -133,17 +121,9 @@ def bbox_contains(
     lon: float,
 ) -> bool:
     """Cheap bbox prefilter; ``True`` if the point falls within the bbox."""
-    if (
-        bbox_min_lat is None
-        or bbox_max_lat is None
-        or bbox_min_lon is None
-        or bbox_max_lon is None
-    ):
+    if bbox_min_lat is None or bbox_max_lat is None or bbox_min_lon is None or bbox_max_lon is None:
         return False
-    return (
-        bbox_min_lat <= lat <= bbox_max_lat
-        and bbox_min_lon <= lon <= bbox_max_lon
-    )
+    return bbox_min_lat <= lat <= bbox_max_lat and bbox_min_lon <= lon <= bbox_max_lon
 
 
 __all__ = [

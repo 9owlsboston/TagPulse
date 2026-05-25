@@ -45,9 +45,7 @@ class PoolEntry:
     @property
     def sessionmaker(self) -> async_sessionmaker[AsyncSession]:
         if self._sessionmaker is None:
-            self._sessionmaker = async_sessionmaker(
-                self.engine, expire_on_commit=False
-            )
+            self._sessionmaker = async_sessionmaker(self.engine, expire_on_commit=False)
         return self._sessionmaker
 
     async def dispose(self) -> None:
@@ -110,15 +108,11 @@ def _build_default_registry() -> PoolRegistry:
         cfg = _load_config(cfg_path)
         for key, raw in cfg["pools"].items():
             if not isinstance(raw, dict) or "dsn" not in raw:
-                raise ValueError(
-                    f"pools.{key} in {cfg_path} must be a mapping with a 'dsn' field"
-                )
+                raise ValueError(f"pools.{key} in {cfg_path} must be a mapping with a 'dsn' field")
             kwargs = {k: v for k, v in raw.items() if k != "dsn"}
             entries[key] = PoolEntry(key=key, dsn=str(raw["dsn"]), **kwargs)
     if "shared_default" not in entries:
-        entries["shared_default"] = PoolEntry(
-            key="shared_default", dsn=settings.database_url
-        )
+        entries["shared_default"] = PoolEntry(key="shared_default", dsn=settings.database_url)
     return PoolRegistry(entries)
 
 

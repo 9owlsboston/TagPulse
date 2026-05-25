@@ -34,14 +34,12 @@ from tagpulse.core.ttl_cache import TTLCache
 from tagpulse.models.schemas import LatestTelemetryEntry
 
 # (tenant_id,) -> tuple of opted-in subject kinds (e.g. ("device", "lot"))
-SUBJECT_KINDS_CACHE: TTLCache[UUID, tuple[str, ...]] = TTLCache(
-    ttl_seconds=30.0, maxsize=1024
-)
+SUBJECT_KINDS_CACHE: TTLCache[UUID, tuple[str, ...]] = TTLCache(ttl_seconds=30.0, maxsize=1024)
 
 # (tenant_id, subject_kind, subject_id) -> latest telemetry per metric
-LATEST_TELEMETRY_CACHE: TTLCache[
-    tuple[UUID, str, UUID], list[LatestTelemetryEntry]
-] = TTLCache(ttl_seconds=30.0, maxsize=4096)
+LATEST_TELEMETRY_CACHE: TTLCache[tuple[UUID, str, UUID], list[LatestTelemetryEntry]] = TTLCache(
+    ttl_seconds=30.0, maxsize=4096
+)
 
 
 def invalidate_subject_kinds(tenant_id: UUID) -> None:

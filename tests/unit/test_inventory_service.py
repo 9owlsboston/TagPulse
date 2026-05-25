@@ -114,8 +114,13 @@ class _FakeLotRepo:
         return lot
 
     async def list_for_product(  # type: ignore[no-untyped-def]
-        self, tenant_id, product_id, *, expiring_within_days=None,
-        limit=100, offset=0,
+        self,
+        tenant_id,
+        product_id,
+        *,
+        expiring_within_days=None,
+        limit=100,
+        offset=0,
     ):
         return [lot for lot in self.lots if lot.product_id == product_id]
 
@@ -144,7 +149,8 @@ class _FakeStockRepo:
     async def get_active_by_binding(self, tenant_id, binding_kind, binding_value):  # type: ignore[no-untyped-def]
         return next(
             (
-                i for i in self.items.values()
+                i
+                for i in self.items.values()
                 if i.binding_kind == binding_kind
                 and i.binding_value == binding_value
                 and i.state not in ("consumed", "expired", "lost")
@@ -238,20 +244,35 @@ class _FakeAudit:
     def __init__(self) -> None:
         self.entries: list[dict[str, Any]] = []
 
-    async def log(self, tenant_id, action, resource_type, resource_id,  # type: ignore[no-untyped-def]
-                  changes=None, *, user_id=None):
-        self.entries.append(
-            {"action": action, "resource_id": resource_id, "changes": changes}
-        )
+    async def log(
+        self,
+        tenant_id,
+        action,
+        resource_type,
+        resource_id,  # type: ignore[no-untyped-def]
+        changes=None,
+        *,
+        user_id=None,
+    ):
+        self.entries.append({"action": action, "resource_id": resource_id, "changes": changes})
 
 
 def _svc() -> tuple[
-    InventoryService, _FakeProductRepo, _FakeLotRepo, _FakeStockRepo,
-    _FakeMovementRepo, _FakeMappingRepo, _FakeAudit,
+    InventoryService,
+    _FakeProductRepo,
+    _FakeLotRepo,
+    _FakeStockRepo,
+    _FakeMovementRepo,
+    _FakeMappingRepo,
+    _FakeAudit,
 ]:
     p, lots, s, m, mp, a = (
-        _FakeProductRepo(), _FakeLotRepo(), _FakeStockRepo(),
-        _FakeMovementRepo(), _FakeMappingRepo(), _FakeAudit(),
+        _FakeProductRepo(),
+        _FakeLotRepo(),
+        _FakeStockRepo(),
+        _FakeMovementRepo(),
+        _FakeMappingRepo(),
+        _FakeAudit(),
     )
     svc = InventoryService(
         product_repo=p,  # type: ignore[arg-type]
@@ -268,7 +289,8 @@ def _svc() -> tuple[
 async def test_create_product_audits() -> None:
     svc, _, _, _, _, _, audit = _svc()
     product = await svc.create_product(
-        uuid4(), uuid4(),
+        uuid4(),
+        uuid4(),
         ProductCreate(sku="A1", name="Widget", gtin="00012345"),
     )
     assert product.sku == "A1"
@@ -278,9 +300,7 @@ async def test_create_product_audits() -> None:
 @pytest.mark.asyncio
 async def test_update_missing_product_no_audit() -> None:
     svc, _, _, _, _, _, audit = _svc()
-    out = await svc.update_product(
-        uuid4(), uuid4(), uuid4(), ProductUpdate(name="x")
-    )
+    out = await svc.update_product(uuid4(), uuid4(), uuid4(), ProductUpdate(name="x"))
     assert out is None
     assert audit.entries == []
 
@@ -290,7 +310,9 @@ async def test_create_lot_requires_product() -> None:
     svc, _, _, _, _, _, _ = _svc()
     with pytest.raises(ProductNotFoundError):
         await svc.create_lot(
-            uuid4(), uuid4(), uuid4(),
+            uuid4(),
+            uuid4(),
+            uuid4(),
             LotCreate(lot_code="L1"),
         )
 
@@ -302,9 +324,7 @@ async def test_create_lot_with_expiry() -> None:
     p = _product(tenant)
     products.products[p.id] = p
     expires = datetime.now(UTC) + timedelta(days=30)
-    lot = await svc.create_lot(
-        tenant, uuid4(), p.id, LotCreate(lot_code="L42", expires_at=expires)
-    )
+    lot = await svc.create_lot(tenant, uuid4(), p.id, LotCreate(lot_code="L42", expires_at=expires))
     assert lot.lot_code == "L42"
     assert lot.expires_at == expires
     assert audit.entries[-1]["action"] == "lot.created"
@@ -315,10 +335,9 @@ async def test_create_stock_item_requires_product() -> None:
     svc, _, _, _, _, _, _ = _svc()
     with pytest.raises(ProductNotFoundError):
         await svc.create_stock_item(
-            uuid4(), uuid4(),
-            StockItemCreate(
-                product_id=uuid4(), binding_value="urn:epc:sgtin:1"
-            ),
+            uuid4(),
+            uuid4(),
+            StockItemCreate(product_id=uuid4(), binding_value="urn:epc:sgtin:1"),
         )
 
 
@@ -329,13 +348,12 @@ async def test_consume_stock_item_sets_state_and_audits() -> None:
     p = _product(tenant)
     products.products[p.id] = p
     item = await svc.create_stock_item(
-        tenant, uuid4(),
+        tenant,
+        uuid4(),
         StockItemCreate(product_id=p.id, binding_value="urn:epc:sgtin:42"),
     )
     audit.entries.clear()
-    out = await svc.update_stock_item(
-        tenant, uuid4(), item.id, StockItemUpdate(state="consumed")
-    )
+    out = await svc.update_stock_item(tenant, uuid4(), item.id, StockItemUpdate(state="consumed"))
     assert out is not None
     assert out.state == "consumed"
     assert out.consumed_at is not None
@@ -353,7 +371,8 @@ async def test_stock_levels_aggregates_in_stock_only() -> None:
     # Three items, two in_stock, one consumed.
     for i, state in enumerate(["in_stock", "in_stock", "consumed"]):
         item = _stock(
-            tenant, p.id,
+            tenant,
+            p.id,
             binding_value=f"urn:epc:sgtin:{i}",
             current_zone_id=zone if state == "in_stock" else None,
             state=state,
@@ -370,7 +389,8 @@ async def test_stock_levels_aggregates_in_stock_only() -> None:
 async def test_create_tag_data_mapping_audits() -> None:
     svc, _, _, _, _, _, audit = _svc()
     out = await svc.create_tag_data_mapping(
-        uuid4(), uuid4(),
+        uuid4(),
+        uuid4(),
         TagDataMappingCreate(
             scope_kind="tenant",
             scope_id=None,
@@ -386,10 +406,9 @@ async def test_create_tag_data_mapping_audits() -> None:
 async def test_delete_tag_data_mapping_audits_only_when_deleted() -> None:
     svc, _, _, _, _, mappings, audit = _svc()
     out = await svc.create_tag_data_mapping(
-        uuid4(), uuid4(),
-        TagDataMappingCreate(
-            scope_kind="tenant", semantic_field="lot", tag_data_key="L"
-        ),
+        uuid4(),
+        uuid4(),
+        TagDataMappingCreate(scope_kind="tenant", semantic_field="lot", tag_data_key="L"),
     )
     audit.entries.clear()
     assert await svc.delete_tag_data_mapping(uuid4(), uuid4(), out.id) is True

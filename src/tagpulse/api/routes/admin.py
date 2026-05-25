@@ -22,9 +22,7 @@ async def get_usage(
     session: AsyncSession = Depends(get_session),
 ) -> list[UsageRecord]:
     """Get daily usage records for the authenticated tenant."""
-    stmt = select(TenantUsageDetail).where(
-        TenantUsageDetail.tenant_id == tenant.id
-    )
+    stmt = select(TenantUsageDetail).where(TenantUsageDetail.tenant_id == tenant.id)
     if start is not None:
         stmt = stmt.where(TenantUsageDetail.usage_date >= start)
     if end is not None:

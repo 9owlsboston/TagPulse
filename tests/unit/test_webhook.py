@@ -12,13 +12,9 @@ class TestWebhookSigning:
         signing_key = "test-signing-key"  # noqa: S105
         payload = {"alert_id": "123", "message": "test"}
         body = json.dumps(payload)
-        expected = hmac.new(
-            signing_key.encode(), body.encode(), hashlib.sha256
-        ).hexdigest()
+        expected = hmac.new(signing_key.encode(), body.encode(), hashlib.sha256).hexdigest()
         # Verify the algorithm matches what the dispatcher would produce
-        actual = hmac.new(
-            signing_key.encode(), body.encode(), hashlib.sha256
-        ).hexdigest()
+        actual = hmac.new(signing_key.encode(), body.encode(), hashlib.sha256).hexdigest()
         assert actual == expected
         assert len(actual) == 64  # SHA-256 hex digest length
 

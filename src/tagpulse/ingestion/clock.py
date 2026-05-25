@@ -31,9 +31,7 @@ class ClockRejectionError(Exception):
         self.reason = reason
 
 
-def check_clock_window(
-    timestamp: datetime, now: datetime | None = None
-) -> str | None:
+def check_clock_window(timestamp: datetime, now: datetime | None = None) -> str | None:
     """Return a rejection reason string, or ``None`` if the timestamp is in window.
 
     A naive timestamp is interpreted as UTC (matches the contract: devices

@@ -72,9 +72,7 @@ class FakeRepo:
     async def query(self, *args: Any, **kwargs: Any) -> list[TelemetryResponse]:
         return []
 
-    async def list_quarantine(
-        self, *args: Any, **kwargs: Any
-    ) -> list[TelemetryQuarantineResponse]:
+    async def list_quarantine(self, *args: Any, **kwargs: Any) -> list[TelemetryQuarantineResponse]:
         return []
 
 

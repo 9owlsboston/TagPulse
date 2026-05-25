@@ -91,9 +91,7 @@ class QueryService:
         limit: int = 50,
     ) -> list[TagReadResponse]:
         """Get the most recent reads for a specific device."""
-        return await self._tag_read_repo.query(
-            tenant_id, device_id=device_id, limit=limit
-        )
+        return await self._tag_read_repo.query(tenant_id, device_id=device_id, limit=limit)
 
     async def device_health(
         self,

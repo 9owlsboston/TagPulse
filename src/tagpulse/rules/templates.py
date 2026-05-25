@@ -77,8 +77,7 @@ RULE_TEMPLATES: list[RuleTemplate] = [
         key="asset.high_temperature",
         name="Asset over-temperature",
         description=(
-            "Alert when an asset (e.g. a forklift battery) reports a "
-            "temperature above threshold."
+            "Alert when an asset (e.g. a forklift battery) reports a temperature above threshold."
         ),
         condition_type="telemetry.threshold",
         condition_config={
