@@ -52,3 +52,12 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
 - Business logic in service functions, not route handlers
 - Pydantic models for all API schemas
 - See `.github/copilot-instructions.md` for full conventions
+
+## Cross-Repo Workflow
+
+TagPulse ships as two repos (backend + `TagPulse-UI`). Sprint numbers are
+shared; the backend `docs/roadmap.md` is the single source of truth.
+Three work shapes (sprint / chore / in-flight follow-up) are routed
+differently. See `.github/copilot-instructions.md` § Cross-Repo Workflow
+for the full model, and use `scripts/start-sprint.sh --with-ui <NN> <topic>`
+to kick off a paired backend + UI sprint.

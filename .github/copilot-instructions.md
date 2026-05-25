@@ -56,3 +56,58 @@ TagPulse is an IoT platform that provides device registration/configuration, dat
 - Architecture: docs/architecture.md
 - ADRs: docs/adr/README.md
 - IoT Reference: IoT.md
+
+## Cross-Repo Workflow
+
+TagPulse ships as **two repos**: this backend (`TagPulse`) and the React SPA
+(`TagPulse-UI` at `$TAGPULSE_UI_PATH`, default `~/ws/TagPulse-UI`). The
+backend owns the product roadmap; the UI consumes the OpenAPI contract.
+Both repos share sprint numbers but ship independent PRs.
+
+### One product, two deliverables, one roadmap
+- `docs/roadmap.md` (this repo) is the **single source of truth** for
+  planning. UI-only items are listed here too, tagged `[UI]`.
+- `TagPulse-UI` has no roadmap. It has its own `CHANGELOG.md` for release
+  notes and its own `.github/copilot-instructions.md` mirroring this
+  section.
+- Sprint numbers are **shared**. "Sprint 54" means the same theme in both
+  repos. Each participating repo gets a `sprint-NN/<topic>` branch.
+
+### Three work shapes — route each differently
+| Shape | What | Branch |
+|---|---|---|
+| **Sprint** | Themed multi-day effort tracked in `docs/roadmap.md` | `sprint-NN/<topic>` (use `scripts/start-sprint.sh`) |
+| **Chore** | Standalone tooling/cleanup, ≤ ~half day, no roadmap impact | `chore/<topic>` (manual branch) |
+| **In-flight follow-up** | Mid-sprint discovery that the other repo is missing a piece | `sprint-NN/<topic>-<repo>-followup` (small focused PR) |
+
+The in-flight follow-up shape is the key. When mid-sprint you discover the
+other repo needs a change, **don't derail the active branch**: commit/stash
+what you have, switch repos, ship a small focused follow-up PR with the
+same sprint number, then resume.
+
+### OpenAPI is the contract handoff
+- Any backend change that touches the API regenerates `openapi.json` as
+  part of the same PR.
+- UI PRs that consume new API record the backend commit SHA the
+  `openapi.json` was regenerated against in the PR description.
+- Merge order when both repos are involved: **backend first** (so the
+  contract is live), UI rebases onto the updated `openapi.json`.
+
+### Sprint kickoff — declare cross-repo plan upfront
+`scripts/start-sprint.sh` injects a `## Cross-repo plan` section into the
+draft PR body. Fill it in even when the answer is "backend only" or
+"UI TBD pending backend exploration" — explicit beats implicit.
+
+Use `scripts/start-sprint.sh --with-ui <NN> <topic>` to also create the
+matching `sprint-NN/<topic>` branch + draft PR in `$TAGPULSE_UI_PATH` and
+cross-link the two PRs. Requires `gh` authenticated against both repos.
+
+### Backlog
+`docs/backlog.md` is the lightweight scratch list for in-flight ideas you
+don't want to lose but won't pull into the active sprint. Drain it during
+sprint planning: promote items to `docs/roadmap.md` or delete.
+
+### Chores are not sprints
+Chores branch directly off `main` as `chore/<topic>`. No sprint number, no
+roadmap entry, no kickoff script. Open a normal PR with a CHANGELOG entry
+and call it done.
