@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -262,7 +263,7 @@ _SPARKLINE_ALERTS_SQL = text(
 )
 
 
-def _classify_trend(values: list[int]) -> str:
+def _classify_trend(values: list[int]) -> Literal["up", "down", "flat"]:
     """Compare last-quarter mean vs first-quarter mean.
 
     Returns ``"up"`` / ``"down"`` / ``"flat"``. Quarter slicing keeps
