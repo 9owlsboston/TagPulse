@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 56 — admin list-page conversion (planned) · UI-only; backend roadmap updated via `chore/sprint-55-roadmap-update` to mark Sprint 55 shipped (with §55.C measurement deferred) and add Sprint 56.
+**Current sprint:** 57 — telemetry charting · branch `sprint-57/telemetry-charting` (full scope lands in §sprint-57 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
