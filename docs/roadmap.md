@@ -1464,6 +1464,32 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 
 ---
 
+## Sprint 57 — Telemetry & charting + minor renames (shipped — [UI PR #68](https://github.com/9owlsboston/TagPulse-UI/pull/68), [backend PR #79](https://github.com/9owlsboston/TagPulse/pull/79))
+
+**Goal.** Bring the telemetry surfaces (Tag Reads / Telemetry Dashboard / asset+device telemetry tabs / Dashboard KPI tiles) up to the operator-grade quality bar set by Sprints 54/55, and clean up two IA rough edges from the Sprint 54 nav. Cross-repo: **one small backend PR (Phase F sparklines endpoint)**, everything else UI-only. Design doc: [TagPulse-UI/docs/sprint-57-telemetry-charting.md](https://github.com/9owlsboston/TagPulse-UI/blob/main/docs/sprint-57-telemetry-charting.md).
+
+### Phases
+
+- [shipped] **57.A Charting foundation + rename plan `[UI]`.** Evaluated Recharts vs visx / ECharts / uPlot / AntD Charts → kept Recharts behind wrappers (cheap swap if it ever becomes the bottleneck); locked the Cross-repo plan (one backend PR for Phase F only).
+- [shipped] **57.B Nav + page renames `[UI]`.** `Devices & Connections` → `Devices & Telemetry` (nav); `Alerts History` → `Alerts` (page).
+- [shipped] **57.C Time-range picker + chart primitives `[UI]`.** Unified `<TimeRangePicker>` (presets + tz badge + prev/next stepper); shared `<TpLineChart>` / `<TpAreaChart>` / `<TpSparkline>` wrappers with axe-tested a11y, interactive series filter, hierarchical x-axis, summary tables for screen readers; migrated all 4 existing Recharts consumers; `/dev/charts` playground covering every wrapper × every state; `chartExport` utility (PNG via dynamic `html-to-image` + CSV via Blob).
+- [shipped] **57.C.6 Perf spike + C.6.1 deferral.** Operator-measured 50-series × 720-point worst case missed §A.1.1 swap-trigger gates (Avg 53.4 / Min 2.7 fps vs 60 / 30 targets), single-device and ≤10-device views (~99% of operator usage) render smoothly. Decision: ship Phase C on Recharts; file uPlot internals swap as **Phase C.6.1** in [TagPulse-UI/docs/backlog.md](https://github.com/9owlsboston/TagPulse-UI/blob/main/docs/backlog.md) as its own focused, independently-revertable PR. Wrapper props/exports/a11y/series-filter/hierarchical-axis stay unchanged across the swap.
+- [shipped] **57.D Tag Reads revamp `[UI]`.** Renamed Data Explorer → Tag Reads, promoted to top-level nav, virtualized the table, wired chart PNG/CSV export.
+- [shipped] **57.E Telemetry tab chart export `[UI]`.** PNG + CSV on Device + Subject telemetry tabs. Aspirational donut / histogram / geo / dwell / uptime visuals deferred to [TagPulse-UI/docs/backlog.md](https://github.com/9owlsboston/TagPulse-UI/blob/main/docs/backlog.md) (require new non-time-series primitives, sit in tension with this sprint's "non-time-series charts" out-of-scope rule).
+- [shipped] **57.F Dashboard KPI tile sparklines (cross-repo).** Backend: `GET /dashboard/sparklines?days=7&bucket_hours=6` ([PR #79](https://github.com/9owlsboston/TagPulse/pull/79)) returning a tile-keyed bundle of `{series: {t,v}[], trend: 'up'|'down'|'flat'}` with 28 points / tile and a ±5% dead-band. UI: inline 32px `<TpSparkline>` below each `<Statistic>` on the 9 dashboard tiles, aria-label `"<tile> 7-day trend (<trend>)"`, graceful degradation when the endpoint is missing or returns an empty series for a given tile.
+- [deferred] **57.G Lighthouse + tablet-sweep measurement `[UI]`.** Same blocker as deferred §55.C: realistic tenant data + a continuously-running tag/device simulator aren't available, so Lighthouse Perf / A11y numbers and operator-task tablet timings are noise-dominated and not comparable to a baseline that was never captured at the Sprint 54 kickoff SHA. Re-run protocol tracked in [TagPulse-UI/docs/backlog.md](https://github.com/9owlsboston/TagPulse-UI/blob/main/docs/backlog.md); re-evaluate at Sprint 58 kickoff alongside the §55.C / §56.B re-evaluation. Roadmap promotion (this entry) and CHANGELOG entries shipped as planned.
+
+### Out of scope
+
+- Non-time-series chart types (treemap / sankey / network graph) — backlog item if a use case emerges.
+- Phone responsive (<768px).
+- New telemetry data sources / new device types.
+- Rule-engine changes; alert-rule UI changes beyond the page title rename.
+- i18n / RTL.
+- The 14 admin list pages — Sprint 56's scope.
+
+---
+
 ## Backlog (not scheduled)
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock.
