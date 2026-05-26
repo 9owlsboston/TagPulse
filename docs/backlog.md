@@ -18,4 +18,7 @@ Tags: `[backend]`, `[ui]`, `[docs]`, `[ops]`, `[idea]`.
 
 ## Open items
 
+- [2026-05-25] Normalize `reads-per-hour` sparkline `v` to reads/hr (currently bucket-volume, ~6× headline number with default `bucket_hours=6`); or rename the tile-id semantics. PR #79 follow-up. [backend]
+- [2026-05-25] Eliminate double `get_summary()` per Dashboard load — `/sparklines` re-runs the 13-query summary that the UI already fetched via `/summary`. Either accept current values from client or drop flat tiles from `/sparklines`. PR #79 follow-up. [backend]
+
 <!-- Add new items above this line. Oldest at bottom; remove when drained. -->
