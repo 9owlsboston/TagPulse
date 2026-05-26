@@ -28,7 +28,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.models.database import (
@@ -43,7 +43,12 @@ from tagpulse.models.database import (
     TenantModel,
     ZoneModel,
 )
-from tagpulse.models.schemas import DashboardSummary
+from tagpulse.models.schemas import (
+    DashboardSparklines,
+    DashboardSummary,
+    SparklinePoint,
+    SparklineSeries,
+)
 
 # Matches the operator-facing default in tag_reconciliation route
 # handlers. Bump in lockstep if Sprint 54 follow-ups change the
@@ -213,4 +218,182 @@ async def get_summary(
         tags_total=int(tags_total),
         sites_total=int(sites_total),
         zones_total=int(zones_total),
+    )
+
+
+# --- Sprint 57 Phase 57.6 — Dashboard KPI tile sparklines -----------------
+
+_DEFAULT_SPARKLINE_DAYS = 7
+_DEFAULT_SPARKLINE_BUCKET_HOURS = 6
+# 7 days x 4 buckets/day = 28 points per tile — small enough to ship in
+# one round-trip, granular enough to surface a real trend.
+
+# Trend classification thresholds: compare mean of last quarter of the
+# window vs mean of first quarter. Anything inside +/-5% reads as
+# "flat" so noisy series don't flicker between up/down on each refresh.
+_TREND_DELTA_THRESHOLD = 0.05
+
+_SPARKLINE_READS_SQL = text(
+    """
+    SELECT
+        date_bin(:stride, "timestamp", :origin) AS bucket_start,
+        COUNT(*)::bigint                         AS v
+    FROM tag_reads
+    WHERE tenant_id = :tenant_id
+      AND "timestamp" >= :since
+      AND "timestamp" <  :until
+    GROUP BY bucket_start
+    ORDER BY bucket_start
+    """
+)
+
+_SPARKLINE_ALERTS_SQL = text(
+    """
+    SELECT
+        date_bin(:stride, triggered_at, :origin) AS bucket_start,
+        COUNT(*)::bigint                          AS v
+    FROM alerts
+    WHERE tenant_id = :tenant_id
+      AND triggered_at >= :since
+      AND triggered_at <  :until
+    GROUP BY bucket_start
+    ORDER BY bucket_start
+    """
+)
+
+
+def _classify_trend(values: list[int]) -> str:
+    """Compare last-quarter mean vs first-quarter mean.
+
+    Returns ``"up"`` / ``"down"`` / ``"flat"``. Quarter slicing keeps
+    each bucket of the comparison ~7 points wide on the default 28-point
+    series, which damps single-bucket spikes without losing real moves.
+    """
+    if not values:
+        return "flat"
+    q = max(1, len(values) // 4)
+    head = values[:q]
+    tail = values[-q:]
+    head_mean = sum(head) / len(head)
+    tail_mean = sum(tail) / len(tail)
+    if head_mean == 0:
+        return "up" if tail_mean > 0 else "flat"
+    delta = (tail_mean - head_mean) / head_mean
+    if delta > _TREND_DELTA_THRESHOLD:
+        return "up"
+    if delta < -_TREND_DELTA_THRESHOLD:
+        return "down"
+    return "flat"
+
+
+def _bucket_starts(since: datetime, until: datetime, bucket: timedelta) -> list[datetime]:
+    """Generate the canonical bucket boundary list for the window."""
+    starts: list[datetime] = []
+    cur = since
+    while cur < until:
+        starts.append(cur)
+        cur = cur + bucket
+    return starts
+
+
+def _gap_filled_series(
+    starts: list[datetime],
+    row_map: dict[datetime, int],
+) -> list[SparklinePoint]:
+    """Fill missing buckets with zero so the client renders evenly."""
+    return [SparklinePoint(t=ts, v=row_map.get(ts, 0)) for ts in starts]
+
+
+def _flat_series(starts: list[datetime], value: int) -> SparklineSeries:
+    """Repeat ``value`` across every bucket; trend is always ``"flat"``.
+
+    Used for tiles whose schema is point-in-time only (no history).
+    """
+    series = [SparklinePoint(t=ts, v=value) for ts in starts]
+    return SparklineSeries(series=series, trend="flat")
+
+
+async def get_sparklines(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    days: int = _DEFAULT_SPARKLINE_DAYS,
+    bucket_hours: int = _DEFAULT_SPARKLINE_BUCKET_HOURS,
+) -> DashboardSparklines:
+    """Compute 7-day downsampled sparkline series for each KPI tile.
+
+    Two tiles (``reads-per-hour``, ``alerts-open``) run real
+    ``date_bin``-bucketed queries against the live tables. The other
+    seven reuse the current point-in-time counts from
+    :func:`get_summary`, repeated across every bucket as a flat
+    series. Honest about what's a true time series in our schema and
+    keeps the per-Dashboard-load cost to ``get_summary`` + 2 extra
+    bucket queries.
+
+    Tile keys match the ``id`` field in ``src/pages/Dashboard.tsx``
+    (``TILES``) so client lookup is a direct dict access. New UI
+    tiles without a matching series render without a sparkline.
+    """
+    bucket = timedelta(hours=bucket_hours)
+    until = datetime.now(UTC)
+    since = until - timedelta(days=days)
+    # Anchor bucket boundaries at ``since`` so the last bucket always
+    # ends at ``until`` regardless of wall-clock when called.
+    origin = since
+
+    starts = _bucket_starts(since, until, bucket)
+
+    # Reuse the full summary for current counts feeding the flat tiles.
+    summary = await get_summary(session, tenant_id)
+
+    reads_rows = await session.execute(
+        _SPARKLINE_READS_SQL,
+        {
+            "stride": bucket,
+            "origin": origin,
+            "tenant_id": tenant_id,
+            "since": since,
+            "until": until,
+        },
+    )
+    reads_map = {row.bucket_start: int(row.v) for row in reads_rows}
+    reads_points = _gap_filled_series(starts, reads_map)
+    reads_series = SparklineSeries(
+        series=reads_points,
+        trend=_classify_trend([p.v for p in reads_points]),
+    )
+
+    alerts_rows = await session.execute(
+        _SPARKLINE_ALERTS_SQL,
+        {
+            "stride": bucket,
+            "origin": origin,
+            "tenant_id": tenant_id,
+            "since": since,
+            "until": until,
+        },
+    )
+    alerts_map = {row.bucket_start: int(row.v) for row in alerts_rows}
+    alerts_points = _gap_filled_series(starts, alerts_map)
+    alerts_series = SparklineSeries(
+        series=alerts_points,
+        trend=_classify_trend([p.v for p in alerts_points]),
+    )
+
+    tiles: dict[str, SparklineSeries] = {
+        "devices": _flat_series(starts, summary.devices_total),
+        "alerts-open": alerts_series,
+        "reads-per-hour": reads_series,
+        "assets-active": _flat_series(starts, summary.assets_active),
+        "tags": _flat_series(starts, summary.tags_total),
+        "locations": _flat_series(starts, summary.sites_total + summary.zones_total),
+        "transfers-in-flight": _flat_series(starts, summary.tag_transfers_in_flight),
+        "recon-backlog": _flat_series(starts, summary.tag_recon_backlog),
+        "low-stock": _flat_series(starts, summary.low_stock_count),
+    }
+
+    return DashboardSparklines(
+        generated_at=until,
+        bucket_hours=bucket_hours,
+        days=days,
+        tiles=tiles,
     )

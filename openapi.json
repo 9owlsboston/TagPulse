@@ -1013,6 +1013,39 @@
         "title": "CollisionPreflightRow",
         "type": "object"
       },
+      "DashboardSparklines": {
+        "description": "Bundle of sparkline series for the Dashboard's 9 KPI tiles.\n\nReturned by ``GET /dashboard/sparklines``. One round-trip per\nDashboard load. ``tiles`` is keyed by the tile ``id`` field\nused in ``src/pages/Dashboard.tsx`` so client wire-up is a\ndirect lookup. New tiles in the UI without a corresponding\nseries here render the tile without a sparkline (graceful\ndegradation).",
+        "properties": {
+          "bucket_hours": {
+            "title": "Bucket Hours",
+            "type": "integer"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "tiles": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SparklineSeries"
+            },
+            "title": "Tiles",
+            "type": "object"
+          }
+        },
+        "required": [
+          "generated_at",
+          "bucket_hours",
+          "days",
+          "tiles"
+        ],
+        "title": "DashboardSparklines",
+        "type": "object"
+      },
       "DashboardSummary": {
         "description": "Aggregate counts powering the operator landing page.\n\nSprint 54 Phase 54.3 \u2014 one tenant-scoped read per page load.\nAll counts are point-in-time at ``generated_at``; clients use\nthat timestamp for cache-busting / staleness display on the\nKPI tiles. Field semantics:\n\n- ``devices_online`` \u2014 devices whose ``last_seen`` is within\n  the last 5 minutes AND whose ``connection_state`` is\n  ``'connected'``. Strict AND because the stringly-typed\n  column drifts when the MQTT subscriber misses a disconnect.\n- ``devices_total`` \u2014 all devices for the tenant.\n- ``alerts_open_24h`` \u2014 alerts with ``status='open'`` and\n  ``triggered_at > now() - 24h``.\n- ``reads_per_hour_now`` \u2014 ``tag_reads`` rows with\n  ``timestamp > now() - 1h``.\n- ``assets_active`` \u2014 assets with ``status='active'``.\n- ``tag_transfers_in_flight`` \u2014 cross-tenant tag-ownership\n  handoffs (ADR 028) in ``status='requested'``, counted on\n  either side via ``from_tenant_id = :t OR to_tenant_id = :t``.\n- ``tag_recon_backlog`` \u2014 sum of the three ADR 028 \u00a7Governance\n  #5 reconciliation views (registered-unread, unregistered-\n  reading, bindings-on-retired) for the tenant. Operator\n  hygiene worklist size; not an alert.\n- ``low_stock_count`` \u2014 distinct products with fewer than\n  ``tenants.low_stock_threshold`` active stock_items\n  (``state='in_stock' AND consumed_at IS NULL``). Default\n  threshold 3; overridable via ``PATCH /tenant/config``.\n- ``tags_total`` \u2014 tags for the tenant. Predicate is selected\n  by ``tenants.dashboard_tags_count_mode`` \u2014 ``\"all\"`` counts\n  every row, ``\"live\"`` (default) counts\n  ``status IN ('registered', 'active')``, ``\"non_terminal\"``\n  counts ``status NOT IN ('retired', 'defective',\n  'transferred_out')``. Overridable via ``PATCH /tenant/config``.\n- ``sites_total`` \u2014 count of rows in ``sites`` for the tenant.\n- ``zones_total`` \u2014 count of rows in ``zones`` for the tenant.\n  The Locations KPI tile renders the (sites, zones) pair as one\n  grouped tile.",
         "properties": {
@@ -4643,6 +4676,53 @@
           }
         },
         "title": "SiteUpdate",
+        "type": "object"
+      },
+      "SparklinePoint": {
+        "description": "One bucket in a dashboard-tile sparkline series.",
+        "properties": {
+          "t": {
+            "format": "date-time",
+            "title": "T",
+            "type": "string"
+          },
+          "v": {
+            "title": "V",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "t",
+          "v"
+        ],
+        "title": "SparklinePoint",
+        "type": "object"
+      },
+      "SparklineSeries": {
+        "description": "Downsampled 7-day trend backing one Dashboard KPI tile.\n\nSprint 57 Phase 57.6. Tiles whose underlying schema has no\npoint-in-time history (e.g. devices total, tag count, location\ncount) return a flat series \u2014 every bucket repeats the current\nvalue and ``trend`` is ``\"flat\"``. Tiles backed by true\ntime-series tables (``tag_reads``, ``alerts``) return real\nbucketed counts and a comparison-derived ``trend``.",
+        "properties": {
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/SparklinePoint"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "trend": {
+            "enum": [
+              "up",
+              "down",
+              "flat"
+            ],
+            "title": "Trend",
+            "type": "string"
+          }
+        },
+        "required": [
+          "series",
+          "trend"
+        ],
+        "title": "SparklineSeries",
         "type": "object"
       },
       "StockItemCreate": {
@@ -10059,6 +10139,73 @@
         "summary": "Update Category",
         "tags": [
           "categories"
+        ]
+      }
+    },
+    "/dashboard/sparklines": {
+      "get": {
+        "description": "Return 7-day downsampled trend series for each Dashboard KPI tile.",
+        "operationId": "get_dashboard_sparklines_dashboard_sparklines_get",
+        "parameters": [
+          {
+            "description": "Look-back window in days.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "description": "Look-back window in days.",
+              "maximum": 30,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Bucket width in hours; default yields 28 points over 7 days.",
+            "in": "query",
+            "name": "bucket_hours",
+            "required": false,
+            "schema": {
+              "default": 6,
+              "description": "Bucket width in hours; default yields 28 points over 7 days.",
+              "maximum": 24,
+              "minimum": 1,
+              "title": "Bucket Hours",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardSparklines"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Dashboard Sparklines",
+        "tags": [
+          "dashboard"
         ]
       }
     },

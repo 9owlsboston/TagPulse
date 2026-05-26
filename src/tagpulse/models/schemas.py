@@ -1648,3 +1648,42 @@ class DashboardSummary(BaseModel):
     tags_total: int
     sites_total: int
     zones_total: int
+
+
+class SparklinePoint(BaseModel):
+    """One bucket in a dashboard-tile sparkline series."""
+
+    t: datetime
+    v: int
+
+
+class SparklineSeries(BaseModel):
+    """Downsampled 7-day trend backing one Dashboard KPI tile.
+
+    Sprint 57 Phase 57.6. Tiles whose underlying schema has no
+    point-in-time history (e.g. devices total, tag count, location
+    count) return a flat series — every bucket repeats the current
+    value and ``trend`` is ``"flat"``. Tiles backed by true
+    time-series tables (``tag_reads``, ``alerts``) return real
+    bucketed counts and a comparison-derived ``trend``.
+    """
+
+    series: list[SparklinePoint]
+    trend: Literal["up", "down", "flat"]
+
+
+class DashboardSparklines(BaseModel):
+    """Bundle of sparkline series for the Dashboard's 9 KPI tiles.
+
+    Returned by ``GET /dashboard/sparklines``. One round-trip per
+    Dashboard load. ``tiles`` is keyed by the tile ``id`` field
+    used in ``src/pages/Dashboard.tsx`` so client wire-up is a
+    direct lookup. New tiles in the UI without a corresponding
+    series here render the tile without a sparkline (graceful
+    degradation).
+    """
+
+    generated_at: datetime
+    bucket_hours: int
+    days: int
+    tiles: dict[str, SparklineSeries]
