@@ -97,12 +97,12 @@ async def _seed_reserved_tag_labels(conn: asyncpg.Connection, tenant_id: UUID) -
         await conn.execute(
             """
             INSERT INTO labels (tenant_id, entity_type, key, created_at, updated_at)
-            SELECT $1, 'tag', $2, now(), now()
+            SELECT $1, 'tag', $2::text, now(), now()
              WHERE NOT EXISTS (
                  SELECT 1 FROM labels
                   WHERE tenant_id = $1
                     AND entity_type = 'tag'
-                    AND lower(key) = lower($2)
+                    AND lower(key) = lower($2::text)
              )
             """,
             tenant_id,
@@ -827,6 +827,8 @@ async def _run(args: argparse.Namespace) -> int:
     else:
         action = "regenerated" if args.regenerate_key else "issued"
         print(f"  API key {action}: {raw_key[:10]}… ({len(raw_key)} chars)")
+        if args.print_full_key:
+            print(f"  FULL KEY (dev only): {raw_key}")
         api_key = raw_key
 
     print("\n[4/4] Provisioning via API…")
@@ -1100,7 +1102,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Sprint 19/21: opt the tenant into subject-scoped telemetry "
         "by adding 'lot' and 'stock_item' to telemetry_subject_kinds, and "
         "verify that the Sprint 21 cutover of "
-        "GET /telemetry-models/{device_type} returns 404/405 (route removed in Sprint 28 H6). Required "
+        "GET /telemetry-models/{device_type} returns 404/405 (route removed in "
+        "Sprint 28 H6). Required "
         "for `simulate_devices.py --cold-chain` to actually populate the "
         "lot/stock_item telemetry rows.",
     )
@@ -1111,6 +1114,15 @@ def main(argv: list[str] | None = None) -> int:
         "--with-roles --with-subject-telemetry. Populates every sidebar "
         "page, creates one user per role, and opts the tenant into "
         "subject-scoped telemetry for lots and stock items.",
+    )
+    parser.add_argument(
+        "--print-full-key",
+        action="store_true",
+        help="Dev-only: also print the freshly issued admin API key in full "
+        "after the truncated preview. Convenient when bootstrapping a "
+        "local UI session and you need to paste the key into the browser. "
+        "Never use in CI or shared environments \u2014 the key lands in "
+        "plaintext on stdout. Ignored when --key-vault-name is set.",
     )
     parser.add_argument(
         "--key-vault-name",
