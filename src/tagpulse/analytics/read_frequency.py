@@ -45,6 +45,11 @@ class ReadFrequencyModule(AnalyticsModule):
 
     async def on_event(self, event: Event) -> None:
         """Increment in-memory counter for the device."""
+        if event.payload.get("backfill"):
+            # Sprint 58 Q1: historical reads replayed via the demo-tenant seed
+            # bundle would inflate reads/minute counters and trip anomaly
+            # flags on a tenant that's not actually anomalous; skip them.
+            return
         tenant_id = event.payload.get("tenant_id", "")
         device_id = event.payload.get("device_id", "")
         if tenant_id and device_id:
