@@ -1490,6 +1490,37 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 
 ---
 
+## Sprint 58 — Demo data & simulation foundation (planned)
+
+**Goal.** Stand up a realistic, repeatable, continuously-running demo dataset so (a) WM (and future customer) review sessions have credible data on screen instead of sparse seed rows, (b) the three deferred measurement items from §55.C / §56.B / §57.G can finally be captured against a real baseline and closed out, and (c) Sprint 59's WM-feedback-driven terminology + nav simplification can be validated with stopwatch + Lighthouse numbers that mean something. Cross-repo: **backend-only** for the simulator + seed work; UI side only runs measurements against the existing UI (no UI code change).
+
+**Why now.** The May focus-group session with WM surfaced two distinct issues — "Device" / "Telemetry" terminology and nav complexity — but the session was conducted against the sparse default-seed tenant, so it's hard to separate "the UI is confusing" from "there's nothing to look at." Three sprints (54, 55, 57) have already deferred their measurement phases on the same blocker. Closing it once unblocks all three and de-risks Sprint 59.
+
+**Three concrete deliverables.** (1) **Demo tenant seed bundle** — repeatable `make demo-tenant` target that brings up a "WM Distribution Center" tenant with realistic site/zone/reader topology, named products, multi-day historical reads, a handful of open + resolved alerts, an unread/exception backlog, and a tag-transfer in flight. (2) **Continuous simulator service** — long-running variant of the existing `simulate_devices.py` + `simulate_assets.py` + `simulate_inventory.py` scripts that runs as a `docker-compose` profile locally and as a Container Apps job in `dev`; realistic patterns (shift peaks, occasional offline readers, periodic alert triggers). (3) **Baseline capture + measurement closeout** — run the §55.C stopwatch protocol + §57.G Lighthouse pass against the demo tenant, record the numbers, and flip §55.C / §56.B / §57.G from `[deferred]` to `[shipped]`.
+
+**Success metrics.**
+- **Primary — reproducibility.** A fresh operator can run `make demo-tenant` against a clean local stack and have a demo-ready tenant in ≤ 5 min, with the continuous simulator running another single command later (`docker compose --profile sim up -d` or equivalent).
+- **Secondary — measurement unblock.** §55.C / §56.B / §57.G all close with real numbers committed to `docs/measurements/sprint-58-baseline.md` (or equivalent); WM-recorded stopwatch session on the same 5 tasks captured as the Sprint 59 "before" baseline.
+
+### Phases
+
+- **A — 58.1 Audit + design.** Inventory what the existing four scripts (`simulate_devices`, `simulate_assets`, `simulate_inventory`, `mqtt_canary`) already cover; identify gaps for a credible demo (alerts not currently triggered, transfers not exercised, low-stock not realistic, no historical backfill). Design doc lands in `docs/design/sprint-58-demo-and-simulation.md` covering the demo-tenant shape, the continuous-simulator architecture, and the measurement protocol. Pass bar: design doc reviewed against the existing scripts; no scope expansion mid-sprint without an explicit OOS exception.
+- **B — 58.2 Demo tenant seed bundle.** Build `scripts/seed_demo_tenant.py` (or extend `smoke_setup.py`) that composes the existing simulators into a coherent "WM Distribution Center" tenant: 1 site, 6–8 zones, 8–12 readers, 4–6 products with named lots, ~3 days of historical reads, 3–5 open alerts, 2–3 resolved alerts, 1 transfer in flight, 1 low-stock product. New `make demo-tenant` target. Pass bar: idempotent re-run; full reset via existing `make smoke-reset`-style flow; doc snippet in `docs/operator-quickstart.md`.
+- **C — 58.3 Continuous simulator service.** Long-running orchestrator that drives the simulators on realistic schedules (shift-pattern read volumes, occasional reader offline events, periodic alert-trigger conditions). Runs as a `docker-compose` profile locally; runs as a `azd-job.sh` Container Apps invocation in `dev`. Configurable rate caps so it doesn't accidentally blow tenant quotas. Pass bar: runs for ≥ 1 hour without crash; tenant quotas not breached at default rate; one `Makefile` target each for start / stop / status.
+- **D — 58.4 Baseline capture + §55.C / §56.B / §57.G closeout.** Run the §55.C stopwatch protocol (5 operator tasks × 3 runs each, drop high+low) against the demo tenant on the Sprint 54-kickoff SHA AND on current `main`; run the §57.G Lighthouse pass (Perf ≥ 90, A11y ≥ 95 on Dashboard / Assets / Devices / Alerts in both themes). Commit numbers to `docs/measurements/sprint-58-baseline.md`. Flip §55.C / §56.B / §57.G to `[shipped]` in this file with cross-links. Pass bar: all three deferred items closed; WM has a demo-tenant dump they can self-serve before the Sprint 59 review session.
+- **E — 58.5 WM pre-Sprint-59 baseline session.** Ask WM to record themselves doing the 5 stopwatch tasks on the demo tenant. Goal isn't to ship a Sprint 58 deliverable from their recording — it's to capture the "before" baseline for Sprint 59's terminology + nav rework so the next iteration is judged against the actual previous experience, not a hypothetical one. Pass bar: recording (or written timing log) on file; pain points enumerated in a Sprint 59 kickoff brief stub.
+
+### Out of scope
+
+- WM-specific scenarios beyond the generic "distribution center" demo tenant — Sprint 59 covers WM-driven terminology, nav, and any WM-specific seed data.
+- **Terminology renames** (`Device` → `Reader`, `Telemetry` → ?) — Sprint 59.
+- **Nav rework** beyond what Sprint 54 / 56 already shipped — Sprint 59.
+- **New device types**, **new chart types**, **rule engine changes**, **new API endpoints**. If the demo tenant needs an alert type that isn't already shippable, fake the alert row directly rather than extending the engine.
+- **i18n / RTL**, **phone responsive (<768 px)**, **WCAG audit beyond Lighthouse**.
+- **Load testing at scale** beyond the demo-rate cap — `scripts/load_test.py` continues to cover the stress-test use case unchanged.
+
+---
+
 ## Backlog (not scheduled)
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock.
