@@ -1446,16 +1446,16 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 
 ---
 
-## Sprint 56 — Admin list-page conversion: apply `<ListPageShell>` to 14 admin pages (planned)
+## Sprint 56 — Admin list-page conversion: apply `<ListPageShell>` to 14 admin pages (shipped — [UI PR #71](https://github.com/9owlsboston/TagPulse-UI/pull/71))
 
-**Goal.** Bring the 14 admin-area list pages onto the shared `<ListPageShell>` pattern that the 6 operator pages adopted in Sprint 54.5 + 55. Cross-repo: UI-only (no backend change expected). Same design doc: [docs/design/sprint-54-ui-overhaul.md](design/sprint-54-ui-overhaul.md).
+**Goal.** Bring the 14 admin-area list pages onto the shared `<ListPageShell>` pattern that the 6 operator pages adopted in Sprint 54.5 + 55. Cross-repo: UI-only (no backend change). Same design doc: [docs/design/sprint-54-ui-overhaul.md](design/sprint-54-ui-overhaul.md).
 
-**Pages in scope (14).** Audit logs, tenants, role assignments, webhook subscriptions, and the rest of `src/pages/admin/*` list surfaces — confirmed at sprint kickoff via a `grep -l 'pages/admin' src/pages/admin/*List*.tsx`-style sweep against the merged sprint-55 commit.
+**Pages converted (14).** Admin (5): `UserList`, `AuditLog`, `DeadLetters`, `LabelManagement`, `PendingBulkOperations`. Operations & catalog (9): `CategoryList`, `integrations/DeliveryLog`, `IntegrationList`, `inventory/LotExpiryQueue`, `StockMovements`, `TagDataMappings`, `reconciliation/ReconciliationPage`, `rules/RuleList`, `transfers/TransferList`. All `data-testid`s, role guards, search/filter wiring, row selection, and Modal/Drawer behaviour preserved — only chrome moved.
 
 ### Phases
 
-- **A — 56.1 Convert `[UI]`.** Apply `<ListPageShell>` + `<EmptyState>` (filter-aware copy) + role-gated primary CTAs across the 14 pages. Same pattern as the 6 operator pages — no new shell features needed. Pass bar: 14 pages match the pattern; tablet aside-wrap inherited from Sprint 55; `npm run check` clean.
-- **B — 56.2 Re-run §55.C measurement (if data is ready) `[UI]`.** If realistic tenant data + simulators are in place by sprint kickoff, fold in the deferred §55.C work: capture sprint-54 baseline + post-sprint-56 after-numbers + Lighthouse Perf/A11y on Dashboard/Assets/Devices/Alerts in both themes. Otherwise carry the deferral forward and re-evaluate at Sprint 57 kickoff.
+- [shipped] **A — 56.1 Convert `[UI]`.** Applied `<ListPageShell>` + `<EmptyState>` (filter-aware copy) + role-gated primary CTAs across the 14 pages. Same pattern as the 6 operator pages — no new shell features. Tablet aside-wrap inherited from Sprint 55; `npm run check` clean.
+- [deferred] **B — 56.2 Re-run §55.C measurement `[UI]`.** Same blocker as §55.C / §57.G: no realistic tenant data + no continuously-running simulator, and no baseline ever captured at the Sprint 54 kickoff SHA. Re-evaluate at Sprint 58 kickoff alongside §55.C / §57.G; protocol tracked in [TagPulse-UI/docs/backlog.md](https://github.com/9owlsboston/TagPulse-UI/blob/main/docs/backlog.md).
 
 ### Out of scope
 
