@@ -35,13 +35,13 @@ Explicitly **not** the user: load testing at scale (`scripts/load_test.py` alrea
 2. **Idempotent.** Running `make demo-tenant` twice produces the same tenant, not double the rows. Same EPCs, same product/lot codes, same site/zone names. Re-runs reuse `simulate_assets.py`'s existing reuse semantics and `simulate_inventory.py`'s stable serials.
 3. **Rate-capped by default.** The continuous simulator must not be able to blow the per-tenant rate limit. Defaults conservative; document how to raise.
 4. **One-command teardown.** `make demo-tenant-reset` or `docker compose --profile sim down --volumes` brings everything back to zero so the next review starts clean.
-5. **No new API endpoints.** If the demo needs an alert type the engine can't trigger naturally, seed it via existing write paths (or via direct SQL through `scripts/azd-job.sh`) — do not extend the rule engine to make the demo prettier.
+5. **No new API endpoints.** If the demo needs an alert type the engine can't trigger naturally, seed it via existing write paths (or via direct SQL through `scripts/azd-job.sh`) — do not extend the rule engine to make the demo prettier. (A query param added to an existing route — see Q1's `?backfill=true` resolution — does not violate this; the constraint targets new routes / new resource surfaces, not flag-shaped behaviour toggles on existing ones.)
 6. **Dev-only Container Apps job.** The continuous simulator runs in `dev` only. Never `staging`, never `prod`. Gated by `ENV` check in the job script.
 
 ## Three concrete deliverables (the user-visible outcomes)
 
 1. **`make demo-tenant`** — repeatable one-shot seed that brings up a "WM Distribution Center" tenant: 1 site, 6–8 zones, 8–12 readers, 4–6 named products with lots, ~3 days of historical reads, 3–5 open alerts, 2–3 resolved alerts, 1 transfer in flight, 1 low-stock product. Idempotent. Companion `make demo-tenant-reset` for clean re-runs.
-2. **Continuous simulator** — long-running orchestrator that drives the four simulators on realistic schedules. Local: `docker compose --profile sim up -d`. Dev: `scripts/azd-job.sh dev run_continuous_sim.py`. Configurable rate caps; ships with sane defaults.
+2. **Continuous simulator** — long-running orchestrator that drives the four simulators on realistic schedules. Local: `docker compose --profile sim up -d`. Dev: `scripts/azd-job.sh dev sim_loop.py`. Configurable rate caps; ships with sane defaults.
 3. **Baseline measurement capture** — run §55.C stopwatch + §57.G Lighthouse against the demo tenant on the Sprint 54-kickoff SHA AND on current `main`. Commit numbers to `docs/measurements/sprint-58-baseline.md`. Flip §55.C / §56.B / §57.G to `[shipped]` with cross-links.
 
 ## Architecture sketch
@@ -106,7 +106,7 @@ The two **NEW: ...** items (plus `backfill_history.py`) in the seed bundle are t
 
 - Rationale: keeps the simulator code path identical to live ingest (same validation, same enrichment pipeline, same telemetry rollups, same hypertable inserts). Direct DB insert would skip the asset-zone enrichment that the dashboard summary depends on.
 - Cost: ~3 days of reads × ~200 reads/min = ~860 K rows. At even modest batch sizes this completes in single-digit minutes locally. Acceptable.
-- Open question for Phase A: do we need a `?backfill=true` query param to skip alert-rule evaluation on backfilled reads? Probably yes — otherwise the seed step itself triggers alerts that the seed step is also trying to control.
+- Backfill-vs-alerts coupling: resolved under [Q1 below](#open-questions--resolved) — Phase B adds `?backfill=true` to the existing tag-reads ingest route to skip rule evaluation while keeping the rest of the ingest pipeline.
 
 ### D4. Alert seeding: trigger naturally or insert directly?
 
