@@ -191,6 +191,46 @@ make demo-tenant-reset      # drops demo + recipient tenants and all their rows
 make demo-tenant            # rebuild from scratch
 ```
 
+### Continuous simulator
+
+After the composer finishes, `make sim-start` launches a long-running
+background service that keeps the tenant animated for review sessions:
+
+```bash
+export TAGPULSE_API_KEY=<key>   # from `make demo-tenant` final line
+make sim-start                  # docker compose --profile sim up -d sim
+make sim-status                 # ps + tail last 50 log lines
+make sim-stop                   # stop + remove the sim container
+```
+
+What it does each second:
+
+- emits realistic tag reads against the demo tenant, gated by a token
+  bucket (default **200 reads/min**, configurable via `SIM_RATE_PER_MIN`;
+  hard ceiling **600/min** enforced inside the loop);
+- applies a shift schedule — 1.5 × during ±30 min around 08:00 and
+  13:00 local, 0.3 × during 20:00 – 06:00, 1.0 × otherwise;
+- every ~minute, a 5 % chance to take one reader offline for 3–8 min;
+- every 15 min, fires one high-temperature read on a random device so
+  the dashboard's alerts panel stays warm.
+
+Knobs:
+
+| Variable | Effect |
+| --- | --- |
+| `SIM_RATE_PER_MIN=400 make sim-start` | Push harder (capped at 600/min). |
+| `SIM_DURATION=30m make sim-start` | Run for a bounded window then stop. |
+| `SIM_SEED=42 …` | Deterministic PRNG for reproducible runs. |
+
+The same binary runs as a manual-trigger Azure Container Apps Job in the
+dev environment (Sprint 58 D6). The job is **dev-only** — the script
+aborts non-zero if `ENV` is set to anything other than `dev`:
+
+```bash
+# Dev only. Reuses the tools-job image; HTTP egress to the dev API only.
+scripts/azd-job.sh dev sim_loop.py -- --duration 8h --rate 200
+```
+
 ## Pointers
 
 - Full architecture: [architecture.md](architecture.md)

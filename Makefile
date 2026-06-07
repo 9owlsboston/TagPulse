@@ -1,5 +1,6 @@
 .PHONY: lint typecheck test format check run export-openapi migration-check \
-        smoke rotate-key logs doctor demo-tenant demo-tenant-reset help
+        smoke rotate-key logs doctor demo-tenant demo-tenant-reset \
+        sim-start sim-stop sim-status help
 
 # Default ENV for ops targets — override on the command line: make logs ENV=prod
 ENV ?= dev
@@ -79,6 +80,30 @@ demo-tenant: ## Sprint 58: seed the WM Distribution Center demo tenant (idempote
 
 demo-tenant-reset: ## Sprint 58: delete the demo tenant + recipient (local dev only)
 	python scripts/reset_demo_tenant.py
+
+# ---------------------------------------------------------------------------
+# Sprint 58 Phase C — continuous demo-tenant simulator (docker compose).
+# Requires ``make demo-tenant`` to have run first and ``$TAGPULSE_API_KEY``
+# exported. Overrides: ``SIM_RATE_PER_MIN=400 make sim-start`` to push
+# harder; ``SIM_DURATION=30m make sim-start`` for a bounded run.
+# ---------------------------------------------------------------------------
+
+sim-start:   ## Sprint 58: start the continuous demo simulator (docker compose --profile sim)
+	@if [ -z "$$TAGPULSE_API_KEY" ]; then \
+	  echo "TAGPULSE_API_KEY must be exported (run 'make demo-tenant' first)" >&2; \
+	  exit 2; \
+	fi
+	docker compose --profile sim up -d sim
+	@echo "sim started — tail logs with: make sim-status"
+
+sim-stop:    ## Sprint 58: stop the continuous demo simulator
+	docker compose --profile sim stop sim
+	docker compose --profile sim rm -f sim
+
+sim-status:  ## Sprint 58: show simulator status + last 50 log lines
+	@docker compose --profile sim ps sim
+	@echo "--- last 50 log lines ---"
+	@docker compose --profile sim logs --tail=50 sim || true
 
 help:        ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | sort | awk -F':.*?## ' '{printf "  %-16s %s\n", $$1, $$2}'
