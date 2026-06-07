@@ -1,5 +1,5 @@
 .PHONY: lint typecheck test format check run export-openapi migration-check \
-        smoke rotate-key logs doctor help
+        smoke rotate-key logs doctor demo-tenant demo-tenant-reset help
 
 # Default ENV for ops targets — override on the command line: make logs ENV=prod
 ENV ?= dev
@@ -65,6 +65,20 @@ logs:        ## Tail container logs — ENV=dev SERVICE=api SINCE=15m
 
 doctor:      ## Sprint 28 F3: aggregate health check for an env — ENV=dev
 	scripts/azd-doctor.sh $(ENV)
+
+# ---------------------------------------------------------------------------
+# Sprint 58 Phase B — demo tenant composer.
+# ``make demo-tenant`` runs scripts/seed_demo_tenant.py end-to-end against
+# the local stack (docker compose). Re-runs are idempotent. Use
+# ``DEMO_KEEP_KEY=1 make demo-tenant`` to reuse $TAGPULSE_API_KEY instead
+# of rotating, or ``DEMO_SKIP_BACKFILL=1`` to skip the historical replay.
+# ---------------------------------------------------------------------------
+
+demo-tenant: ## Sprint 58: seed the WM Distribution Center demo tenant (idempotent)
+	python scripts/seed_demo_tenant.py
+
+demo-tenant-reset: ## Sprint 58: delete the demo tenant + recipient (local dev only)
+	python scripts/reset_demo_tenant.py
 
 help:        ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | sort | awk -F':.*?## ' '{printf "  %-16s %s\n", $$1, $$2}'

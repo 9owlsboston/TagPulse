@@ -140,6 +140,57 @@ For Mosquitto, log into the ACI:
 az container exec -g tp${env}-rg -n tp${env}-mqtt --exec-command /bin/sh
 ```
 
+## Demo tenant (local only)
+
+Sprint 58 ships a one-command composer that builds a fully populated
+demo tenant on a local `docker compose up` stack. Use it for screenshots,
+walkthroughs, and Lighthouse / perf baselines — never against a deployed
+environment.
+
+```bash
+docker compose up -d
+alembic upgrade head
+make demo-tenant            # ~2-3 min; idempotent on re-run
+```
+
+The composer runs seven steps in sequence:
+
+1. `smoke_setup.py --full` — provisions the `demo-wm-dc` tenant
+   (id `uuid5(DNS, "demo-wm-dc.tagpulse.local")`), zones, telemetry
+   model, rules, RBAC, and rotates a fresh admin API key.
+2. `simulate_devices.py --seed-only` — registers 10 RFID readers.
+3. `simulate_inventory.py --seed-only` — seeds 60 inventory units across
+   4-6 products.
+4. `simulate_assets.py --iterations 20 --interval 0.1` — creates 12
+   bound assets and emits a short burst of movement reads.
+5. `backfill_history.py --days 3 --reads 5000` — replays 3 days of
+   historical reads via `POST /tag-reads/batch?backfill=true`. The
+   `backfill=true` flag suppresses rules, alerts, and the read-frequency
+   rollup so the history doesn't trigger 5000 stale notifications.
+6. `seed_alerts.py` — produces 4 live alerts (high-temperature reads
+   above 30 °C, fired via the normal ingest path) plus 3 resolved
+   alerts inserted directly to give the UI an alert-resolution timeline.
+7. `seed_transfer.py` — creates a `demo-wm-recipient` tenant and one
+   in-flight cross-tenant transfer of 3 EPCs.
+
+The final line prints `export TAGPULSE_API_KEY=<key>` so you can
+`eval $(make demo-tenant | tail -1)` and start hitting the API.
+
+Environment knobs:
+
+| Variable | Effect |
+| --- | --- |
+| `DEMO_KEEP_KEY=1` | Reuse the existing `$TAGPULSE_API_KEY` instead of rotating. Required if you want to keep an open browser session. |
+| `DEMO_SKIP_BACKFILL=1` | Skip step 5 (saves ~30 s; the dashboard's history view will be empty). |
+| `DEMO_RESET_FORCE=1` | Bypass the "looks-local" guard in `make demo-tenant-reset` (only set this if you know what you're doing). |
+
+To start over:
+
+```bash
+make demo-tenant-reset      # drops demo + recipient tenants and all their rows
+make demo-tenant            # rebuild from scratch
+```
+
 ## Pointers
 
 - Full architecture: [architecture.md](architecture.md)
