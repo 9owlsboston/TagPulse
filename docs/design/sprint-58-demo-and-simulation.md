@@ -123,10 +123,26 @@ The two **NEW: ...** items (plus `backfill_history.py`) in the seed bundle are t
 
 ### D6. Container Apps job vs. long-running Container App service
 
-**Decision: Container Apps Job (manual-trigger, no schedule), invoked through `scripts/azd-job.sh dev sim_loop.py -- --duration 8h`.** NOT a perpetually-running Container App service.
+**Decision: Azure Container Apps Job (manual-trigger, no schedule), invoked through `scripts/azd-job.sh dev sim_loop.py -- --duration 8h`.** NOT a perpetually-running Container App service.
 
 - Rationale: cost. A demo tenant doesn't need 24/7 reads; we want explicit "I'm doing a demo today" invocation with a built-in 8 h ceiling so it can't run forever if forgotten.
 - Operator workflow: invoke the job ~30 min before the review session; tenant is alive for 8 h; job self-terminates.
+
+**ACA Job configuration (specifics, so Phase C Bicep is unambiguous):**
+
+| Aspect | Value |
+|---|---|
+| Job trigger type | Manual (`triggerType: Manual`) — not Schedule, not Event |
+| Container image | Reuse the existing `tools-job` image (same one driven by `smoke_setup.py` / `rotate-key`) — no new ACR push, no separate Dockerfile |
+| `replicaTimeout` | `28800` (8 h, matches the ceiling above; ACA Jobs cap at 7 days so well within limits) |
+| `parallelism` / `replicaCompletions` | `1` / `1` — exactly one `sim_loop` at a time per dev env |
+| Env vars | `TAGPULSE_API_URL` + `TAGPULSE_API_KEY` from existing Key Vault secrets (already wired into the tools-job; no new KV plumbing) |
+| Egress | HTTP only to the dev `api` Container App (per Q3 working assumption); same NSG / private-endpoint path the existing tools jobs already use; **no MQTT broker access needed from the job** |
+| Invocation surface | `scripts/azd-job.sh dev sim_loop.py -- --duration 8h --rate 200` — same calling convention as the existing tools jobs |
+| `ENV` guard | Script aborts with non-zero if `ENV != dev` (defence-in-depth on the "dev-only" constraint from Hard Constraint 6) |
+| Cost shape | Billed per execution-second only while running. 8 h on the tools-job CPU/memory profile is on the order of single-digit dollars per session, not hundreds |
+
+The local `docker compose --profile sim up -d` path is the *only* deviation from ACA: locally we want `up -d` / `down` semantics with no per-execution timeout, so it's a regular compose service under a profile (not a separate job runner).
 
 ### D7. Demo tenant in CI?
 
