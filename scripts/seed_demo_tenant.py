@@ -30,9 +30,31 @@ Idempotency:
     then have ``$TAGPULSE_API_KEY`` already exported.
 
 Usage:
-    python scripts/seed_demo_tenant.py
+    python scripts/seed_demo_tenant.py                       # local (docker compose)
     python scripts/seed_demo_tenant.py --reads 2000 --days 1
     DEMO_KEEP_KEY=1 python scripts/seed_demo_tenant.py
+
+    # Against the deployed `dev` Azure environment via the tools-job:
+    scripts/azd-job.sh dev seed_demo_tenant.py -- --days 1
+    # (equivalent helper: `make demo-tenant-dev`)
+
+When run inside the tools-job, the script auto-detects the in-cluster
+environment via ``$ENVIRONMENT`` (set by tools-job Bicep) and:
+  * Refuses to run if ``$ENVIRONMENT in {prod, production}`` — the demo
+    seed mutates a deterministic tenant slug and rotates an admin key,
+    neither of which belong in prod under any circumstance.
+  * Defaults ``--days 1`` instead of 3 to fit the ingest clock window
+    (``MAX_PAST=24h``, see ``src/tagpulse/ingestion/clock.py``). Pass
+    ``--days`` explicitly to override; the default-bump only fires when
+    the operator didn't ask for a specific value.
+  * Routes the rotated admin key through Key Vault (smoke_setup picks up
+    ``$TAGPULSE_SMOKE_KEY_VAULT_NAME`` automatically and redacts the
+    plaintext from stdout). The composer then fetches the key back from
+    KV via ``DefaultAzureCredential`` to feed it to steps 2–7, and the
+    final stdout shows the operator-facing retrieval recipe
+    (``scripts/azd-kv-get.sh dev tagpulse-demo-wm-dc-admin-key``) rather
+    than the plaintext key — which would otherwise land in Log
+    Analytics.
 """
 
 from __future__ import annotations
@@ -56,6 +78,25 @@ DEMO_TENANT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, f"{DEMO_TENANT_SLUG}.tagpulse.lo
 DEMO_ADMIN_EMAIL = "admin@demo-wm-dc.tagpulse.local"
 DEMO_ADMIN_NAME = "Demo Admin"
 
+# Key Vault secret name smoke_setup writes the rotated admin key to when
+# ``--key-vault-name`` is set. Format must stay in lock-step with
+# ``scripts/smoke_setup.py::_kv_secret_name`` (covered by a regression
+# test in ``tests/unit/test_seed_demo_tenant.py``).
+DEMO_ADMIN_KV_SECRET_NAME = f"tagpulse-{DEMO_TENANT_SLUG}-admin-key"
+
+# ``$ENVIRONMENT`` values that mark a tools-job execution as production.
+# The composer hard-refuses these — see ``_assert_environment_safe``.
+PROD_ENVIRONMENT_NAMES = frozenset({"prod", "production"})
+
+# Default ``--days`` of history to backfill, indexed by execution mode.
+# Local stack (``$ENVIRONMENT`` unset) defaults to 3 because
+# ``INGEST_CLOCK_ENFORCE=false`` is the local default and three days of
+# history makes the dashboard look populated. In-cluster defaults to 1
+# because the deployed API enforces the 24 h ``MAX_PAST`` clock window
+# and a wider backfill silently dead-letters most of the writes.
+_DEFAULT_DAYS_LOCAL = 3.0
+_DEFAULT_DAYS_INCLUSTER = 1.0
+
 # Parsed from smoke_setup stdout: "  export TAGPULSE_API_KEY=<key>"
 _EXPORT_KEY_RE = re.compile(r"^\s*export\s+TAGPULSE_API_KEY=(\S+)\s*$", re.MULTILINE)
 
@@ -66,6 +107,63 @@ def _print_header(step: int, total: int, title: str) -> None:
     print(bar)
     print(f"[{step}/{total}] {title}")
     print(bar)
+
+
+def _assert_environment_safe() -> str:
+    """Refuse to run against a production environment.
+
+    Reads ``$ENVIRONMENT`` (set by ``tools-job.bicep`` to ``dev``,
+    ``staging``, or ``prod``). Returns the lowercased value (or the
+    sentinel ``'local'`` when the variable is unset) so callers can
+    branch on execution mode without re-reading the env. Raises
+    ``SystemExit(2)`` when the environment looks like prod.
+    """
+    raw = os.environ.get("ENVIRONMENT", "").strip().lower()
+    if raw in PROD_ENVIRONMENT_NAMES:
+        print(
+            f"FATAL: refusing to run seed_demo_tenant.py against ENVIRONMENT={raw!r}. "
+            "The demo seed rotates an admin API key and mutates a deterministic "
+            "tenant slug; both are unsafe in production. If you really need a "
+            "prod-shaped demo, run it in a dedicated staging or dev environment.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return raw or "local"
+
+
+def _fetch_admin_key_from_keyvault(vault_name: str, secret_name: str) -> str:
+    """Pull a plaintext API key back out of Key Vault.
+
+    Used in the in-cluster path, where ``smoke_setup.py --key-vault-name
+    …`` writes the rotated key to KV and *redacts* the plaintext from
+    stdout (so it never lands in Log Analytics). The composer still
+    needs the plaintext to feed ``--api-key`` to steps 2–7, so we read
+    it back here via ``DefaultAzureCredential`` — which inside the
+    tools-job resolves to the workload UAMI that already has Key Vault
+    Secrets Officer on the same vault smoke_setup just wrote to.
+
+    Imports are lazy so the script keeps running in pure-local dev
+    without the optional ``azure`` extra installed.
+    """
+    try:
+        from azure.identity import DefaultAzureCredential
+        from azure.keyvault.secrets import SecretClient
+    except ImportError as exc:  # pragma: no cover - exercised via tools-job
+        raise SystemExit(
+            "azure-identity / azure-keyvault-secrets not installed. "
+            "Reinstall with `pip install -e .[azure]` or use the api image "
+            "(which ships the extra by default)."
+        ) from exc
+
+    vault_url = f"https://{vault_name}.vault.azure.net"
+    client = SecretClient(vault_url=vault_url, credential=DefaultAzureCredential())
+    secret = client.get_secret(secret_name)
+    if not secret.value:
+        raise SystemExit(
+            f"FATAL: KV secret {secret_name!r} in vault {vault_name!r} has no "
+            "value (was smoke_setup --regenerate-key actually run?)."
+        )
+    return secret.value
 
 
 def _run(cmd: list[str], *, env: dict[str, str] | None = None) -> str:
@@ -95,11 +193,18 @@ def _run(cmd: list[str], *, env: dict[str, str] | None = None) -> str:
     return proc.stdout
 
 
-def _step_smoke_setup(*, keep_key: bool) -> str:
+def _step_smoke_setup(*, keep_key: bool, key_vault_name: str | None) -> str:
     """Run smoke_setup and return the admin API key.
 
     ``DEMO_KEEP_KEY=1`` skips key regeneration and reuses the existing
     ``$TAGPULSE_API_KEY`` (which must be set).
+
+    When ``key_vault_name`` is non-empty (typically populated from
+    ``$TAGPULSE_SMOKE_KEY_VAULT_NAME`` in the tools-job), the freshly
+    issued admin key is written to KV by smoke_setup; the composer then
+    reads it back via :func:`_fetch_admin_key_from_keyvault` to feed it
+    into the HTTP shims. In that path smoke_setup *redacts* the
+    plaintext from stdout, so the regex parse must be skipped.
     """
     if keep_key:
         existing = os.environ.get("TAGPULSE_API_KEY")
@@ -147,7 +252,19 @@ def _step_smoke_setup(*, keep_key: bool) -> str:
         "--admin-name",
         DEMO_ADMIN_NAME,
     ]
+    if key_vault_name:
+        cmd.extend(["--key-vault-name", key_vault_name])
+
     stdout = _run(cmd)
+
+    if key_vault_name:
+        # smoke_setup redacted plaintext from stdout — fetch from KV.
+        key = _fetch_admin_key_from_keyvault(key_vault_name, DEMO_ADMIN_KV_SECRET_NAME)
+        print(
+            f"  fetched admin API key from KV ({DEMO_ADMIN_KV_SECRET_NAME}): {key[:10]}…"
+        )
+        return key
+
     match = _EXPORT_KEY_RE.search(stdout)
     if not match:
         print(
@@ -305,8 +422,12 @@ def main() -> int:
     parser.add_argument(
         "--days",
         type=float,
-        default=3.0,
-        help="Days of history to backfill (default: 3.0)",
+        default=None,
+        help=(
+            "Days of history to backfill. Defaults to 3 on a local stack and "
+            "1 in-cluster (24 h `MAX_PAST` clock window — wider backfills "
+            "dead-letter most writes unless `INGEST_CLOCK_ENFORCE=false`)."
+        ),
     )
     parser.add_argument(
         "--reads",
@@ -340,11 +461,26 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    env_mode = _assert_environment_safe()
+    in_cluster = env_mode != "local"
+    key_vault_name = os.environ.get("TAGPULSE_SMOKE_KEY_VAULT_NAME") if in_cluster else None
+
+    if args.days is None:
+        args.days = _DEFAULT_DAYS_INCLUSTER if in_cluster else _DEFAULT_DAYS_LOCAL
+        if in_cluster:
+            print(
+                f"  ENVIRONMENT={env_mode}: defaulting --days {args.days} "
+                "(24h MAX_PAST clock window); pass --days explicitly to override."
+            )
+
     keep_key = os.environ.get("DEMO_KEEP_KEY") == "1"
     skip_backfill = os.environ.get("DEMO_SKIP_BACKFILL") == "1"
     reads = 0 if skip_backfill else args.reads
 
     print(f"Demo tenant composer → slug={DEMO_TENANT_SLUG} id={DEMO_TENANT_ID}")
+    print(f"  ENVIRONMENT={env_mode}" + ("  (tools-job mode)" if in_cluster else ""))
+    if key_vault_name:
+        print(f"  Key Vault: {key_vault_name} (admin key → {DEMO_ADMIN_KV_SECRET_NAME})")
     if keep_key:
         print("  DEMO_KEEP_KEY=1: reusing existing $TAGPULSE_API_KEY")
     if skip_backfill:
@@ -354,7 +490,7 @@ def main() -> int:
     total_steps = 7
 
     _print_header(1, total_steps, "smoke_setup — tenant + admin + rules + zones")
-    api_key = _step_smoke_setup(keep_key=keep_key)
+    api_key = _step_smoke_setup(keep_key=keep_key, key_vault_name=key_vault_name)
 
     _print_header(2, total_steps, "simulate_devices — seed reader devices")
     _step_simulate_devices(api_key, devices=args.devices, tags=args.tags)
@@ -399,7 +535,22 @@ def main() -> int:
     print(f"  tenant_id:   {DEMO_TENANT_ID}")
     print(f"  tenant_slug: {DEMO_TENANT_SLUG}")
     print()
-    print("  export TAGPULSE_API_KEY=" + api_key)
+    if key_vault_name:
+        # In-cluster path: plaintext key is in KV, never in Log Analytics.
+        # Print the operator-facing retrieval recipe instead.
+        print("Admin API key written to Key Vault. Retrieve it from your laptop:")
+        print()
+        print(
+            f"  export TAGPULSE_API_KEY=$(scripts/azd-kv-get.sh {env_mode} "
+            f"{DEMO_ADMIN_KV_SECRET_NAME})"
+        )
+        print()
+        print(
+            f"  (or: az keyvault secret show --vault-name {key_vault_name} "
+            f"--name {DEMO_ADMIN_KV_SECRET_NAME} --query value -o tsv)"
+        )
+    else:
+        print("  export TAGPULSE_API_KEY=" + api_key)
     print()
     print("Open the UI and log in as the demo admin to inspect.")
     return 0
