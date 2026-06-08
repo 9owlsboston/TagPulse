@@ -62,6 +62,11 @@ class RuleEvaluator:
     async def on_tag_read(self, event: Event) -> None:
         """Called by EventBus when a tag read is created."""
         payload = event.payload
+        if payload.get("backfill"):
+            # Sprint 58 Q1: historical reads replayed via the demo-tenant
+            # seed bundle (POST /tag-reads?backfill=true) must not fire
+            # alerts — the seed step controls its own curated alert set.
+            return
         tenant_id_str = payload.get("tenant_id")
         device_id_str = payload.get("device_id")
         if not tenant_id_str or not device_id_str:
@@ -131,6 +136,9 @@ class RuleEvaluator:
         check fired by ``DwellWorker``.
         """
         payload = event.payload
+        if payload.get("backfill"):
+            # Sprint 58 Q1: see on_tag_read() for rationale.
+            return
         tenant_id_str = payload.get("tenant_id")
         if not tenant_id_str:
             return
@@ -180,6 +188,9 @@ class RuleEvaluator:
         breach doesn't stamp out an alert per minute.
         """
         payload = event.payload
+        if payload.get("backfill"):
+            # Sprint 58 Q1: see on_tag_read() for rationale.
+            return
         tenant_id_str = payload.get("tenant_id")
         if not tenant_id_str:
             return

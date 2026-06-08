@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 57 — telemetry charting · branch `sprint-57/telemetry-charting` (full scope lands in §sprint-57 during the sprint).
+**Current sprint:** 58 — demo data and simulation · branch `sprint-58/demo-data-and-simulation` (full scope lands in §sprint-58 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1436,7 +1436,7 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 - [shipped] **55.A1 Convert original-S54.5 pages `[UI]`.** AssetList + TagList + AlertHistory.
 - [shipped] **55.A2 Convert original-S55 pages `[UI]`.** DeviceList + ProductList + StockLevels.
 - [shipped] **55.B Polish `[UI]`.** Filter-aware empty states with role-gated CTAs across 5 list pages via the existing `<EmptyState>` helper; tablet aside-wrap fix on `<ListPageShell>` (320px FilterPanel drops below the table at portrait-tablet widths instead of squeezing it).
-- [deferred] **55.C Stopwatch + Lighthouse `[UI]`.** Deferred until realistic tenant data + a continuously-running tag/device simulator are available. Two blockers: (a) the sprint-54 kickoff baseline was never captured (PR #66's `## Stopwatch baseline` section still has `TBD` placeholders), so the primary pass criterion ("4 of 5 tasks ≥30% faster than baseline") has nothing to compare against; (b) Lighthouse Performance and operator-task timings are both noise-dominated on empty/sparse seed data. Re-run protocol tracked in [TagPulse-UI/docs/backlog.md](https://github.com/9owlsboston/TagPulse-UI/blob/main/docs/backlog.md) — capture baseline at the `sprint-54/ui-overhaul-foundation` kickoff SHA, after-numbers on the merged sprint-55 commit, record both in a follow-up doc when data is ready.
+- [deferred] **55.C Stopwatch + Lighthouse `[UI]`.** Deferred until realistic tenant data + a continuously-running tag/device simulator are available. Two blockers: (a) the sprint-54 kickoff baseline was never captured (PR #66's `## Stopwatch baseline` section still has `TBD` placeholders), so the primary pass criterion ("4 of 5 tasks ≥30% faster than baseline") has nothing to compare against; (b) Lighthouse Performance and operator-task timings are both noise-dominated on empty/sparse seed data. **Sprint 58 update:** demo tenant + simulator now exist; API-side baseline captured in [docs/measurements/sprint-58-baseline.md](measurements/sprint-58-baseline.md) §2. Remaining work is the human stopwatch + Lighthouse run (§3, §4); flip this item to `[shipped]` when both sections are filled in. The Sprint 54-SHA "before" comparison is no longer attempted (§1 R4 escape hatch — schema drift would conflate UI changes with DB shape changes); this measurement instead anchors the Sprint 59 "before" baseline.
 - [shipped] **55.D Backlog drain + Sprint 56 entry.** This entry. 14-admin-list-pages item promoted to §sprint-56 below; drained from [backlog.md](backlog.md).
 
 ### Out of scope
@@ -1455,7 +1455,7 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 ### Phases
 
 - [shipped] **A — 56.1 Convert `[UI]`.** Applied `<ListPageShell>` + `<EmptyState>` (filter-aware copy) + role-gated primary CTAs across the 14 pages. Same pattern as the 6 operator pages — no new shell features. Tablet aside-wrap inherited from Sprint 55; `npm run check` clean.
-- [deferred] **B — 56.2 Re-run §55.C measurement `[UI]`.** Same blocker as §55.C / §57.G: no realistic tenant data + no continuously-running simulator, and no baseline ever captured at the Sprint 54 kickoff SHA. Re-evaluate at Sprint 58 kickoff alongside §55.C / §57.G; protocol tracked in [TagPulse-UI/docs/backlog.md](https://github.com/9owlsboston/TagPulse-UI/blob/main/docs/backlog.md).
+- [deferred] **B — 56.2 Re-run §55.C measurement `[UI]`.** Same blocker as §55.C / §57.G: no realistic tenant data + no continuously-running simulator, and no baseline ever captured at the Sprint 54 kickoff SHA. **Sprint 58 update:** demo tenant + simulator now exist; API-side baseline captured in [docs/measurements/sprint-58-baseline.md](measurements/sprint-58-baseline.md) §2 — the UI-side re-run lands in §3 / §4 of the same doc. Flip to `[shipped]` when the human run is complete; collapses into the same closeout as §55.C and §57.G.
 
 ### Out of scope
 
@@ -1477,7 +1477,7 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 - [shipped] **57.D Tag Reads revamp `[UI]`.** Renamed Data Explorer → Tag Reads, promoted to top-level nav, virtualized the table, wired chart PNG/CSV export.
 - [shipped] **57.E Telemetry tab chart export `[UI]`.** PNG + CSV on Device + Subject telemetry tabs. Aspirational donut / histogram / geo / dwell / uptime visuals deferred to [TagPulse-UI/docs/backlog.md](https://github.com/9owlsboston/TagPulse-UI/blob/main/docs/backlog.md) (require new non-time-series primitives, sit in tension with this sprint's "non-time-series charts" out-of-scope rule).
 - [shipped] **57.F Dashboard KPI tile sparklines (cross-repo).** Backend: `GET /dashboard/sparklines?days=7&bucket_hours=6` ([PR #79](https://github.com/9owlsboston/TagPulse/pull/79)) returning a tile-keyed bundle of `{series: {t,v}[], trend: 'up'|'down'|'flat'}` with 28 points / tile and a ±5% dead-band. UI: inline 32px `<TpSparkline>` below each `<Statistic>` on the 9 dashboard tiles, aria-label `"<tile> 7-day trend (<trend>)"`, graceful degradation when the endpoint is missing or returns an empty series for a given tile.
-- [deferred] **57.G Lighthouse + tablet-sweep measurement `[UI]`.** Same blocker as deferred §55.C: realistic tenant data + a continuously-running tag/device simulator aren't available, so Lighthouse Perf / A11y numbers and operator-task tablet timings are noise-dominated and not comparable to a baseline that was never captured at the Sprint 54 kickoff SHA. Re-run protocol tracked in [TagPulse-UI/docs/backlog.md](https://github.com/9owlsboston/TagPulse-UI/blob/main/docs/backlog.md); re-evaluate at Sprint 58 kickoff alongside the §55.C / §56.B re-evaluation. Roadmap promotion (this entry) and CHANGELOG entries shipped as planned.
+- [deferred] **57.G Lighthouse + tablet-sweep measurement `[UI]`.** Same blocker as deferred §55.C: realistic tenant data + a continuously-running tag/device simulator aren't available, so Lighthouse Perf / A11y numbers and operator-task tablet timings are noise-dominated and not comparable to a baseline that was never captured at the Sprint 54 kickoff SHA. **Sprint 58 update:** demo tenant + simulator now exist; API-side baseline captured in [docs/measurements/sprint-58-baseline.md](measurements/sprint-58-baseline.md) §2; Lighthouse pass remains §4 `_TBD_` pending a human DevTools run. Flip to `[shipped]` when §4 is filled in for Dashboard / Assets / Devices / Alerts in both themes.
 
 ### Out of scope
 
@@ -1487,6 +1487,39 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 - Rule-engine changes; alert-rule UI changes beyond the page title rename.
 - i18n / RTL.
 - The 14 admin list pages — Sprint 56's scope.
+
+---
+
+## Sprint 58 — Demo data & simulation foundation (shipped — Phases A–D; Phase E open as a Sprint 59 prerequisite)
+
+**Status note.** Phases A (design), B (`make demo-tenant` composer + 4 shims + `?backfill=true`), C (`sim_loop.py` + docker profile + ACA Job invocation path), and D (baseline capture) all shipped in backend PR [#83](https://github.com/9owlsboston/TagPulse/pull/83). Phase D's pass bar — "flip §55.C / §56.B / §57.G to `[shipped]`" — is **partially met**: API-side latency baseline captured in [docs/measurements/sprint-58-baseline.md](measurements/sprint-58-baseline.md) §2; the UI-side stopwatch (§3) and Lighthouse (§4) sections remain `_TBD_` pending a human run, so the three roadmap items below remain `[deferred]` with cross-links to the baseline doc rather than being flipped on API numbers alone. Phase E (WM pre-Sprint-59 baseline session) is non-blocking per the design doc R5 and is tracked as a Sprint 59 kickoff prerequisite.
+
+**Goal.** Stand up a realistic, repeatable, continuously-running demo dataset so (a) WM (and future customer) review sessions have credible data on screen instead of sparse seed rows, (b) the three deferred measurement items from §55.C / §56.B / §57.G can finally be captured against a real baseline and closed out, and (c) Sprint 59's WM-feedback-driven terminology + nav simplification can be validated with stopwatch + Lighthouse numbers that mean something. Cross-repo: **backend-only** for the simulator + seed work; UI side only runs measurements against the existing UI (no UI code change).
+
+**Why now.** The May focus-group session with WM surfaced two distinct issues — "Device" / "Telemetry" terminology and nav complexity — but the session was conducted against the sparse default-seed tenant, so it's hard to separate "the UI is confusing" from "there's nothing to look at." Three sprints (54, 55, 57) have already deferred their measurement phases on the same blocker. Closing it once unblocks all three and de-risks Sprint 59.
+
+**Three concrete deliverables.** (1) **Demo tenant seed bundle** — repeatable `make demo-tenant` target that brings up a "WM Distribution Center" tenant with realistic site/zone/reader topology, named products, multi-day historical reads, a handful of open + resolved alerts, an unread/exception backlog, and a tag-transfer in flight. (2) **Continuous simulator service** — long-running variant of the existing `simulate_devices.py` + `simulate_assets.py` + `simulate_inventory.py` scripts that runs as a `docker-compose` profile locally and as a Container Apps job in `dev`; realistic patterns (shift peaks, occasional offline readers, periodic alert triggers). (3) **Baseline capture + measurement closeout** — run the §55.C stopwatch protocol + §57.G Lighthouse pass against the demo tenant, record the numbers, and flip §55.C / §56.B / §57.G from `[deferred]` to `[shipped]`.
+
+**Success metrics.**
+- **Primary — reproducibility.** A fresh operator can run `make demo-tenant` against a clean local stack and have a demo-ready tenant in ≤ 5 min, with the continuous simulator running another single command later (`docker compose --profile sim up -d` or equivalent).
+- **Secondary — measurement unblock.** §55.C / §56.B / §57.G all close with real numbers committed to `docs/measurements/sprint-58-baseline.md` (or equivalent); WM-recorded stopwatch session on the same 5 tasks captured as the Sprint 59 "before" baseline.
+
+### Phases
+
+- **A — 58.1 Audit + design.** Inventory what the existing four scripts (`simulate_devices`, `simulate_assets`, `simulate_inventory`, `mqtt_canary`) already cover; identify gaps for a credible demo (alerts not currently triggered, transfers not exercised, low-stock not realistic, no historical backfill). Design doc lands in `docs/design/sprint-58-demo-and-simulation.md` covering the demo-tenant shape, the continuous-simulator architecture, and the measurement protocol. Pass bar: design doc reviewed against the existing scripts; no scope expansion mid-sprint without an explicit OOS exception.
+- **B — 58.2 Demo tenant seed bundle.** Build `scripts/seed_demo_tenant.py` (or extend `smoke_setup.py`) that composes the existing simulators into a coherent "WM Distribution Center" tenant: 1 site, 6–8 zones, 8–12 readers, 4–6 products with named lots, ~3 days of historical reads, 3–5 open alerts, 2–3 resolved alerts, 1 transfer in flight, 1 low-stock product. New `make demo-tenant` target. Pass bar: idempotent re-run; full reset via existing `make smoke-reset`-style flow; doc snippet in `docs/operator-quickstart.md`.
+- **C — 58.3 Continuous simulator service.** Long-running orchestrator (`scripts/sim_loop.py`) that drives the simulators on realistic schedules (shift-pattern read volumes, occasional reader offline events, periodic alert-trigger conditions). Runs as a `docker-compose` profile locally; runs as a `azd-job.sh dev sim_loop.py` Container Apps invocation in `dev`. Configurable rate caps so it doesn't accidentally blow tenant quotas. Pass bar: runs for ≥ 1 hour without crash; tenant quotas not breached at default rate; one `Makefile` target each for start / stop / status.
+- **D — 58.4 Baseline capture + §55.C / §56.B / §57.G closeout.** Run the §55.C stopwatch protocol (5 operator tasks × 3 runs each, drop high+low) against the demo tenant on the Sprint 54-kickoff SHA AND on current `main`; run the §57.G Lighthouse pass (Perf ≥ 90, A11y ≥ 95 on Dashboard / Assets / Devices / Alerts in both themes). Commit numbers to `docs/measurements/sprint-58-baseline.md`. Flip §55.C / §56.B / §57.G to `[shipped]` in this file with cross-links. Pass bar: all three deferred items closed; WM has a demo-tenant dump they can self-serve before the Sprint 59 review session.
+- **E — 58.5 WM pre-Sprint-59 baseline session.** Ask WM to record themselves doing the 5 stopwatch tasks on the demo tenant. Goal isn't to ship a Sprint 58 deliverable from their recording — it's to capture the "before" baseline for Sprint 59's terminology + nav rework so the next iteration is judged against the actual previous experience, not a hypothetical one. Pass bar: recording (or written timing log) on file; pain points enumerated in a Sprint 59 kickoff brief stub.
+
+### Out of scope
+
+- WM-specific scenarios beyond the generic "distribution center" demo tenant — Sprint 59 covers WM-driven terminology, nav, and any WM-specific seed data.
+- **Terminology renames** (`Device` → `Reader`, `Telemetry` → ?) — Sprint 59.
+- **Nav rework** beyond what Sprint 54 / 56 already shipped — Sprint 59.
+- **New device types**, **new chart types**, **rule engine changes**, **new API endpoints**. If the demo tenant needs an alert type that isn't already shippable, fake the alert row directly rather than extending the engine.
+- **i18n / RTL**, **phone responsive (<768 px)**, **WCAG audit beyond Lighthouse**.
+- **Load testing at scale** beyond the demo-rate cap — `scripts/load_test.py` continues to cover the stress-test use case unchanged.
 
 ---
 

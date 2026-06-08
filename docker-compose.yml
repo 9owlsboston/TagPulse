@@ -106,5 +106,31 @@ services:
     volumes:
       - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf
 
+  # Sprint 58 Phase C: continuous demo-tenant simulator. Opt-in via
+  # ``docker compose --profile sim up -d sim`` (wrapped by ``make sim-start``).
+  # Requires ``make demo-tenant`` to have run first so the tenant + devices
+  # exist; expects ``$TAGPULSE_API_KEY`` to be set to the key printed by
+  # ``seed_demo_tenant.py``.
+  sim:
+    profiles: ["sim"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    environment:
+      TAGPULSE_API_URL: http://app:8000
+      TAGPULSE_API_KEY: ${TAGPULSE_API_KEY:-}
+      TAGPULSE_TENANT_ID: ${TAGPULSE_TENANT_ID:-}
+      SIM_RATE_PER_MIN: ${SIM_RATE_PER_MIN:-200}
+      SIM_DURATION: ${SIM_DURATION:-0}
+      LOG_LEVEL: info
+    depends_on:
+      app:
+        condition: service_started
+    volumes:
+      - ./scripts:/app/scripts:ro
+    command: python scripts/sim_loop.py
+    restart: unless-stopped
+
 volumes:
   pgdata:

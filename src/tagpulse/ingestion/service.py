@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
@@ -58,6 +59,29 @@ from tagpulse.rfid.epc import decode_epc_hex, gtin14_from_decoded
 from tagpulse.services.tags import normalize_epc_hex
 
 logger = logging.getLogger(__name__)
+
+# Sprint 58: backfill flag for the current ingest call. Set at the top of
+# ``ingest()`` / ``ingest_batch()`` and consumed by ``_event_payload()`` which
+# stamps ``backfill=True`` onto every event payload published downstream.
+# Subscribers (rule evaluator, read-frequency analytics) early-return on the
+# flag so historical reads replayed via ``POST /tag-reads?backfill=true`` go
+# through the full ingest pipeline (validation, enrichment, hypertable insert,
+# telemetry rollups) but never fire alerts. ContextVar is the right scope: one
+# value per async task, no cross-request leakage on a shared service instance.
+_BACKFILL_CTX: ContextVar[bool] = ContextVar("tagpulse_ingest_backfill", default=False)
+
+
+def _event_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return ``payload`` augmented with ``backfill=True`` when in a backfill ingest.
+
+    Defined at module scope (not on the service) so the dozen Event
+    constructions in this file each add a single ``**_event_payload(...)`` call
+    instead of threading a ``backfill`` parameter through every helper.
+    """
+    if _BACKFILL_CTX.get():
+        return {**payload, "backfill": True}
+    return payload
+
 
 # Bounded process-local zone caches. Cross requests within a single worker;
 # multi-worker durability lands in Sprint 17 alongside the rules engine's
@@ -155,8 +179,29 @@ class IngestionService:
         self._tag_repo = tag_repo
         self._usage_meter = usage_meter
 
-    async def ingest(self, tenant_id: uuid.UUID, read: TagReadCreate) -> TagReadResponse:
-        """Validate, persist, and publish a single tag read."""
+    async def ingest(
+        self,
+        tenant_id: uuid.UUID,
+        read: TagReadCreate,
+        *,
+        backfill: bool = False,
+    ) -> TagReadResponse:
+        """Validate, persist, and publish a single tag read.
+
+        ``backfill=True`` (Sprint 58, resolved Q1): runs the full ingest path
+        but stamps published events with ``backfill=True`` so rule evaluators
+        and read-frequency analytics skip them. Use for replaying historical
+        reads from the demo-tenant seed bundle without firing alerts that
+        the seed step is simultaneously trying to control.
+        """
+        token = _BACKFILL_CTX.set(backfill)
+        try:
+            return await self._ingest_impl(tenant_id, read)
+        finally:
+            _BACKFILL_CTX.reset(token)
+
+    async def _ingest_impl(self, tenant_id: uuid.UUID, read: TagReadCreate) -> TagReadResponse:
+        """Inner implementation — see :meth:`ingest`."""
         normalized = self._normalize(tenant_id, read)
         reason = check_clock_window(normalized.timestamp)
         if reason is not None:
@@ -205,21 +250,27 @@ class IngestionService:
                 id=uuid.uuid4(),
                 topic=Topic.TAG_READ_CREATED,
                 timestamp=datetime.now(UTC),
-                payload={
-                    "tag_read_id": str(result.id),
-                    "tenant_id": str(tenant_id),
-                    "device_id": str(normalized.device_id),
-                    "tag_id": normalized.tag_id,
-                    "epc": normalized.identity.epc if normalized.identity else None,
-                    "tid": normalized.identity.tid if normalized.identity else None,
-                    "signal_strength": normalized.signal_strength,
-                },
+                payload=_event_payload(
+                    {
+                        "tag_read_id": str(result.id),
+                        "tenant_id": str(tenant_id),
+                        "device_id": str(normalized.device_id),
+                        "tag_id": normalized.tag_id,
+                        "epc": normalized.identity.epc if normalized.identity else None,
+                        "tid": normalized.identity.tid if normalized.identity else None,
+                        "signal_strength": normalized.signal_strength,
+                    }
+                ),
             ),
         )
         return result
 
     async def ingest_batch(
-        self, tenant_id: uuid.UUID, reads: list[TagReadCreate]
+        self,
+        tenant_id: uuid.UUID,
+        reads: list[TagReadCreate],
+        *,
+        backfill: bool = False,
     ) -> tuple[int, int]:
         """Validate, persist, enrich, and publish a batch of tag reads.
 
@@ -230,7 +281,19 @@ class IngestionService:
         Sprint 16: out-of-window events (per docs/design/edge-device-contract.md
         §3.5) are dead-lettered + metered and excluded from the inserted set.
         Returns ``(ingested, rejected)``.
+
+        ``backfill=True`` (Sprint 58, resolved Q1): see :meth:`ingest`.
         """
+        token = _BACKFILL_CTX.set(backfill)
+        try:
+            return await self._ingest_batch_impl(tenant_id, reads)
+        finally:
+            _BACKFILL_CTX.reset(token)
+
+    async def _ingest_batch_impl(
+        self, tenant_id: uuid.UUID, reads: list[TagReadCreate]
+    ) -> tuple[int, int]:
+        """Inner implementation — see :meth:`ingest_batch`."""
         normalized_all = [self._normalize(tenant_id, r) for r in reads]
         normalized: list[TagReadCreate] = []
         rejected = 0
@@ -284,15 +347,17 @@ class IngestionService:
                     id=uuid.uuid4(),
                     topic=Topic.TAG_READ_CREATED,
                     timestamp=datetime.now(UTC),
-                    payload={
-                        "tag_read_id": str(row.id),
-                        "tenant_id": str(tenant_id),
-                        "device_id": str(read.device_id),
-                        "tag_id": read.tag_id,
-                        "epc": read.identity.epc if read.identity else None,
-                        "tid": read.identity.tid if read.identity else None,
-                        "signal_strength": read.signal_strength,
-                    },
+                    payload=_event_payload(
+                        {
+                            "tag_read_id": str(row.id),
+                            "tenant_id": str(tenant_id),
+                            "device_id": str(read.device_id),
+                            "tag_id": read.tag_id,
+                            "epc": read.identity.epc if read.identity else None,
+                            "tid": read.identity.tid if read.identity else None,
+                            "signal_strength": read.signal_strength,
+                        }
+                    ),
                 ),
             )
         return count, rejected
@@ -459,17 +524,19 @@ class IngestionService:
                             id=inserted.id,
                             topic=Topic.TELEMETRY_RECORDED,
                             timestamp=inserted.timestamp,
-                            payload={
-                                "tenant_id": str(tenant_id),
-                                "subject_kind": subject_kind,
-                                "subject_id": str(subject_id),
-                                "metric_name": key,
-                                "metric_value": value,
-                                "unit": inserted.unit,
-                                "device_id": str(read.device_id),
-                                "source": "tag",
-                                "timestamp": inserted.timestamp.isoformat(),
-                            },
+                            payload=_event_payload(
+                                {
+                                    "tenant_id": str(tenant_id),
+                                    "subject_kind": subject_kind,
+                                    "subject_id": str(subject_id),
+                                    "metric_name": key,
+                                    "metric_value": value,
+                                    "unit": inserted.unit,
+                                    "device_id": str(read.device_id),
+                                    "source": "tag",
+                                    "timestamp": inserted.timestamp.isoformat(),
+                                }
+                            ),
                         ),
                     )
                 except Exception:  # noqa: BLE001
@@ -654,20 +721,22 @@ class IngestionService:
                 id=uuid.uuid4(),
                 topic=Topic.SUBJECT_ZONE_CHANGED,
                 timestamp=datetime.now(UTC),
-                payload={
-                    "tenant_id": str(tenant_id),
-                    "subject_kind": "asset",
-                    "subject_id": str(binding.asset_id),
-                    "zone_kind": "reader_bound",
-                    "from_zone_id": str(prev_zone_id) if prev_zone_id else None,
-                    "to_zone_id": str(new_zone_id) if new_zone_id else None,
-                    "device_id": str(read.device_id),
-                    "tag_id": read.tag_id,
-                    "epc": read.identity.epc if read.identity else None,
-                    "tid": read.identity.tid if read.identity else None,
-                    "tag_read_id": str(tag_read_id),
-                    "timestamp": read.timestamp.isoformat(),
-                },
+                payload=_event_payload(
+                    {
+                        "tenant_id": str(tenant_id),
+                        "subject_kind": "asset",
+                        "subject_id": str(binding.asset_id),
+                        "zone_kind": "reader_bound",
+                        "from_zone_id": str(prev_zone_id) if prev_zone_id else None,
+                        "to_zone_id": str(new_zone_id) if new_zone_id else None,
+                        "device_id": str(read.device_id),
+                        "tag_id": read.tag_id,
+                        "epc": read.identity.epc if read.identity else None,
+                        "tid": read.identity.tid if read.identity else None,
+                        "tag_read_id": str(tag_read_id),
+                        "timestamp": read.timestamp.isoformat(),
+                    }
+                ),
             ),
         )
         subject_zone_changed_counter.add(1, {"tenant_id": str(tenant_id), "subject_kind": "asset"})
@@ -752,22 +821,24 @@ class IngestionService:
                 id=uuid.uuid4(),
                 topic=Topic.SUBJECT_ZONE_CHANGED,
                 timestamp=datetime.now(UTC),
-                payload={
-                    "tenant_id": str(tenant_id),
-                    "subject_kind": subject_kind,
-                    "subject_id": str(subject_id),
-                    "zone_kind": "geofence",
-                    "from_zone_id": str(prev_zone_id) if prev_zone_id else None,
-                    "to_zone_id": str(new_zone_id) if new_zone_id else None,
-                    "device_id": str(read.device_id),
-                    "tag_id": read.tag_id,
-                    "epc": read.identity.epc if read.identity else None,
-                    "tid": read.identity.tid if read.identity else None,
-                    "tag_read_id": str(tag_read_id),
-                    "latitude": lat,
-                    "longitude": lon,
-                    "timestamp": read.timestamp.isoformat(),
-                },
+                payload=_event_payload(
+                    {
+                        "tenant_id": str(tenant_id),
+                        "subject_kind": subject_kind,
+                        "subject_id": str(subject_id),
+                        "zone_kind": "geofence",
+                        "from_zone_id": str(prev_zone_id) if prev_zone_id else None,
+                        "to_zone_id": str(new_zone_id) if new_zone_id else None,
+                        "device_id": str(read.device_id),
+                        "tag_id": read.tag_id,
+                        "epc": read.identity.epc if read.identity else None,
+                        "tid": read.identity.tid if read.identity else None,
+                        "tag_read_id": str(tag_read_id),
+                        "latitude": lat,
+                        "longitude": lon,
+                        "timestamp": read.timestamp.isoformat(),
+                    }
+                ),
             ),
         )
         geofence_transitions_counter.add(
@@ -933,19 +1004,21 @@ class IngestionService:
                 id=uuid.uuid4(),
                 topic=Topic.SUBJECT_ZONE_CHANGED,
                 timestamp=datetime.now(UTC),
-                payload={
-                    "tenant_id": str(tenant_id),
-                    "subject_kind": "stock_item",
-                    "subject_id": str(stock_item.id),
-                    "zone_kind": "reader_bound",
-                    "product_id": str(product_id),
-                    "from_zone_id": str(prev_zone_id) if prev_zone_id else None,
-                    "to_zone_id": str(new_zone_id) if new_zone_id else None,
-                    "device_id": str(read.device_id),
-                    "epc": epc,
-                    "tag_read_id": str(tag_read_id),
-                    "timestamp": read.timestamp.isoformat(),
-                },
+                payload=_event_payload(
+                    {
+                        "tenant_id": str(tenant_id),
+                        "subject_kind": "stock_item",
+                        "subject_id": str(stock_item.id),
+                        "zone_kind": "reader_bound",
+                        "product_id": str(product_id),
+                        "from_zone_id": str(prev_zone_id) if prev_zone_id else None,
+                        "to_zone_id": str(new_zone_id) if new_zone_id else None,
+                        "device_id": str(read.device_id),
+                        "epc": epc,
+                        "tag_read_id": str(tag_read_id),
+                        "timestamp": read.timestamp.isoformat(),
+                    }
+                ),
             ),
         )
         subject_zone_changed_counter.add(

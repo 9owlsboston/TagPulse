@@ -629,7 +629,9 @@ def ensure_assets_with_bindings(
 
     # Find or create the ``Sim-Pallet`` category. Sprint 41 Phase H
     # made ``category_id`` required on ``AssetCreate`` (ADR 019).
-    cat_resp = client.get(f"{API_URL}/categories", headers=headers, params={"limit": 1000})
+    # ``limit=500`` matches the endpoint's max (categories cap at 500 by
+    # design; smoke seed only ever creates one category).
+    cat_resp = client.get(f"{API_URL}/categories", headers=headers, params={"limit": 500})
     cat_resp.raise_for_status()
     category_id: str | None = None
     for cat in cat_resp.json():

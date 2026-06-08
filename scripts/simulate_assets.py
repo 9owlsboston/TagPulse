@@ -79,7 +79,9 @@ def ensure_pallet_category(client: httpx.Client, tenant_id: str) -> str:
     ``asset_type`` shadow column.
     """
     headers = _headers(tenant_id)
-    resp = client.get(f"{API_URL}/categories", headers=headers, params={"limit": 1000})
+    # /categories caps at limit=500 (see api/routes/categories.py); we only ever
+    # create the one ``Sim-Pallet`` category so 500 is plenty.
+    resp = client.get(f"{API_URL}/categories", headers=headers, params={"limit": 500})
     resp.raise_for_status()
     for cat in resp.json():
         if cat["name"] == "Sim-Pallet":
@@ -184,7 +186,7 @@ def emit_tag_reads(
             "signal_strength": round(random.uniform(-75, -35), 1),
             "identity": {"epc": epc},
         }
-        resp = client.post(f"{API_URL}/ingest/tag-read", headers=headers, json=body)
+        resp = client.post(f"{API_URL}/tag-reads", headers=headers, json=body)
         if not _ok(resp):
             print(f"  Ingest failed: {resp.status_code} {resp.text}")
         sent += 1
