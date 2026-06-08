@@ -46,9 +46,7 @@ DB_URL = os.environ.get(
 # to the same row across operators / machines / CI.
 DEFAULT_RECIPIENT_SLUG = "demo-wm-recipient"
 DEFAULT_RECIPIENT_NAME = "WM Receiving Hub"
-DEFAULT_RECIPIENT_ID = uuid.uuid5(
-    uuid.NAMESPACE_DNS, f"{DEFAULT_RECIPIENT_SLUG}.tagpulse.local"
-)
+DEFAULT_RECIPIENT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, f"{DEFAULT_RECIPIENT_SLUG}.tagpulse.local")
 
 
 def _headers(tenant_id: str, api_key: str) -> dict[str, str]:
@@ -74,9 +72,7 @@ async def _connect_db() -> asyncpg.Connection:
     return await asyncpg.connect(DB_URL)
 
 
-async def _ensure_recipient_tenant(
-    recipient_id: UUID, slug: str, name: str
-) -> None:
+async def _ensure_recipient_tenant(recipient_id: UUID, slug: str, name: str) -> None:
     """Upsert the recipient tenant — same shape as smoke_setup.upsert_tenant()."""
     conn = await _connect_db()
     try:
@@ -102,8 +98,7 @@ async def _existing_inflight_transfer_count(source_tenant_id: UUID) -> int:
     conn = await _connect_db()
     try:
         row = await conn.fetchval(
-            "SELECT COUNT(*) FROM tag_transfers"
-            " WHERE from_tenant_id = $1 AND status = 'requested'",
+            "SELECT COUNT(*) FROM tag_transfers WHERE from_tenant_id = $1 AND status = 'requested'",
             source_tenant_id,
         )
         return int(row or 0)
@@ -163,15 +158,12 @@ async def _seed_one_transfer(
     inflight = await _existing_inflight_transfer_count(source_tenant_id)
     if inflight > 0:
         print(
-            f"  source tenant already has {inflight} in-flight transfer(s);"
-            " skipping (idempotent)"
+            f"  source tenant already has {inflight} in-flight transfer(s); skipping (idempotent)"
         )
         return True
 
     await _ensure_recipient_tenant(recipient_id, recipient_slug, recipient_name)
-    print(
-        f"  recipient tenant: {recipient_slug} ({recipient_id}) ensured"
-    )
+    print(f"  recipient tenant: {recipient_slug} ({recipient_id}) ensured")
 
     epcs = await _pick_active_epcs(source_tenant_id, epc_count)
     if not epcs:
@@ -194,9 +186,7 @@ async def _seed_one_transfer(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--tenant-id", required=True, help="Source tenant UUID"
-    )
+    parser.add_argument("--tenant-id", required=True, help="Source tenant UUID")
     parser.add_argument(
         "--api-key",
         default=os.environ.get("TAGPULSE_API_KEY"),
@@ -234,9 +224,7 @@ def main() -> int:
 
     # Recipient UUID derived deterministically from its slug so the row is
     # the same across runs.
-    recipient_id = uuid.uuid5(
-        uuid.NAMESPACE_DNS, f"{args.recipient_slug}.tagpulse.local"
-    )
+    recipient_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"{args.recipient_slug}.tagpulse.local")
 
     print(
         f"Seeding in-flight transfer → {API_URL}"

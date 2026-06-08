@@ -110,9 +110,7 @@ def _fire_natural_alert_read(
     return resp.status_code == 201
 
 
-def _trigger_natural_alerts(
-    tenant_id: str, api_key: str, count: int
-) -> int:
+def _trigger_natural_alerts(tenant_id: str, api_key: str, count: int) -> int:
     """Fire ``count`` natural alerts by posting high-temp tag reads.
 
     The high-temp rule has a 60 s cooldown per (tenant, rule, device),
@@ -123,9 +121,7 @@ def _trigger_natural_alerts(
         return 0
     with httpx.Client(timeout=15.0) as client:
         # Discover devices.
-        resp = client.get(
-            f"{API_URL}/devices", headers=_headers(tenant_id, api_key)
-        )
+        resp = client.get(f"{API_URL}/device-registry", headers=_headers(tenant_id, api_key))
         resp.raise_for_status()
         devices = [d["id"] for d in resp.json()]
         if not devices:
@@ -149,9 +145,7 @@ def _trigger_natural_alerts(
         return accepted
 
 
-async def _insert_resolved_alerts(
-    tenant_id: UUID, count: int
-) -> int:
+async def _insert_resolved_alerts(tenant_id: UUID, count: int) -> int:
     """Insert ``count`` resolved alerts directly into the ``alerts`` table.
 
     Each row references the demo high-temp rule (the seed-time rule
@@ -217,10 +211,7 @@ async def _insert_resolved_alerts(
                 triggered_at,
             )
             inserted += 1
-            print(
-                f"  inserted resolved alert (triggered {hours_ago}h ago, "
-                f"severity={severity})"
-            )
+            print(f"  inserted resolved alert (triggered {hours_ago}h ago, severity={severity})")
         return inserted
     finally:
         await conn.close()
@@ -228,9 +219,7 @@ async def _insert_resolved_alerts(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--tenant-id", required=True, help="Target tenant UUID"
-    )
+    parser.add_argument("--tenant-id", required=True, help="Target tenant UUID")
     parser.add_argument(
         "--api-key",
         default=os.environ.get("TAGPULSE_API_KEY"),
@@ -276,9 +265,7 @@ def main() -> int:
         f"natural={args.natural_count}, resolved={args.resolved_count})"
     )
 
-    natural = _trigger_natural_alerts(
-        args.tenant_id, args.api_key, args.natural_count
-    )
+    natural = _trigger_natural_alerts(args.tenant_id, args.api_key, args.natural_count)
     print(f"  natural reads accepted: {natural}")
 
     resolved = asyncio.run(_insert_resolved_alerts(tenant_uuid, args.resolved_count))

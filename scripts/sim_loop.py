@@ -178,15 +178,13 @@ def _headers(tenant_id: str, api_key: str) -> dict[str, str]:
     }
 
 
-async def _discover_devices(
-    client: httpx.AsyncClient, tenant_id: str, api_key: str
-) -> list[str]:
-    """GET /devices for the tenant, return list of device UUIDs.
+async def _discover_devices(client: httpx.AsyncClient, tenant_id: str, api_key: str) -> list[str]:
+    """GET /device-registry for the tenant, return list of device UUIDs.
 
     Aborts the loop with a clear message if the tenant has no devices —
     operators should run ``make demo-tenant`` first.
     """
-    resp = await client.get(f"{API_URL}/devices", headers=_headers(tenant_id, api_key))
+    resp = await client.get(f"{API_URL}/device-registry", headers=_headers(tenant_id, api_key))
     resp.raise_for_status()
     devices = resp.json()
     if not devices:
@@ -370,9 +368,7 @@ async def _run_loop(
                 print(f"  duration elapsed ({duration_seconds}s); shutting down")
                 break
 
-            await _emit_tick(
-                client, tenant_id, api_key, state, bucket, rate_per_min
-            )
+            await _emit_tick(client, tenant_id, api_key, state, bucket, rate_per_min)
 
             # Outage check once per minute (tick is 1s).
             if now - last_outage_check >= 60.0:
@@ -476,8 +472,7 @@ def main() -> int:
 
     if args.rate > _HARD_CEILING_PER_MIN:
         print(
-            f"ERROR: --rate {args.rate} exceeds hard ceiling"
-            f" {_HARD_CEILING_PER_MIN}",
+            f"ERROR: --rate {args.rate} exceeds hard ceiling {_HARD_CEILING_PER_MIN}",
             file=sys.stderr,
         )
         return 2
@@ -499,9 +494,7 @@ def main() -> int:
     print(f"  api_url:    {API_URL}")
     print(f"  tenant_id:  {args.tenant_id}")
     print(f"  rate:       {args.rate} reads/min (peak ×{_PEAK_MULTIPLIER})")
-    print(
-        f"  duration:   {'forever' if args.duration == 0 else f'{int(args.duration)}s'}"
-    )
+    print(f"  duration:   {'forever' if args.duration == 0 else f'{int(args.duration)}s'}")
 
     stop_event = asyncio.Event()
 

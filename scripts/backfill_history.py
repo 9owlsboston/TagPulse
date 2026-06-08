@@ -12,7 +12,7 @@ the row. This keeps the curated alert set authored by ``seed_alerts.py``
 from being polluted by alerts the historical replay itself would otherwise
 trigger.
 
-Devices are discovered via ``GET /devices`` if not supplied. The script is
+Devices are discovered via ``GET /device-registry`` if not supplied. The script is
 idempotent in the demo-tenant sense — re-running adds another window of
 reads but does not double-create devices or tags.
 
@@ -52,11 +52,9 @@ def _headers(tenant_id: str, api_key: str) -> dict[str, str]:
     }
 
 
-def _discover_devices(
-    client: httpx.Client, tenant_id: str, api_key: str
-) -> list[str]:
+def _discover_devices(client: httpx.Client, tenant_id: str, api_key: str) -> list[str]:
     """Fetch all devices for the tenant and return their UUIDs."""
-    resp = client.get(f"{API_URL}/devices", headers=_headers(tenant_id, api_key))
+    resp = client.get(f"{API_URL}/device-registry", headers=_headers(tenant_id, api_key))
     resp.raise_for_status()
     devices = resp.json()
     if not devices:
@@ -68,9 +66,7 @@ def _discover_devices(
     return [d["id"] for d in devices]
 
 
-def _build_read(
-    device_id: str, tag_id: str, timestamp: datetime
-) -> dict[str, Any]:
+def _build_read(device_id: str, tag_id: str, timestamp: datetime) -> dict[str, Any]:
     """Build a single TagReadCreate payload with a past timestamp."""
     sensor_data: dict[str, float] = {
         "temperature": round(random.uniform(18.0, 28.0), 1),
@@ -135,8 +131,7 @@ def _post_batches(
         resp = client.post(url, headers=headers, json=batch)
         if resp.status_code != 201:
             print(
-                f"  batch {batch_idx}/{batch_count}: HTTP {resp.status_code}"
-                f" — {resp.text[:200]}",
+                f"  batch {batch_idx}/{batch_count}: HTTP {resp.status_code} — {resp.text[:200]}",
                 file=sys.stderr,
             )
             continue
@@ -153,9 +148,7 @@ def _post_batches(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--tenant-id", required=True, help="Target tenant UUID (X-Tenant-ID)"
-    )
+    parser.add_argument("--tenant-id", required=True, help="Target tenant UUID (X-Tenant-ID)")
     parser.add_argument(
         "--api-key",
         default=os.environ.get("TAGPULSE_API_KEY"),
@@ -183,7 +176,7 @@ def main() -> int:
         "--devices",
         nargs="*",
         default=None,
-        help="Device UUIDs to round-robin (default: discover via GET /devices)",
+        help="Device UUIDs to round-robin (default: discover via GET /device-registry)",
     )
     parser.add_argument(
         "--tags",
@@ -218,9 +211,7 @@ def main() -> int:
     )
 
     with httpx.Client(timeout=30.0) as client:
-        devices = args.devices or _discover_devices(
-            client, args.tenant_id, args.api_key
-        )
+        devices = args.devices or _discover_devices(client, args.tenant_id, args.api_key)
         print(f"  using {len(devices)} device(s)")
 
         tag_pool = [f"TAG{i:04d}" for i in range(1, args.tags + 1)] or _DEFAULT_TAG_POOL
@@ -249,8 +240,7 @@ def main() -> int:
 
     rate = ingested / post_secs if post_secs > 0 else 0.0
     print(
-        f"Done: ingested={ingested} rejected={rejected} in {post_secs:.1f}s "
-        f"({rate:.0f} reads/sec)"
+        f"Done: ingested={ingested} rejected={rejected} in {post_secs:.1f}s ({rate:.0f} reads/sec)"
     )
     return 0
 

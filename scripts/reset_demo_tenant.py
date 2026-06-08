@@ -43,9 +43,7 @@ DB_URL = os.environ.get(
 DEMO_TENANT_SLUG = "demo-wm-dc"
 DEMO_TENANT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, f"{DEMO_TENANT_SLUG}.tagpulse.local")
 RECIPIENT_SLUG = "demo-wm-recipient"
-RECIPIENT_TENANT_ID = uuid.uuid5(
-    uuid.NAMESPACE_DNS, f"{RECIPIENT_SLUG}.tagpulse.local"
-)
+RECIPIENT_TENANT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, f"{RECIPIENT_SLUG}.tagpulse.local")
 
 _LOCAL_DB_HINTS = ("localhost", "127.0.0.1", "tagpulse-pg", "host.docker.internal")
 

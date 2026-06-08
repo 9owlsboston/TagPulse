@@ -88,8 +88,7 @@ def _run(cmd: list[str], *, env: dict[str, str] | None = None) -> str:
         print(proc.stderr, end="", file=sys.stderr)
     if proc.returncode != 0:
         print(
-            f"  FATAL: {cmd[1] if len(cmd) > 1 else cmd[0]} exited "
-            f"with code {proc.returncode}",
+            f"  FATAL: {cmd[1] if len(cmd) > 1 else cmd[0]} exited with code {proc.returncode}",
             file=sys.stderr,
         )
         sys.exit(proc.returncode)
@@ -116,11 +115,16 @@ def _step_smoke_setup(*, keep_key: bool) -> str:
             sys.executable,
             str(SCRIPTS_DIR / "smoke_setup.py"),
             "--full",
-            "--tenant-id", str(DEMO_TENANT_ID),
-            "--tenant-slug", DEMO_TENANT_SLUG,
-            "--tenant-name", DEMO_TENANT_NAME,
-            "--admin-email", DEMO_ADMIN_EMAIL,
-            "--admin-name", DEMO_ADMIN_NAME,
+            "--tenant-id",
+            str(DEMO_TENANT_ID),
+            "--tenant-slug",
+            DEMO_TENANT_SLUG,
+            "--tenant-name",
+            DEMO_TENANT_NAME,
+            "--admin-email",
+            DEMO_ADMIN_EMAIL,
+            "--admin-name",
+            DEMO_ADMIN_NAME,
         ]
         _run(cmd)
         print(f"  reusing existing $TAGPULSE_API_KEY ({existing[:10]}…)")
@@ -132,11 +136,16 @@ def _step_smoke_setup(*, keep_key: bool) -> str:
         "--full",
         "--regenerate-key",
         "--print-full-key",
-        "--tenant-id", str(DEMO_TENANT_ID),
-        "--tenant-slug", DEMO_TENANT_SLUG,
-        "--tenant-name", DEMO_TENANT_NAME,
-        "--admin-email", DEMO_ADMIN_EMAIL,
-        "--admin-name", DEMO_ADMIN_NAME,
+        "--tenant-id",
+        str(DEMO_TENANT_ID),
+        "--tenant-slug",
+        DEMO_TENANT_SLUG,
+        "--tenant-name",
+        DEMO_TENANT_NAME,
+        "--admin-email",
+        DEMO_ADMIN_EMAIL,
+        "--admin-name",
+        DEMO_ADMIN_NAME,
     ]
     stdout = _run(cmd)
     match = _EXPORT_KEY_RE.search(stdout)
@@ -156,10 +165,14 @@ def _step_simulate_devices(api_key: str, *, devices: int, tags: int) -> None:
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "simulate_devices.py"),
-        "--tenant-id", str(DEMO_TENANT_ID),
-        "--api-key", api_key,
-        "--devices", str(devices),
-        "--tags", str(tags),
+        "--tenant-id",
+        str(DEMO_TENANT_ID),
+        "--api-key",
+        api_key,
+        "--devices",
+        str(devices),
+        "--tags",
+        str(tags),
         "--seed-only",
     ]
     _run(cmd)
@@ -169,58 +182,70 @@ def _step_simulate_inventory(api_key: str, *, units: int) -> None:
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "simulate_inventory.py"),
-        "--tenant-id", str(DEMO_TENANT_ID),
-        "--api-key", api_key,
-        "--units", str(units),
+        "--tenant-id",
+        str(DEMO_TENANT_ID),
+        "--api-key",
+        api_key,
+        "--units",
+        str(units),
         "--seed-only",
     ]
     _run(cmd)
 
 
-def _step_simulate_assets(
-    api_key: str, *, assets: int, readers: int, iterations: int
-) -> None:
+def _step_simulate_assets(api_key: str, *, assets: int, readers: int, iterations: int) -> None:
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "simulate_assets.py"),
-        "--tenant-id", str(DEMO_TENANT_ID),
-        "--api-key", api_key,
-        "--assets", str(assets),
-        "--readers", str(readers),
-        "--iterations", str(iterations),
-        "--interval", "0.1",
+        "--tenant-id",
+        str(DEMO_TENANT_ID),
+        "--api-key",
+        api_key,
+        "--assets",
+        str(assets),
+        "--readers",
+        str(readers),
+        "--iterations",
+        str(iterations),
+        "--interval",
+        "0.1",
     ]
     _run(cmd)
 
 
-def _step_backfill_history(
-    api_key: str, *, days: float, reads: int, batch_size: int
-) -> None:
+def _step_backfill_history(api_key: str, *, days: float, reads: int, batch_size: int) -> None:
     if reads <= 0:
         print("  skipped (reads=0)")
         return
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "backfill_history.py"),
-        "--tenant-id", str(DEMO_TENANT_ID),
-        "--api-key", api_key,
-        "--days", str(days),
-        "--reads", str(reads),
-        "--batch-size", str(batch_size),
+        "--tenant-id",
+        str(DEMO_TENANT_ID),
+        "--api-key",
+        api_key,
+        "--days",
+        str(days),
+        "--reads",
+        str(reads),
+        "--batch-size",
+        str(batch_size),
     ]
     _run(cmd)
 
 
-def _step_seed_alerts(
-    api_key: str, *, natural: int, resolved: int
-) -> None:
+def _step_seed_alerts(api_key: str, *, natural: int, resolved: int) -> None:
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "seed_alerts.py"),
-        "--tenant-id", str(DEMO_TENANT_ID),
-        "--api-key", api_key,
-        "--natural-count", str(natural),
-        "--resolved-count", str(resolved),
+        "--tenant-id",
+        str(DEMO_TENANT_ID),
+        "--api-key",
+        api_key,
+        "--natural-count",
+        str(natural),
+        "--resolved-count",
+        str(resolved),
     ]
     _run(cmd)
 
@@ -229,9 +254,12 @@ def _step_seed_transfer(api_key: str, *, epc_count: int) -> None:
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "seed_transfer.py"),
-        "--tenant-id", str(DEMO_TENANT_ID),
-        "--api-key", api_key,
-        "--epc-count", str(epc_count),
+        "--tenant-id",
+        str(DEMO_TENANT_ID),
+        "--api-key",
+        api_key,
+        "--epc-count",
+        str(epc_count),
     ]
     _run(cmd)
 
@@ -316,9 +344,7 @@ def main() -> int:
     skip_backfill = os.environ.get("DEMO_SKIP_BACKFILL") == "1"
     reads = 0 if skip_backfill else args.reads
 
-    print(
-        f"Demo tenant composer → slug={DEMO_TENANT_SLUG} id={DEMO_TENANT_ID}"
-    )
+    print(f"Demo tenant composer → slug={DEMO_TENANT_SLUG} id={DEMO_TENANT_ID}")
     if keep_key:
         print("  DEMO_KEEP_KEY=1: reusing existing $TAGPULSE_API_KEY")
     if skip_backfill:
@@ -345,7 +371,8 @@ def main() -> int:
     )
 
     _print_header(
-        5, total_steps,
+        5,
+        total_steps,
         f"backfill_history — replay {reads} reads across {args.days} day(s)",
     )
     _step_backfill_history(
