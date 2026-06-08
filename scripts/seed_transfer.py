@@ -29,6 +29,7 @@ import argparse
 import asyncio
 import os
 import sys
+import time
 import uuid
 from typing import Any
 from uuid import UUID
@@ -47,6 +48,15 @@ DB_URL = os.environ.get(
 DEFAULT_RECIPIENT_SLUG = "demo-wm-recipient"
 DEFAULT_RECIPIENT_NAME = "WM Receiving Hub"
 DEFAULT_RECIPIENT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, f"{DEFAULT_RECIPIENT_SLUG}.tagpulse.local")
+
+# Backfill / live-ingest reads run through HTTP and are processed by the
+# tag-registrar worker on a tick interval (currently a few seconds). The
+# composer invokes us immediately after backfill returns, so there is a
+# narrow window where no tags have yet flipped from ``status='registered'``
+# to ``status='active'``. Poll for up to this many seconds rather than
+# failing the seed run on a benign race.
+_WORKER_PROMOTION_TIMEOUT_S = 30.0
+_WORKER_PROMOTION_POLL_INTERVAL_S = 1.0
 
 
 def _headers(tenant_id: str, api_key: str) -> dict[str, str]:
@@ -123,6 +133,32 @@ async def _pick_active_epcs(source_tenant_id: UUID, count: int) -> list[str]:
         await conn.close()
 
 
+async def _wait_for_active_epcs(
+    source_tenant_id: UUID,
+    count: int,
+    *,
+    timeout_s: float = _WORKER_PROMOTION_TIMEOUT_S,
+    poll_interval_s: float = _WORKER_PROMOTION_POLL_INTERVAL_S,
+) -> list[str]:
+    """Poll for ``count`` active EPCs, waiting up to ``timeout_s`` seconds.
+
+    Mitigates the worker-promotion race that surfaced in the Sprint 58 audit:
+    backfilled reads ingest synchronously but the registrar worker only
+    promotes ``status='registered'`` to ``status='active'`` on its next tick,
+    so an immediate post-backfill pick can return zero rows on a freshly
+    seeded tenant. Returns whatever the picker has on the last attempt
+    (possibly empty) once the budget expires — callers decide how to
+    handle short returns.
+    """
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    epcs: list[str] = []
+    while True:
+        epcs = await _pick_active_epcs(source_tenant_id, count)
+        if len(epcs) >= count or time.monotonic() >= deadline:
+            return epcs
+        await asyncio.sleep(poll_interval_s)
+
+
 def _post_transfer(
     tenant_id: str, api_key: str, recipient_slug: str, epcs: list[str]
 ) -> dict[str, Any] | None:
@@ -165,14 +201,21 @@ async def _seed_one_transfer(
     await _ensure_recipient_tenant(recipient_id, recipient_slug, recipient_name)
     print(f"  recipient tenant: {recipient_slug} ({recipient_id}) ensured")
 
-    epcs = await _pick_active_epcs(source_tenant_id, epc_count)
+    epcs = await _wait_for_active_epcs(source_tenant_id, epc_count)
     if not epcs:
         print(
-            "  WARN: no active tags on source tenant — skipping transfer."
-            " Run simulate_devices.py to bind tags first.",
+            "  WARN: no active tags on source tenant after waiting"
+            f" {_WORKER_PROMOTION_TIMEOUT_S:.0f}s for the tag-registrar worker."
+            " Re-run `make demo-tenant` once the worker container is healthy,"
+            " or run simulate_devices.py with live reads to flush the queue.",
             file=sys.stderr,
         )
         return False
+    if len(epcs) < epc_count:
+        print(
+            f"  NOTE: only {len(epcs)}/{epc_count} active EPC(s) available;"
+            " proceeding with what we have (worker may still be catching up)."
+        )
 
     result = _post_transfer(str(source_tenant_id), api_key, recipient_slug, epcs)
     if result is None:

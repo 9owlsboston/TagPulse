@@ -167,11 +167,34 @@ The composer runs seven steps in sequence:
    historical reads via `POST /tag-reads/batch?backfill=true`. The
    `backfill=true` flag suppresses rules, alerts, and the read-frequency
    rollup so the history doesn't trigger 5000 stale notifications.
+
+   > **Gotcha — clock-window vs. `--days`.** The ingest path enforces a
+   > **24-hour** clock window (`MAX_PAST` in
+   > `src/tagpulse/ingestion/clock.py`, per
+   > [edge-device-contract.md](design/edge-device-contract.md) §3.5). The
+   > `backfill=true` flag does **not** bypass this — it only suppresses
+   > rule eval. With the default `INGEST_CLOCK_ENFORCE=true`, any read
+   > older than 24 h is rejected as `event_too_old`, so a `--days 3`
+   > replay lands roughly one day of accepted history and dead-letters
+   > the rest. Two ways to land the full window: (a) use `--days 1` to
+   > match the window, or (b) set `INGEST_CLOCK_ENFORCE=false` in your
+   > local env file before `make demo-tenant` to fall back to
+   > observe-only mode (rejections still metered, but reads still
+   > inserted).
 6. `seed_alerts.py` — produces 4 live alerts (high-temperature reads
    above 30 °C, fired via the normal ingest path) plus 3 resolved
    alerts inserted directly to give the UI an alert-resolution timeline.
 7. `seed_transfer.py` — creates a `demo-wm-recipient` tenant and one
    in-flight cross-tenant transfer of 3 EPCs.
+
+   > **Gotcha — worker-promotion race on first run.** The transfer needs
+   > `tags.status='active'`, but the registrar worker only promotes
+   > `registered → active` on its next tick after the backfill batch
+   > lands. As of Sprint 58 audit, `seed_transfer.py` waits up to 30 s
+   > for the worker to catch up before failing, so on a healthy stack
+   > you should never see the "no active tags" warning — if you do,
+   > check that the `worker` container is running (`docker compose ps
+   > worker`) and re-run `make demo-tenant`.
 
 The final line prints `export TAGPULSE_API_KEY=<key>` so you can
 `eval $(make demo-tenant | tail -1)` and start hitting the API.
