@@ -113,6 +113,39 @@ Requires **Inventory tracking** enabled on the target tenant (Tracking
 Modes UI, or `PATCH /tenant/config`). `TAGPULSE_API_KEY` is auto-injected
 from Key Vault by the tools job — no `--api-key` flag needed.
 
+### 3c. Seed the full WM-DC demo tenant against `dev`
+
+```bash
+make demo-tenant-dev ENV=dev      # ENV=dev is mandatory; refuses any other value
+```
+
+Runs the Sprint 58 composer (`scripts/seed_demo_tenant.py`) inside the
+tools-job against the deployed `dev` env. Combines steps 1–2 above
+(`smoke_setup` + `simulate_devices` + `simulate_inventory`) with the
+demo-specific shims (`simulate_assets`, `backfill_history`,
+`seed_alerts`, `seed_transfer`) into a single idempotent run.
+
+Differences from local `make demo-tenant` (auto-applied when the
+composer detects `$ENVIRONMENT` set by `tools-job.bicep`):
+
+- **`--days` defaults to 1**, not 3, because the deployed API enforces
+  the 24 h ingest clock window (`INGEST_CLOCK_ENFORCE=true` per
+  [edge-device-contract.md](../design/edge-device-contract.md) §3.5).
+- **Admin key is written to Key Vault** as
+  `tagpulse-demo-wm-dc-admin-key` and never echoed to stdout. Retrieve
+  it for a laptop session:
+
+  ```bash
+  export TAGPULSE_API_KEY=$(scripts/azd-kv-get.sh dev tagpulse-demo-wm-dc-admin-key)
+  ```
+
+- **Two prod-refusal guards** (Make target on `ENV=dev`, composer on
+  `$ENVIRONMENT in {prod,production}`). There is no `prod` equivalent
+  of this target.
+
+Operator walkthrough + reset caveat: [operator-quickstart.md → Demo
+tenant → Dev cluster](../operator-quickstart.md#demo-tenant-dev-cluster).
+
 ### 4. Re-tail logs after a terminal disconnect
 
 ```bash

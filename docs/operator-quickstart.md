@@ -140,12 +140,24 @@ For Mosquitto, log into the ACI:
 az container exec -g tp${env}-rg -n tp${env}-mqtt --exec-command /bin/sh
 ```
 
-## Demo tenant (local only)
+## Demo tenant
 
 Sprint 58 ships a one-command composer that builds a fully populated
-demo tenant on a local `docker compose up` stack. Use it for screenshots,
-walkthroughs, and Lighthouse / perf baselines — never against a deployed
-environment.
+demo tenant — used for screenshots, walkthroughs, and Lighthouse /
+perf baselines. It runs in two modes:
+
+- **Local** (this section, default): `make demo-tenant` against a
+  `docker compose up` stack on your laptop.
+- **Dev cluster** ([subsection below](#demo-tenant-dev-cluster)):
+  `make demo-tenant-dev` against the deployed `dev` env via the
+  tools-job.
+
+Both modes share the composer (`scripts/seed_demo_tenant.py`) and the
+deterministic tenant identity (`demo-wm-dc`); they differ only in
+backfill window, key handoff, and a hard prod-refusal guard. **Neither
+mode runs against staging or prod.**
+
+### Local (`make demo-tenant`)
 
 ```bash
 docker compose up -d
