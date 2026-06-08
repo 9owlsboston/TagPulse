@@ -82,6 +82,11 @@ _COMPOSER_INVOCATIONS: list[tuple[str, str, frozenset[str]]] = [
                 "--tenant-name",
                 "--admin-email",
                 "--admin-name",
+                # Added in chore/demo-tenant-as-job: composer forwards
+                # $TAGPULSE_SMOKE_KEY_VAULT_NAME through to smoke_setup
+                # when running inside the tools-job so the rotated key
+                # lands in KV instead of Log Analytics.
+                "--key-vault-name",
             }
         ),
     ),
@@ -224,3 +229,95 @@ def test_composer_subprocess_args_match_target_cli(
         f"passes: {sorted(missing)} — either restore them on the target or "
         f"update _COMPOSER_INVOCATIONS in {Path(__file__).name}."
     )
+
+
+# ---------------------------------------------------------------------------
+# chore/demo-tenant-as-job — in-cluster execution guards & key handoff.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("env_value", ["prod", "production", "PROD", "Production"])
+def test_assert_environment_safe_refuses_prod(
+    env_value: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The composer must never run against a prod-shaped ENVIRONMENT.
+
+    Case-insensitive, both 'prod' and 'production' variants. The demo
+    seed rotates an admin API key and mutates a deterministic tenant
+    slug, neither of which is safe in prod under any circumstance.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    monkeypatch.setenv("ENVIRONMENT", env_value)
+
+    with pytest.raises(SystemExit) as excinfo:
+        seed_demo_tenant._assert_environment_safe()
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "refusing to run" in err
+    assert env_value.lower() in err
+
+
+@pytest.mark.parametrize(
+    ("env_value", "expected_mode"),
+    [
+        ("dev", "dev"),
+        ("staging", "staging"),
+        ("DEV", "dev"),  # case-insensitive
+        ("", "local"),  # empty
+    ],
+)
+def test_assert_environment_safe_accepts_non_prod(
+    env_value: str,
+    expected_mode: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-prod ENVIRONMENT values are accepted and returned normalized."""
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    monkeypatch.setenv("ENVIRONMENT", env_value)
+
+    assert seed_demo_tenant._assert_environment_safe() == expected_mode
+
+
+def test_assert_environment_safe_treats_unset_as_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset $ENVIRONMENT (laptop dev path) resolves to the 'local' sentinel."""
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+
+    assert seed_demo_tenant._assert_environment_safe() == "local"
+
+
+def test_demo_admin_kv_secret_name_matches_smoke_setup_format() -> None:
+    """Composer's hard-coded KV secret name must equal what smoke_setup writes.
+
+    The composer reads the rotated admin key back from KV by deriving
+    the name as ``tagpulse-<slug>-admin-key`` (per
+    ``smoke_setup._kv_secret_name``). If smoke_setup ever changes that
+    format, this test catches the drift before the in-cluster
+    composer runs and silently can't find the secret.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    smoke_setup = _load_script_module("smoke_setup.py")
+
+    derived = smoke_setup._kv_secret_name(seed_demo_tenant.DEMO_TENANT_SLUG, "admin")
+    assert derived == seed_demo_tenant.DEMO_ADMIN_KV_SECRET_NAME
+    assert derived == f"tagpulse-{seed_demo_tenant.DEMO_TENANT_SLUG}-admin-key"
+
+
+def test_in_cluster_default_days_is_one_local_default_is_three() -> None:
+    """Backfill --days default is mode-dependent.
+
+    Local: 3 days because INGEST_CLOCK_ENFORCE is typically false. The
+    dashboard's history view looks empty with less.
+    In-cluster: 1 day because the deployed API enforces a 24 h
+    MAX_PAST window (see src/tagpulse/ingestion/clock.py); a wider
+    replay silently dead-letters most of the writes.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+
+    assert seed_demo_tenant._DEFAULT_DAYS_LOCAL == 3.0
+    assert seed_demo_tenant._DEFAULT_DAYS_INCLUSTER == 1.0

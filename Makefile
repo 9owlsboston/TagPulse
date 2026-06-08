@@ -1,5 +1,5 @@
 .PHONY: lint typecheck test format check run export-openapi migration-check \
-        smoke rotate-key logs doctor demo-tenant demo-tenant-reset \
+        smoke rotate-key logs doctor demo-tenant demo-tenant-reset demo-tenant-dev \
         sim-start sim-stop sim-status help
 
 # Default ENV for ops targets — override on the command line: make logs ENV=prod
@@ -80,6 +80,20 @@ demo-tenant: ## Sprint 58: seed the WM Distribution Center demo tenant (idempote
 
 demo-tenant-reset: ## Sprint 58: delete the demo tenant + recipient (local dev only)
 	python scripts/reset_demo_tenant.py
+
+# ``make demo-tenant-dev`` (ENV=dev only) runs the same composer inside the
+# deployed tools-job, so it can reach the private Postgres + KV in-VNet.
+# The composer itself reads $ENVIRONMENT (set by tools-job.bicep) and
+# refuses to run if it sees 'prod'; this target also refuses any
+# ENV != 'dev' as a second-layer guard. Admin key is written to KV as
+# 'tagpulse-demo-wm-dc-admin-key' and retrieved via scripts/azd-kv-get.sh.
+demo-tenant-dev: ## Seed the demo tenant against the deployed dev env via tools-job (ENV=dev only)
+	@if [ "$(ENV)" != "dev" ]; then \
+	  echo "demo-tenant-dev only runs against ENV=dev (got '$(ENV)'). " \
+	       "For local, use 'make demo-tenant'." >&2; \
+	  exit 2; \
+	fi
+	scripts/azd-job.sh dev seed_demo_tenant.py -- --days 1
 
 # ---------------------------------------------------------------------------
 # Sprint 58 Phase C — continuous demo-tenant simulator (docker compose).

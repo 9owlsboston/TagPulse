@@ -214,6 +214,64 @@ make demo-tenant-reset      # drops demo + recipient tenants and all their rows
 make demo-tenant            # rebuild from scratch
 ```
 
+### Demo tenant (dev cluster)
+
+The same composer also runs inside the deployed `dev` environment via
+the tools-job (Sprint 26 B1), so you can populate the live dev API
+without a local stack. Useful for UI review against the cloud
+environment, Lighthouse against the real CDN, or cross-tenant transfer
+demos that need the deployed worker.
+
+```bash
+make demo-tenant-dev ENV=dev    # ENV=dev is mandatory; refuses any other value
+```
+
+The Make target wraps `scripts/azd-job.sh dev seed_demo_tenant.py --
+--days 1` and streams the job's stdout back to your terminal. Two
+defense-in-depth guards protect the production environment:
+
+1. **Make-target guard.** `make demo-tenant-dev` exits non-zero unless
+   `ENV=dev`.
+2. **Composer-level guard.** `seed_demo_tenant.py` reads `$ENVIRONMENT`
+   (set by [tools-job.bicep](../deploy/azure/bicep/modules/tools-job.bicep))
+   and refuses to run if it sees `prod` or `production` — covered by
+   [tests/unit/test_seed_demo_tenant.py](../tests/unit/test_seed_demo_tenant.py).
+
+Differences from the local path (auto-applied when `$ENVIRONMENT` is
+set):
+
+- **`--days` defaults to 1**, not 3. The deployed API enforces the 24 h
+  `MAX_PAST` clock window (`INGEST_CLOCK_ENFORCE=true` per
+  [edge-device-contract.md](design/edge-device-contract.md) §3.5), so
+  a wider backfill silently dead-letters most writes. Pass `--days
+  <n>` after the `--` to override.
+- **Admin API key is written to Key Vault**, not printed in plaintext.
+  The composer picks up `$TAGPULSE_SMOKE_KEY_VAULT_NAME` from the
+  tools-job env (wired by Bicep), forwards it to `smoke_setup.py
+  --key-vault-name …`, then reads the rotated key back via
+  `DefaultAzureCredential` to feed the HTTP shims. Plaintext never
+  lands in stdout or Log Analytics.
+
+To use the demo from your laptop afterwards:
+
+```bash
+export TAGPULSE_API_KEY=$(scripts/azd-kv-get.sh dev tagpulse-demo-wm-dc-admin-key)
+# Hit the dev API:
+curl -H "X-API-Key: $TAGPULSE_API_KEY" \
+     -H "X-Tenant-Id: $(python -c 'import uuid; print(uuid.uuid5(uuid.NAMESPACE_DNS, "demo-wm-dc.tagpulse.local"))')" \
+     https://<dev-api-fqdn>/health
+```
+
+> **Note — no in-cluster reset path yet.** `make demo-tenant-reset` is
+> local-only by design ([scripts/reset_demo_tenant.py](../scripts/reset_demo_tenant.py)
+> "looks-local" guard). The composer is largely idempotent on re-run
+> (smoke_setup upserts; simulators are `--seed-only`; backfill appends —
+> pass `DEMO_SKIP_BACKFILL=1` on re-run), so `make demo-tenant-dev` can
+> be re-run without a wipe. To hard-drop the dev tenant, open a
+> Postgres session via the tools-job and `DELETE FROM tenants WHERE
+> slug IN ('demo-wm-dc', 'demo-wm-recipient')`. An in-cluster reset job
+> is a candidate follow-up.
+
 ### Continuous simulator
 
 After the composer finishes, `make sim-start` launches a long-running
