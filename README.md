@@ -7,6 +7,7 @@ IoT platform for RFID tag readers and sensor data. Ingests device telemetry, man
 - **Current sprint & shipped milestones:** see [docs/roadmap.md](docs/roadmap.md) — single source of truth. The roadmap header carries a `current-sprint` badge that is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff.
 - **Operators:** start at [docs/operator-quickstart.md](docs/operator-quickstart.md). On-call → [docs/runbooks/incident-template.md](docs/runbooks/incident-template.md). Edge / Pi smoke + canary recipes → [clients/pi/README.md](clients/pi/README.md).
 - **Developers on a laptop:** [docs/quickstart.md](docs/quickstart.md).
+- **Demos & walkthroughs:** [docs/guides/demo-guide.md](docs/guides/demo-guide.md) — full tour of the `make demo-tenant` seed bundle and the live `make sim-start` simulator.
 
 ## Quick Start (developer laptop)
 

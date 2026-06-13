@@ -144,7 +144,15 @@ az container exec -g tp${env}-rg -n tp${env}-mqtt --exec-command /bin/sh
 
 Sprint 58 ships a one-command composer that builds a fully populated
 demo tenant — used for screenshots, walkthroughs, and Lighthouse /
-perf baselines. It runs in two modes:
+perf baselines.
+
+> **Looking for the content tour** (what's seeded, what to click,
+> static-vs-live data expectations, the live simulator, troubleshooting)?
+> See the dedicated **[Demo Tenant Guide](guides/demo-guide.md)**.
+> This section covers only the operational shape — how to invoke the
+> composer locally vs in the dev cluster.
+
+It runs in two modes:
 
 - **Local** (this section, default): `make demo-tenant` against a
   `docker compose up` stack on your laptop.
