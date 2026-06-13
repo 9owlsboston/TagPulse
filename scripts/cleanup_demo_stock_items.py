@@ -1,18 +1,31 @@
 #!/usr/bin/env python3
-"""Delete orphaned stock_items for the non-perishable demo SKUs.
+"""Retire stock_items for the non-perishable demo SKUs so the seeder can re-run.
 
 When a seeder POSTs stock_items with a serial scheme that does not match the
 read stream (see the "serial alignment" sim gap in ``docs/backlog.md``), the
 stock_items never get bound by reads and show up as zone ``unassigned``. This
-helper force-deletes every stock_item for the five non-perishable SKUs so the
-seeder can re-materialize them cleanly.
+helper clears those units so ``seed_nonperishable_skus.py`` can re-materialize
+them cleanly.
+
+Why a *soft* retire instead of a hard delete? ``stock_movements`` has an
+``ON DELETE RESTRICT`` FK to ``stock_items`` (migration 021, Sprint 15b — "the
+ledger can never be orphaned"), so ``DELETE /stock-items/{id}?force=true`` 500s
+for any unit that has ever moved through a zone. Instead we PATCH each unit to
+``state=consumed``. That:
+
+* removes it from on-hand / Stock Levels (terminal state), and
+* frees its ``binding_value`` (EPC) for re-seeding — the partial unique index
+  ``ix_stock_items_active_binding`` excludes ``consumed``/``expired``/``lost``
+  (migration 020), so a fresh ``in_stock`` unit with the same EPC is allowed,
+  while
+* leaving the append-only movement ledger intact.
 
 Usage:
     export TAGPULSE_API_KEY=tp_demo-wm-dc_...
     python scripts/cleanup_demo_stock_items.py
 
-Destructive (hard delete via ``?force=true``) but scoped to the five demo SKUs
-only. Local/dev demo tooling — do not run against production tenants.
+Scoped to the five non-perishable demo SKUs only. Local/dev demo tooling — do
+not run against production tenants.
 """
 
 from __future__ import annotations
@@ -39,6 +52,9 @@ SKUS = {
     "SKU-TOWEL-BATH-6PK",
 }
 
+# states that already drop out of on-hand and free the binding (see module docs)
+TERMINAL_STATES = {"consumed", "expired", "lost"}
+
 
 def _rows(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
@@ -50,7 +66,7 @@ def _rows(payload: Any) -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    deleted = 0
+    retired = 0
     with httpx.Client(timeout=10.0) as client:
         prods = _rows(client.get(f"{API}/products?limit=100", headers=H).json())
         targets = [p for p in prods if p["sku"] in SKUS]
@@ -58,12 +74,17 @@ def main() -> None:
             items = _rows(
                 client.get(f"{API}/stock-items?product_id={p['id']}&limit=1000", headers=H).json()
             )
-            for it in items:
-                resp = client.delete(f"{API}/stock-items/{it['id']}?force=true", headers=H)
-                if resp.status_code == 204:
-                    deleted += 1
-            print(f"  {p['sku']}: cleared {len(items)} stock items")
-    print(f"Deleted {deleted} orphaned stock items.")
+            active = [it for it in items if it.get("state") not in TERMINAL_STATES]
+            for it in active:
+                resp = client.patch(
+                    f"{API}/stock-items/{it['id']}",
+                    headers=H,
+                    json={"state": "consumed"},
+                )
+                if resp.status_code == 200:
+                    retired += 1
+            print(f"  {p['sku']}: retired {len(active)} stock items")
+    print(f"Retired {retired} stock items (state=consumed; binding freed for reseed).")
 
 
 if __name__ == "__main__":

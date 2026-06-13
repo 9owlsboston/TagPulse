@@ -21,6 +21,15 @@ Most demo-facing scripts accept the same config:
 | `DEMO_TENANT_SLUG` | `demo-wm-dc` | Tenant slug; the tenant UUID is derived deterministically via `uuid5(NAMESPACE_DNS, "<slug>.tagpulse.local")`. |
 | `TAGPULSE_TENANT_ID` | _(derived)_ | Explicit tenant UUID override. |
 
+> **Why `demo-wm-dc`, not `demo-supermart`?** The slug is a **stable
+> identifier**, not a brand label. Its `uuid5`-derived tenant id, the
+> `tagpulse-demo-wm-dc-admin-key` Key Vault secret, and the Sprint 58 baseline
+> measurements are all keyed off this exact string, so it is intentionally
+> frozen even though the tenant's *display name* is now "SuperMart Distribution
+> Center". Don't rename the slug to match the brand — it would change the tenant
+> UUID and orphan the deployed KV secret. New domain tenants get fresh
+> brand-aligned slugs (see [Sprint 59 plan](../docs/design/sprint-59-demo-scenarios.md)).
+
 Get a demo key by running `make demo-tenant` (it prints the key) or pulling it
 from Key Vault on a deployed env.
 
@@ -31,7 +40,7 @@ from Key Vault on a deployed env.
 | [`seed_nonperishable_skus.py`](seed_nonperishable_skus.py) | seeder | Adds 5 general-merchandise SKUs (shoes, jeans, TV, speaker, towels) with **no-expiry** lots, materializes stock items, and streams zone reads. Gives the demo a realistic mixed catalog alongside the perishable simulators. Idempotent. |
 | [`verify_catalog.py`](verify_catalog.py) | check (read-only) | Lists products + categories, shows per-zone on-hand for the shoe SKU, and asserts non-perishable lots never leak into the Lot Expiry Queue. |
 | [`check_devices_online.py`](check_devices_online.py) | check (read-only) | Lists devices with `connection_state` + `last_seen` age and flags which count as online in the Dashboard's 5-minute window. |
-| [`cleanup_demo_stock_items.py`](cleanup_demo_stock_items.py) | cleanup (destructive) | Force-deletes stock items for the 5 non-perishable demo SKUs so the seeder can re-materialize cleanly. Scoped to those SKUs only. |
+| [`cleanup_demo_stock_items.py`](cleanup_demo_stock_items.py) | cleanup | Retires stock items for the 5 non-perishable demo SKUs (PATCH `state=consumed`) so the seeder can re-materialize cleanly. Soft, not a hard delete: `stock_movements` has an `ON DELETE RESTRICT` FK (migration 021), so consuming a unit frees its EPC binding (partial unique index excludes terminal states) without orphaning the append-only ledger. Scoped to those SKUs only. |
 | [`seed_stock_items.py`](seed_stock_items.py) | ⚠️ workaround | Materializes perishable stock items via direct `POST /stock-items` (binds by decoded URI). Works around the latent ingest gate bug. **Remove once that bug is fixed.** |
 | [`register_inventory_tags.py`](register_inventory_tags.py) | ⚠️ workaround | Pre-registers the simulator's SGTIN EPCs in the tags registry so the gate passes. Alternative to `seed_stock_items.py`. **Remove once the gate bug is fixed.** |
 

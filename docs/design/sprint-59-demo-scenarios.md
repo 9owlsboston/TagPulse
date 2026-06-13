@@ -150,6 +150,41 @@ Builds on `simulate_assets.py` (assets → EPC → zone transitions,
   map is the riskiest change. *Mitigation:* keep single-tenant path as the
   default; multi-tenant behind an explicit `--tenants` list.
 
+## Carried-in issues (surfaced by the `chore/demo-data-fixes` validation)
+
+Two findings from reset-and-run-through the promoted demo scripts. Neither
+blocks the chore PR; both belong here.
+
+- **59.6 — `?force=true` stock-item delete semantics (needs an ADR).** The
+  `DELETE /stock-items/{id}?force=true` path only bypasses the `in_stock`
+  *state* guard — it still issues a hard `DELETE`, which the `ON DELETE
+  RESTRICT` FK `stock_movements_stock_item_id_fkey` (migration 021, Sprint 15b
+  — "the ledger can never be orphaned") rejects with an unhandled
+  `IntegrityError`, 500-ing and dropping the connection. So force-delete is
+  effectively broken for any unit that has ever moved. The chore worked around
+  it by making `cleanup_demo_stock_items.py` *soft-retire* (PATCH
+  `state=consumed`, which frees the EPC binding via the partial unique index
+  without touching the ledger). **Decision needed (ADR):** should `?force=true`
+  (a) cascade-delete the ledger, (b) soft-delete the item (state transition +
+  hide), or (c) be removed in favour of the consume lifecycle? At minimum the
+  route must catch `IntegrityError` → 409 instead of 500. *Pass bar:* ADR
+  authored; route returns a structured 409; a regression test covers a moved
+  unit.
+
+- **59.7 — Static demo tenant shows "0 active devices" after the online
+  window.** The Dashboard's `devices_online` counts `connection_state='online'
+  AND last_seen > now − 5min` (`services/dashboard.py`). A freshly seeded
+  tenant with no live stream drops to 0 online ~5 min after seeding — the demo
+  looks dead on a cold open. This is the **dwell-vs-heartbeat** sim gap in the
+  chore cluster surfacing as a hero-metric regression. *Options:* (a) a
+  heartbeat-only tick in `sim_loop`/seeder that keeps all readers fresh
+  regardless of dwell, (b) a max-dwell cap so the streamed reads never leave a
+  reader idle past the window, or (c) `make demo-*` ends by starting the
+  simulator so devices stay warm. Fold into §59.4 (multi-tenant sim_loop) so
+  every demo tenant stays "alive" without a manual `make sim-start`. *Pass
+  bar:* a tenant left idle after seed still reports all readers online for the
+  demo session.
+
 ## Related
 
 - Feeds from the **Post-Sprint-58 demo-data chore cluster** in
