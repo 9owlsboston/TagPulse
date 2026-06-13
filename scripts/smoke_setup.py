@@ -30,6 +30,7 @@ import argparse
 import asyncio
 import os
 import sys
+import time
 from typing import Any
 from uuid import UUID
 
@@ -452,7 +453,11 @@ def ensure_telemetry_model(
         "humidity",
         "battery_pct",
     }
-    existing = client.get(f"{API_URL}/telemetry-models/rfid_reader", headers=headers)
+    # Sprint 19 cutover: the legacy ``GET /telemetry-models/{device_type}``
+    # route is gone. The subject-scoped replacement is
+    # ``GET /telemetry-models/{subject_kind}/{key}`` (see ADR-013 §6 +
+    # ADR-015 §6) — for device-type models the key is the device_type.
+    existing = client.get(f"{API_URL}/telemetry-models/device/rfid_reader", headers=headers)
     if existing.status_code == 200:
         existing_names = {m["name"] for m in existing.json().get("metrics", [])}
         if existing_names >= desired_metric_names:
@@ -740,6 +745,39 @@ def ensure_assets_with_bindings(
     return out
 
 
+def _wait_for_api_health(
+    client: httpx.Client,
+    *,
+    timeout_seconds: float = 30.0,
+    interval_seconds: float = 1.0,
+) -> bool:
+    """Wait until ``GET /health`` returns HTTP 200.
+
+    Local dev uses uvicorn ``--reload`` in docker-compose, so file-sync or
+    image startup can briefly reset in-flight sockets. We treat transient
+    ``ConnectError``/``ReadError`` as retryable until timeout.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    last_error: str | None = None
+    while time.monotonic() < deadline:
+        try:
+            health = client.get(f"{API_URL}/health")
+            if health.status_code == 200:
+                return True
+            last_error = f"HTTP {health.status_code}"
+        except (httpx.ConnectError, httpx.ReadError) as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+        time.sleep(interval_seconds)
+
+    if last_error:
+        print(f"  ERROR: API health check timed out: {last_error}")
+    else:
+        print("  ERROR: API health check timed out")
+    print(f"  API target: {API_URL}")
+    print("  If the stack just started, wait a few seconds and rerun the command.")
+    return False
+
+
 async def _run(args: argparse.Namespace) -> int:
     print("=== TagPulse smoke setup ===")
     pg_host = os.environ.get("POSTGRES_HOST")
@@ -835,15 +873,9 @@ async def _run(args: argparse.Namespace) -> int:
 
     print("\n[4/4] Provisioning via API…")
     with httpx.Client(timeout=10.0) as client:
-        # Sanity-check the API is reachable.
-        try:
-            health = client.get(f"{API_URL}/health")
-            if health.status_code != 200:
-                print(f"  API unhealthy: {health.status_code}")
-                return 3
-        except httpx.ConnectError:
-            print(f"  ERROR: cannot reach API at {API_URL}")
-            print("  Is `make run` running in another terminal?")
+        # Sanity-check the API is reachable, with retries for transient
+        # startup/reload resets in local docker-compose dev.
+        if not _wait_for_api_health(client):
             return 3
 
         modes = enable_asset_tracking(client, args.tenant_id, api_key)

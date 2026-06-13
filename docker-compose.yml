@@ -21,6 +21,13 @@ services:
       # Force-enable in dev so the smoke test's zone.entered/exited rules
       # actually fire — see docs/quickstart.md §6b.
       GEOFENCE_EVALUATION_ENABLED: "true"
+      # Dev-only: make the bind-mounted ``/app/src`` shadow the wheel
+      # installed into site-packages by the Dockerfile, so edits to
+      # ``src/tagpulse/...`` on the host are picked up by uvicorn
+      # ``--reload`` without rebuilding the image. Production images
+      # don't set PYTHONPATH and continue to import from the installed
+      # wheel as before.
+      PYTHONPATH: /app/src
     depends_on:
       db:
         condition: service_healthy
@@ -52,6 +59,8 @@ services:
       JWT_SECRET: "dev-secret-change-in-production"
       WORKERS_INLINE: "true"
       GEOFENCE_EVALUATION_ENABLED: "true"
+      # Dev-only PYTHONPATH override — see app service above for rationale.
+      PYTHONPATH: /app/src
     depends_on:
       db:
         condition: service_healthy

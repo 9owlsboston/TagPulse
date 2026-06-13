@@ -31,6 +31,7 @@ import os
 import sys
 import time
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -54,8 +55,9 @@ DEFAULT_RECIPIENT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, f"{DEFAULT_RECIPIENT_SLUG}
 # composer invokes us immediately after backfill returns, so there is a
 # narrow window where no tags have yet flipped from ``status='registered'``
 # to ``status='active'``. Poll for up to this many seconds rather than
-# failing the seed run on a benign race.
-_WORKER_PROMOTION_TIMEOUT_S = 30.0
+# failing the seed run on a benign race. The default is intentionally
+# generous to absorb occasional queue backlog on first startup.
+_WORKER_PROMOTION_TIMEOUT_S = 120.0
 _WORKER_PROMOTION_POLL_INTERVAL_S = 1.0
 
 
@@ -178,6 +180,84 @@ def _post_transfer(
         return {"request_id": rows[0]["request_id"], "count": len(rows)}
 
 
+def _bootstrap_transferable_epcs(
+    tenant_id: UUID,
+    api_key: str,
+    *,
+    epc_count: int,
+) -> bool:
+    """Create demo tag rows + emit reads so registrar can promote to active.
+
+    The transfer API requires EPCs in status ``active``. On a fresh local
+    stack the demo flow may have no tag-registry rows yet (only ``tag_id``
+    strings like ``TAG0001``), so we seed deterministic EPC-hex tags and
+    submit one matching read per EPC to trigger ``registered -> active``.
+    """
+    headers = _headers(str(tenant_id), api_key)
+    with httpx.Client(timeout=15.0) as client:
+        devices = client.get(f"{API_URL}/device-registry", headers=headers, params={"limit": 1})
+        if devices.status_code != 200:
+            print(
+                f"  WARN: cannot list devices for transfer bootstrap: "
+                f"{devices.status_code} {devices.text}",
+                file=sys.stderr,
+            )
+            return False
+        payload = devices.json()
+        if not payload:
+            print(
+                "  WARN: cannot bootstrap transfer tags (no devices found for tenant)",
+                file=sys.stderr,
+            )
+            return False
+        device_id = payload[0]["id"]
+
+        seeded = 0
+        base = 0xE20000172211000000000000
+        for i in range(1, epc_count + 1):
+            epc_hex = f"{base + i:024X}"
+            create_tag = client.post(
+                f"{API_URL}/tags",
+                headers=headers,
+                json={
+                    "epc_hex": epc_hex,
+                    "source": "api",
+                    "metadata": {"seed": "seed_transfer"},
+                },
+            )
+            if create_tag.status_code not in (201, 409):
+                print(
+                    f"  WARN: failed to ensure tag {epc_hex}: "
+                    f"{create_tag.status_code} {create_tag.text}",
+                    file=sys.stderr,
+                )
+                continue
+
+            ingest = client.post(
+                f"{API_URL}/tag-reads",
+                headers={**headers, "Content-Type": "application/json"},
+                json={
+                    "device_id": device_id,
+                    "tag_id": epc_hex,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "identity": {"epc": epc_hex, "epc_hex": epc_hex},
+                },
+            )
+            if ingest.status_code != 201:
+                print(
+                    f"  WARN: failed to ingest bootstrap read for {epc_hex}: "
+                    f"{ingest.status_code} {ingest.text}",
+                    file=sys.stderr,
+                )
+                continue
+            seeded += 1
+
+        if seeded:
+            print(f"  bootstrapped {seeded} EPC read(s) for transfer seeding")
+            return True
+        return False
+
+
 async def _seed_one_transfer(
     source_tenant_id: UUID,
     api_key: str,
@@ -186,6 +266,7 @@ async def _seed_one_transfer(
     recipient_slug: str,
     recipient_name: str,
     epc_count: int,
+    wait_timeout_s: float,
 ) -> bool:
     """Seed exactly one in-flight transfer if none already exists.
 
@@ -201,11 +282,29 @@ async def _seed_one_transfer(
     await _ensure_recipient_tenant(recipient_id, recipient_slug, recipient_name)
     print(f"  recipient tenant: {recipient_slug} ({recipient_id}) ensured")
 
-    epcs = await _wait_for_active_epcs(source_tenant_id, epc_count)
+    epcs = await _wait_for_active_epcs(
+        source_tenant_id,
+        epc_count,
+        timeout_s=wait_timeout_s,
+    )
+    if not epcs:
+        print("  no active EPC tags found yet; bootstrapping transfer-ready EPCs")
+        bootstrapped = _bootstrap_transferable_epcs(
+            source_tenant_id,
+            api_key,
+            epc_count=epc_count,
+        )
+        if bootstrapped:
+            epcs = await _wait_for_active_epcs(
+                source_tenant_id,
+                epc_count,
+                timeout_s=wait_timeout_s,
+            )
+
     if not epcs:
         print(
             "  WARN: no active tags on source tenant after waiting"
-            f" {_WORKER_PROMOTION_TIMEOUT_S:.0f}s for the tag-registrar worker."
+            f" {wait_timeout_s:.0f}s for the tag-registrar worker."
             " Re-run `make demo-tenant` once the worker container is healthy,"
             " or run simulate_devices.py with live reads to flush the queue.",
             file=sys.stderr,
@@ -251,6 +350,15 @@ def main() -> int:
         default=DEFAULT_RECIPIENT_NAME,
         help=f"Recipient tenant display name (default: {DEFAULT_RECIPIENT_NAME!r})",
     )
+    parser.add_argument(
+        "--wait-timeout-s",
+        type=float,
+        default=_WORKER_PROMOTION_TIMEOUT_S,
+        help=(
+            "Seconds to wait for active tags before giving up "
+            f"(default: {_WORKER_PROMOTION_TIMEOUT_S:.0f})"
+        ),
+    )
     args = parser.parse_args()
 
     if not args.api_key:
@@ -281,6 +389,7 @@ def main() -> int:
             recipient_slug=args.recipient_slug,
             recipient_name=args.recipient_name,
             epc_count=args.epc_count,
+            wait_timeout_s=args.wait_timeout_s,
         )
     )
     return 0 if ok else 1

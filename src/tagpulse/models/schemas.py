@@ -1605,8 +1605,8 @@ class DashboardSummary(BaseModel):
 
     - ``devices_online`` — devices whose ``last_seen`` is within
       the last 5 minutes AND whose ``connection_state`` is
-      ``'connected'``. Strict AND because the stringly-typed
-      column drifts when the MQTT subscriber misses a disconnect.
+      ``'online'``. Strict AND because the stringly-typed column
+      drifts when the MQTT subscriber misses a disconnect.
     - ``devices_total`` — all devices for the tenant.
     - ``alerts_open_24h`` — alerts with ``status='open'`` and
       ``triggered_at > now() - 24h``.

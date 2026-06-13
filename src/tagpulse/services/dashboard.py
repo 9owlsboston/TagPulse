@@ -59,7 +59,10 @@ _RECON_LOOKBACK_DAYS = 7
 # Strict-AND online definition per Sprint 54 design discussion: the
 # stringly-typed ``connection_state`` column drifts when MQTT misses
 # a disconnect, so we require both fresh ``last_seen`` AND the column
-# saying ``connected`` before we light up the tile.
+# saying ``online`` before we light up the tile. The canonical value
+# is ``online`` (not ``connected``) — matches the ingestion writer in
+# :mod:`tagpulse.ingestion.service` and the ``offline`` sentinel set
+# by the device-repo timeout sweep.
 _ONLINE_WINDOW = timedelta(minutes=5)
 
 _READS_WINDOW = timedelta(hours=1)
@@ -99,7 +102,7 @@ async def get_summary(
         DeviceModel.tenant_id == tenant_id,
         DeviceModel.last_seen.is_not(None),
         DeviceModel.last_seen > online_cutoff,
-        DeviceModel.connection_state == "connected",
+        DeviceModel.connection_state == "online",
     )
     devices_total_stmt = select(func.count()).where(
         DeviceModel.tenant_id == tenant_id,
