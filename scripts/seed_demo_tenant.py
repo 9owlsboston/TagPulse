@@ -462,6 +462,19 @@ def main() -> int:
         default=3,
         help="EPCs in the seeded in-flight transfer (default: 3)",
     )
+    parser.add_argument(
+        "--creds-only",
+        action="store_true",
+        help=(
+            "Only run step 1 (smoke_setup): rotate the admin API key and "
+            "ensure the tenant/admin/editor/viewer users exist, then print "
+            "the login email + freshly issued keys. Skips all data seeding "
+            "(devices, inventory, assets, backfill, alerts, transfer). Use "
+            "this to recover a working set of credentials without re-seeding. "
+            "Honour DEMO_KEEP_KEY=1 to reuse $TAGPULSE_API_KEY instead of "
+            "rotating."
+        ),
+    )
     args = parser.parse_args()
 
     env_mode = _assert_environment_safe()
@@ -494,6 +507,34 @@ def main() -> int:
 
     _print_header(1, total_steps, "smoke_setup — tenant + admin + rules + zones")
     api_key = _step_smoke_setup(keep_key=keep_key, key_vault_name=key_vault_name)
+
+    if args.creds_only:
+        elapsed = time.monotonic() - t0
+        print()
+        print("=" * 64)
+        print(f"Demo credentials ready in {elapsed:.1f}s (--creds-only: data seeding skipped)")
+        print(f"  tenant_id:   {DEMO_TENANT_ID}")
+        print(f"  tenant_slug: {DEMO_TENANT_SLUG}")
+        print()
+        if key_vault_name:
+            print("Admin API key written to Key Vault. Retrieve it from your laptop:")
+            print()
+            print(
+                f"  export TAGPULSE_API_KEY=$(scripts/azd-kv-get.sh {env_mode} "
+                f"{DEMO_ADMIN_KV_SECRET_NAME})"
+            )
+        else:
+            print("Log in to the UI as the demo admin:")
+            print(f"  Email:    {DEMO_ADMIN_EMAIL}")
+            print(f"  API key:  {api_key}")
+            print()
+            print("  export TAGPULSE_API_KEY=" + api_key)
+            print()
+            print(
+                "  (editor/viewer keys, if rotated, are printed in the "
+                "smoke_setup output above — keys are shown only once.)"
+            )
+        return 0
 
     _print_header(2, total_steps, "simulate_devices — seed reader devices")
     _step_simulate_devices(api_key, devices=args.devices, tags=args.tags)

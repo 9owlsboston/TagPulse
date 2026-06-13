@@ -30,8 +30,18 @@ Most demo-facing scripts accept the same config:
 > UUID and orphan the deployed KV secret. New domain tenants get fresh
 > brand-aligned slugs (see [Sprint 59 plan](../docs/design/sprint-59-demo-scenarios.md)).
 
-Get a demo key by running `make demo-tenant` (it prints the key) or pulling it
-from Key Vault on a deployed env.
+Get a demo key by running `make demo-tenant` (full seed; prints the key) or,
+when you just need working credentials without re-seeding, `make demo-creds`
+(rotates the demo admin key and reprints the login email + key). On a deployed
+env the key is pulled from Key Vault instead.
+
+> **Why rotate to "get" a key?** Local plaintext API keys are stored **hashed**
+> (`users.api_key_hash`) and shown only once at issue time — there is no script
+> that can read an existing key back. `make demo-creds` wraps
+> `seed_demo_tenant.py --creds-only`, which rotates the admin key (and the
+> editor/viewer keys) via `smoke_setup.py` with the correct frozen
+> `--tenant-id` / `--admin-email`, then prints them. Pass `DEMO_KEEP_KEY=1` to
+> reuse an already-exported `$TAGPULSE_API_KEY` instead of rotating.
 
 ## Demo-data scripts (added in `chore/demo-data-fixes`)
 

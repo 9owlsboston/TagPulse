@@ -81,6 +81,15 @@ demo-tenant: ## Sprint 58: seed the SuperMart Distribution Center demo tenant (i
 demo-tenant-reset: ## Sprint 58: delete the demo tenant + recipient (local dev only)
 	python scripts/reset_demo_tenant.py
 
+# ``make demo-creds`` rotates the demo admin API key and reprints the login
+# email + key WITHOUT re-seeding any data. Local plaintext keys are stored
+# hashed (shown only at issue time), so rotation is the retrieval mechanism.
+# Wraps ``seed_demo_tenant.py --creds-only`` so the frozen tenant id / slug /
+# admin email live in exactly one place. ``DEMO_KEEP_KEY=1 make demo-creds``
+# reuses $TAGPULSE_API_KEY instead of rotating (just reprints the email).
+demo-creds:  ## Rotate + print the demo admin login email and API key (no data re-seed)
+	python scripts/seed_demo_tenant.py --creds-only
+
 # ``make demo-tenant-dev`` (ENV=dev only) runs the same composer inside the
 # deployed tools-job, so it can reach the private Postgres + KV in-VNet.
 # The composer itself reads $ENVIRONMENT (set by tools-job.bicep) and
