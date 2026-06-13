@@ -10,7 +10,7 @@
 | Sprint | 58 (Phase D — `[58.4]` per `docs/design/sprint-58-demo-and-simulation.md`) |
 | Backend SHA | `998351e` (Phase C commit; Phase D drive-by fixes captured in the same PR) |
 | Branch | `sprint-58/demo-data-and-simulation` (PR [#83](https://github.com/9owlsboston/TagPulse/pull/83)) |
-| Demo tenant | `WM Distribution Center` — slug `demo-wm-dc` — id `241d9b81-59da-5fb7-8f78-f58200978566` |
+| Demo tenant | `SuperMart Distribution Center` — slug `demo-wm-dc` — id `241d9b81-59da-5fb7-8f78-f58200978566` |
 | Stack | local `docker-compose` (api + worker + db + mqtt, no UI container) |
 | Date captured | 2026-05-19 |
 | Operator | velen |

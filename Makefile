@@ -75,7 +75,7 @@ doctor:      ## Sprint 28 F3: aggregate health check for an env — ENV=dev
 # of rotating, or ``DEMO_SKIP_BACKFILL=1`` to skip the historical replay.
 # ---------------------------------------------------------------------------
 
-demo-tenant: ## Sprint 58: seed the WM Distribution Center demo tenant (idempotent)
+demo-tenant: ## Sprint 58: seed the SuperMart Distribution Center demo tenant (idempotent)
 	python scripts/seed_demo_tenant.py
 
 demo-tenant-reset: ## Sprint 58: delete the demo tenant + recipient (local dev only)

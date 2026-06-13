@@ -60,7 +60,7 @@ operator / CI / machine converges to the same row.
 
 | Property | Value |
 |---|---|
-| Name | `WM Distribution Center` |
+| Name | `SuperMart Distribution Center` |
 | Slug | `demo-wm-dc` |
 | UUID | `241d9b81-59da-5fb7-8f78-f58200978566` |
 | Recipient tenant (for transfers) | `demo-wm-recipient` |

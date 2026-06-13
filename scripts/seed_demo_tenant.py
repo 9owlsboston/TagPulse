@@ -72,8 +72,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 
 # Deterministic demo tenant identity (Sprint 58 D2).
+# NOTE: the slug is a frozen identifier, not a brand. DEMO_TENANT_ID (uuid5 of
+# the slug), the `tagpulse-demo-wm-dc-admin-key` KV secret, and the Sprint 58
+# baseline are all keyed off this exact string. Only the display NAME is
+# branded ("SuperMart"); do not rename the slug to match — it would change the
+# tenant UUID and orphan the deployed KV secret.
 DEMO_TENANT_SLUG = "demo-wm-dc"
-DEMO_TENANT_NAME = "WM Distribution Center"
+DEMO_TENANT_NAME = "SuperMart Distribution Center"
 DEMO_TENANT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, f"{DEMO_TENANT_SLUG}.tagpulse.local")
 DEMO_ADMIN_EMAIL = "admin@demo-wm-dc.tagpulse.local"
 DEMO_ADMIN_NAME = "Demo Admin"
