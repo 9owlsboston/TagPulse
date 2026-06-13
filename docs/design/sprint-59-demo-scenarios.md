@@ -17,7 +17,7 @@ surface so each business domain tells a complete, realistic story. Concretely:
 
 ## Theme
 
-Sprint 58 gave us *one* combined "WM Distribution Center" tenant + a continuous
+Sprint 58 gave us *one* combined "SuperMart Distribution Center" tenant + a continuous
 simulator, composed from the four existing scripts. It's credible at a glance
 but it's a generalist — inventory and asset-tracking data share one tenant, so
 neither domain tells a complete business story. Sprint 59 splits the demo
@@ -37,7 +37,7 @@ are fine).
 
 | Tenant | Slug | Role |
 |---|---|---|
-| WM Distribution Center | `demo-wm-dc` | **kept as-is** — the combined "everything on one screen" tenant; still used by the Sprint 58 baseline doc |
+| SuperMart Distribution Center | `demo-wm-dc` | **kept as-is** — the combined "everything on one screen" tenant; still used by the Sprint 58 baseline doc |
 | *Inventory* domain tenant | `demo-inv-coldchain` | cold-chain / perishable + pharma **inventory management** story |
 | *Asset* domain tenant | `demo-asset-*` | high-value mobile **asset tracking** story |
 

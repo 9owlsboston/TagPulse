@@ -42,7 +42,7 @@ Explicitly **not** the user: load testing at scale (`scripts/load_test.py` alrea
 
 ## Three concrete deliverables (the user-visible outcomes)
 
-1. **`make demo-tenant`** — repeatable one-shot seed that brings up a "WM Distribution Center" tenant: 1 site, 6–8 zones, 8–12 readers, 4–6 named products with lots, ~3 days of historical reads, 3–5 open alerts, 2–3 resolved alerts, 1 transfer in flight, 1 low-stock product. Idempotent. Companion `make demo-tenant-reset` for clean re-runs.
+1. **`make demo-tenant`** — repeatable one-shot seed that brings up a "SuperMart Distribution Center" tenant: 1 site, 6–8 zones, 8–12 readers, 4–6 named products with lots, ~3 days of historical reads, 3–5 open alerts, 2–3 resolved alerts, 1 transfer in flight, 1 low-stock product. Idempotent. Companion `make demo-tenant-reset` for clean re-runs.
 2. **Continuous simulator** — long-running orchestrator that drives the four simulators on realistic schedules. Local: `docker compose --profile sim up -d`. Dev: `scripts/azd-job.sh dev sim_loop.py`. Configurable rate caps; ships with sane defaults.
 3. **Baseline measurement capture** — run §55.C stopwatch + §57.G Lighthouse against the demo tenant on the Sprint 54-kickoff SHA AND on current `main`. Commit numbers to `docs/measurements/sprint-58-baseline.md`. Flip §55.C / §56.B / §57.G to `[shipped]` with cross-links.
 

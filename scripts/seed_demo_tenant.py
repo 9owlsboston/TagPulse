@@ -73,7 +73,7 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 
 # Deterministic demo tenant identity (Sprint 58 D2).
 DEMO_TENANT_SLUG = "demo-wm-dc"
-DEMO_TENANT_NAME = "WM Distribution Center"
+DEMO_TENANT_NAME = "SuperMart Distribution Center"
 DEMO_TENANT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, f"{DEMO_TENANT_SLUG}.tagpulse.local")
 DEMO_ADMIN_EMAIL = "admin@demo-wm-dc.tagpulse.local"
 DEMO_ADMIN_NAME = "Demo Admin"
