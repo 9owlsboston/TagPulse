@@ -260,9 +260,7 @@ def _step_smoke_setup(*, keep_key: bool, key_vault_name: str | None) -> str:
     if key_vault_name:
         # smoke_setup redacted plaintext from stdout — fetch from KV.
         key = _fetch_admin_key_from_keyvault(key_vault_name, DEMO_ADMIN_KV_SECRET_NAME)
-        print(
-            f"  fetched admin API key from KV ({DEMO_ADMIN_KV_SECRET_NAME}): {key[:10]}…"
-        )
+        print(f"  fetched admin API key from KV ({DEMO_ADMIN_KV_SECRET_NAME}): {key[:10]}…")
         return key
 
     match = _EXPORT_KEY_RE.search(stdout)
