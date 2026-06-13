@@ -20,7 +20,7 @@ Tags: `[backend]`, `[ui]`, `[docs]`, `[ops]`, `[idea]`.
 
 ### Post-Sprint-58 demo-data chore cluster (discovered 2026-06-13)
 
-Surfaced while enriching the `demo-wm-dc` tenant with non-perishable Walmart
+Surfaced while enriching the `demo-wm-dc` tenant with non-perishable SuperMart
 SKUs. Scripts + ADR landed on `chore/demo-data-fixes`; the prod bug + sim gaps
 below remain open and feed Sprint 59 §59.3.
 
@@ -28,7 +28,7 @@ below remain open and feed Sprint 59 §59.3.
 - [2026-06-13] **SIM GAP — serial alignment:** any seeder that materializes stock items via direct `POST /stock-items` MUST use the same serial scheme as `simulate_inventory._build_units` → `(product_idx+1)*100_000 + unit_idx`. Mismatched serials produce different EPCs, so the streamed reads never bind the units and stock shows as zone `unassigned`. Bit me with a `(idx+30)` offset; cost a full reseed. [backend]
 - [2026-06-13] **SIM GAP — dwell vs heartbeat window:** `_build_units` per-stage dwell is `uniform(duration*0.10, duration*0.30)`, so a long `--duration` (e.g. 1800s) leaves downstream readers idle far past the dashboard's 5-min online window → devices stick at e.g. 11/14. Workaround is looping short runs (`--duration 90`). Consider a max-dwell cap or a heartbeat-only tick so all readers stay "online" regardless of duration. [backend]
 - [2026-06-13] **(done in `chore/demo-data-fixes`)** Promoted the working `/tmp` seeders into `scripts/` with docstrings + a `scripts/README.md`: `seed_nonperishable_skus.py`, `verify_catalog.py`, `check_devices_online.py`, `cleanup_demo_stock_items.py`, plus the two gate-bug workarounds `seed_stock_items.py` / `register_inventory_tags.py` (marked obsolete-once-fixed). Good basis for the Sprint 59 catalog-depth work. [backend]
-- [2026-06-13] **Walmart as validation vehicle:** use Walmart business use cases/scenarios to drive demo-data design and *exercise app capability to surface gaps* (the gate bug + sim gaps above are the first finds). Feed into Sprint 59 scenario design. [idea]
+- [2026-06-13] **SuperMart as validation vehicle:** use SuperMart business use cases/scenarios to drive demo-data design and *exercise app capability to surface gaps* (the gate bug + sim gaps above are the first finds). Feed into Sprint 59 scenario design. See [docs/design/supermart-inventory-scenario.md](design/supermart-inventory-scenario.md). [idea]
 
 ### UI
 
