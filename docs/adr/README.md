@@ -30,3 +30,5 @@
 | 026 | [Server-side presence model — `tag_presence` + synchronous reconciler](026-presence-model.md) | accepted | 2026-05-23 |
 | 027 | [Reader-to-Edge LAN-side contract — CSV-over-TCP, Pi owns wall clock](027-reader-to-edge-contract.md) | proposed | 2026-05-23 |
 | 028 | [Tags as a first-class entity](028-tags-as-first-class-entity.md) | implemented | 2026-05-23 |
+| 029 | [UI design tokens — semantic layer, dual theme, AntD ConfigProvider](029-ui-design-tokens.md) | accepted | 2026-05-24 |
+| 030 | [List-page column filters — standard checkbox + search pattern](030-list-page-column-filters.md) | proposed | 2026-06-13 |
