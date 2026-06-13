@@ -1,8 +1,8 @@
 # Sprint 59 — Demo scenario depth: split inventory & asset demo tenants
 
-> Status: **Draft plan** (recorded ahead of kickoff on `chore/demo-data-fixes`;
-> promote to the `sprint-59/demo-scenarios` branch at kickoff via
-> `scripts/start-sprint.sh`). Supersedes the scratch notes in `/tmp`.
+> Status: **Active** — kicked off on `sprint-59/demo-scenarios`
+> (backend PR [#89](https://github.com/9owlsboston/TagPulse/pull/89)).
+> Supersedes the scratch notes in `/tmp`.
 
 ## Sprint goal
 
@@ -119,6 +119,13 @@ Builds on `simulate_assets.py` (assets → EPC → zone transitions,
 
 - **Terminology renames / nav rework** (`Device`→`Reader`, etc.) — **moved to
   Sprint 60**.
+- **Fixed-reader indoor RTLS / RSSI multilateration** — the location model is
+  GPS-biased and can't answer "where is X" on a building floor (verified: zone
+  presence is a client-side derivation; `/assets/current-locations` is GPS-only
+  and returns 0 for the zone-based demo). Surfacing this is a research-heavy,
+  cross-layer capability tracked as a **candidate Sprint 61 spike + design
+  sprint** — it does **not** ride Sprint 59. (A small zone-fallback for the
+  AssetList Location column is a separable Sprint 60 band-aid; don't conflate.)
 - New device types, new chart types, **rule-engine changes**, **new API
   endpoints** (query-param toggles OK).
 - New ADRs (reuses tenant isolation 008, subject scoping 013, network hardening
@@ -184,6 +191,22 @@ blocks the chore PR; both belong here.
   every demo tenant stays "alive" without a manual `make sim-start`. *Pass
   bar:* a tenant left idle after seed still reports all readers online for the
   demo session.
+
+- **59.8 — Product "Units" table `[UI]`.** `ProductDetail` shows only a total +
+  by-zone chart; the per-unit list (each tagged stock item, its state, zone,
+  last-seen) is unreachable in the App — operators must call
+  `GET /stock-items?product_id=` by hand, and the Tags page can't substitute
+  (it filters **hex hardware EPCs**, not the **SGTIN-URN inventory bindings**;
+  the two namespaces don't cross-reference). Add a Units table to `ProductDetail`
+  wired to the existing `GET /stock-items?product_id={id}` (no backend change):
+  columns EPC/binding · state (`in_stock`/`consumed`) · zone (name-resolved) ·
+  last seen; zone + state filters; row → that unit's read history. **Cross-repo:
+  `[ui]` only — `9owlsboston/TagPulse-UI`**; rides Sprint 59 only if UI bandwidth
+  exists, otherwise it leads Sprint 60. *Out of scope for the fix:* reconciling
+  the two EPC namespaces — backlog it; the table reads `binding_value` as-is.
+  *Pass bar:* from `SKU-SHOE-RUN-SZ10`, list in-stock units, filter by zone,
+  click into one unit's history in ≤ 3 clicks, zero manual API calls; vitest
+  render + empty-state; `npm run check` green.
 
 ## Related
 

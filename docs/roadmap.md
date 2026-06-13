@@ -1514,12 +1514,60 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 
 ### Out of scope
 
-- WM-specific scenarios beyond the generic "distribution center" demo tenant — Sprint 59 covers WM-driven terminology, nav, and any WM-specific seed data.
-- **Terminology renames** (`Device` → `Reader`, `Telemetry` → ?) — Sprint 59.
-- **Nav rework** beyond what Sprint 54 / 56 already shipped — Sprint 59.
+- WM-specific scenarios beyond the generic "distribution center" demo tenant — Sprint 59 covers domain-split demo depth; WM-driven terminology, nav, and any WM-specific seed data move to Sprint 60.
+- **Terminology renames** (`Device` → `Reader`, `Telemetry` → ?) — Sprint 60 (re-slotted; Sprint 59 absorbed demo scenario depth first).
+- **Nav rework** beyond what Sprint 54 / 56 already shipped — Sprint 60.
 - **New device types**, **new chart types**, **rule engine changes**, **new API endpoints**. If the demo tenant needs an alert type that isn't already shippable, fake the alert row directly rather than extending the engine.
 - **i18n / RTL**, **phone responsive (<768 px)**, **WCAG audit beyond Lighthouse**.
 - **Load testing at scale** beyond the demo-rate cap — `scripts/load_test.py` continues to cover the stress-test use case unchanged.
+
+---
+
+## Sprint 59 — Demo scenario depth: split inventory & asset demo tenants
+
+> Design: [docs/design/sprint-59-demo-scenarios.md](design/sprint-59-demo-scenarios.md)
+> ADRs: none new (reuses tenant-isolation 008, subject scoping 013, edge contract 017, wire format v2 025).
+> Backend PR: [#89](https://github.com/9owlsboston/TagPulse/pull/89). Builds on Sprint 58 ([design](design/sprint-58-demo-and-simulation.md)).
+
+**Goal.** Sprint 58 produced *one* combined demo tenant (`demo-wm-dc`); it's credible at a glance but a generalist — inventory and asset-tracking data share one tenant, so neither domain tells a complete business story. Sprint 59 splits the demo surface into **two purpose-built tenants, each with an extensive, realistic business scenario**, and teaches the seed composer + `sim_loop` to drive multiple tenants from named profiles. **Terminology/nav rework (the original Sprint 59 plan) is re-slotted to Sprint 60** — the May WM session was muddied by sparse data, and domain-deep tenants are the prerequisite for judging "the nav is confusing" separately from "there's nothing on the page."
+
+**Cross-repo.** Backend-led (profile-driven composition of the existing simulators). The UI runs unchanged against whichever tenant you point it at. One candidate `[ui]` follow-up (§59.8 Units table) rides only if UI bandwidth exists.
+
+**Carry-forward principle (unchanged from 58).** *Compose, don't rewrite.* Extend the existing simulators via data/profiles and narrow shims; no new API endpoints (query-param toggles OK).
+
+### Phases
+
+- **A — 59.1 Scenario design.** Design doc (two business narratives — cold-chain inventory + high-value asset fleet — catalog/asset rosters, per-tenant rule + alert mix, profile model, multi-tenant rate-cap math). Pick the asset narrative (D2). Lock decisions D1–D5. Pass bar: doc reviewed; no scope creep without an OOS note.
+- **B — 59.2 Profile-driven composer.** Parametrize `scripts/seed_demo_tenant.py` with `--profile {combined,inventory,asset}` (default `combined` = today's behaviour, unchanged). New `make demo-inventory` / `make demo-asset` targets + per-tenant reset. Pass bar: each profile idempotent; existing `make demo-tenant` byte-for-byte unchanged.
+- **C — 59.3 Scenario depth.** Extend the inventory catalog (~12–15 SKUs, staggered-expiry lots for FEFO) + asset roster (~20–30 named assets, geofenced + yard/exit zones); add narrow shims for the business events (quarantine/hold, cycle-count delta, geofence-breach read sequences, inactivity gaps, missing-asset). All via composition / existing write paths. Pass bar: every page in both tenants shows non-empty, domain-true data.
+- **D — 59.4 Multi-tenant `sim_loop`.** Teach `scripts/sim_loop.py` to drive N tenants from a profile list with per-tenant keys + per-tenant rate caps (aggregate ceiling preserved). `make sim-start` drives all active demo tenants. Folds in §59.7 (keep readers "online" regardless of dwell). Pass bar: runs ≥ 1 h across 2–3 tenants; aggregate under the per-tenant Sprint 38 limit; start/stop/status targets.
+- **E — 59.5 Docs + closeout.** Split `docs/guides/demo-guide.md` into a combined overview + two domain tours; update `docs/operator-quickstart.md`, CHANGELOG; this §59 section + the §60 stub. Pass bar: guides match what the seeds produce; `make check` green.
+
+### Carried-in fixes (surfaced by `chore/demo-data-fixes`)
+
+- **59.6 — `?force=true` stock-item delete semantics (needs an ADR).** `DELETE /stock-items/{id}?force=true` bypasses only the `in_stock` *state* guard, then hard-`DELETE`s; the `ON DELETE RESTRICT` FK `stock_movements_stock_item_id_fkey` (migration 021) rejects it with an unhandled `IntegrityError` → 500 + dropped connection — broken for any unit that has moved. Decision needed (cascade ledger vs soft-delete vs remove) + route-level `IntegrityError`→409. Pass bar: ADR authored; route returns a structured 409; regression test covers a moved unit.
+- **59.7 — Static demo tenant shows "0 active devices" after the online window.** Dashboard `devices_online` counts `connection_state='online' AND last_seen > now − 5min`; an idle seeded tenant drops to 0 ~5 min after seeding (dwell-vs-heartbeat sim gap). Fold into §59.4 — a heartbeat tick / max-dwell cap keeps all readers warm. Pass bar: a tenant left idle after seed still reports all readers online.
+- **59.8 — Product "Units" table `[ui]`** (`9owlsboston/TagPulse-UI`). `ProductDetail` shows only a total + by-zone chart; the per-unit list is unreachable in the App (operators must call `GET /stock-items?product_id=` by hand, and the Tags page filters hex hardware EPCs, not the SGTIN-URN inventory bindings). Add a Units table wired to the existing `GET /stock-items?product_id={id}` (no backend change): columns EPC/binding · state · zone (name-resolved) · last seen; zone + state filters; row → unit read history. Rides Sprint 59 only if UI bandwidth exists, else leads Sprint 60. Pass bar: from `SKU-SHOE-RUN-SZ10`, list in-stock units, filter by zone, click into one unit's history in ≤ 3 clicks, zero manual API calls; vitest render + empty-state; `npm run check` green.
+
+### Out of scope
+
+- **Terminology renames / nav rework** (`Device`→`Reader`, etc.) — **Sprint 60**.
+- **Fixed-reader indoor RTLS / RSSI multilateration** — the location model is GPS-biased and can't answer "where is X" on a building floor (verified: zone presence is a client-side derivation; `/assets/current-locations` is GPS-only, returns 0 for the zone-based demo). Research-heavy, cross-layer; tracked as a **candidate Sprint 61 spike + design sprint**, building on the already-deferred [ADR 024 — Indoor position estimation](adr/024-position-estimation.md). Does **not** ride Sprint 59. (A small zone-fallback for the AssetList Location column is a separable Sprint 60 band-aid — don't conflate.)
+- New device types, new chart types, **rule-engine changes**, **new API endpoints** (query-param toggles OK).
+- Demo tenants in CI (Sprint 58 D7 still stands), staging/prod simulators (dev-only ceiling).
+- Load testing at scale (`scripts/load_test.py` keeps that).
+
+---
+
+## Sprint 60 — Terminology + nav rework (planned)
+
+> Re-slotted from the original Sprint 59 plan: domain-deep demo tenants (Sprint 59) are the prerequisite for measuring nav/terminology changes against data that has something to look at.
+
+**Scope seed (not yet locked).**
+- **Terminology renames** (`Device` → `Reader`, `Telemetry` → ?) driven by the May WM focus-group feedback, validated against the Sprint 58 "before" baseline + the Sprint 59 domain tenants.
+- **Nav rework** beyond Sprint 54 / 56.
+- **§59.8 Units table** leads here if it didn't ride Sprint 59.
+- **Zone-fallback for the AssetList Location column** — when an asset has no GPS fix, show its current zone (from the same client-side derivation the AssetDetail timeline already uses) so "where is X" is honest at zone granularity. Separable band-aid; **not** the full RTLS capability (that's candidate Sprint 61).
 
 ---
 
