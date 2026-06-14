@@ -14,10 +14,12 @@
 # Flags:
 #   --update-only   Skip the job-update + start; just re-tail logs from the
 #                   most recent execution (recovers from terminal disconnect).
-#   --allow-stale   Allow running with a dirty working tree or unpushed
-#                   commits. By default we refuse, because the job runs the
-#                   *deployed* image — local script edits won't take effect
-#                   until the next `azd deploy`.
+#   --allow-stale   Allow running despite a dirty working tree / unpushed
+#                   commits, OR a tools-job image whose tag differs from the
+#                   deployed api app. By default we refuse both, because the
+#                   job runs the *deployed* image — local script edits (or a
+#                   skipped deploy) won't take effect until the job image is
+#                   refreshed.
 #
 # Exit codes:
 #   0   job execution Succeeded
@@ -25,6 +27,7 @@
 #   2   azd env / Azure auth failure
 #   3   job did not reach Succeeded within 30 minutes
 #   4   job execution finished with non-Succeeded status (Failed/Stopped/etc)
+#   5   tools-job image is stale vs the deployed api app (without --allow-stale)
 
 set -euo pipefail
 
@@ -123,6 +126,20 @@ if [[ -z "$JOB_NAME" || -z "$RG" ]]; then
 fi
 echo "    job:        $JOB_NAME"
 echo "    rg:         $RG"
+# Point the az CLI at the env's subscription. Without this, every `az` call
+# below targets whatever subscription happens to be the laptop's default —
+# which, in a multi-subscription tenant, is frequently NOT the one the dev
+# resources live in, producing a confusing `ResourceGroupNotFound` (or an
+# empty Log Analytics workspace id) even though the RG is perfectly healthy.
+SUBSCRIPTION_ID="$(azd env get-value AZURE_SUBSCRIPTION_ID 2>/dev/null || echo '')"
+if [[ -n "$SUBSCRIPTION_ID" ]]; then
+  az account set --subscription "$SUBSCRIPTION_ID" >/dev/null 2>&1 || {
+    echo "error: 'az account set --subscription $SUBSCRIPTION_ID' failed." >&2
+    echo "       Are you logged in (az login) with access to that subscription?" >&2
+    exit 2
+  }
+  echo "    sub:        $SUBSCRIPTION_ID"
+fi
 LOG_WORKSPACE_ID="$(az containerapp env show \
   --name "$(azd env get-value containerAppsEnvName)" \
   --resource-group "$RG" \
@@ -145,6 +162,33 @@ done
 
 EXEC_NAME=""
 if [[ "$UPDATE_ONLY" -eq 0 ]]; then
+  # Staleness guard (defense-in-depth). `deploy-azure.yml` pins the tools-job
+  # to the api image on every deploy, but if that step is ever skipped/broken
+  # the job silently re-runs months-old code (this script re-uses whatever
+  # image the job currently carries). Compare the job's image tag against the
+  # api container app's live tag — they should match. A mismatch means a script
+  # change you just merged is NOT yet on the job; warn loudly rather than run
+  # stale code that looks like it succeeded.
+  JOB_IMAGE_NOW=$(az containerapp job show -n "$JOB_NAME" -g "$RG" \
+    --query 'properties.template.containers[0].image' -o tsv 2>/dev/null || echo '')
+  API_APP=$(az containerapp list -g "$RG" \
+    --query "[?ends_with(name,'-api')].name | [0]" -o tsv 2>/dev/null || echo '')
+  API_IMAGE_NOW=""
+  if [[ -n "$API_APP" ]]; then
+    API_IMAGE_NOW=$(az containerapp show -n "$API_APP" -g "$RG" \
+      --query 'properties.template.containers[0].image' -o tsv 2>/dev/null || echo '')
+  fi
+  if [[ -n "$JOB_IMAGE_NOW" && -n "$API_IMAGE_NOW" && \
+        "${JOB_IMAGE_NOW##*:}" != "${API_IMAGE_NOW##*:}" ]]; then
+    echo "WARNING: tools-job image tag (${JOB_IMAGE_NOW##*:}) != deployed api tag (${API_IMAGE_NOW##*:})." >&2
+    echo "         The job may run stale code. To refresh it to the current api image:" >&2
+    echo "         az containerapp job update -n $JOB_NAME -g $RG --image $API_IMAGE_NOW" >&2
+    if [[ "$ALLOW_STALE" -eq 0 ]]; then
+      echo "         (pass --allow-stale to run anyway)" >&2
+      exit 5
+    fi
+    echo "         --allow-stale set; continuing with the stale job image." >&2
+  fi
   echo "==> Updating job command"
   az containerapp job update \
     --name "$JOB_NAME" \

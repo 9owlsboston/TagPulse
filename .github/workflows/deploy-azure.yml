@@ -203,12 +203,18 @@ jobs:
           API=$(az containerapp list -g "$RG" --query "[?ends_with(name,'-api')].name | [0]" -o tsv)
           WORKER=$(az containerapp list -g "$RG" --query "[?ends_with(name,'-worker')].name | [0]" -o tsv)
           MIGRATIONS=$(az containerapp job list -g "$RG" --query "[?ends_with(name,'-migrations')].name | [0]" -o tsv)
+          # The tools-job runs the tagpulse-api image (different command) for
+          # operator scripts (seed_demo_tenant, smoke_setup, …). It is optional:
+          # not every env declares one, so a missing tools-job is not fatal.
+          TOOLS=$(az containerapp job list -g "$RG" --query "[?ends_with(name,'-tools')].name | [0]" -o tsv)
           for v in API WORKER MIGRATIONS; do
             val="${!v}"
             [[ -n "$val" ]] || { echo "Could not find ${v,,} resource in $RG"; exit 1; }
             echo "${v,,}=$val" >> "$GITHUB_OUTPUT"
             echo "  ${v,,} = $val"
           done
+          echo "tools=$TOOLS" >> "$GITHUB_OUTPUT"
+          echo "  tools = ${TOOLS:-<none>}"
 
       - name: Verify all three images exist in ACR
         env:
@@ -278,6 +284,28 @@ jobs:
             --name "$APP" \
             --resource-group "$RG" \
             --image "${ACR}.azurecr.io/tagpulse-worker:${TAG}"
+
+      - name: Roll out tools-job image
+        # The tools-job runs the tagpulse-api image for operator scripts
+        # (seed_demo_tenant, smoke_setup, rotate-key, …). It is invoked
+        # on-demand via scripts/azd-job.sh, which re-uses whatever image the
+        # job currently carries — so if this deploy step is skipped, the job
+        # silently runs stale code forever (it drifted to a months-old image
+        # until this step was added). Pin it to the same api tag every deploy.
+        # Optional: only run when an -tools job exists in the env.
+        if: steps.names.outputs.tools != ''
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          ACR: ${{ vars.AZURE_ACR_NAME }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          JOB: ${{ steps.names.outputs.tools }}
+        run: |
+          set -e
+          az containerapp job update \
+            --name "$JOB" \
+            --resource-group "$RG" \
+            --image "${ACR}.azurecr.io/tagpulse-api:${TAG}" >/dev/null
+          echo "tools-job $JOB pinned to tagpulse-api:${TAG}"
 
       - name: Smoke test /health/ready
         env:
