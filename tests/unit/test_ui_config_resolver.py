@@ -278,7 +278,7 @@ def test_wm_label_skin_resolves() -> None:
 
 
 def test_wm_demo_presentation_is_valid_and_resolves() -> None:
-    """The concrete WM demo presentation (label skin + nav/cards/theme/columns/
+    """The concrete WM demo presentation (label skin + cards/theme/columns/
     tables) is a *valid* override that resolves through the real merge — so the
     demo seed can never push a doc the schema would 422 on (ADR-032 §4)."""
     from tagpulse.services.ui_config import WM_DEMO_PRESENTATION
@@ -289,8 +289,13 @@ def test_wm_demo_presentation_is_valid_and_resolves() -> None:
     resolved = resolve_ui_config([WM_DEMO_PRESENTATION])
     # Each consumed leaf folds through to the resolved document.
     assert resolved.labels["device"] == "Reader"
-    assert "sec-data-management" in resolved.nav.hidden
+    # Reconciled against the wireframe: Data Management stays visible (no nav
+    # override) and the Tags card stays visible; only the five non-wireframe
+    # tiles are hidden.
+    assert resolved.nav.hidden == []
+    assert "tags" not in resolved.cards["dashboard"].hidden
     assert "reads-per-hour" in resolved.cards["dashboard"].hidden
+    assert "low-stock" in resolved.cards["dashboard"].hidden
     assert resolved.theme.card_style == "sparkline"
     assert resolved.columns["tag_reads"].advanced == ["tid", "user_memory_hex"]
     assert resolved.tables["tag_reads"].default_sort is not None

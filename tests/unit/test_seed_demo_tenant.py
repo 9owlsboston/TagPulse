@@ -448,10 +448,16 @@ def test_seed_ui_config_applies_canonical_wm_presentation() -> None:
     from tagpulse.services.ui_config import WM_DEMO_PRESENTATION, WM_LABEL_SKIN
 
     assert seed_ui_config.WM_LABEL_SKIN == WM_LABEL_SKIN == {"device": "Reader"}
-    # The presentation carries every consumed leaf, not just labels.
+    # The presentation carries every consumed leaf, not just labels. The `nav`
+    # leaf is intentionally absent — the wireframe keeps Data Management
+    # visible, so the demo leaves nav at the system default.
     assert seed_ui_config.WM_DEMO_PRESENTATION == WM_DEMO_PRESENTATION
-    assert set(WM_DEMO_PRESENTATION) == {"labels", "nav", "cards", "theme", "columns", "tables"}
+    assert set(WM_DEMO_PRESENTATION) == {"labels", "cards", "theme", "columns", "tables"}
     assert WM_DEMO_PRESENTATION["labels"] == {"device": "Reader"}
+    # Reconciled against the wireframe: Data Management stays in the nav, and
+    # the Tags dashboard card stays visible (only five tiles are hidden).
+    assert "nav" not in WM_DEMO_PRESENTATION
+    assert "tags" not in WM_DEMO_PRESENTATION["cards"]["dashboard"]["hidden"]
 
     captured: dict[str, object] = {}
 
@@ -465,10 +471,11 @@ def test_seed_ui_config_applies_canonical_wm_presentation() -> None:
 
             @staticmethod
             def json() -> dict:
-                # The resolved document echoes the pushed leaves (label skin + nav).
+                # The resolved document echoes the pushed leaves (label skin +
+                # the hidden-card list).
                 return {
                     "labels": {"device": "Reader", "asset": "Asset"},
-                    "nav": {"hidden": ["sec-data-management"]},
+                    "cards": {"dashboard": {"hidden": ["reads-per-hour"]}},
                 }
 
         return _Resp()
