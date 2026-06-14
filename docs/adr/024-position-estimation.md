@@ -86,6 +86,20 @@ Sprint 61 spike — not required by this amendment.
 The estimator (item 2/3 implementation), confidence scoring, BYO ingest
 endpoint, and the reader-status MQTT topic remain deferred.
 
+**As implemented (Sprint 59 Track 2).** Migration
+[`051_spatial_foundation`](../../migrations/versions/051_spatial_foundation.py)
+creates the `antennas` table (`UNIQUE(device_id, port)`, isolation via the
+`device_id` FK — no `tenant_id`/RLS of its own), adds `sites.coord_system`
+JSONB, and creates the `asset_positions` hypertable with the `source` CHECK
+enum (`precomputed | zone | computed`) and an `id + time` composite PK (the v1
+DDL sketch omitted a PK; the hypertable + ORM need a partition-keyed one — same
+precedent as `external_locations`). The `position_strategy` placeholder lands as
+a nullable JSONB column on **`tenants`** (D8 "tenant-settings JSONB" shape),
+created-not-used. The fusion lookup is
+[`tagpulse.services.asset_fusion.AssetFusionService`](../../src/tagpulse/services/asset_fusion.py),
+backed by `TimescaleAssetTagBindingRepository.list_active_by_values`. Nothing
+writes to `asset_positions` in Sprint 59.
+
 ## Context
 
 An SME reviewing the Sprint-33 plan described a real customer-class

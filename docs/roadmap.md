@@ -1525,7 +1525,7 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 
 ## Sprint 59 — Demo scenario depth + spatial foundation
 
-> Status: **Track 1 (Phases A–E) complete** on PR [#89](https://github.com/9owlsboston/TagPulse/pull/89) (compose-don't-rewrite demo depth — three tenants, multi-tenant `sim_loop`, docs split; `make check` green, CI green). **Track 2 (Phases F–G — spatial schema + EPC→asset fusion) not yet started** (only the doc-only [ADR-024](adr/024-position-estimation.md) amendment landed). §59.6 / §59.8 are carried-in items, not yet addressed.
+> Status: **Track 1 (Phases A–E) complete** on PR [#89](https://github.com/9owlsboston/TagPulse/pull/89) (compose-don't-rewrite demo depth — three tenants, multi-tenant `sim_loop`, docs split; `make check` green, CI green). **Track 2 (Phases F–G — spatial schema + EPC→asset fusion) complete**: migration `051_spatial_foundation` (antennas, `sites.coord_system`, `asset_positions` hypertable, `tenants.position_strategy` — all created-not-written), [ADR-024](adr/024-position-estimation.md) amended, and the `AssetFusionService` EPC→asset lookup with unit coverage. The estimator, BYO ingest endpoint, and wire-format peak-RSSI remain deferred per the amendment. §59.6 / §59.8 are carried-in items, not yet addressed.
 >
 > Design: [docs/design/sprint-59-demo-scenarios.md](design/sprint-59-demo-scenarios.md)
 > ADRs: **amends** [ADR-024 — Indoor position estimation](adr/024-position-estimation.md) (Track 2 — position moves devices→antennas; estimator contract becomes antenna-keyed + asset-grouped); reuses tenant-isolation 008, subject scoping 013, edge contract 017, wire format v2 025.
