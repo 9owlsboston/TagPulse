@@ -12,12 +12,21 @@ Usage from a laptop::
 
     scripts/azd-job.sh dev get_kv_secret.py -- --name tagpulse-test-corp-admin-key
 
+To fetch several secrets in a single job run (avoids paying the tools-job
+cold-start cost once per secret)::
+
+    scripts/azd-job.sh dev get_kv_secret.py -- \
+        --names tagpulse-demo-wm-dc-admin-key,tagpulse-demo-wm-dc-editor-key
+
 The script prints two sentinel-bracketed lines so the wrapper can robustly
 extract just the value from the streamed log output:
 
     ===KV_SECRET_BEGIN===
     <secret value>
     ===KV_SECRET_END===
+
+In ``--names`` mode the block is bracketed by ``===KV_SECRET_MULTI_BEGIN===`` /
+``===KV_SECRET_MULTI_END===`` and contains one ``name=value`` line per secret.
 """
 
 from __future__ import annotations
@@ -31,7 +40,16 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "--name",
-        help="Secret name (e.g. tagpulse-test-corp-admin-key). Required unless --list.",
+        help="Secret name (e.g. tagpulse-test-corp-admin-key). Required unless --names or --list.",
+    )
+    ap.add_argument(
+        "--names",
+        help="Comma-separated secret names to fetch in a single job run "
+        "(e.g. tagpulse-demo-wm-dc-admin-key,tagpulse-demo-wm-dc-editor-key). "
+        "Avoids paying the tools-job cold-start cost once per secret. Each "
+        "value is emitted as a sentinel-bracketed 'name=value' line so the "
+        "wrapper can extract them; missing secrets are reported as "
+        "'name=<NOT_FOUND>' without aborting the rest.",
     )
     ap.add_argument(
         "--list",
@@ -52,8 +70,11 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    if not args.list_names and not args.name:
-        print("error: --name is required unless --list is passed", file=sys.stderr)
+    if not args.list_names and not args.name and not args.names:
+        print(
+            "error: one of --name, --names or --list is required",
+            file=sys.stderr,
+        )
         return 2
 
     if not args.vault:
@@ -85,6 +106,25 @@ def main() -> int:
         for prop in client.list_properties_of_secrets():
             print(prop.name)
         print("===KV_SECRET_LIST_END===")
+        return 0
+
+    if args.names:
+        # Batch mode: fetch several secrets in this single job execution so
+        # the caller pays the tools-job cold-start once instead of once per
+        # secret. Output is a sentinel-bracketed block of 'name=value' lines;
+        # a missing secret is reported inline so one typo doesn't abort the
+        # rest of the batch.
+        from azure.core.exceptions import ResourceNotFoundError
+
+        wanted = [n.strip() for n in args.names.split(",") if n.strip()]
+        print("===KV_SECRET_MULTI_BEGIN===")
+        for name in wanted:
+            try:
+                value = client.get_secret(name).value
+            except ResourceNotFoundError:
+                value = "<NOT_FOUND>"
+            print(f"{name}={value}")
+        print("===KV_SECRET_MULTI_END===")
         return 0
 
     secret = client.get_secret(args.name, version=args.version)
