@@ -17,6 +17,7 @@
 - [Map](#map)
 - [Inventory](#inventory)
 - [Labels](#labels)
+- [Configurable UI & Preferences](#configurable-ui--preferences)
 - [Tenant Settings](#tenant-settings)
 - [Usage & Quotas](#usage--quotas)
 - [User Management](#user-management)
@@ -314,6 +315,8 @@ The dashboard provides a real-time overview of your IoT deployment. Widgets are 
 
 Data refreshes automatically — the live event counter updates in real time, while other widgets refresh every 30 seconds.
 
+**Hiding cards you don't use.** Click **Customize** to reorder cards or hide ones you don't need (stored per-device in your browser). To make a hidden-card choice **follow your account across devices**, set it in **Preferences** instead (account menu → Preferences) — that persists server-side via your user UI config. Your tenant/team may also ship a default set of visible cards; "Reset to team default" in Preferences reverts to it.
+
 ---
 
 ## Devices
@@ -437,7 +440,7 @@ Click **Explore** (from the Telemetry page) for detailed data access.
 - **Limit** — number of results (1–1000, default 100).
 
 **Views:**
-- **Table** — columns: Tag ID, Device, Timestamp, Signal Strength. Sortable and paginated (100 per page).
+- **Table** — columns: Tag ID, EPC, Scheme, Device, Timestamp, Signal Strength, Latitude, Longitude. The **TID** and **User Memory** columns are plumbing the typical operator doesn't need, so they're hidden by default behind the **Advanced columns** toggle in the toolbar — tick it to reveal them. (They're always included in the CSV export regardless of the toggle.) Sortable and paginated (100 per page). Which columns are advanced/hidden/ordered and the default sort are configurable per-tenant — see [Configurable UI & Preferences](#configurable-ui--preferences).
 - **Chart** — line chart of signal strength over time.
 
 Toggle between views using the button in the toolbar.
@@ -792,6 +795,8 @@ An **asset** is a real-world thing you want to track — a forklift, a returnabl
 
 **Columns:** Name, Type, External Ref, Status (`active` / `decommissioned`), Updated. Sort by name; type-ahead search filters in place.
 
+**Advanced columns.** Low-value plumbing columns (e.g. the registration date) are hidden by default behind the **Advanced columns** toggle in the toolbar — tick it to reveal them. Which columns are advanced/hidden/ordered (and the default sort) can be set per-tenant via the configurable-UI config (see [Configurable UI & Preferences](#configurable-ui--preferences) and [ADR-032](adr/032-configurable-ui.md)).
+
 Click **Create Asset** to add one. Required: Name. Optional: Asset Type (free text — `forklift`, `pallet`, `container`, …), External Ref (your ERP/WMS ID).
 
 ### Asset detail
@@ -940,8 +945,9 @@ Four pages plus an admin sub-page for tag-data mappings.
 
 Click **Create Product** to add one. SKU + Name are required; GTIN, category, and unit are optional. Click a row to open **Product detail**, which shows:
 
-- **Lots** tab — manufacturing batches (lot_code, manufactured_at, expires_at). Lots with expiry dates feed the **Lot Expiry Queue**. Click a lot to see its detail page; when **Tenant Settings → Telemetry subjects** includes `lot`, a **Latest telemetry** card lists the most recent reading per metric (Sprint 19), surfacing on-tag temperature for cold-chain. `GET /lots/{lot_id}` populates the `latest_telemetry` field; results are cached server-side for 30 s (Sprint 21).
-- **Stock items** tab — every individual tag bound to this product, with its current zone and state.
+- **Details** + **Stock by zone** — the product's attributes and a per-zone on-hand bar chart.
+- **Lots** — manufacturing batches (lot_code, manufactured_at, expires_at). Lots with expiry dates feed the **Lot Expiry Queue**. Click a lot to see its detail page; when **Tenant Settings → Telemetry subjects** includes `lot`, a **Latest telemetry** card lists the most recent reading per metric (Sprint 19), surfacing on-tag temperature for cold-chain. `GET /lots/{lot_id}` populates the `latest_telemetry` field; results are cached server-side for 30 s (Sprint 21).
+- **Units** — every individual stock-item unit of this product (`GET /stock-items?product_id=`). Columns: **EPC / binding** (the SGTIN-URN or hardware binding + its kind), **State** (`in_stock` / `consumed` / …), **Zone** (resolved to its name, or `unassigned`), **Last seen**. Filter by **state** and **zone**; click a unit row to open a drawer with that unit's full **movement history** (entry/transfer/exit events with from/to zones). This is the drill-down from "how many of SKU-X are in stock" to "where is *this specific* unit and where has it been".
 
 ### Lot Expiry
 
@@ -1110,6 +1116,54 @@ curl -G "$API/assets" -H "Authorization: Bearer $KEY" \
   --data-urlencode 'labels[location]=warehouse-bos-01' \
   --data-urlencode 'labels[priority]=high'
 ```
+
+---
+
+## Configurable UI & Preferences
+
+TagPulse renders the same engine as a **per-viewer projection** — what you see is
+your *team* and *tenant* defaults with your own personal choices on top, all
+**presentation only** (visibility, ordering, labels, density — never behaviour or
+permissions). The contract is [ADR-032](adr/032-configurable-ui.md); the resolved
+config is served by `GET /ui-config` (four-layer merge: **System → Tenant → Role
+→ User**).
+
+### What's configurable
+
+| Leaf | Effect | Where it shows |
+|------|--------|----------------|
+| `labels` | Rename entity/nav terms (e.g. **Device → Reader**) without a code change | Sidebar + page headers |
+| `nav` | Hide / reorder sidebar sections + items | Left sidebar |
+| `cards` | Hide / reorder dashboard cards | Dashboard |
+| `columns` | Hide / reorder list columns; mark columns **advanced** (default-OFF) | Tag Reads, Assets (more over time) |
+| `tables` | Default sort per list page | Tag Reads, Assets |
+| `theme` | Persona variant + card style (e.g. `sparkline`) | App-wide |
+
+Only registered keys are accepted — an unknown label key or theme value is
+rejected (HTTP 422), so config can never smuggle in behaviour.
+
+### Your preferences (`Preferences` page)
+
+Open the **account menu → Preferences** to set choices that **follow your account
+across devices** (persisted server-side via `PUT /ui-config/me`):
+
+- **Dashboard cards** — uncheck a card to hide it from your dashboard. (The
+  Dashboard's own *Customize* button does the same thing but only on the current
+  browser/device; Preferences is the cross-device version.)
+- **Reset to team default** — clears all your personal overrides and reverts to
+  whatever your tenant/role default is.
+
+### Admin defaults (tenant & role)
+
+Tenant admins set the **floor** every user inherits via `PUT /ui-config/tenant`
+and `PUT /ui-config/role/{role}`. For example, the demo "SuperMart" tenant ships
+a WM-operator persona: `Device` relabelled to **Reader**, the technical *Data
+Management* nav section hidden, throughput/registry/reconciliation dashboard
+cards hidden, sparkline card style, TID/raw-memory columns advanced, and Tag
+Reads sorted newest-first. These are seeded by `scripts/seed_ui_config.py` from
+the canonical `WM_DEMO_PRESENTATION` constant. (A dedicated admin UI to edit
+these from the app is a follow-on; today they're set via the API or the demo
+seed.)
 
 ---
 

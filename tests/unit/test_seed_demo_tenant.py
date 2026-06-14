@@ -439,15 +439,19 @@ def test_only_combined_profile_applies_wm_ui_config() -> None:
     assert not profiles["asset"].seed_ui_config
 
 
-def test_seed_ui_config_applies_canonical_wm_skin() -> None:
-    """The shim PUTs the *canonical* ``WM_LABEL_SKIN`` (imported, not hardcoded)
-    so the demo can never drift from the backend registry, and verifies the
-    skin resolved in the response before returning.
+def test_seed_ui_config_applies_canonical_wm_presentation() -> None:
+    """The shim PUTs the *canonical* ``WM_DEMO_PRESENTATION`` (imported, not
+    hardcoded) so the demo can never drift from the backend registry, and
+    verifies the headline label skin resolved in the response before returning.
     """
     seed_ui_config = _load_script_module("seed_ui_config.py")
-    from tagpulse.services.ui_config import WM_LABEL_SKIN
+    from tagpulse.services.ui_config import WM_DEMO_PRESENTATION, WM_LABEL_SKIN
 
     assert seed_ui_config.WM_LABEL_SKIN == WM_LABEL_SKIN == {"device": "Reader"}
+    # The presentation carries every consumed leaf, not just labels.
+    assert seed_ui_config.WM_DEMO_PRESENTATION == WM_DEMO_PRESENTATION
+    assert set(WM_DEMO_PRESENTATION) == {"labels", "nav", "cards", "theme", "columns", "tables"}
+    assert WM_DEMO_PRESENTATION["labels"] == {"device": "Reader"}
 
     captured: dict[str, object] = {}
 
@@ -461,19 +465,23 @@ def test_seed_ui_config_applies_canonical_wm_skin() -> None:
 
             @staticmethod
             def json() -> dict:
-                # The resolved document carries the full label map; echo the skin.
-                return {"labels": {"device": "Reader", "asset": "Asset"}}
+                # The resolved document echoes the pushed leaves (label skin + nav).
+                return {
+                    "labels": {"device": "Reader", "asset": "Asset"},
+                    "nav": {"hidden": ["sec-data-management"]},
+                }
 
         return _Resp()
 
     seed_ui_config.httpx.put = _fake_put  # type: ignore[assignment]
-    labels = seed_ui_config.apply_wm_skin("tid-123", "tp_demo_key")
+    resolved = seed_ui_config.apply_wm_presentation("tid-123", "tp_demo_key")
 
     assert captured["url"].endswith("/ui-config/tenant")
-    assert captured["json"] == {"labels": {"device": "Reader"}}
+    # The full presentation is PUT, not just labels.
+    assert captured["json"] == WM_DEMO_PRESENTATION
     assert captured["headers"]["Authorization"] == "Bearer tp_demo_key"
     assert captured["headers"]["X-Tenant-ID"] == "tid-123"
-    assert labels["device"] == "Reader"
+    assert resolved["labels"]["device"] == "Reader"
 
 
 def test_reset_known_slugs_cover_all_profiles() -> None:
