@@ -144,11 +144,18 @@ az container exec -g tp${env}-rg -n tp${env}-mqtt --exec-command /bin/sh
 
 Sprint 58 ships a one-command composer that builds a fully populated
 demo tenant — used for screenshots, walkthroughs, and Lighthouse /
-perf baselines.
+perf baselines. Sprint 59 extends it into **three profiles** from the
+same composer: the combined `demo-wm-dc` (`make demo-tenant`, both
+domains in one tenant), a cold-chain inventory tenant
+(`make demo-inventory`), and a returnable asset-fleet tenant
+(`make demo-asset`).
 
 > **Looking for the content tour** (what's seeded, what to click,
 > static-vs-live data expectations, the live simulator, troubleshooting)?
-> See the dedicated **[Demo Tenant Guide](guides/demo-guide.md)**.
+> See the dedicated **[Demo Tenant Guide](guides/demo-guide.md)** — the
+> shared hub — plus the per-domain
+> **[inventory tour](guides/demo-inventory-tour.md)** and
+> **[asset-fleet tour](guides/demo-asset-tour.md)**.
 > This section covers only the operational shape — how to invoke the
 > composer locally vs in the dev cluster.
 
