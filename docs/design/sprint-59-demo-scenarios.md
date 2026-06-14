@@ -210,6 +210,19 @@ positioning pipeline** (Sprint 61: per-`(asset, antenna)` take the strongest tag
   `precomputed` is Sprint 60 (BYO ingest), `computed` is Sprint 61 (estimator),
   `zone` is the fallback the Sprint 60 retrieval path will synthesize. Locking
   the enum now avoids a later migration.
+- **D8. `position_strategy` config placeholder (Track 2):** *Decided — create
+  it now, leave it unused.* The estimator's RSSI/count/peak weight formula
+  varies company-to-company, so it is **per-tenant config, never hardcoded**.
+  Sprint 59 lands a placeholder (storage shape open — tenant-settings JSONB vs.
+  a dedicated table) so the Sprint 61 estimator has somewhere to read from
+  without a follow-up migration.
+- **D9. `rpk` (peak-RSSI) is optional, not required:** *Decided — optional,
+  recommended for positioning-class readers.* It **cannot** be required — that
+  would break already-shipped v2 producers (Sprint 47 Pi gateway, WM reader).
+  Producers send the per-`(epc, antenna)` mean `rssi` + `cnt` today; `rpk` is an
+  *additive* field a reader may also send (omit when `cnt==1`). The Sprint 61
+  spike validates whether it earns its place against surveyed ground truth
+  before any wire-format change lands.
 
 ## Out of scope
 
