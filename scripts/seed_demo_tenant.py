@@ -124,6 +124,11 @@ class DemoProfile:
     seed_backfill: bool = True
     seed_alerts: bool = True
     seed_transfer: bool = True
+    # Sprint 60 (ADR-032): apply the WM-facing UI presentation config (the
+    # ``Device`` -> ``Reader`` label skin) to this tenant's default layer.
+    # Only the WM-facing ``combined`` tenant gets it; the domain demos stay on
+    # system defaults so they tell their own neutral story.
+    seed_ui_config: bool = False
     # Sprint 59 Phase C: which simulator scenario preset each domain step runs.
     # ``baseline`` reproduces the Sprint 58 combined build; the domain profiles
     # select the richer single-domain presets (registered in each simulator's
@@ -151,6 +156,8 @@ PROFILES: dict[str, DemoProfile] = {
         name=DEMO_TENANT_NAME,
         admin_email=DEMO_ADMIN_EMAIL,
         admin_name=DEMO_ADMIN_NAME,
+        # The WM-facing tenant renders the `Device` -> `Reader` skin.
+        seed_ui_config=True,
     ),
     "inventory": DemoProfile(
         key="inventory",
@@ -483,6 +490,18 @@ def _step_seed_transfer(profile: DemoProfile, api_key: str, *, epc_count: int) -
     _run(cmd)
 
 
+def _step_seed_ui_config(profile: DemoProfile, api_key: str) -> None:
+    cmd = [
+        sys.executable,
+        str(SCRIPTS_DIR / "seed_ui_config.py"),
+        "--tenant-id",
+        str(profile.tenant_id),
+        "--api-key",
+        api_key,
+    ]
+    _run(cmd)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -670,6 +689,11 @@ def main() -> int:
             profile.seed_transfer,
             "seed_transfer — one in-flight cross-tenant transfer",
             lambda: _step_seed_transfer(profile, api_key, epc_count=args.transfer_epc_count),
+        ),
+        (
+            profile.seed_ui_config,
+            "seed_ui_config — apply WM label skin (Device -> Reader)",
+            lambda: _step_seed_ui_config(profile, api_key),
         ),
     ]
     enabled_steps = [(title, run) for ok, title, run in seed_steps if ok]

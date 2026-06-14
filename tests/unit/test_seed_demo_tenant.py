@@ -130,6 +130,11 @@ _COMPOSER_INVOCATIONS: list[tuple[str, str, frozenset[str]]] = [
         "seed_transfer.py",
         frozenset({"--tenant-id", "--api-key", "--epc-count"}),
     ),
+    (
+        "_step_seed_ui_config",
+        "seed_ui_config.py",
+        frozenset({"--tenant-id", "--api-key"}),
+    ),
 ]
 
 
@@ -358,6 +363,8 @@ def test_combined_profile_matches_legacy_constants() -> None:
     assert combined.seed_backfill
     assert combined.seed_alerts
     assert combined.seed_transfer
+    # Sprint 60: the WM-facing tenant applies the Device -> Reader label skin.
+    assert combined.seed_ui_config
 
 
 def test_profile_ids_are_deterministic_and_distinct() -> None:
@@ -414,6 +421,59 @@ def test_domain_profiles_toggle_off_the_other_domain() -> None:
     assert asset.seed_devices
     assert asset.seed_backfill
     assert asset.seed_alerts
+
+
+def test_only_combined_profile_applies_wm_ui_config() -> None:
+    """The WM label skin (Sprint 60, ADR-032) is applied to the WM-facing
+    ``combined`` tenant only; the neutral domain demos stay on system defaults.
+
+    Pins the per-tenant scoping decision: ``Device`` -> ``Reader`` is a
+    WM-specific simplification, not a platform-wide default, so it must not
+    leak onto the cold-chain / asset-fleet demo tenants.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    profiles = seed_demo_tenant.PROFILES
+
+    assert profiles["combined"].seed_ui_config
+    assert not profiles["inventory"].seed_ui_config
+    assert not profiles["asset"].seed_ui_config
+
+
+def test_seed_ui_config_applies_canonical_wm_skin() -> None:
+    """The shim PUTs the *canonical* ``WM_LABEL_SKIN`` (imported, not hardcoded)
+    so the demo can never drift from the backend registry, and verifies the
+    skin resolved in the response before returning.
+    """
+    seed_ui_config = _load_script_module("seed_ui_config.py")
+    from tagpulse.services.ui_config import WM_LABEL_SKIN
+
+    assert seed_ui_config.WM_LABEL_SKIN == WM_LABEL_SKIN == {"device": "Reader"}
+
+    captured: dict[str, object] = {}
+
+    def _fake_put(url: str, *, headers: dict[str, str], json: dict, timeout: float):  # type: ignore[no-untyped-def]
+        captured["url"] = url
+        captured["json"] = json
+        captured["headers"] = headers
+
+        class _Resp:
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict:
+                # The resolved document carries the full label map; echo the skin.
+                return {"labels": {"device": "Reader", "asset": "Asset"}}
+
+        return _Resp()
+
+    seed_ui_config.httpx.put = _fake_put  # type: ignore[assignment]
+    labels = seed_ui_config.apply_wm_skin("tid-123", "tp_demo_key")
+
+    assert captured["url"].endswith("/ui-config/tenant")
+    assert captured["json"] == {"labels": {"device": "Reader"}}
+    assert captured["headers"]["Authorization"] == "Bearer tp_demo_key"
+    assert captured["headers"]["X-Tenant-ID"] == "tid-123"
+    assert labels["device"] == "Reader"
 
 
 def test_reset_known_slugs_cover_all_profiles() -> None:
