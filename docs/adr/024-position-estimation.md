@@ -1,8 +1,104 @@
 # ADR-024: Indoor Position Estimation — Trilateration Processor + `asset_positions` Hypertable
 
-- Status: Deferred (Sprint 49, May 2026) — originally Proposed (Sprint 33). Backlog item; gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled — no schema rewrite required to unblock.
+- Status: **Amended (Sprint 59, June 2026)** — see [Amendment v2](#amendment-v2-sprint-59) below. Previously Deferred (Sprint 49) / Proposed (Sprint 33). Sprint 59 **partially implements** this ADR (Track 2): the `antennas` table + `sites.coord_system` + `asset_positions` hypertable + the EPC→asset fusion lookup land as schema/service; the **estimator itself stays deferred** to a candidate Sprint 61 spike. The Sprint 41 `processor` enum is live, so the `trilateration` value can still be added additively when the estimator is scheduled.
 - Implements: a new gap (row 2.18 in `docs/design/reference-design-remediation.md`) surfaced by SME review of large-zone deployments (football-field-size sites divided by a 400×600 XY grid of fixed readers).
 - Related: ADR [002 MQTT for device connectivity](002-mqtt-device-connectivity.md), ADR [003 TimescaleDB storage](003-timescaledb-storage.md), ADR [011 Device identity roadmap](011-device-identity-roadmap.md) (introduces `devices.mobility`), ADR [013 Subject-scoped telemetry](013-telemetry-subject-scoping.md), ADR [014 Multi-subject telemetry ingest](014-telemetry-multi-subject-ingest.md), ADR [021 Configurable Sensing Events v2](021-configurable-sensing-events.md) (the `processor` enum this ADR extends), [edge-hardware-and-rfid-primer.md §3.1](../refs/edge-hardware-and-rfid-primer.md).
+
+## Amendment v2 (Sprint 59)
+
+Sprint 59 schedules the **schema half** of this ADR (the estimator stays
+deferred). Implementing it surfaced three corrections to the v1 design below.
+Where this amendment and the v1 body disagree, **this amendment wins**; the v1
+sections are kept for rationale and marked inline.
+
+**1. Position lives on antennas, not devices.** v1 added `position_*` columns to
+`devices`. That is the wrong grain: a fixed positioning reader fans **2–8
+antennas** across tens of metres of coax, each a distinct radiator at a distinct
+`(x, y)`. v2 carries the antenna port (`an`) per `(epc, antenna)` observation
+([edge-wire-format-v2.md](../design/edge-wire-format-v2.md) §2.2), so the
+resolution the estimator needs is already on the wire. Sprint 59 therefore adds
+a normalized **`antennas`** table instead:
+
+```sql
+CREATE TABLE antennas (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id   UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    port        SMALLINT NOT NULL,        -- matches tag_reads.reader_antenna (0..255)
+    x           NUMERIC,                  -- in the site coord_system units
+    y           NUMERIC,
+    z           NUMERIC,                  -- mount height (nullable)
+    label       VARCHAR(64),
+    gain_dbi    NUMERIC,                  -- optional, for future antenna-pattern work
+    UNIQUE (device_id, port)
+);
+```
+
+The v1 `ALTER TABLE devices ADD COLUMN position_*` block below is **superseded**
+— `devices` gains no position columns. `sites.coord_system` and the
+`asset_positions` hypertable are unchanged from v1, except `asset_positions`
+carries a `source` enum (`precomputed | zone | computed`) in place of v1's free
+`method VARCHAR` so the three write paths are constrained at the schema level.
+
+**2. The estimator contract is antenna-keyed + asset-grouped.** v1's
+`PositionEstimator.estimate(reads: Sequence[TagReadObservation])` was
+reader-keyed and per-tag, which can't express the two things that make homegrown
+RSSI positioning credible:
+
+- **Multi-tag-per-item.** A real item carries 2–3 tags (top + 2 sides;
+  `categories.required_tags`, `asset_tag_bindings` with no `asset_id`
+  uniqueness). The pipeline must first resolve each read's EPC → `asset_id`
+  (the Sprint 59 fusion lookup), group by asset, then per-`(asset, antenna)`
+  take the **strongest** tag = the best-oriented face. This defeats
+  orientation nulls without phase hardware.
+- **Antenna coordinates.** Weighting is over **antenna** `(x, y)`, not reader
+  `(x, y)`.
+
+The amended contract:
+
+```python
+class PositionEstimator(Protocol):
+    name: ClassVar[str]                                # 'rssi_weighted_centroid', ...
+    def estimate(
+        self,
+        asset_id: UUID,
+        observations: Sequence[AntennaObservation],    # (antenna_id, x, y, rssi, cnt, ts)
+        config: PositionEstimatorConfig,               #   pre-fused: best face per (asset, antenna)
+    ) -> PositionFix | None: ...
+```
+
+**3. Reference algorithm: `rssi_weighted_centroid` (relative, bounded,
+calibration-free).** v1 named the bundled algorithm
+`weighted_centroid_log_distance`, which implies absolute RSSI→distance ranging
+(`path_loss_exponent`, `ref_rssi_dbm`, `ref_distance_m`). That requires per-site
+calibration and is exactly the fragile path real deployments avoid. The amended
+reference algorithm uses **relative** RSSI as a comparative weight and is
+**bounded to the convex hull of the contributing antennas** — it cannot produce
+a wild out-of-floor jump, degrades gracefully (1 antenna ⇒ choke-point, 2 ⇒
+line, 3+ ⇒ `(x, y)`), and needs no absolute calibration. `cnt` (reads/cycle) is
+a count-weight and a partly-independent proximity proxy. The exact weight
+formula varies by deployment and is **per-tenant `position_strategy` config**,
+not hardcoded. The `path_loss_*` config keys below are therefore **optional /
+superseded** for the reference algorithm. A peak-RSSI wire field (`rpk`) is a
+separate additive v2 candidate, evaluated against surveyed ground truth in the
+Sprint 61 spike — not required by this amendment.
+
+**Scope in Sprint 59:** item 1 (schema) and the EPC→asset fusion lookup ship.
+The estimator (item 2/3 implementation), confidence scoring, BYO ingest
+endpoint, and the reader-status MQTT topic remain deferred.
+
+**As implemented (Sprint 59 Track 2).** Migration
+[`051_spatial_foundation`](../../migrations/versions/051_spatial_foundation.py)
+creates the `antennas` table (`UNIQUE(device_id, port)`, isolation via the
+`device_id` FK — no `tenant_id`/RLS of its own), adds `sites.coord_system`
+JSONB, and creates the `asset_positions` hypertable with the `source` CHECK
+enum (`precomputed | zone | computed`) and an `id + time` composite PK (the v1
+DDL sketch omitted a PK; the hypertable + ORM need a partition-keyed one — same
+precedent as `external_locations`). The `position_strategy` placeholder lands as
+a nullable JSONB column on **`tenants`** (D8 "tenant-settings JSONB" shape),
+created-not-used. The fusion lookup is
+[`tagpulse.services.asset_fusion.AssetFusionService`](../../src/tagpulse/services/asset_fusion.py),
+backed by `TimescaleAssetTagBindingRepository.list_active_by_values`. Nothing
+writes to `asset_positions` in Sprint 59.
 
 ## Context
 
@@ -275,6 +371,16 @@ commit to" table:
 
 ## Decision history
 
-- v1 (this version): extend ADR 021 v2's `processor` enum; add
+- v1 (Sprint 33): extend ADR 021 v2's `processor` enum; add
   `asset_positions` hypertable + minimal `devices`/`sites` schema; ship
   one reference algorithm + BYO-positions path.
+- v2 (Sprint 59) — [Amendment v2](#amendment-v2-sprint-59): position moves
+  `devices` → a normalized `antennas` table; `asset_positions.method`
+  becomes a constrained `source` enum (`precomputed | zone | computed`);
+  the `PositionEstimator` contract becomes antenna-keyed + asset-grouped
+  (EPC→asset fusion first, best-face per `(asset, antenna)`); the reference
+  algorithm is renamed `weighted_centroid_log_distance` →
+  `rssi_weighted_centroid` (relative RSSI, bounded to the antenna convex hull,
+  calibration-free; per-tenant weight via `position_strategy`). Sprint 59
+  implements the schema + fusion; the estimator stays deferred (candidate
+  Sprint 61 spike).

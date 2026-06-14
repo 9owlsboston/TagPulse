@@ -98,7 +98,7 @@ _COMPOSER_INVOCATIONS: list[tuple[str, str, frozenset[str]]] = [
     (
         "_step_simulate_inventory",
         "simulate_inventory.py",
-        frozenset({"--tenant-id", "--api-key", "--units", "--seed-only"}),
+        frozenset({"--tenant-id", "--api-key", "--scenario", "--units", "--seed-only"}),
     ),
     (
         "_step_simulate_assets",
@@ -107,6 +107,7 @@ _COMPOSER_INVOCATIONS: list[tuple[str, str, frozenset[str]]] = [
             {
                 "--tenant-id",
                 "--api-key",
+                "--scenario",
                 "--assets",
                 "--readers",
                 "--iterations",
@@ -321,3 +322,199 @@ def test_in_cluster_default_days_is_one_local_default_is_three() -> None:
 
     assert seed_demo_tenant._DEFAULT_DAYS_LOCAL == 3.0
     assert seed_demo_tenant._DEFAULT_DAYS_INCLUSTER == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Sprint 59 Phase B — per-domain demo profiles.
+# The composer now drives three tenants from one script via ``--profile``.
+# ``combined`` MUST stay byte-for-byte identical to the Sprint 58 build; the
+# two new profiles each toggle off the steps that belong to the other domain.
+# ---------------------------------------------------------------------------
+
+
+def test_combined_profile_matches_legacy_constants() -> None:
+    """The ``combined`` profile reproduces the frozen Sprint 58 identity.
+
+    Its slug/uuid/admin-email/KV-secret-name must equal the module-level
+    ``DEMO_*`` constants verbatim — that's the contract that guarantees
+    ``make demo-tenant`` (which defaults to ``--profile combined``) keeps
+    converging onto the existing ``demo-wm-dc`` tenant rather than spawning
+    a new one.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    combined = seed_demo_tenant.PROFILES["combined"]
+
+    assert seed_demo_tenant.DEFAULT_PROFILE == "combined"
+    assert combined.slug == seed_demo_tenant.DEMO_TENANT_SLUG == "demo-wm-dc"
+    assert combined.name == seed_demo_tenant.DEMO_TENANT_NAME
+    assert combined.tenant_id == seed_demo_tenant.DEMO_TENANT_ID
+    assert combined.admin_email == seed_demo_tenant.DEMO_ADMIN_EMAIL
+    assert combined.admin_name == seed_demo_tenant.DEMO_ADMIN_NAME
+    assert combined.admin_kv_secret_name == seed_demo_tenant.DEMO_ADMIN_KV_SECRET_NAME
+    # All six seed steps run for the combined build.
+    assert combined.seed_devices
+    assert combined.seed_inventory
+    assert combined.seed_assets
+    assert combined.seed_backfill
+    assert combined.seed_alerts
+    assert combined.seed_transfer
+
+
+def test_profile_ids_are_deterministic_and_distinct() -> None:
+    """Each profile's tenant_id is uuid5 of its slug, and all three differ.
+
+    Same idempotency contract as Sprint 58 D2: re-running a profile must
+    converge onto its own tenant row, and the three demo tenants must never
+    collide.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    profiles = seed_demo_tenant.PROFILES
+
+    assert set(profiles) == {"combined", "inventory", "asset"}
+
+    expected_slugs = {
+        "combined": "demo-wm-dc",
+        "inventory": "demo-inv-coldchain",
+        "asset": "demo-asset-fleet",
+    }
+    ids = set()
+    for key, profile in profiles.items():
+        assert profile.key == key
+        assert profile.slug == expected_slugs[key]
+        assert profile.tenant_id == uuid.uuid5(uuid.NAMESPACE_DNS, f"{profile.slug}.tagpulse.local")
+        assert profile.admin_kv_secret_name == f"tagpulse-{profile.slug}-admin-key"
+        ids.add(profile.tenant_id)
+
+    assert len(ids) == 3, "demo profiles must have distinct tenant UUIDs"
+
+
+def test_domain_profiles_toggle_off_the_other_domain() -> None:
+    """Inventory drops assets+transfer; asset drops inventory.
+
+    The toggles are what make each domain tenant tell *one* complete story
+    instead of the combined generalist. Devices/backfill/alerts stay on for
+    both so the dashboards animate.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    inventory = seed_demo_tenant.PROFILES["inventory"]
+    asset = seed_demo_tenant.PROFILES["asset"]
+
+    # Inventory story: no asset roster, no cross-tenant transfer.
+    assert inventory.seed_inventory
+    assert not inventory.seed_assets
+    assert not inventory.seed_transfer
+    assert inventory.seed_devices
+    assert inventory.seed_backfill
+    assert inventory.seed_alerts
+
+    # Asset story: no inventory catalog.
+    assert asset.seed_assets
+    assert asset.seed_transfer
+    assert not asset.seed_inventory
+    assert asset.seed_devices
+    assert asset.seed_backfill
+    assert asset.seed_alerts
+
+
+def test_reset_known_slugs_cover_all_profiles() -> None:
+    """``reset_demo_tenant`` can target every profile slug the composer seeds.
+
+    Guards the per-tenant reset targets (``make demo-inventory-reset`` /
+    ``demo-asset-reset``): if a profile slug is added to the composer but not
+    to the reset script's ``--slug`` choices, the operator can seed a tenant
+    they can't tear down.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    reset_demo_tenant = _load_script_module("reset_demo_tenant.py")
+
+    composer_slugs = {p.slug for p in seed_demo_tenant.PROFILES.values()}
+    reset_slugs = set(reset_demo_tenant.KNOWN_DEMO_SLUGS)
+
+    assert composer_slugs <= reset_slugs, (
+        "reset_demo_tenant.KNOWN_DEMO_SLUGS is missing composer profile slugs: "
+        f"{sorted(composer_slugs - reset_slugs)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 59 Phase C — scenario depth.
+# Each domain profile now selects a richer simulator preset via ``--scenario``.
+# The ``baseline`` preset in each simulator MUST reproduce the legacy
+# (Sprint 58) module constants so the combined tenant stays byte-for-byte.
+# ---------------------------------------------------------------------------
+
+
+def test_profile_scenarios_are_registered_in_their_simulators() -> None:
+    """Every profile's scenario name resolves to a real preset.
+
+    Catches drift where a profile points ``inventory_scenario`` /
+    ``asset_scenario`` at a preset key that the target simulator's
+    ``SCENARIOS`` dict doesn't define — which would crash the composer
+    mid-run with an argparse ``choices`` error.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    simulate_inventory = _load_script_module("simulate_inventory.py")
+    simulate_assets = _load_script_module("simulate_assets.py")
+
+    for profile in seed_demo_tenant.PROFILES.values():
+        assert profile.inventory_scenario in simulate_inventory.SCENARIOS, (
+            f"profile {profile.key!r} inventory_scenario "
+            f"{profile.inventory_scenario!r} not in simulate_inventory.SCENARIOS"
+        )
+        assert profile.asset_scenario in simulate_assets.SCENARIOS, (
+            f"profile {profile.key!r} asset_scenario "
+            f"{profile.asset_scenario!r} not in simulate_assets.SCENARIOS"
+        )
+
+
+def test_combined_profile_uses_baseline_scenarios() -> None:
+    """The combined tenant must run both simulators in their baseline preset.
+
+    This is the scenario-depth half of the byte-for-byte contract: the
+    domain profiles get the richer presets, but ``combined`` stays on
+    ``baseline`` so ``make demo-tenant`` reproduces the Sprint 58 build.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    combined = seed_demo_tenant.PROFILES["combined"]
+
+    assert combined.inventory_scenario == "baseline"
+    assert combined.asset_scenario == "baseline"
+
+
+def test_domain_profiles_select_deep_scenarios() -> None:
+    """Inventory selects coldchain catalog depth; asset selects the fleet roster."""
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    profiles = seed_demo_tenant.PROFILES
+
+    assert profiles["inventory"].inventory_scenario == "coldchain"
+    assert profiles["asset"].asset_scenario == "fleet"
+
+
+def test_inventory_baseline_scenario_matches_legacy_constants() -> None:
+    """``simulate_inventory`` baseline preset reuses the legacy module objects.
+
+    The combined tenant seeds inventory with ``--scenario baseline``; if that
+    preset ever diverged from the original ``CATALOG`` / ``ZONE_PIPELINE`` /
+    ``SITE_NAME`` constants, the combined build would silently change shape.
+    """
+    simulate_inventory = _load_script_module("simulate_inventory.py")
+    baseline = simulate_inventory.SCENARIOS["baseline"]
+
+    assert baseline.catalog is simulate_inventory.CATALOG
+    assert baseline.zone_pipeline is simulate_inventory.ZONE_PIPELINE
+    assert baseline.site_name == simulate_inventory.SITE_NAME
+    # Baseline has no quarantine divert (that's a coldchain-only feature).
+    assert baseline.quarantine_zone is None
+
+
+def test_assets_baseline_scenario_is_not_topology() -> None:
+    """``simulate_assets`` baseline preset keeps the legacy Sim-Pallet flow.
+
+    ``is_topology`` False routes ``main()`` down the unchanged Sprint 15
+    fetch_devices/ensure_assets/ensure_bindings/emit path the combined tenant
+    relies on; the ``fleet`` preset is the topology-driven one.
+    """
+    simulate_assets = _load_script_module("simulate_assets.py")
+
+    assert simulate_assets.SCENARIOS["baseline"].is_topology is False
+    assert simulate_assets.SCENARIOS["fleet"].is_topology is True

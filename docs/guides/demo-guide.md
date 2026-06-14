@@ -1,13 +1,38 @@
 # Demo Tenant Guide
 
-A complete tour of the TagPulse demo tenant — what's in it, how it
-behaves with and without the live simulator, and how to drive it for
+A complete tour of the TagPulse demo tenants — what's in them, how they
+behave with and without the live simulator, and how to drive them for
 screenshots, walkthroughs, design reviews, and Lighthouse / perf runs.
 
 For the deployment side (laptop setup, Azure topology, on-call runbooks)
 see [operator-quickstart.md](../operator-quickstart.md). This guide is
-the *content* view of the same tenant — what an operator clicking
+the *content* view of the same tenants — what an operator clicking
 around in the UI will actually see.
+
+## Three demo tenants, one composer
+
+Sprint 59 split the demo surface into **three purpose-built tenants**,
+all seeded by the same composer ([scripts/seed_demo_tenant.py](../../scripts/seed_demo_tenant.py))
+selected via `--profile`. Each has a deterministic
+`uuid5(NAMESPACE_DNS, "<slug>.tagpulse.local")` identity so every
+operator / CI / machine converges to the same rows.
+
+| Tenant | Slug | Profile / target | Tour |
+|---|---|---|---|
+| SuperMart Distribution Center | `demo-wm-dc` | `combined` / `make demo-tenant` | **this page** (below) |
+| Cold-Chain Distribution Center | `demo-inv-coldchain` | `inventory` / `make demo-inventory` | [demo-inventory-tour.md](demo-inventory-tour.md) |
+| Returnable Asset Fleet | `demo-asset-fleet` | `asset` / `make demo-asset` | [demo-asset-tour.md](demo-asset-tour.md) |
+
+- The **combined** tenant is the original Sprint 58 "everything on one
+  screen" build — inventory *and* asset data in one tenant. It is the
+  reference tenant the [Sprint 58 baseline](../measurements/sprint-58-baseline.md)
+  measurements were captured against, and is documented in full on this
+  page.
+- The two **domain** tenants tell one complete business story each
+  (cold-chain inventory vs. high-value asset fleet). Their catalogs,
+  rosters, zones, and scenario events live in the two linked tour pages;
+  everything *else* on this page — the simulator, multi-tenant driving,
+  reset, troubleshooting, dev tips — applies to all three.
 
 ## TL;DR
 
@@ -16,8 +41,10 @@ around in the UI will actually see.
 docker compose up -d
 alembic upgrade head
 
-# 2. Seed the demo tenant (idempotent; ~2-3 min on a clean DB)
-make demo-tenant
+# 2. Seed a demo tenant (idempotent; ~2-3 min on a clean DB)
+make demo-tenant        # combined  → demo-wm-dc
+make demo-inventory     # cold-chain → demo-inv-coldchain
+make demo-asset         # asset fleet → demo-asset-fleet
 
 # 3. (Optional) start the live simulator so the dashboard isn't a snapshot
 export TAGPULSE_API_KEY=$(make demo-tenant | tail -1 | awk -F= '{print $2}')
@@ -32,10 +59,12 @@ When you're done:
 
 ```bash
 make sim-stop                # if you started the sim
-make demo-tenant-reset       # drop the demo tenant + recipient
+make demo-tenant-reset       # drop the combined demo tenant + recipient
+make demo-inventory-reset    # drop the cold-chain tenant
+make demo-asset-reset        # drop the asset-fleet tenant
 ```
 
-## What the demo tenant is for
+## What the demo tenants are for
 
 A repeatable, deterministic, fully populated tenant used for:
 
@@ -53,7 +82,17 @@ It is **not** for load testing (use `scripts/load_test.py`) and
 **not** for staging or prod — the composer hard-refuses to run with
 `ENVIRONMENT=prod`.
 
-## Tenant identity
+## The combined tenant (`demo-wm-dc`)
+
+The rest of this page documents the **combined** tenant in full. For the
+two single-domain tenants, read their dedicated tours —
+[cold-chain inventory](demo-inventory-tour.md) and
+[asset fleet](demo-asset-tour.md) — then come back here for the shared
+[simulator](#the-continuous-simulator), [multi-tenant](#driving-several-tenants-at-once),
+[reset](#reset-and-restart), and [troubleshooting](#troubleshooting)
+sections, which apply identically to all three.
+
+### Tenant identity
 
 The tenant identity is deterministic (UUID5 over the slug), so every
 operator / CI / machine converges to the same row.
@@ -65,7 +104,7 @@ operator / CI / machine converges to the same row.
 | UUID | `241d9b81-59da-5fb7-8f78-f58200978566` |
 | Recipient tenant (for transfers) | `demo-wm-recipient` |
 
-## Login credentials
+### Login credentials
 
 `make demo-tenant` rotates one API key per role and prints them at the
 end of the run. **Keys are only shown once** — capture them or rotate
@@ -85,7 +124,7 @@ The UI accepts either:
 If you missed the keys, run `make demo-tenant` again. It is idempotent;
 it will rotate keys and reprint them.
 
-## What gets seeded (static snapshot)
+### What gets seeded (static snapshot)
 
 `make demo-tenant` runs [scripts/seed_demo_tenant.py](../../scripts/seed_demo_tenant.py),
 which composes seven steps. Each step is idempotent (re-runs converge,
@@ -104,7 +143,7 @@ they do not duplicate).
 Total wall-clock: ~2-3 min on a clean DB, ~20 sec on subsequent runs
 (skips the backfill phase if `DEMO_SKIP_BACKFILL=1` is set).
 
-## Static vs live data — what to expect
+### Static vs live data — what to expect
 
 This is the single most important distinction. The seed is a
 **snapshot**. The simulator keeps it **moving**.
@@ -133,6 +172,32 @@ This is the single most important distinction. The seed is a
 > backfill window from step 5 lands inside the 1-hour bucket the tile
 > queries, so it's non-zero immediately after the seed and decays as
 > wall-clock advances.
+
+### Tour — what to click (combined tenant)
+
+After `make demo-tenant` (and ideally `make sim-start`):
+
+1. **Dashboard** (`/`) — 9 KPI tiles + 7-day sparklines. With the
+   simulator running, the reads/hour line bends visibly within a
+   minute. Click the "Active assets" tile to deep-link into the
+   Assets page filtered by `status=active`.
+2. **Assets** (`/assets`) — 17 rows. Sim-Pallet-001..012 are the
+   "warehouse" assets; Sim-Pallet-01..05 are the "Bay Area" ones bound
+   to TAG0001..TAG0005 (used by the geofence rule).
+3. **Tag Reads** (`/tag-reads`) — pageable list with chart view.
+   Toggle to the chart and watch it tick when the simulator runs.
+4. **Devices** (`/device-registry`) — 14 readers across 3 sites.
+5. **Sites + Zones** — Bay Area HQ (1 geofence + 1 reader-bound zone)
+   + Boston DC (4 reader-bound zones).
+6. **Rules + Alerts** — the high-temp rule and the two geofence rules
+   are pre-provisioned; alerts arrive from the simulator's 15-min
+   high-temp tick.
+7. **Tag Transfers** — 1 outgoing in-flight transfer to
+   `demo-wm-recipient` with 3 EPCs in `status='requested'`.
+8. **Inventory / Products / Lots** — vaccines, milk, yogurt, cheese
+   with associated stock items.
+9. **Telemetry** — pre-provisioned `rfid_reader` model so charts
+   render immediately.
 
 ## The continuous simulator
 
@@ -164,31 +229,41 @@ make sim-status     # docker compose ps sim + last 50 log lines
 make sim-stop       # stop and remove the sim container
 ```
 
-## Tour — what to click
+## Driving several tenants at once
 
-After `make demo-tenant` (and ideally `make sim-start`):
+The simulator can keep **all three demo tenants** warm from one process
+(Sprint 59 §59.4). Pass a comma-separated `slug:key` list via
+`$SIM_TENANTS` instead of exporting a single `$TAGPULSE_API_KEY`:
 
-1. **Dashboard** (`/`) — 9 KPI tiles + 7-day sparklines. With the
-   simulator running, the reads/hour line bends visibly within a
-   minute. Click the "Active assets" tile to deep-link into the
-   Assets page filtered by `status=active`.
-2. **Assets** (`/assets`) — 17 rows. Sim-Pallet-001..012 are the
-   "warehouse" assets; Sim-Pallet-01..05 are the "Bay Area" ones bound
-   to TAG0001..TAG0005 (used by the geofence rule).
-3. **Tag Reads** (`/tag-reads`) — pageable list with chart view.
-   Toggle to the chart and watch it tick when the simulator runs.
-4. **Devices** (`/device-registry`) — 14 readers across 3 sites.
-5. **Sites + Zones** — Bay Area HQ (1 geofence + 1 reader-bound zone)
-   + Boston DC (4 reader-bound zones).
-6. **Rules + Alerts** — the high-temp rule and the two geofence rules
-   are pre-provisioned; alerts arrive from the simulator's 15-min
-   high-temp tick.
-7. **Tag Transfers** — 1 outgoing in-flight transfer to
-   `demo-wm-recipient` with 3 EPCs in `status='requested'`.
-8. **Inventory / Products / Lots** — vaccines, milk, yogurt, cheese
-   with associated stock items.
-9. **Telemetry** — pre-provisioned `rfid_reader` model so charts
-   render immediately.
+```bash
+# Seed all three, capturing each admin key
+KEY_WM=$(make demo-tenant    | tail -1 | awk -F= '{print $2}')
+KEY_INV=$(make demo-inventory | tail -1 | awk -F= '{print $2}')
+KEY_AST=$(make demo-asset     | tail -1 | awk -F= '{print $2}')
+
+# Drive all three; the aggregate rate is split evenly across them
+export SIM_TENANTS="demo-wm-dc:$KEY_WM,demo-inv-coldchain:$KEY_INV,demo-asset-fleet:$KEY_AST"
+make sim-start
+```
+
+Key points:
+
+- Each tenant gets its **own API key, token bucket, and roster** — one
+  tenant's outage or alert cadence never bleeds into another.
+- `$SIM_RATE_PER_MIN` is the **aggregate** ceiling across all driven
+  tenants (still hard-capped at 600/min), split evenly
+  (`aggregate ÷ N`). Adding tenants never raises total load on the
+  shared dev cluster.
+- A per-reader **heartbeat** (every 4 min, under the dashboard's 5-min
+  `devices_online` window) keeps each tenant's readers `online` even
+  when its organic read rate is low — so an idle domain tenant no
+  longer falls to "0 active devices" between clicks.
+- `make sim-start` accepts **either** `$SIM_TENANTS` (multi-tenant) or
+  `$TAGPULSE_API_KEY` (single-tenant, the combined default).
+
+The tenant UUID for each slug is derived the same way the composer does
+(`uuid5(NAMESPACE_DNS, "<slug>.tagpulse.local")`), so you only ever
+supply `slug:key`, never the raw UUID.
 
 ## Reset and restart
 
@@ -207,6 +282,18 @@ columns like `tag_transfers.from_tenant_id` and `.to_tenant_id` are
 included), and retries deletes iteratively to resolve FK chains. It
 refuses to run against anything that doesn't look local unless
 `DEMO_RESET_FORCE=1` is set.
+
+The two domain tenants reset the same way, scoped to their own slug
+(each leaves the others untouched):
+
+```bash
+make demo-inventory-reset    # drop demo-inv-coldchain
+make demo-asset-reset        # drop demo-asset-fleet
+```
+
+Only the **combined** reset also removes the shared `demo-wm-recipient`
+transfer recipient — the domain resets leave it alone so a per-domain
+teardown can't orphan a recipient another demo shares.
 
 ## Troubleshooting
 
@@ -262,6 +349,10 @@ or "demo-mfg" tenant alongside the WM one.
 
 ## See also
 
+- [demo-inventory-tour.md](demo-inventory-tour.md) — the cold-chain
+  inventory domain tenant (`demo-inv-coldchain`).
+- [demo-asset-tour.md](demo-asset-tour.md) — the returnable
+  asset-fleet domain tenant (`demo-asset-fleet`).
 - [operator-quickstart.md](../operator-quickstart.md) — laptop +
   Azure topology, on-call paths, env-cluster commands.
 - [docs/measurements/sprint-58-baseline.md](../measurements/sprint-58-baseline.md)

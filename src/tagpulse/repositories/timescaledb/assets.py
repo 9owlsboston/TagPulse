@@ -310,6 +310,26 @@ class TimescaleAssetTagBindingRepository:
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _binding_to_response(row) if row else None
 
+    async def list_active_by_values(
+        self, tenant_id: uuid.UUID, values: Sequence[str]
+    ) -> list[AssetTagBindingResponse]:
+        """Resolve a batch of binding values to their active bindings in one query.
+
+        Backs the Sprint 59 EPC->asset fusion lookup: given the distinct EPCs
+        seen in a read batch, return the active ``(asset_id, binding_value)``
+        pairs (``unbound_at IS NULL``). Values with no active binding are simply
+        absent from the result.
+        """
+        if not values:
+            return []
+        stmt = select(AssetTagBindingModel).where(
+            AssetTagBindingModel.tenant_id == tenant_id,
+            AssetTagBindingModel.binding_value.in_(list(values)),
+            AssetTagBindingModel.unbound_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return [_binding_to_response(r) for r in result.scalars()]
+
     async def count_other_tenant_collisions(self, tenant_id: uuid.UUID, binding_value: str) -> int:
         """Number of *other* tenants with an active binding for this value.
 

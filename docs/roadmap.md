@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 58 — demo data and simulation · branch `sprint-58/demo-data-and-simulation` (full scope lands in §sprint-58 during the sprint).
+**Current sprint:** 59 — demo scenarios · branch `sprint-59/demo-scenarios` (full scope lands in §sprint-59 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1514,12 +1514,88 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 
 ### Out of scope
 
-- WM-specific scenarios beyond the generic "distribution center" demo tenant — Sprint 59 covers WM-driven terminology, nav, and any WM-specific seed data.
-- **Terminology renames** (`Device` → `Reader`, `Telemetry` → ?) — Sprint 59.
-- **Nav rework** beyond what Sprint 54 / 56 already shipped — Sprint 59.
+- WM-specific scenarios beyond the generic "distribution center" demo tenant — Sprint 59 covers domain-split demo depth; WM-driven terminology, nav, and any WM-specific seed data move to Sprint 60.
+- **Terminology renames** (`Device` → `Reader`, `Telemetry` → ?) — Sprint 60 (re-slotted; Sprint 59 absorbed demo scenario depth first).
+- **Nav rework** beyond what Sprint 54 / 56 already shipped — Sprint 60.
 - **New device types**, **new chart types**, **rule engine changes**, **new API endpoints**. If the demo tenant needs an alert type that isn't already shippable, fake the alert row directly rather than extending the engine.
 - **i18n / RTL**, **phone responsive (<768 px)**, **WCAG audit beyond Lighthouse**.
 - **Load testing at scale** beyond the demo-rate cap — `scripts/load_test.py` continues to cover the stress-test use case unchanged.
+
+---
+
+## Sprint 59 — Demo scenario depth + spatial foundation
+
+> Status: **Track 1 (Phases A–E) complete** on PR [#89](https://github.com/9owlsboston/TagPulse/pull/89) (compose-don't-rewrite demo depth — three tenants, multi-tenant `sim_loop`, docs split; `make check` green, CI green). **Track 2 (Phases F–G — spatial schema + EPC→asset fusion) complete**: migration `051_spatial_foundation` (antennas, `sites.coord_system`, `asset_positions` hypertable, `tenants.position_strategy` — all created-not-written), [ADR-024](adr/024-position-estimation.md) amended, and the `AssetFusionService` EPC→asset lookup with unit coverage. The estimator, BYO ingest endpoint, and wire-format peak-RSSI remain deferred per the amendment. **§59.6 (force-delete ledger semantics) is shipped** ([ADR-031](adr/031-stock-item-force-delete-ledger.md)); §59.8 is a `TagPulse-UI` item that may lead Sprint 60.
+>
+> Design: [docs/design/sprint-59-demo-scenarios.md](design/sprint-59-demo-scenarios.md)
+> ADRs: **amends** [ADR-024 — Indoor position estimation](adr/024-position-estimation.md) (Track 2 — position moves devices→antennas; estimator contract becomes antenna-keyed + asset-grouped); reuses tenant-isolation 008, subject scoping 013, edge contract 017, wire format v2 025.
+> Backend PR: [#89](https://github.com/9owlsboston/TagPulse/pull/89). Builds on Sprint 58 ([design](design/sprint-58-demo-and-simulation.md)).
+
+Sprint 59 runs **two tracks** with different engineering postures. **Track 1 — Demo scenario depth** is *compose, don't rewrite* (no new schema/endpoints). **Track 2 — Spatial foundation** is the opposite: it lays the net-new schema for indoor `(x, y)` positioning but **defers the positioning math** — schema and the EPC→asset fusion lookup only; no RSSI estimator, no wire-format change.
+
+**Goal (Track 1).** Sprint 58 produced *one* combined demo tenant (`demo-wm-dc`); it's credible at a glance but a generalist — inventory and asset-tracking data share one tenant, so neither domain tells a complete business story. Sprint 59 splits the demo surface into **two purpose-built tenants, each with an extensive, realistic business scenario**, and teaches the seed composer + `sim_loop` to drive multiple tenants from named profiles. **Terminology/nav rework (the original Sprint 59 plan) is re-slotted to Sprint 60** — the May WM session was muddied by sparse data, and domain-deep tenants are the prerequisite for judging "the nav is confusing" separately from "there's nothing on the page."
+
+**Goal (Track 2).** The location model is GPS-biased: there is no way to express *where an antenna is on a floor* or *where an asset is in `(x, y)`*. Track 2 lands the minimal schema to close that gap — an `antennas` table holding per-antenna `(x, y, z)`, a site `coord_system`, and an `asset_positions` hypertable — plus the **EPC→asset multi-binding fusion** lookup that both zone-presence and future positioning depend on. **Zone / choke-point presence is the headline "where is X" answer**, surfaced from the existing `tag_presence` + `subject_current_zone` state. The homegrown `rssi_weighted_centroid` estimator, the `rpk` (peak-RSSI) wire-format change, and BYO-precomputed ingest/render are **explicitly deferred** (Sprint 60/61 — see OOS).
+
+**Cross-repo.** Backend-led. Track 1: profile-driven composition of the existing simulators; UI runs unchanged. Track 2: backend schema + service only; the floor-map config UI and position render are Sprint 60 `[ui]`. One candidate Track 1 `[ui]` follow-up (§59.8 Units table) rides only if UI bandwidth exists.
+
+**Carry-forward principle (Track 1, unchanged from 58).** *Compose, don't rewrite.* Extend the existing simulators via data/profiles and narrow shims; no new API endpoints (query-param toggles OK). **Track 2 is exempt** — it is deliberately additive schema + one normalized table; it adds **no** new endpoint in Sprint 59 (BYO ingest endpoint lands in Sprint 60).
+
+### Phases — Track 1 (demo scenario depth)
+
+- **A — 59.1 Scenario design.** Design doc (two business narratives — cold-chain inventory + high-value asset fleet — catalog/asset rosters, per-tenant rule + alert mix, profile model, multi-tenant rate-cap math). Pick the asset narrative (D2). Lock decisions D1–D5. Pass bar: doc reviewed; no scope creep without an OOS note.
+- **B — 59.2 Profile-driven composer.** Parametrize `scripts/seed_demo_tenant.py` with `--profile {combined,inventory,asset}` (default `combined` = today's behaviour, unchanged). New `make demo-inventory` / `make demo-asset` targets + per-tenant reset. Pass bar: each profile idempotent; existing `make demo-tenant` byte-for-byte unchanged.
+- **C — 59.3 Scenario depth.** Extend the inventory catalog (~12–15 SKUs, staggered-expiry lots for FEFO) + asset roster (~20–30 named assets, geofenced + yard/exit zones); add narrow shims for the business events (quarantine/hold, cycle-count delta, geofence-breach read sequences, inactivity gaps, missing-asset). All via composition / existing write paths. Pass bar: every page in both tenants shows non-empty, domain-true data.
+- **D — 59.4 Multi-tenant `sim_loop`.** Teach `scripts/sim_loop.py` to drive N tenants from a profile list with per-tenant keys + per-tenant rate caps (aggregate ceiling preserved). `make sim-start` drives all active demo tenants. Folds in §59.7 (keep readers "online" regardless of dwell). Pass bar: runs ≥ 1 h across 2–3 tenants; aggregate under the per-tenant Sprint 38 limit; start/stop/status targets.
+- **E — 59.5 Docs + closeout.** Split `docs/guides/demo-guide.md` into a combined overview + two domain tours; update `docs/operator-quickstart.md`, CHANGELOG; this §59 section + the §60 stub. Pass bar: guides match what the seeds produce; `make check` green.
+
+### Phases — Track 2 (spatial foundation — schema + fusion only)
+
+> Scope discipline: Track 2 lands **schema and the fusion lookup**, nothing that computes a position from RF. It amends [ADR-024](adr/024-position-estimation.md); it does **not** add an endpoint, a wire-format field, or an estimator in Sprint 59.
+
+- **F — 59.9 Spatial schema + ADR-024 amendment.** New normalized **`antennas`** table (`device_id` FK, `port`, `x`, `y`, `z` nullable, `label`, `gain_dbi` nullable) — position lives per **antenna**, not per device, because a fixed reader fans 2–8 antennas across tens of metres of coax (ADR-024 originally put `position_*` on `devices`; the amendment moves it). Site **`coord_system`** JSONB (units, extent, origin anchor, rotation, optional geo-anchor) per the ADR-024 shape. New **`asset_positions`** hypertable (tenant, asset_id, site_id, ts, x, y, z, confidence, `source` enum `precomputed|zone|computed`, metadata) — Sprint 59 **creates** it but writes nothing to the `computed` source. A per-tenant **`position_strategy`** config placeholder (storage shape TBD — tenant-settings JSONB) is also created-not-used: the weight formula in the future estimator varies company-to-company, so it must be config, never hardcoded. Amend ADR-024: position→`antennas`; estimator contract becomes **antenna-keyed + asset-grouped**; reference algorithm renamed `weighted_centroid_log_distance` → **`rssi_weighted_centroid`** (relative RSSI, bounded to the antenna convex hull, calibration-free). Pass bar: migration up/down clean on a populated tenant; `mypy`/`ruff` green; ADR-024 amended + decision-history bumped; no FK on `asset_positions.asset_id` (hypertable, matches ADR-013/014).
+- **G — 59.10 EPC→asset multi-binding fusion lookup.** Service that resolves an EPC → `asset_id` via the existing `asset_tag_bindings` (one asset legitimately holds many active EPC bindings — the top+2-sides multi-tag item) and groups an asset's tags. Backs **zone-presence** ("where is this asset now", any of its tags) today and is **step 1 of the future positioning pipeline** (Sprint 61). No new endpoint — internal service consumed by the existing zone/presence read paths. Pass bar: a multi-bound asset resolves from **any** of its EPCs; unbinding history (`bound_at`/`unbound_at`) respected; unit tests cover 1-tag, 3-tag, and rebound cases.
+
+### Carried-in fixes (surfaced by `chore/demo-data-fixes`)
+
+- **59.6 — [shipped] `?force=true` stock-item delete semantics ([ADR-031](adr/031-stock-item-force-delete-ledger.md)).** `DELETE /stock-items/{id}?force=true` bypassed only the `in_stock` *state* guard, then hard-`DELETE`d; the `ON DELETE RESTRICT` FK `stock_movements_stock_item_id_fkey` (migration 021) rejected it with an unhandled `IntegrityError` → 500 + dropped connection — broken for any unit that had moved. **Decided (ADR-031): `force` bypasses the state guard only, never the ledger** — a moved unit is retired (soft-delete via `state=consumed`), never hard-deleted. `delete_stock_item` now pre-counts referencing movements and raises a typed `StockItemLedgerError` *before* any DB delete (FK never reached, transaction never poisons); the route returns a structured 409 (`{error, message, movement_count, remediation}`). Pass bar met: ADR authored; route returns a structured 409; regression tests cover a moved unit (`tests/unit/test_inventory_service.py` + `tests/unit/test_inventory_route_force_delete.py`).
+- **59.7 — Static demo tenant shows "0 active devices" after the online window.** Dashboard `devices_online` counts `connection_state='online' AND last_seen > now − 5min`; an idle seeded tenant drops to 0 ~5 min after seeding (dwell-vs-heartbeat sim gap). Fold into §59.4 — a heartbeat tick / max-dwell cap keeps all readers warm. Pass bar: a tenant left idle after seed still reports all readers online.
+- **59.8 — Product "Units" table `[ui]`** (`9owlsboston/TagPulse-UI`). `ProductDetail` shows only a total + by-zone chart; the per-unit list is unreachable in the App (operators must call `GET /stock-items?product_id=` by hand, and the Tags page filters hex hardware EPCs, not the SGTIN-URN inventory bindings). Add a Units table wired to the existing `GET /stock-items?product_id={id}` (no backend change): columns EPC/binding · state · zone (name-resolved) · last seen; zone + state filters; row → unit read history. Rides Sprint 59 only if UI bandwidth exists, else leads Sprint 60. Pass bar: from `SKU-SHOE-RUN-SZ10`, list in-stock units, filter by zone, click into one unit's history in ≤ 3 clicks, zero manual API calls; vitest render + empty-state; `npm run check` green.
+
+### Out of scope
+
+- **Terminology renames / nav rework** (`Device`→`Reader`, etc.) — **Sprint 60**.
+- **BYO-precomputed position ingest + render** (Track 2 phase "H") — **Sprint 60.** Accept vendor `(x, y)` fixes into `asset_positions` (`source=precomputed`) via **one narrow new endpoint** (`POST /assets/{id}/position`), retrieval with zone-source fallback, and the floor-map config + position render `[ui]`. Sprint 59 lands the *table*; Sprint 60 fills and draws it.
+- **Homegrown RSSI positioning math** — the `rssi_weighted_centroid` estimator (relative-RSSI, count-weighted, asset-grouped), confidence honesty, and the `rpk` (peak-RSSI) wire-format adjustment to [edge-wire-format-v2.md](design/edge-wire-format-v2.md) — **candidate Sprint 61 spike.** v2 already carries per-`(epc, antenna)` `rssi` + `cnt`; `rpk` is an *additive, optional* field (omit when `cnt==1`) the spike will add only if the surveyed-position data shows mean-RSSI dilutes the signal. The per-tenant weight formula is **not** baked into the wire or code — it is per-tenant `position_strategy` config. Builds on the Track 2 schema + the amended ADR-024.
+- New device types, new chart types, **rule-engine changes**, **new API endpoints** (Track 1 query-param toggles OK; the Track 2 BYO endpoint is explicitly a Sprint 60 item).
+- Demo tenants in CI (Sprint 58 D7 still stands), staging/prod simulators (dev-only ceiling).
+- Load testing at scale (`scripts/load_test.py` keeps that).
+
+---
+
+## Sprint 60 — Terminology + nav rework (planned)
+
+> Re-slotted from the original Sprint 59 plan: domain-deep demo tenants (Sprint 59) are the prerequisite for measuring nav/terminology changes against data that has something to look at.
+
+**Scope seed (not yet locked).**
+- **Terminology renames** (`Device` → `Reader`, `Telemetry` → ?) driven by the May WM focus-group feedback, validated against the Sprint 58 "before" baseline + the Sprint 59 domain tenants. **Decided: per-tenant display label ("label skin"), not a global rename** — TagPulse is architected multi-device-type, so a label-skin keeps the door open for non-reader device types. The label-skin *mechanism* itself ships in the dedicated Configurable UI sprint below; Sprint 60 only chooses the WM-facing label values.
+- **UI simplification (WM feedback).** Non-technical operators asked to hide plumbing columns (drop **TID** and others from the tag-reads view) and simplify nav. The generic, opt-in **column presets + configurable menu system** that satisfy this are pulled into the dedicated Configurable UI sprint below (too large to ride Sprint 60); Sprint 60 captures the actual keep/cut column list + nav asks from WM as input to that sprint.
+- **Nav rework** beyond Sprint 54 / 56 (the configurable-menu mechanism lands in the dedicated sprint below; Sprint 60 scopes the concrete WM nav simplification on top of it).
+- **§59.8 Units table** leads here if it didn't ride Sprint 59.
+- **Track 2 phase H — BYO-precomputed position ingest + floor-map render.** On the Sprint 59 `asset_positions` table: **one narrow new endpoint** `POST /assets/{id}/position` to accept vendor `(x, y)` fixes (`source=precomputed`); a retrieval path that returns the latest fix with **zone-source fallback** when none exists; and the `[ui]` floor-map config (place antennas in the site `coord_system`) + position render. This is the "fill and draw the table" follow-on to Sprint 59 Track 2.
+- **Zone-fallback for the AssetList Location column** — when an asset has no GPS/precomputed fix, show its current zone (from `subject_current_zone` / the same client-side derivation the AssetDetail timeline uses) so "where is X" is honest at zone granularity. Separable band-aid; **not** the homegrown RSSI estimator (that's candidate Sprint 61).
+
+---
+
+## Configurable UI — label skins · column presets · menu system (planned; dedicated sprint, number TBD)
+
+> Pulled out of Sprint 60: the WM feedback (rename `Device`→`Reader`, hide plumbing columns like **TID**, simplify nav) all want the *same underlying capability* — per-tenant UI configuration — rather than one-off hardcoded edits. Building that framework once is its own sprint; Sprint 60 then consumes it to apply the concrete WM-facing values. Sequencing vs. the candidate Sprint 61 RSSI spike is open (independent workstreams; either may go first).
+
+**Scope seed (not yet locked).**
+- **Label skins (`[ui]` + backend config).** Per-tenant display-label overrides for entity/nav terms (e.g. `Device`→`Reader`, `Telemetry`→?) without a schema/code rename — keeps the multi-device-type architecture intact. Decided in Sprint 60's analysis as the chosen mechanism over a global rename.
+- **Configurable column presets (`[ui]`).** Generic, opt-in per-tenant (or per-user) column show/hide + ordering on the list pages, so operators can drop plumbing columns (TID, etc.) without a reader-specific App fork. Builds on the [ADR-030](adr/030-list-page-column-filters.md) list-page convention.
+- **Configurable menu/nav system (`[ui]`).** Data-driven nav (section/item visibility + ordering per tenant) so the Sprint 60 nav simplification is a configuration, not a hardcoded layout.
+- **Decision:** label skin vs. global rename → **label skin** (resolved; see Sprint 60). Open: config storage shape (tenant settings JSONB vs. dedicated tables), and the user-vs-tenant scope boundary for column presets.
 
 ---
 

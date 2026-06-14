@@ -1,6 +1,7 @@
 .PHONY: lint typecheck test format check run export-openapi migration-check \
         smoke rotate-key logs doctor demo-tenant demo-tenant-reset demo-tenant-dev \
-        sim-start sim-stop sim-status help
+        demo-inventory demo-asset demo-inventory-reset demo-asset-reset \
+        demo-creds sim-start sim-stop sim-status help
 
 # Default ENV for ops targets — override on the command line: make logs ENV=prod
 ENV ?= dev
@@ -81,6 +82,23 @@ demo-tenant: ## Sprint 58: seed the SuperMart Distribution Center demo tenant (i
 demo-tenant-reset: ## Sprint 58: delete the demo tenant + recipient (local dev only)
 	python scripts/reset_demo_tenant.py
 
+# Sprint 59 Phase B — purpose-built per-domain demo tenants. Same composer,
+# selected via --profile. ``demo-inventory`` = cold-chain inventory story
+# (demo-inv-coldchain); ``demo-asset`` = returnable asset-fleet story
+# (demo-asset-fleet). Each is idempotent and independent of the combined
+# ``demo-tenant`` build. The *-reset targets delete only that domain tenant.
+demo-inventory: ## Sprint 59: seed the cold-chain inventory demo tenant (idempotent)
+	python scripts/seed_demo_tenant.py --profile inventory
+
+demo-asset:  ## Sprint 59: seed the returnable asset-fleet demo tenant (idempotent)
+	python scripts/seed_demo_tenant.py --profile asset
+
+demo-inventory-reset: ## Sprint 59: delete the inventory demo tenant (local dev only)
+	python scripts/reset_demo_tenant.py --slug demo-inv-coldchain
+
+demo-asset-reset: ## Sprint 59: delete the asset demo tenant (local dev only)
+	python scripts/reset_demo_tenant.py --slug demo-asset-fleet
+
 # ``make demo-creds`` rotates the demo admin API key and reprints the login
 # email + key WITHOUT re-seeding any data. Local plaintext keys are stored
 # hashed (shown only at issue time), so rotation is the retrieval mechanism.
@@ -106,14 +124,17 @@ demo-tenant-dev: ## Seed the demo tenant against the deployed dev env via tools-
 
 # ---------------------------------------------------------------------------
 # Sprint 58 Phase C — continuous demo-tenant simulator (docker compose).
-# Requires ``make demo-tenant`` to have run first and ``$TAGPULSE_API_KEY``
-# exported. Overrides: ``SIM_RATE_PER_MIN=400 make sim-start`` to push
-# harder; ``SIM_DURATION=30m make sim-start`` for a bounded run.
+# Sprint 59 §59.4 — drive multiple demo tenants at once via $SIM_TENANTS.
+# Single tenant: run ``make demo-tenant`` first + export ``$TAGPULSE_API_KEY``.
+# All demo tenants: export ``SIM_TENANTS='demo-wm-dc:KEY1,demo-inv-coldchain:KEY2,demo-asset-fleet:KEY3'``
+# (each KEY printed by the matching ``make demo-*`` / ``make demo-creds`` run).
+# Overrides: ``SIM_RATE_PER_MIN=400 make sim-start`` (aggregate) to push harder;
+# ``SIM_DURATION=30m make sim-start`` for a bounded run.
 # ---------------------------------------------------------------------------
 
-sim-start:   ## Sprint 58: start the continuous demo simulator (docker compose --profile sim)
-	@if [ -z "$$TAGPULSE_API_KEY" ]; then \
-	  echo "TAGPULSE_API_KEY must be exported (run 'make demo-tenant' first)" >&2; \
+sim-start:   ## Sprint 58/59: start the continuous demo simulator (docker compose --profile sim)
+	@if [ -z "$$SIM_TENANTS" ] && [ -z "$$TAGPULSE_API_KEY" ]; then \
+	  echo "Set SIM_TENANTS (multi-tenant) or export TAGPULSE_API_KEY (single, run 'make demo-tenant' first)" >&2; \
 	  exit 2; \
 	fi
 	docker compose --profile sim up -d sim

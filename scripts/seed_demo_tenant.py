@@ -34,6 +34,10 @@ Usage:
     python scripts/seed_demo_tenant.py --reads 2000 --days 1
     DEMO_KEEP_KEY=1 python scripts/seed_demo_tenant.py
 
+    # Sprint 59 Phase B — purpose-built per-domain tenants (alongside combined):
+    python scripts/seed_demo_tenant.py --profile inventory   # demo-inv-coldchain
+    python scripts/seed_demo_tenant.py --profile asset       # demo-asset-fleet
+
     # Against the deployed `dev` Azure environment via the tools-job:
     scripts/azd-job.sh dev seed_demo_tenant.py -- --days 1
     # (equivalent helper: `make demo-tenant-dev`)
@@ -66,6 +70,8 @@ import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -88,6 +94,91 @@ DEMO_ADMIN_NAME = "Demo Admin"
 # ``scripts/smoke_setup.py::_kv_secret_name`` (covered by a regression
 # test in ``tests/unit/test_seed_demo_tenant.py``).
 DEMO_ADMIN_KV_SECRET_NAME = f"tagpulse-{DEMO_TENANT_SLUG}-admin-key"
+
+
+@dataclass(frozen=True)
+class DemoProfile:
+    """A named demo tenant: identity + which seed steps run.
+
+    Sprint 59 Track 1 Phase B: the composer drives three purpose-built
+    demo tenants from one script via ``--profile``. ``combined`` reproduces
+    the Sprint 58 ``demo-wm-dc`` "everything on one screen" build
+    byte-for-byte; ``inventory`` and ``asset`` stand up domain-deep tenants
+    (the scenario *depth* — extended catalog/roster + narrow shims — lands
+    in Phase C; Phase B only wires up the identity + step toggles).
+
+    Each profile's identity is deterministic ``uuid5(NAMESPACE_DNS,
+    "<slug>.tagpulse.local")`` so re-runs converge (same idempotency
+    contract as Sprint 58 D2). The KV admin-key secret name is derived the
+    same way smoke_setup writes it (``tagpulse-<slug>-admin-key``).
+    """
+
+    key: str
+    slug: str
+    name: str
+    admin_email: str
+    admin_name: str
+    seed_devices: bool = True
+    seed_inventory: bool = True
+    seed_assets: bool = True
+    seed_backfill: bool = True
+    seed_alerts: bool = True
+    seed_transfer: bool = True
+    # Sprint 59 Phase C: which simulator scenario preset each domain step runs.
+    # ``baseline`` reproduces the Sprint 58 combined build; the domain profiles
+    # select the richer single-domain presets (registered in each simulator's
+    # ``SCENARIOS`` dict).
+    inventory_scenario: str = "baseline"
+    asset_scenario: str = "baseline"
+
+    @property
+    def tenant_id(self) -> uuid.UUID:
+        return uuid.uuid5(uuid.NAMESPACE_DNS, f"{self.slug}.tagpulse.local")
+
+    @property
+    def admin_kv_secret_name(self) -> str:
+        return f"tagpulse-{self.slug}-admin-key"
+
+
+# Profile registry. ``combined`` reuses the frozen Sprint 58 constants above so
+# its identity is provably identical to the legacy build. ``inventory`` and
+# ``asset`` are Sprint 59 additions, each toggling off the steps that belong to
+# the *other* domain so the tenant tells one complete story.
+PROFILES: dict[str, DemoProfile] = {
+    "combined": DemoProfile(
+        key="combined",
+        slug=DEMO_TENANT_SLUG,
+        name=DEMO_TENANT_NAME,
+        admin_email=DEMO_ADMIN_EMAIL,
+        admin_name=DEMO_ADMIN_NAME,
+    ),
+    "inventory": DemoProfile(
+        key="inventory",
+        slug="demo-inv-coldchain",
+        name="Cold-Chain Distribution Center",
+        admin_email="admin@demo-inv-coldchain.tagpulse.local",
+        admin_name="Inventory Demo Admin",
+        # Inventory-only story: no asset roster, no cross-tenant transfer.
+        seed_assets=False,
+        seed_transfer=False,
+        # Domain-deep catalog: multi-lot cold-chain SKUs + quarantine zone.
+        inventory_scenario="coldchain",
+    ),
+    "asset": DemoProfile(
+        key="asset",
+        slug="demo-asset-fleet",
+        name="Returnable Asset Fleet",
+        admin_email="admin@demo-asset-fleet.tagpulse.local",
+        admin_name="Asset Demo Admin",
+        # Asset-tracking story: no inventory catalog.
+        seed_inventory=False,
+        # Domain-deep roster: named returnables across 3 categories + a
+        # geofenced site with a yard/exit zone (breach + missing narratives).
+        asset_scenario="fleet",
+    ),
+}
+
+DEFAULT_PROFILE = "combined"
 
 # ``$ENVIRONMENT`` values that mark a tools-job execution as production.
 # The composer hard-refuses these — see ``_assert_environment_safe``.
@@ -198,7 +289,7 @@ def _run(cmd: list[str], *, env: dict[str, str] | None = None) -> str:
     return proc.stdout
 
 
-def _step_smoke_setup(*, keep_key: bool, key_vault_name: str | None) -> str:
+def _step_smoke_setup(profile: DemoProfile, *, keep_key: bool, key_vault_name: str | None) -> str:
     """Run smoke_setup and return the admin API key.
 
     ``DEMO_KEEP_KEY=1`` skips key regeneration and reuses the existing
@@ -226,15 +317,15 @@ def _step_smoke_setup(*, keep_key: bool, key_vault_name: str | None) -> str:
             str(SCRIPTS_DIR / "smoke_setup.py"),
             "--full",
             "--tenant-id",
-            str(DEMO_TENANT_ID),
+            str(profile.tenant_id),
             "--tenant-slug",
-            DEMO_TENANT_SLUG,
+            profile.slug,
             "--tenant-name",
-            DEMO_TENANT_NAME,
+            profile.name,
             "--admin-email",
-            DEMO_ADMIN_EMAIL,
+            profile.admin_email,
             "--admin-name",
-            DEMO_ADMIN_NAME,
+            profile.admin_name,
         ]
         _run(cmd)
         print(f"  reusing existing $TAGPULSE_API_KEY ({existing[:10]}…)")
@@ -247,15 +338,15 @@ def _step_smoke_setup(*, keep_key: bool, key_vault_name: str | None) -> str:
         "--regenerate-key",
         "--print-full-key",
         "--tenant-id",
-        str(DEMO_TENANT_ID),
+        str(profile.tenant_id),
         "--tenant-slug",
-        DEMO_TENANT_SLUG,
+        profile.slug,
         "--tenant-name",
-        DEMO_TENANT_NAME,
+        profile.name,
         "--admin-email",
-        DEMO_ADMIN_EMAIL,
+        profile.admin_email,
         "--admin-name",
-        DEMO_ADMIN_NAME,
+        profile.admin_name,
     ]
     if key_vault_name:
         cmd.extend(["--key-vault-name", key_vault_name])
@@ -264,8 +355,8 @@ def _step_smoke_setup(*, keep_key: bool, key_vault_name: str | None) -> str:
 
     if key_vault_name:
         # smoke_setup redacted plaintext from stdout — fetch from KV.
-        key = _fetch_admin_key_from_keyvault(key_vault_name, DEMO_ADMIN_KV_SECRET_NAME)
-        print(f"  fetched admin API key from KV ({DEMO_ADMIN_KV_SECRET_NAME}): {key[:10]}…")
+        key = _fetch_admin_key_from_keyvault(key_vault_name, profile.admin_kv_secret_name)
+        print(f"  fetched admin API key from KV ({profile.admin_kv_secret_name}): {key[:10]}…")
         return key
 
     match = _EXPORT_KEY_RE.search(stdout)
@@ -281,12 +372,12 @@ def _step_smoke_setup(*, keep_key: bool, key_vault_name: str | None) -> str:
     return key
 
 
-def _step_simulate_devices(api_key: str, *, devices: int, tags: int) -> None:
+def _step_simulate_devices(profile: DemoProfile, api_key: str, *, devices: int, tags: int) -> None:
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "simulate_devices.py"),
         "--tenant-id",
-        str(DEMO_TENANT_ID),
+        str(profile.tenant_id),
         "--api-key",
         api_key,
         "--devices",
@@ -298,14 +389,16 @@ def _step_simulate_devices(api_key: str, *, devices: int, tags: int) -> None:
     _run(cmd)
 
 
-def _step_simulate_inventory(api_key: str, *, units: int) -> None:
+def _step_simulate_inventory(profile: DemoProfile, api_key: str, *, units: int) -> None:
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "simulate_inventory.py"),
         "--tenant-id",
-        str(DEMO_TENANT_ID),
+        str(profile.tenant_id),
         "--api-key",
         api_key,
+        "--scenario",
+        profile.inventory_scenario,
         "--units",
         str(units),
         "--seed-only",
@@ -313,14 +406,18 @@ def _step_simulate_inventory(api_key: str, *, units: int) -> None:
     _run(cmd)
 
 
-def _step_simulate_assets(api_key: str, *, assets: int, readers: int, iterations: int) -> None:
+def _step_simulate_assets(
+    profile: DemoProfile, api_key: str, *, assets: int, readers: int, iterations: int
+) -> None:
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "simulate_assets.py"),
         "--tenant-id",
-        str(DEMO_TENANT_ID),
+        str(profile.tenant_id),
         "--api-key",
         api_key,
+        "--scenario",
+        profile.asset_scenario,
         "--assets",
         str(assets),
         "--readers",
@@ -333,7 +430,9 @@ def _step_simulate_assets(api_key: str, *, assets: int, readers: int, iterations
     _run(cmd)
 
 
-def _step_backfill_history(api_key: str, *, days: float, reads: int, batch_size: int) -> None:
+def _step_backfill_history(
+    profile: DemoProfile, api_key: str, *, days: float, reads: int, batch_size: int
+) -> None:
     if reads <= 0:
         print("  skipped (reads=0)")
         return
@@ -341,7 +440,7 @@ def _step_backfill_history(api_key: str, *, days: float, reads: int, batch_size:
         sys.executable,
         str(SCRIPTS_DIR / "backfill_history.py"),
         "--tenant-id",
-        str(DEMO_TENANT_ID),
+        str(profile.tenant_id),
         "--api-key",
         api_key,
         "--days",
@@ -354,12 +453,12 @@ def _step_backfill_history(api_key: str, *, days: float, reads: int, batch_size:
     _run(cmd)
 
 
-def _step_seed_alerts(api_key: str, *, natural: int, resolved: int) -> None:
+def _step_seed_alerts(profile: DemoProfile, api_key: str, *, natural: int, resolved: int) -> None:
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "seed_alerts.py"),
         "--tenant-id",
-        str(DEMO_TENANT_ID),
+        str(profile.tenant_id),
         "--api-key",
         api_key,
         "--natural-count",
@@ -370,12 +469,12 @@ def _step_seed_alerts(api_key: str, *, natural: int, resolved: int) -> None:
     _run(cmd)
 
 
-def _step_seed_transfer(api_key: str, *, epc_count: int) -> None:
+def _step_seed_transfer(profile: DemoProfile, api_key: str, *, epc_count: int) -> None:
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "seed_transfer.py"),
         "--tenant-id",
-        str(DEMO_TENANT_ID),
+        str(profile.tenant_id),
         "--api-key",
         api_key,
         "--epc-count",
@@ -386,6 +485,17 @@ def _step_seed_transfer(api_key: str, *, epc_count: int) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--profile",
+        choices=sorted(PROFILES),
+        default=DEFAULT_PROFILE,
+        help=(
+            "Which demo tenant to seed (default: combined). 'combined' is the "
+            "Sprint 58 SuperMart Distribution Center (both domains on one "
+            "screen); 'inventory' is the cold-chain inventory tenant; 'asset' "
+            "is the returnable asset-fleet tenant."
+        ),
+    )
     parser.add_argument(
         "--devices",
         type=int,
@@ -477,6 +587,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    profile = PROFILES[args.profile]
+
     env_mode = _assert_environment_safe()
     in_cluster = env_mode != "local"
     key_vault_name = os.environ.get("TAGPULSE_SMOKE_KEY_VAULT_NAME") if in_cluster else None
@@ -493,39 +605,97 @@ def main() -> int:
     skip_backfill = os.environ.get("DEMO_SKIP_BACKFILL") == "1"
     reads = 0 if skip_backfill else args.reads
 
-    print(f"Demo tenant composer → slug={DEMO_TENANT_SLUG} id={DEMO_TENANT_ID}")
+    print(
+        f"Demo tenant composer → profile={profile.key} slug={profile.slug} id={profile.tenant_id}"
+    )
     print(f"  ENVIRONMENT={env_mode}" + ("  (tools-job mode)" if in_cluster else ""))
     if key_vault_name:
-        print(f"  Key Vault: {key_vault_name} (admin key → {DEMO_ADMIN_KV_SECRET_NAME})")
+        print(f"  Key Vault: {key_vault_name} (admin key → {profile.admin_kv_secret_name})")
     if keep_key:
         print("  DEMO_KEEP_KEY=1: reusing existing $TAGPULSE_API_KEY")
     if skip_backfill:
         print("  DEMO_SKIP_BACKFILL=1: skipping historical backfill")
 
     t0 = time.monotonic()
-    total_steps = 7
+
+    # Steps 2+ are gated per-profile (Sprint 59 Phase B). ``combined`` enables
+    # all six, reproducing the Sprint 58 build exactly (`[1/7]` … `[7/7]`);
+    # the domain profiles drop the steps that belong to the other domain and
+    # the step counter renumbers accordingly. The callables run lazily after
+    # smoke_setup assigns ``api_key`` below.
+    seed_steps: list[tuple[bool, str, Callable[[], None]]] = [
+        (
+            profile.seed_devices,
+            "simulate_devices — seed reader devices",
+            lambda: _step_simulate_devices(profile, api_key, devices=args.devices, tags=args.tags),
+        ),
+        (
+            profile.seed_inventory,
+            "simulate_inventory — seed products and lots",
+            lambda: _step_simulate_inventory(profile, api_key, units=args.inventory_units),
+        ),
+        (
+            profile.seed_assets,
+            "simulate_assets — seed assets and bind tags",
+            lambda: _step_simulate_assets(
+                profile,
+                api_key,
+                assets=args.assets,
+                readers=args.readers,
+                iterations=args.asset_iterations,
+            ),
+        ),
+        (
+            profile.seed_backfill,
+            f"backfill_history — replay {reads} reads across {args.days} day(s)",
+            lambda: _step_backfill_history(
+                profile,
+                api_key,
+                days=args.days,
+                reads=reads,
+                batch_size=args.backfill_batch_size,
+            ),
+        ),
+        (
+            profile.seed_alerts,
+            "seed_alerts — open + resolved alert mix",
+            lambda: _step_seed_alerts(
+                profile,
+                api_key,
+                natural=args.natural_alerts,
+                resolved=args.resolved_alerts,
+            ),
+        ),
+        (
+            profile.seed_transfer,
+            "seed_transfer — one in-flight cross-tenant transfer",
+            lambda: _step_seed_transfer(profile, api_key, epc_count=args.transfer_epc_count),
+        ),
+    ]
+    enabled_steps = [(title, run) for ok, title, run in seed_steps if ok]
+    total_steps = 1 + len(enabled_steps)
 
     _print_header(1, total_steps, "smoke_setup — tenant + admin + rules + zones")
-    api_key = _step_smoke_setup(keep_key=keep_key, key_vault_name=key_vault_name)
+    api_key = _step_smoke_setup(profile, keep_key=keep_key, key_vault_name=key_vault_name)
 
     if args.creds_only:
         elapsed = time.monotonic() - t0
         print()
         print("=" * 64)
         print(f"Demo credentials ready in {elapsed:.1f}s (--creds-only: data seeding skipped)")
-        print(f"  tenant_id:   {DEMO_TENANT_ID}")
-        print(f"  tenant_slug: {DEMO_TENANT_SLUG}")
+        print(f"  tenant_id:   {profile.tenant_id}")
+        print(f"  tenant_slug: {profile.slug}")
         print()
         if key_vault_name:
             print("Admin API key written to Key Vault. Retrieve it from your laptop:")
             print()
             print(
                 f"  export TAGPULSE_API_KEY=$(scripts/azd-kv-get.sh {env_mode} "
-                f"{DEMO_ADMIN_KV_SECRET_NAME})"
+                f"{profile.admin_kv_secret_name})"
             )
         else:
             print("Log in to the UI as the demo admin:")
-            print(f"  Email:    {DEMO_ADMIN_EMAIL}")
+            print(f"  Email:    {profile.admin_email}")
             print(f"  API key:  {api_key}")
             print()
             print("  export TAGPULSE_API_KEY=" + api_key)
@@ -536,48 +706,16 @@ def main() -> int:
             )
         return 0
 
-    _print_header(2, total_steps, "simulate_devices — seed reader devices")
-    _step_simulate_devices(api_key, devices=args.devices, tags=args.tags)
-
-    _print_header(3, total_steps, "simulate_inventory — seed products and lots")
-    _step_simulate_inventory(api_key, units=args.inventory_units)
-
-    _print_header(4, total_steps, "simulate_assets — seed assets and bind tags")
-    _step_simulate_assets(
-        api_key,
-        assets=args.assets,
-        readers=args.readers,
-        iterations=args.asset_iterations,
-    )
-
-    _print_header(
-        5,
-        total_steps,
-        f"backfill_history — replay {reads} reads across {args.days} day(s)",
-    )
-    _step_backfill_history(
-        api_key,
-        days=args.days,
-        reads=reads,
-        batch_size=args.backfill_batch_size,
-    )
-
-    _print_header(6, total_steps, "seed_alerts — open + resolved alert mix")
-    _step_seed_alerts(
-        api_key,
-        natural=args.natural_alerts,
-        resolved=args.resolved_alerts,
-    )
-
-    _print_header(7, total_steps, "seed_transfer — one in-flight cross-tenant transfer")
-    _step_seed_transfer(api_key, epc_count=args.transfer_epc_count)
+    for step_no, (title, run) in enumerate(enabled_steps, start=2):
+        _print_header(step_no, total_steps, title)
+        run()
 
     elapsed = time.monotonic() - t0
     print()
     print("=" * 64)
     print(f"Demo tenant ready in {elapsed:.1f}s")
-    print(f"  tenant_id:   {DEMO_TENANT_ID}")
-    print(f"  tenant_slug: {DEMO_TENANT_SLUG}")
+    print(f"  tenant_id:   {profile.tenant_id}")
+    print(f"  tenant_slug: {profile.slug}")
     print()
     if key_vault_name:
         # In-cluster path: plaintext key is in KV, never in Log Analytics.
@@ -586,12 +724,12 @@ def main() -> int:
         print()
         print(
             f"  export TAGPULSE_API_KEY=$(scripts/azd-kv-get.sh {env_mode} "
-            f"{DEMO_ADMIN_KV_SECRET_NAME})"
+            f"{profile.admin_kv_secret_name})"
         )
         print()
         print(
             f"  (or: az keyvault secret show --vault-name {key_vault_name} "
-            f"--name {DEMO_ADMIN_KV_SECRET_NAME} --query value -o tsv)"
+            f"--name {profile.admin_kv_secret_name} --query value -o tsv)"
         )
     else:
         print("  export TAGPULSE_API_KEY=" + api_key)

@@ -92,6 +92,11 @@ class TenantModel(Base):
     logo_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     brand_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    # -- Sprint 59 Track 2 (59.9, ADR-024 D8): per-tenant indoor-position
+    # estimator config placeholder. NULL = unconfigured. Created-not-used in
+    # Sprint 59 — the RSSI/count weight formula varies company-to-company, so
+    # it must be config, never hardcoded; the Sprint 61 estimator reads it. --
+    position_strategy: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -537,6 +542,10 @@ class SiteModel(Base):
     # -- Sprint 34 gap 2.7: geolocation --
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # -- Sprint 59 Track 2 (59.9): floor coordinate frame for indoor (x, y).
+    # NULL = geographic-only (today's behaviour). Shape (units, extent, origin
+    # anchor, rotation, optional geo-anchor) per ADR-024. --
+    coord_system: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     default_timezone: Mapped[str] = mapped_column(String(64), nullable=False, server_default="UTC")
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -866,6 +875,61 @@ class ExternalLocationModel(Base):
     accuracy_meters: Mapped[float | None] = mapped_column(Float, nullable=True)
     speed_kph: Mapped[float | None] = mapped_column(Float, nullable=True)
     heading_deg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
+
+
+class AntennaModel(Base):
+    """Per-antenna position within a site's coordinate frame (Sprint 59 Track 2).
+
+    Position lives per **antenna**, not per device: a fixed positioning reader
+    fans 2-8 antennas across tens of metres of coax, each a distinct radiator at
+    a distinct ``(x, y)``. ``port`` matches ``tag_reads.reader_antenna``.
+    Tenant isolation flows through the ``device_id`` FK (devices are
+    tenant-scoped), so this table carries no ``tenant_id`` of its own. Amends
+    ADR-024 (v1 put ``position_*`` on ``devices``).
+    """
+
+    __tablename__ = "antennas"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False
+    )
+    port: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    x: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    y: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    z: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    gain_dbi: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    __table_args__ = (UniqueConstraint("device_id", "port", name="uq_antennas_device_port"),)
+
+
+class AssetPositionModel(Base):
+    """Per-asset ``(x, y)`` position fix hypertable (Sprint 59 Track 2).
+
+    Created in Sprint 59 but written to by nothing: ``source='precomputed'`` is
+    the Sprint 60 BYO-ingest path, ``'computed'`` is the Sprint 61 estimator,
+    and ``'zone'`` is the Sprint 60 retrieval-time fallback. ``asset_id`` carries
+    no FK (hypertable, matches ADR-013/014). The ``id + time`` composite PK
+    follows the ``external_locations`` precedent.
+    """
+
+    __tablename__ = "asset_positions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True, nullable=False
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    x: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    y: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
+    z: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(3, 2), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
 
 

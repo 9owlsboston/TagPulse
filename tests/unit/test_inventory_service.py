@@ -11,6 +11,7 @@ import pytest
 from tagpulse.api.services.inventory_service import (
     InventoryService,
     ProductNotFoundError,
+    StockItemLedgerError,
 )
 from tagpulse.models.schemas import (
     LotCreate,
@@ -131,6 +132,7 @@ class _FakeLotRepo:
 class _FakeStockRepo:
     def __init__(self) -> None:
         self.items: dict[UUID, StockItemResponse] = {}
+        self.deleted: list[UUID] = []
 
     async def create(self, tenant_id, payload: StockItemCreate):  # type: ignore[no-untyped-def]
         item = _stock(
@@ -189,6 +191,18 @@ class _FakeStockRepo:
             for (p, lot, z), q in buckets.items()
         ]
 
+    async def delete(self, tenant_id, stock_item_id, *, force=False):  # type: ignore[no-untyped-def]
+        item = self.items.get(stock_item_id)
+        if item is None:
+            return False
+        if item.state == "in_stock" and not force:
+            raise ValueError(
+                "Cannot delete an in_stock item; use ?force=true or change state first"
+            )
+        del self.items[stock_item_id]
+        self.deleted.append(stock_item_id)
+        return True
+
 
 class _FakeMovementRepo:
     def __init__(self) -> None:
@@ -211,6 +225,9 @@ class _FakeMovementRepo:
 
     async def list(self, tenant_id, **kw):  # type: ignore[no-untyped-def]
         return list(self.rows)
+
+    async def count_for_stock_item(self, tenant_id, stock_item_id):  # type: ignore[no-untyped-def]
+        return sum(1 for r in self.rows if r.stock_item_id == stock_item_id)
 
 
 class _FakeMappingRepo:
@@ -415,4 +432,108 @@ async def test_delete_tag_data_mapping_audits_only_when_deleted() -> None:
     assert audit.entries[-1]["action"] == "tag_data_mapping.deleted"
     audit.entries.clear()
     assert await svc.delete_tag_data_mapping(uuid4(), uuid4(), uuid4()) is False
+    assert audit.entries == []
+
+
+# -- Sprint 59 (§59.6): force-delete must never orphan the movement ledger --
+
+
+async def _make_stock_item(svc: InventoryService, products: Any, tenant: UUID) -> StockItemResponse:
+    p = _product(tenant)
+    products.products[p.id] = p
+    return await svc.create_stock_item(
+        tenant,
+        uuid4(),
+        StockItemCreate(product_id=p.id, binding_value="urn:epc:sgtin:59"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_force_delete_moved_item_raises_ledger_error() -> None:
+    """A unit with movement history cannot be hard-deleted even with force=True;
+    the service raises StockItemLedgerError (route maps to a structured 409)
+    instead of letting the RESTRICT FK explode into a 500."""
+    svc, products, _, stock, movements, _, audit = _svc()
+    tenant = uuid4()
+    item = await _make_stock_item(svc, products, tenant)
+    await movements.insert(
+        tenant,
+        item.id,
+        from_zone_id=None,
+        to_zone_id=uuid4(),
+        movement_type="move",
+        device_id=None,
+        occurred_at=datetime.now(UTC),
+    )
+    audit.entries.clear()
+
+    with pytest.raises(StockItemLedgerError) as excinfo:
+        await svc.delete_stock_item(tenant, uuid4(), item.id, force=True)
+
+    assert excinfo.value.movement_count == 1
+    assert excinfo.value.stock_item_id == item.id
+    # The item survives and nothing was audited as a deletion.
+    assert item.id in stock.items
+    assert stock.deleted == []
+    assert audit.entries == []
+
+
+@pytest.mark.asyncio
+async def test_ledger_guard_applies_even_to_consumed_item() -> None:
+    """The ledger guard is independent of state: a consumed (already retired)
+    item with movements still cannot be hard-deleted."""
+    svc, products, _, stock, movements, _, _ = _svc()
+    tenant = uuid4()
+    item = await _make_stock_item(svc, products, tenant)
+    stock.items[item.id] = stock.items[item.id].model_copy(update={"state": "consumed"})
+    await movements.insert(
+        tenant,
+        item.id,
+        from_zone_id=None,
+        to_zone_id=uuid4(),
+        movement_type="move",
+        device_id=None,
+        occurred_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(StockItemLedgerError):
+        await svc.delete_stock_item(tenant, uuid4(), item.id, force=True)
+    assert item.id in stock.items
+
+
+@pytest.mark.asyncio
+async def test_force_delete_unmoved_item_succeeds_and_audits() -> None:
+    """force=True bypasses the *state* guard for a never-moved in_stock unit."""
+    svc, products, _, stock, _, _, audit = _svc()
+    tenant = uuid4()
+    item = await _make_stock_item(svc, products, tenant)
+    audit.entries.clear()
+
+    deleted = await svc.delete_stock_item(tenant, uuid4(), item.id, force=True)
+
+    assert deleted is True
+    assert item.id not in stock.items
+    assert audit.entries[-1]["action"] == "stock_item.deleted"
+
+
+@pytest.mark.asyncio
+async def test_delete_in_stock_without_force_blocked_by_state_guard() -> None:
+    """Without force, an in_stock unit (no movements) is still blocked, but by
+    the repo state guard (plain ValueError), not the ledger guard."""
+    svc, products, _, stock, _, _, _ = _svc()
+    tenant = uuid4()
+    item = await _make_stock_item(svc, products, tenant)
+
+    with pytest.raises(ValueError) as excinfo:
+        await svc.delete_stock_item(tenant, uuid4(), item.id, force=False)
+
+    assert not isinstance(excinfo.value, StockItemLedgerError)
+    assert item.id in stock.items
+
+
+@pytest.mark.asyncio
+async def test_delete_missing_item_returns_false() -> None:
+    svc, _, _, _, _, _, audit = _svc()
+    deleted = await svc.delete_stock_item(uuid4(), uuid4(), uuid4(), force=True)
+    assert deleted is False
     assert audit.entries == []

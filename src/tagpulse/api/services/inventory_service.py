@@ -57,6 +57,27 @@ class StockItemNotFoundError(Exception):
     """Raised when a stock_item is missing for the caller's tenant."""
 
 
+class StockItemLedgerError(ValueError):
+    """Raised when a stock item cannot be hard-deleted because the immutable
+    movement ledger references it.
+
+    ``force=true`` bypasses the *state* guard but never the ledger: a unit that
+    has ever moved must be retired (soft-deleted via ``state=consumed``) so its
+    ``stock_movements`` history is preserved. See ADR-031.
+
+    Subclasses :class:`ValueError` so callers that map ``ValueError`` to HTTP
+    409 keep working even if they do not catch this type explicitly.
+    """
+
+    def __init__(self, stock_item_id: UUID, movement_count: int) -> None:
+        self.stock_item_id = stock_item_id
+        self.movement_count = movement_count
+        super().__init__(
+            f"Cannot delete stock item {stock_item_id}: {movement_count} ledger "
+            "movement(s) reference it. Retire it instead (set state=consumed)."
+        )
+
+
 class InventoryService:
     """CRUD + state transitions for inventory entities."""
 
@@ -345,6 +366,12 @@ class InventoryService:
         *,
         force: bool = False,
     ) -> bool:
+        # The movement ledger is immutable (stock_movements FK is ON DELETE
+        # RESTRICT). A moved unit can never be hard-deleted — not even with
+        # force=true — it must be retired via state=consumed. See ADR-031.
+        movement_count = await self._movements.count_for_stock_item(tenant_id, stock_item_id)
+        if movement_count > 0:
+            raise StockItemLedgerError(stock_item_id, movement_count)
         deleted = await self._stock.delete(tenant_id, stock_item_id, force=force)
         if deleted:
             await self._audit.log(

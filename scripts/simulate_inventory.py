@@ -147,6 +147,218 @@ SITE_NAME = "Boston DC"
 
 
 # --------------------------------------------------------------------------- #
+# Scenarios (Sprint 59 Phase C)
+#
+# A *scenario* bundles the site name, the zone pipeline, the catalog, and an
+# optional quarantine divert into one named preset. ``baseline`` reproduces the
+# Sprint 58 behaviour byte-for-byte (the combined ``demo-wm-dc`` tenant still
+# seeds it), so the constants above are reused verbatim. ``coldchain`` is the
+# Sprint 59 inventory-domain tenant: a deeper catalog across four categories
+# with multiple lots at staggered expiries (so FEFO / near-expiry is visible),
+# a deliberately low-stock SKU, and a quarantine/hold zone a fraction of
+# receiving units divert into.
+# --------------------------------------------------------------------------- #
+
+
+# Cold-chain catalog — ~13 product/lot rows across vaccines/biologics, dairy,
+# produce, and dry goods. Multiple rows may share a ``sku``/``item_ref`` (one
+# product) with distinct ``lot_code``s so a single SKU shows several lots at
+# different expiries; ``_seed_catalog`` keys products on SKU and lots on
+# lot_code, so this materialises one product with N lots.
+_COLDCHAIN_CATALOG: list[CatalogItem] = [
+    # Vaccines / biologics (pharma).
+    CatalogItem(
+        sku="SKU-VAX-X-05ML",
+        name="Vaccine-X 0.5 mL vial",
+        category="pharma/vaccine",
+        item_ref="200001",
+        lot_code="VAX-2604-A",
+        expires_in_days=34,
+        units=10,
+    ),
+    CatalogItem(
+        sku="SKU-VAX-X-05ML",  # second lot, same product — near-expiry
+        name="Vaccine-X 0.5 mL vial",
+        category="pharma/vaccine",
+        item_ref="200001",
+        lot_code="VAX-2604-B",
+        expires_in_days=6,  # near-expiry → stock.expiring_within
+        units=6,
+    ),
+    CatalogItem(
+        sku="SKU-INSULIN-10ML",
+        name="Insulin 10 mL vial",
+        category="pharma/biologic",
+        item_ref="200002",
+        lot_code="INS-2606",
+        expires_in_days=45,
+        units=8,
+    ),
+    CatalogItem(
+        sku="SKU-MAB-5ML",
+        name="Monoclonal Ab 5 mL",
+        category="pharma/biologic",
+        item_ref="200003",
+        lot_code="MAB-0612",
+        expires_in_days=3,  # critically near-expiry
+        units=5,
+    ),
+    # Dairy.
+    CatalogItem(
+        sku="SKU-MILK-1L",
+        name="Milk 1L",
+        category="food/dairy",
+        item_ref="100001",
+        lot_code="MILK-0501-A",
+        expires_in_days=4,  # near-expiry
+        units=12,
+    ),
+    CatalogItem(
+        sku="SKU-MILK-1L",  # fresher second lot
+        name="Milk 1L",
+        category="food/dairy",
+        item_ref="100001",
+        lot_code="MILK-0509-B",
+        expires_in_days=12,
+        units=10,
+    ),
+    CatalogItem(
+        sku="SKU-YOGURT-4PK",
+        name="Yogurt 4-pack",
+        category="food/dairy",
+        item_ref="100002",
+        lot_code="YOG-0428-B",
+        expires_in_days=15,
+        units=10,
+    ),
+    CatalogItem(
+        sku="SKU-CHEESE-200G",
+        name="Cheese 200g",
+        category="food/dairy",
+        item_ref="100003",
+        lot_code="CHS-0301-K",
+        expires_in_days=90,
+        units=8,
+    ),
+    # Produce.
+    CatalogItem(
+        sku="SKU-STRAWBERRY-1LB",
+        name="Strawberries 1 lb",
+        category="food/produce",
+        item_ref="110001",
+        lot_code="STR-0610",
+        expires_in_days=2,  # near-expiry
+        units=9,
+    ),
+    CatalogItem(
+        sku="SKU-LETTUCE-HEAD",
+        name="Lettuce, head",
+        category="food/produce",
+        item_ref="110002",
+        lot_code="LET-0611",
+        expires_in_days=5,
+        units=10,
+    ),
+    # Dry goods (long shelf life; Rice is the deliberately low-stock SKU).
+    CatalogItem(
+        sku="SKU-RICE-5KG",
+        name="Rice 5 kg",
+        category="food/dry-goods",
+        item_ref="120001",
+        lot_code="RICE-2026",
+        expires_in_days=365,
+        units=2,  # low-stock → reorder narrative
+    ),
+    CatalogItem(
+        sku="SKU-BEANS-CAN",
+        name="Canned beans 400g",
+        category="food/dry-goods",
+        item_ref="120002",
+        lot_code="BEAN-2027",
+        expires_in_days=730,
+        units=14,
+    ),
+    CatalogItem(
+        sku="SKU-PASTA-500G",
+        name="Pasta 500g",
+        category="food/dry-goods",
+        item_ref="120003",
+        lot_code="PAS-2026",
+        expires_in_days=540,
+        units=12,
+    ),
+]
+
+
+# Cold-chain zone pipeline — the four forward-flow zones plus a terminal
+# Quarantine / Hold zone a fraction of receiving units divert into.
+_COLDCHAIN_ZONE_PIPELINE: list[tuple[str, str]] = [
+    ("Receiving Dock", "CC-Receiving"),
+    ("Cold Storage", "CC-ColdStorage"),
+    ("Pick Floor", "CC-PickFloor"),
+    ("Shipping Dock", "CC-Shipping"),
+    ("Quarantine / Hold", "CC-Quarantine"),
+]
+
+
+@dataclass(frozen=True)
+class Scenario:
+    """A named inventory-seeding preset.
+
+    ``quarantine_zone`` names a terminal hold zone (must be the LAST entry in
+    ``zone_pipeline``); when set, a ``quarantine_fraction`` of units whose lot
+    is in ``quarantine_lot_codes`` divert Receiving → Quarantine and stop,
+    instead of flowing forward. ``baseline`` leaves it unset, so the forward
+    flow is unchanged.
+    """
+
+    name: str
+    site_name: str
+    address: str
+    zone_pipeline: list[tuple[str, str]]
+    catalog: list[CatalogItem]
+    quarantine_zone: str | None = None
+    quarantine_lot_codes: tuple[str, ...] = ()
+    quarantine_fraction: float = 0.0
+
+    @property
+    def quarantine_index(self) -> int | None:
+        """Index of the quarantine zone in ``zone_pipeline`` (None if unset)."""
+        if self.quarantine_zone is None:
+            return None
+        return len(self.zone_pipeline) - 1
+
+    @property
+    def flow_stage_count(self) -> int:
+        """Number of forward-flow zones (excludes the quarantine terminal)."""
+        return len(self.zone_pipeline) - (0 if self.quarantine_zone is None else 1)
+
+
+SCENARIOS: dict[str, Scenario] = {
+    "baseline": Scenario(
+        name="baseline",
+        site_name=SITE_NAME,
+        address="1 Warehouse Way, Boston, MA",
+        zone_pipeline=ZONE_PIPELINE,
+        catalog=CATALOG,
+    ),
+    "coldchain": Scenario(
+        name="coldchain",
+        site_name="Cold-Chain Distribution Center",
+        address="5 Cold Storage Row, Boston, MA",
+        zone_pipeline=_COLDCHAIN_ZONE_PIPELINE,
+        catalog=_COLDCHAIN_CATALOG,
+        quarantine_zone="Quarantine / Hold",
+        # Reject a fraction of two near-expiry/biologic lots at receiving.
+        quarantine_lot_codes=("MAB-0612", "STR-0610"),
+        quarantine_fraction=0.5,
+    ),
+}
+
+DEFAULT_SCENARIO = "baseline"
+
+
+# --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
 
@@ -241,34 +453,39 @@ def _ensure_inventory_mode(client: httpx.Client, tenant_id: str) -> list[str]:
 
 
 def _seed_site_and_devices(
-    client: httpx.Client, tenant_id: str
+    client: httpx.Client,
+    tenant_id: str,
+    *,
+    site_name: str,
+    address: str,
+    zone_pipeline: list[tuple[str, str]],
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Ensure the site + 4 zone-anchor devices exist. Return (site_id, devices)."""
+    """Ensure the site + zone-anchor devices exist. Return (site_id, devices)."""
     headers = _headers(tenant_id)
 
     # Site.
     sites_r = client.get(f"{API_URL}/sites", headers=headers)
     sites = sites_r.json() if _ok(sites_r) else []
-    site = next((s for s in sites if s["name"] == SITE_NAME), None)
+    site = next((s for s in sites if s["name"] == site_name), None)
     if site is None:
         r = client.post(
             f"{API_URL}/sites",
             headers=headers,
-            json={"name": SITE_NAME, "address": "1 Warehouse Way, Boston, MA"},
+            json={"name": site_name, "address": address},
         )
         if not _ok(r):
             print(f"  FAIL site: {r.status_code} {r.text}")
             sys.exit(1)
         site = r.json()
-        print(f"  Created site: {SITE_NAME} ({site['id']})")
+        print(f"  Created site: {site_name} ({site['id']})")
     else:
-        print(f"  Reusing site: {SITE_NAME} ({site['id']})")
+        print(f"  Reusing site: {site_name} ({site['id']})")
 
-    # Devices — one per zone in ZONE_PIPELINE.
+    # Devices — one per zone in the pipeline.
     devices_r = client.get(f"{API_URL}/device-registry", headers=headers, params={"limit": 1000})
     existing_devices = {d["name"]: d for d in (devices_r.json() if _ok(devices_r) else [])}
     devices: list[dict[str, Any]] = []
-    for _zone_name, device_name in ZONE_PIPELINE:
+    for _zone_name, device_name in zone_pipeline:
         if device_name in existing_devices:
             devices.append(existing_devices[device_name])
             print(f"  Reusing device: {device_name}")
@@ -292,7 +509,12 @@ def _seed_site_and_devices(
 
 
 def _seed_zones(
-    client: httpx.Client, tenant_id: str, site_id: str, devices: list[dict[str, Any]]
+    client: httpx.Client,
+    tenant_id: str,
+    site_id: str,
+    devices: list[dict[str, Any]],
+    *,
+    zone_pipeline: list[tuple[str, str]],
 ) -> dict[str, str]:
     """Ensure reader-bound zones exist. Return device_id → zone_id map."""
     headers = _headers(tenant_id)
@@ -300,7 +522,7 @@ def _seed_zones(
     existing = {z["name"]: z for z in (zones_r.json() if _ok(zones_r) else [])}
 
     device_zone: dict[str, str] = {}
-    for (zone_name, _device_name), device in zip(ZONE_PIPELINE, devices, strict=True):
+    for (zone_name, _device_name), device in zip(zone_pipeline, devices, strict=True):
         if zone_name in existing:
             zone = existing[zone_name]
             print(f"  Reusing zone: {zone_name}")
@@ -324,13 +546,15 @@ def _seed_zones(
     return device_zone
 
 
-def _seed_catalog(client: httpx.Client, tenant_id: str) -> list[CatalogItem]:
+def _seed_catalog(
+    client: httpx.Client, tenant_id: str, *, catalog: list[CatalogItem]
+) -> list[CatalogItem]:
     headers = _headers(tenant_id)
     products_r = client.get(f"{API_URL}/products", headers=headers, params={"limit": 1000})
     existing_products = {p["sku"]: p for p in (products_r.json() if _ok(products_r) else [])}
 
     seeded: list[CatalogItem] = []
-    for item in CATALOG:
+    for item in catalog:
         item.gtin = _gtin14(COMPANY_PREFIX, item.item_ref)
 
         # Product.
@@ -351,6 +575,10 @@ def _seed_catalog(client: httpx.Client, tenant_id: str) -> list[CatalogItem]:
                 print(f"  FAIL product {item.sku}: {r.status_code} {r.text}")
                 continue
             product = r.json()
+            # Register so a later catalog row with the same SKU (a second lot
+            # of the same product) reuses this product instead of re-POSTing a
+            # duplicate SKU (which 409s and would drop the lot).
+            existing_products[item.sku] = product
             print(f"  Created product: {item.sku}")
         else:
             print(f"  Reusing product: {item.sku}")
@@ -364,16 +592,10 @@ def _seed_catalog(client: httpx.Client, tenant_id: str) -> list[CatalogItem]:
                     json={"gtin": item.gtin},
                 )
                 if _ok(r):
-                    print(
-                        f"    Healed GTIN: {product.get('gtin')!r} -> "
-                        f"{item.gtin!r}"
-                    )
+                    print(f"    Healed GTIN: {product.get('gtin')!r} -> {item.gtin!r}")
                     product = r.json()
                 else:
-                    print(
-                        f"    WARN GTIN heal failed for {item.sku}: "
-                        f"{r.status_code} {r.text}"
-                    )
+                    print(f"    WARN GTIN heal failed for {item.sku}: {r.status_code} {r.text}")
         item.product_id = product["id"]
 
         # Lot.
@@ -445,37 +667,58 @@ class StockUnit:
         return self.item.lot_code
 
 
-def _build_units(catalog: list[CatalogItem], duration: float) -> list[StockUnit]:
+def _build_units(scenario: Scenario, duration: float) -> list[StockUnit]:
     """Generate stock units with stable EPCs and a per-unit movement schedule.
 
     Serial numbering scheme (stable across runs):
         product_index * 100_000 + unit_index_within_lot
-    so re-running the simulator hits the same stock_item rows.
+    so re-running the simulator hits the same stock_item rows. Catalog rows
+    that share a SKU still get distinct ``product_index`` slots, so their EPCs
+    never collide.
+
+    When ``scenario`` defines a quarantine zone, a ``quarantine_fraction`` of
+    units whose lot is flagged divert Receiving → Quarantine and stop; the
+    forward-flow path is unchanged (the ``baseline`` scenario has no quarantine
+    zone, so it draws the exact same random sequence as before).
     """
+    catalog = scenario.catalog
+    q_idx = scenario.quarantine_index
+    max_flow_stage = scenario.flow_stage_count - 1
     units: list[StockUnit] = []
     for product_idx, item in enumerate(catalog):
         for unit_idx in range(item.units):
             serial = (product_idx + 1) * 100_000 + unit_idx
             epc_hex = _sgtin96_hex(COMPANY_PREFIX, item.item_ref, serial)
 
-            # Pick a destination stage for this unit.
-            r = random.random()
-            if r < 0.30:
-                final_stage = 1  # stays in Cold Storage
-            elif r < 0.50:
-                final_stage = 2  # reaches Pick Floor
+            quarantined = (
+                q_idx is not None
+                and item.lot_code in scenario.quarantine_lot_codes
+                and random.random() < scenario.quarantine_fraction
+            )
+            if quarantined and q_idx is not None:
+                # Received, then diverted to the hold zone — no forward flow.
+                t0 = random.uniform(0, duration * 0.10)
+                t1 = t0 + random.uniform(duration * 0.05, duration * 0.15)
+                schedule = [(t0, 0), (t1, q_idx)]
             else:
-                final_stage = 3  # ships out
+                # Pick a destination stage for this unit.
+                r = random.random()
+                if r < 0.30:
+                    final_stage = min(1, max_flow_stage)  # stays in Cold Storage
+                elif r < 0.50:
+                    final_stage = min(2, max_flow_stage)  # reaches Pick Floor
+                else:
+                    final_stage = min(3, max_flow_stage)  # ships out
 
-            # Spread reads across the duration so movement is observable.
-            schedule: list[tuple[float, int]] = []
-            t = random.uniform(0, duration * 0.10)  # arrival jitter
-            for stage in range(final_stage + 1):
-                schedule.append((t, stage))
-                # Dwell in current stage before moving on.
-                if stage < final_stage:
-                    dwell = random.uniform(duration * 0.10, duration * 0.30)
-                    t += dwell
+                # Spread reads across the duration so movement is observable.
+                schedule = []
+                t = random.uniform(0, duration * 0.10)  # arrival jitter
+                for stage in range(final_stage + 1):
+                    schedule.append((t, stage))
+                    # Dwell in current stage before moving on.
+                    if stage < final_stage:
+                        dwell = random.uniform(duration * 0.10, duration * 0.30)
+                        t += dwell
 
             units.append(StockUnit(item=item, serial=serial, epc_hex=epc_hex, schedule=schedule))
     random.shuffle(units)
@@ -512,11 +755,13 @@ def _run_pipeline(
     units: list[StockUnit],
     duration: float,
     tick: float,
+    *,
+    zone_pipeline: list[tuple[str, str]],
 ) -> tuple[int, int]:
     """Drive the simulation. Returns (sent, failed)."""
     sent = 0
     failed = 0
-    by_stage_count: dict[int, int] = {i: 0 for i in range(len(ZONE_PIPELINE))}
+    by_stage_count: dict[int, int] = {i: 0 for i in range(len(zone_pipeline))}
     start = time.monotonic()
 
     while True:
@@ -539,7 +784,7 @@ def _run_pipeline(
             progressed = True
 
         # Status line.
-        parts = [f"{ZONE_PIPELINE[i][0]}={by_stage_count[i]}" for i in range(len(ZONE_PIPELINE))]
+        parts = [f"{zone_pipeline[i][0]}={by_stage_count[i]}" for i in range(len(zone_pipeline))]
         print(f"  t={now:5.1f}s  sent={sent} failed={failed}  " + "  ".join(parts), end="\r")
 
         if now >= duration:
@@ -568,10 +813,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="TagPulse inventory simulator (warehouse)")
     parser.add_argument("--tenant-id", required=True)
     parser.add_argument(
+        "--scenario",
+        choices=sorted(SCENARIOS),
+        default=DEFAULT_SCENARIO,
+        help=(
+            "Catalog/topology preset (default: baseline). 'baseline' is the "
+            "Sprint 58 4-SKU warehouse (used by the combined demo tenant); "
+            "'coldchain' is the Sprint 59 inventory-domain catalog (deeper "
+            "multi-lot SKUs across 4 categories + a quarantine hold zone)."
+        ),
+    )
+    parser.add_argument(
         "--units",
         type=int,
         default=None,
-        help="Override total stock units (default: sum of CATALOG.units = "
+        help="Override total stock units (default: the selected scenario's "
+        "catalog total; baseline = "
         f"{sum(c.units for c in CATALOG)}).",
     )
     parser.add_argument(
@@ -601,6 +858,7 @@ def main() -> None:
     args = parser.parse_args()
 
     _check_uuid(args.tenant_id, "tenant-id")
+    scenario = SCENARIOS[args.scenario]
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -625,19 +883,25 @@ def main() -> None:
         sys.exit(1)
 
     print("\n=== TagPulse Inventory Simulator (warehouse scenario) ===")
-    print(f"Tenant: {args.tenant_id}\n")
+    print(f"Tenant: {args.tenant_id}  Scenario: {scenario.name} ({scenario.site_name})\n")
 
     print("Step 0: enable inventory tracking mode")
     _ensure_inventory_mode(client, args.tenant_id)
 
     print("\nStep 1: site + zone-anchor devices")
-    site_id, devices = _seed_site_and_devices(client, args.tenant_id)
+    site_id, devices = _seed_site_and_devices(
+        client,
+        args.tenant_id,
+        site_name=scenario.site_name,
+        address=scenario.address,
+        zone_pipeline=scenario.zone_pipeline,
+    )
 
     print("\nStep 2: reader-bound zones")
-    _seed_zones(client, args.tenant_id, site_id, devices)
+    _seed_zones(client, args.tenant_id, site_id, devices, zone_pipeline=scenario.zone_pipeline)
 
     print("\nStep 3: products, lots, tag-data mapping")
-    catalog = _seed_catalog(client, args.tenant_id)
+    catalog = _seed_catalog(client, args.tenant_id, catalog=scenario.catalog)
     if not catalog:
         print("No catalog items — aborting.")
         sys.exit(1)
@@ -653,7 +917,7 @@ def main() -> None:
         for item in catalog:
             item.units = max(1, round(item.units * scale))
 
-    units = _build_units(catalog, duration=args.duration)
+    units = _build_units(scenario, duration=args.duration)
     print(
         f"\nStep 4: streaming reads for {len(units)} stock units across "
         f"{len(devices)} readers over {args.duration:.0f}s "
@@ -663,7 +927,13 @@ def main() -> None:
 
     try:
         sent, failed = _run_pipeline(
-            client, args.tenant_id, devices, units, args.duration, args.tick
+            client,
+            args.tenant_id,
+            devices,
+            units,
+            args.duration,
+            args.tick,
+            zone_pipeline=scenario.zone_pipeline,
         )
     except KeyboardInterrupt:
         print("\nInterrupted.")
