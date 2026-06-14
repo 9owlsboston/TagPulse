@@ -1,6 +1,6 @@
 # ADR-032: Configurable UI — presentation config as a per-viewer projection of one engine
 
-- Status: **Proposed (chore/configurable-ui-adr, June 2026)**
+- Status: **Accepted (sprint-60/configurable-ui, June 2026)**
 - Scope: **backend + `TagPulse-UI`.** The backend owns the config storage,
   resolution, and `GET /ui-config` contract; `TagPulse-UI` consumes the
   resolved document. Recorded in the backend repo per the standing arrangement
@@ -203,6 +203,17 @@ the regenerated contract (the standing cross-repo convention).
 
 ## Decision history
 
+- **v1.1 (sprint-60/configurable-ui, June 2026)** — Accepted. The full §7
+  backend rollout shipped over Sprint 60 (steps 1–5): server-resolved
+  `GET /ui-config` over system defaults, the `user_ui_prefs` user-override
+  layer (`PUT /ui-config/me`), the `tenants.ui_config` tenant + role default
+  layers (`PUT /ui-config/{tenant,role/{role}}`), the curated `labels`
+  registry (`Device`→`Reader`), and the curated `theme` variant + card-style
+  catalogues — all in `tagpulse.services.ui_config` behind the four-layer
+  deep-merge. The `locked` leaf-pin remains the one deferred §2 increment
+  (it earns its complexity once the tenant/role floor layers are in real use).
+  `TagPulse-UI` consumption of the resolved document is the remaining
+  cross-repo follow-on.
 - **v1.0 (chore/configurable-ui-adr, June 2026)** — Proposed. Presentation-only
   UI config contract: the presentation-vs-behavior invariant, a
   System→Tenant→Role→User deep-merge with "Reset to team default" + `locked`,
