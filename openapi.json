@@ -780,6 +780,28 @@
         "title": "Body_import_tags_tags_import_post",
         "type": "object"
       },
+      "CardGroup": {
+        "additionalProperties": false,
+        "description": "Per-page dashboard-card visibility + ordering.",
+        "properties": {
+          "hidden": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hidden",
+            "type": "array"
+          },
+          "order": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Order",
+            "type": "array"
+          }
+        },
+        "title": "CardGroup",
+        "type": "object"
+      },
       "CategoryCreate": {
         "description": "Create a category.",
         "properties": {
@@ -1011,6 +1033,35 @@
           "other_tenant_collisions"
         ],
         "title": "CollisionPreflightRow",
+        "type": "object"
+      },
+      "ColumnGroup": {
+        "additionalProperties": false,
+        "description": "Per-page list-column config (ADR-030 surface).\n\n``advanced`` is the key move for the TID / ``metadata``-JSONB ask: those\ncolumns are default-OFF, revealed by an \"Advanced columns\" toggle. This is\n*default-hidden*, never deletion \u2014 the field still exists in the API and\nexports (ADR-032 \u00a74, \u00a76.3).",
+        "properties": {
+          "advanced": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Advanced",
+            "type": "array"
+          },
+          "hidden": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hidden",
+            "type": "array"
+          },
+          "order": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Order",
+            "type": "array"
+          }
+        },
+        "title": "ColumnGroup",
         "type": "object"
       },
       "DashboardSparklines": {
@@ -3053,6 +3104,28 @@
         "title": "MetricDefinition",
         "type": "object"
       },
+      "NavConfig": {
+        "additionalProperties": false,
+        "description": "Sidebar/nav section visibility + ordering (the menu system).",
+        "properties": {
+          "hidden": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hidden",
+            "type": "array"
+          },
+          "order": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Order",
+            "type": "array"
+          }
+        },
+        "title": "NavConfig",
+        "type": "object"
+      },
       "PendingBulkOperationResponse": {
         "description": "Persisted ``pending_bulk_operations`` row (ADR 028 \u00a7Governance #4).\n\nSurfaced on:\n\n- the **202** branch of ``POST /tags/import`` (via the\n  ``pending_id`` field on :class:`TagImportResult`) \u2014 operator A\n  learns \"your import is queued for approval, here is the id\";\n- ``GET /bulk-operations/{id}`` \u2014 operator B fetches the record\n  they're being asked to approve;\n- ``POST /bulk-operations/{id}/approve`` and ``/reject`` \u2014\n  the response echoes the updated row.\n\nThe CSV bytes themselves (``payload``) are deliberately **not**\nexposed \u2014 operator B sees ``row_count`` + ``sample`` (the same\n10-EPC preview operator A saw on dry-run) which is the\nintended review surface. ``content_hash`` is exposed for\ncross-system verification.",
         "properties": {
@@ -4678,6 +4751,30 @@
         "title": "SiteUpdate",
         "type": "object"
       },
+      "SortSpec": {
+        "additionalProperties": false,
+        "description": "A default sort for a list page (ADR-030 sort-by-header default).",
+        "properties": {
+          "dir": {
+            "default": "asc",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "title": "Dir",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "SortSpec",
+        "type": "object"
+      },
       "SparklinePoint": {
         "description": "One bucket in a dashboard-tile sparkline series.",
         "properties": {
@@ -5166,6 +5263,24 @@
           "occurred_at"
         ],
         "title": "StockMovementResponse",
+        "type": "object"
+      },
+      "TableConfig": {
+        "additionalProperties": false,
+        "description": "Per-page table defaults (the persisted default sort).",
+        "properties": {
+          "defaultSort": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SortSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "TableConfig",
         "type": "object"
       },
       "TagBulkOperationResult": {
@@ -7144,6 +7259,24 @@
         "title": "TenantConfigUpdate",
         "type": "object"
       },
+      "ThemeConfig": {
+        "additionalProperties": false,
+        "description": "Theme variant + card style, riding the ADR-029 design tokens.\n\nBoth fields are curated surfaces (ADR-032 \u00a74): ``variant`` must name a\nregistered persona theme (``THEME_VARIANTS``) and ``card_style`` a\nregistered card visual (``CARD_STYLES``). The default is today's UI\n(``default`` / ``default``).",
+        "properties": {
+          "cardStyle": {
+            "default": "default",
+            "title": "Cardstyle",
+            "type": "string"
+          },
+          "variant": {
+            "default": "default",
+            "title": "Variant",
+            "type": "string"
+          }
+        },
+        "title": "ThemeConfig",
+        "type": "object"
+      },
       "TileProviderUpdate": {
         "description": "Admin payload for setting the tenant's tile provider.\n\n``provider`` is the raw blob persisted to ``tenants.tile_provider``;\nschema is provider-specific (see ``services.map_config``).\nPass ``None`` to fall back to the system default (OSM public).",
         "properties": {
@@ -7161,6 +7294,48 @@
           }
         },
         "title": "TileProviderUpdate",
+        "type": "object"
+      },
+      "UiConfig": {
+        "additionalProperties": false,
+        "description": "The resolved presentation-config document served by ``GET /ui-config``.\n\n``cards`` / ``columns`` / ``tables`` are keyed by page name (e.g.\n``\"assets\"``, ``\"tag_reads\"``); ``labels`` is the display-label skin \u2014 a\nmap of curated term keys (``LABEL_KEYS``) to display strings. ``labels``\ndefaults to the full canonical registry so the resolved document always\ncarries every term (the UI reads one authoritative ``labels[key]``).",
+        "properties": {
+          "cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CardGroup"
+            },
+            "title": "Cards",
+            "type": "object"
+          },
+          "columns": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ColumnGroup"
+            },
+            "title": "Columns",
+            "type": "object"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "object"
+          },
+          "nav": {
+            "$ref": "#/components/schemas/NavConfig"
+          },
+          "tables": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TableConfig"
+            },
+            "title": "Tables",
+            "type": "object"
+          },
+          "theme": {
+            "$ref": "#/components/schemas/ThemeConfig"
+          }
+        },
+        "title": "UiConfig",
         "type": "object"
       },
       "UniqueTagsPerWindow": {
@@ -16392,6 +16567,191 @@
         "summary": "Update Map Config",
         "tags": [
           "tenant"
+        ]
+      }
+    },
+    "/ui-config": {
+      "get": {
+        "description": "Return the presentation config resolved for the calling viewer.\n\nFolds System \u2192 Tenant \u2192 Role \u2192 User server-side so the UI never\nreconstructs the merge.",
+        "operationId": "get_ui_config_ui_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Ui Config",
+        "tags": [
+          "ui-config"
+        ]
+      }
+    },
+    "/ui-config/me": {
+      "put": {
+        "description": "Upsert the caller's UI override and return the freshly resolved config.\n\nThe body is a **sparse** subset of the ADR-032 \u00a74 document; unknown or\nill-typed keys are rejected (422). An empty body ``{}`` clears the\noverride (\"reset to team default\"). Requires a real user identity \u2014 the\nX-Tenant-ID backward-compat path has no user to attach prefs to.",
+        "operationId": "put_ui_config_me_ui_config_me_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Put Ui Config Me",
+        "tags": [
+          "ui-config"
+        ]
+      }
+    },
+    "/ui-config/role/{role}": {
+      "put": {
+        "description": "Set a per-role default presentation layer (admin only).\n\n``role`` must be one of the known roles (``admin`` / ``editor`` /\n``viewer``); an unknown role is rejected (422). The body is a **sparse**\nsubset of the ADR-032 \u00a74 document, rejecting unknown/ill-typed keys (422).\nIt replaces that role's layer wholesale; an empty body ``{}`` removes the\nrole layer (reset). The tenant-default leaves and other roles are\nuntouched. Audited. Returns the caller's freshly resolved config.",
+        "operationId": "put_ui_config_role_ui_config_role__role__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Put Ui Config Role",
+        "tags": [
+          "ui-config"
+        ]
+      }
+    },
+    "/ui-config/tenant": {
+      "put": {
+        "description": "Set the tenant-default presentation layer (admin only).\n\nThe body is a **sparse** subset of the ADR-032 \u00a74 document; unknown or\nill-typed keys are rejected (422). It replaces the tenant-default leaves\nwholesale while preserving the per-role layer (managed via\n``PUT /ui-config/role/{role}``). An empty body ``{}`` clears the\ntenant-default leaves. Audited. Returns the caller's freshly resolved\nconfig.",
+        "operationId": "put_ui_config_tenant_ui_config_tenant_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Put Ui Config Tenant",
+        "tags": [
+          "ui-config"
         ]
       }
     },

@@ -137,9 +137,10 @@ Organization accounts on the platform.
 | `tracking_modes` | JSONB | NOT NULL, default `'["asset"]'` | Array of `asset` \| `inventory`; controls which domain layer is exposed |
 | `db_pool_key` | VARCHAR(64) | NOT NULL, default `'shared_default'` | Routing key into the startup-built `PoolRegistry`. Most tenants share `'shared_default'` (RLS-isolated); sovereign tenants get a dedicated key pointing at a region-specific cluster. See [adr/008-multi-tenancy-strategy.md](adr/008-multi-tenancy-strategy.md) and [design/storage-strategy.md §6 Q2](design/storage-strategy.md). |
 | `tile_provider` | JSONB | NULLABLE | Per-tenant map tile provider override. Shape: `{"kind": "osm" \| "mapbox" \| "maptiler" \| "self_hosted", "config": {...}}`. NULL = system default (OSM public for POC). Resolved by `MapConfigResolver`; switching providers is a settings change, not a code change. See [design/geofencing-and-map.md §11](design/geofencing-and-map.md) Q4. |
+| `ui_config` | JSONB | NULLABLE | Per-tenant Configurable-UI **presentation** defaults (the tenant + role layers). NULL = pure system default. Tenant-default leaves (`labels` / `theme` / `nav` / `cards` / `columns` / `tables`) live at the top level; the per-role layer is keyed under a reserved `roles` sub-object, e.g. `{"theme": {...}, "roles": {"viewer": {"columns": {...}}}}`. Split into resolve layers and folded `System → Tenant → Role → User` by `tagpulse.services.ui_config` (never queried directly). Reuses the tenant-JSONB precedent above. See [adr/032-configurable-ui.md](adr/032-configurable-ui.md). |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
 
-**Migration:** 005, 014, 017 (tracking_modes), 023 (db_pool_key), 026 (tile_provider)
+**Migration:** 005, 014, 017 (tracking_modes), 023 (db_pool_key), 026 (tile_provider), 053 (ui_config)
 
 ---
 
@@ -273,6 +274,21 @@ Individual user accounts within a tenant.
 
 **Unique constraint:** `(tenant_id, email)`
 **Migration:** 014
+
+---
+
+### user_ui_prefs
+
+Per-user Configurable-UI **presentation** overrides — the *user* layer of the `System → Tenant → Role → User` resolve ([adr/032-configurable-ui.md](adr/032-configurable-ui.md) §3). Sibling of `users` (same `user_id` PK grain), so — like `users` — it carries **no RLS**: the request path scopes by the globally-unique `user_id` PK, not the `app.current_tenant_id` GUC.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `user_id` | UUID | PK, FK → users.id (`ON DELETE CASCADE`) | One row per user. "Reset to team default" = delete the row → the user falls through to role/tenant/system. |
+| `tenant_id` | UUID | FK → tenants.id (`ON DELETE CASCADE`), NOT NULL | Stored for audit + scoping, not isolation (the `user_id` PK already pins one user → one tenant). |
+| `prefs` | JSONB | NOT NULL, default `'{}'` | The **sparse** per-leaf override (a subset of the ADR-032 §4 leaf document — missing keys fall through to the layer below). Validated on write via `PUT /ui-config/me`. |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, default `now()` | Touched on every upsert. |
+
+**Migration:** 052
 
 ---
 
