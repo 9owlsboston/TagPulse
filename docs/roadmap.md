@@ -1573,29 +1573,24 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 60 — Terminology + nav rework (planned)
+## Sprint 60 — Configurable UI: label skins · column presets · menu config (active)
 
-> Re-slotted from the original Sprint 59 plan: domain-deep demo tenants (Sprint 59) are the prerequisite for measuring nav/terminology changes against data that has something to look at.
+> **Re-scoped at kickoff.** Sprints 58–59 confirmed the May WM focus-group asks — rename `Device`→`Reader`, hide plumbing columns like **TID**, simplify nav — all want the *same underlying capability*: per-tenant (and per-user) UI configuration, not one-off hardcoded edits. So the originally-separate "Configurable UI" dedicated sprint and the "Terminology + nav rework" Sprint 60 are **merged**: Sprint 60 builds the mechanism *and* applies the concrete WM-facing values on top of it. The contract is ratified in [ADR-032](adr/032-configurable-ui.md).
 
-**Scope seed (not yet locked).**
-- **Terminology renames** (`Device` → `Reader`, `Telemetry` → ?) driven by the May WM focus-group feedback, validated against the Sprint 58 "before" baseline + the Sprint 59 domain tenants. **Decided: per-tenant display label ("label skin"), not a global rename** — TagPulse is architected multi-device-type, so a label-skin keeps the door open for non-reader device types. The label-skin *mechanism* itself ships in the dedicated Configurable UI sprint below; Sprint 60 only chooses the WM-facing label values.
-- **UI simplification (WM feedback).** Non-technical operators asked to hide plumbing columns (drop **TID** and others from the tag-reads view) and simplify nav. The generic, opt-in **column presets + configurable menu system** that satisfy this are pulled into the dedicated Configurable UI sprint below (too large to ride Sprint 60); Sprint 60 captures the actual keep/cut column list + nav asks from WM as input to that sprint.
-- **Nav rework** beyond Sprint 54 / 56 (the configurable-menu mechanism lands in the dedicated sprint below; Sprint 60 scopes the concrete WM nav simplification on top of it).
-- **§59.8 Units table** leads here if it didn't ride Sprint 59.
-- **Track 2 phase H — BYO-precomputed position ingest + floor-map render.** On the Sprint 59 `asset_positions` table: **one narrow new endpoint** `POST /assets/{id}/position` to accept vendor `(x, y)` fixes (`source=precomputed`); a retrieval path that returns the latest fix with **zone-source fallback** when none exists; and the `[ui]` floor-map config (place antennas in the site `coord_system`) + position render. This is the "fill and draw the table" follow-on to Sprint 59 Track 2.
-- **Zone-fallback for the AssetList Location column** — when an asset has no GPS/precomputed fix, show its current zone (from `subject_current_zone` / the same client-side derivation the AssetDetail timeline uses) so "where is X" is honest at zone granularity. Separable band-aid; **not** the homegrown RSSI estimator (that's candidate Sprint 61).
+**Governing invariant (ADR-032).** Configure _presentation_ (visibility, order, density, theme, presets, labels), never _behavior/semantics_.
 
----
+**Scope seed (locked at kickoff; phases sequence within the sprint).**
+- **Config storage + resolution (backend).** `tenants.ui_config` JSONB + new `user_ui_prefs` table, reusing the established tile_provider / rate_limit_overrides / position_strategy precedent (resolves roadmap D8 — JSONB, **not** dedicated tables). Four-layer per-leaf deep-merge **System → Tenant → Role → User**; "Reset to team default" = delete the user-override row; `locked:true` flag pins a leaf. Leaf namespaces: `labels` / `theme` / `nav` / `cards` / `columns` / `tables`.
+- **API (backend; OpenAPI change).** `GET /ui-config` (fully resolved server-side for the calling viewer), `PUT /ui-config/me`, `PUT /ui-config/tenant`, `PUT /ui-config/role/{role}`. Regenerate `openapi.json` in the backend PR; UI rebases onto it.
+- **Label skins (`[ui]` + config).** Per-tenant display-label overrides for entity/nav terms (`Device`→`Reader`, `Telemetry`→ value TBD with WM) without a schema/code rename — keeps the multi-device-type architecture intact. Decided over a global rename; Sprint 60 also picks the actual WM-facing label values.
+- **Configurable column presets (`[ui]`).** Generic, opt-in per-tenant/per-user column show/hide + ordering on the list pages, so operators drop plumbing columns (TID, metadata) without a reader-specific fork. `columns.*.advanced` drives a default-OFF **"Advanced columns"** toggle (TID/metadata hidden by default). Builds on the [ADR-030](adr/030-list-page-column-filters.md) list-page convention; capture the concrete WM keep/cut column list here.
+- **Configurable menu/nav system (`[ui]`).** Data-driven nav (section/item visibility + ordering per tenant) so the WM nav simplification is configuration, not a hardcoded layout. Scopes the concrete WM nav asks on top of the mechanism.
+- **§59.8 Units table (`[ui]`).** Deferred from Sprint 59 — pulled into Sprint 60.
+- **Rollout (ADR-032 5-step).** Sequence so **user overrides (step 2) land early** — they satisfy the bulk of the WM ask before the tenant/role admin surfaces are built out.
 
-## Configurable UI — label skins · column presets · menu system (planned; dedicated sprint, number TBD)
-
-> Pulled out of Sprint 60: the WM feedback (rename `Device`→`Reader`, hide plumbing columns like **TID**, simplify nav) all want the *same underlying capability* — per-tenant UI configuration — rather than one-off hardcoded edits. Building that framework once is its own sprint; Sprint 60 then consumes it to apply the concrete WM-facing values. Sequencing vs. the candidate Sprint 61 RSSI spike is open (independent workstreams; either may go first).
-
-**Scope seed (not yet locked).**
-- **Label skins (`[ui]` + backend config).** Per-tenant display-label overrides for entity/nav terms (e.g. `Device`→`Reader`, `Telemetry`→?) without a schema/code rename — keeps the multi-device-type architecture intact. Decided in Sprint 60's analysis as the chosen mechanism over a global rename.
-- **Configurable column presets (`[ui]`).** Generic, opt-in per-tenant (or per-user) column show/hide + ordering on the list pages, so operators can drop plumbing columns (TID, etc.) without a reader-specific App fork. Builds on the [ADR-030](adr/030-list-page-column-filters.md) list-page convention.
-- **Configurable menu/nav system (`[ui]`).** Data-driven nav (section/item visibility + ordering per tenant) so the Sprint 60 nav simplification is a configuration, not a hardcoded layout.
-- **Decision:** label skin vs. global rename → **label skin** (resolved; see Sprint 60). Open: config storage shape (tenant settings JSONB vs. dedicated tables), and the user-vs-tenant scope boundary for column presets.
+**Deferred out of Sprint 60 (Track 2 / spatial — re-slotted to a later sprint).**
+- **Track 2 phase H — BYO-precomputed position ingest + floor-map render.** On the Sprint 59 `asset_positions` table: `POST /assets/{id}/position` for vendor `(x, y)` fixes (`source=precomputed`); latest-fix retrieval with **zone-source fallback**; `[ui]` floor-map config + position render. The "fill and draw the table" follow-on to Sprint 59 Track 2.
+- **Zone-fallback for the AssetList Location column** — show current zone (from `subject_current_zone`) when an asset has no GPS/precomputed fix. Separable band-aid; **not** the homegrown RSSI estimator (candidate Sprint 61).
 
 ---
 
