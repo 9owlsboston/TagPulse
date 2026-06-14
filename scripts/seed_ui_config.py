@@ -2,21 +2,23 @@
 """Apply the WM-facing UI presentation config to the demo tenant.
 
 Sprint 60 (ADR-032) shipped the configurable-UI *mechanism* (the four-layer
-``GET/PUT /ui-config`` family) and the UI now consumes the ``labels`` /
-``nav`` / ``cards`` / ``theme`` leaves. This shim closes the second half of
-the sprint: it **applies the one decided WM-facing value** — the
-``Device`` -> ``Reader`` label skin (:data:`tagpulse.services.ui_config.WM_LABEL_SKIN`)
-— to a demo tenant by ``PUT``-ing it to the **tenant-default** layer, so the
-demo actually renders ``Reader`` instead of merely being *able* to.
+``GET/PUT /ui-config`` family) and the UI consumes the ``labels`` / ``nav`` /
+``cards`` / ``theme`` / ``columns`` / ``tables`` leaves. This shim closes the
+second half of the sprint: it **applies the concrete WM-facing values** —
+:data:`tagpulse.services.ui_config.WM_DEMO_PRESENTATION` (the ``Device`` ->
+``Reader`` label skin plus the nav-simplification, hidden cards, sparkline card
+style, TID/raw-memory advanced columns, and newest-first sort) — to a demo
+tenant by ``PUT``-ing it to the **tenant-default** layer, so the demo actually
+renders the WM persona instead of merely being *able* to.
 
-The value is imported from the canonical registry rather than hardcoded here,
+The values are imported from the canonical registry rather than hardcoded here,
 so the demo can never drift from the backend's source of truth.
 
 Auth: the admin API key (Bearer) resolves to the tenant's admin user, which
 ``PUT /ui-config/tenant`` requires (``require_role("admin")``).
 
 Idempotent: ``PUT /ui-config/tenant`` replaces the tenant-default leaves
-wholesale, so re-running converges to the same skin.
+wholesale, so re-running converges to the same config.
 
 Usage:
     python scripts/seed_ui_config.py \\
@@ -38,7 +40,7 @@ import httpx
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from tagpulse.services.ui_config import WM_LABEL_SKIN  # noqa: E402
+from tagpulse.services.ui_config import WM_DEMO_PRESENTATION, WM_LABEL_SKIN  # noqa: E402
 
 API_URL = os.environ.get("TAGPULSE_API_URL", "http://localhost:8000").rstrip("/")
 
@@ -50,12 +52,14 @@ def _headers(tenant_id: str, api_key: str) -> dict[str, str]:
     }
 
 
-def apply_wm_skin(tenant_id: str, api_key: str) -> dict[str, str]:
-    """PUT the WM label skin to the tenant-default layer; return resolved labels.
+def apply_wm_presentation(tenant_id: str, api_key: str) -> dict[str, object]:
+    """PUT the WM presentation config to the tenant-default layer.
 
+    Pushes the full ``WM_DEMO_PRESENTATION`` (label skin + nav/cards/theme/
+    columns/tables) the UI now consumes, returning the resolved document.
     Raises ``SystemExit`` on a non-2xx response so the composer fails fast.
     """
-    body = {"labels": dict(WM_LABEL_SKIN)}
+    body = dict(WM_DEMO_PRESENTATION)
     url = f"{API_URL}/ui-config/tenant"
     try:
         resp = httpx.put(url, headers=_headers(tenant_id, api_key), json=body, timeout=30.0)
@@ -70,17 +74,19 @@ def apply_wm_skin(tenant_id: str, api_key: str) -> dict[str, str]:
         )
         sys.exit(1)
 
-    resolved = resp.json()
-    labels: dict[str, str] = resolved.get("labels", {})
-    # Verify every skinned term took effect in the resolved document.
-    mismatched = {k: v for k, v in WM_LABEL_SKIN.items() if labels.get(k) != v}
+    resolved: dict[str, object] = resp.json()
+    # Verify the headline WM label skin took effect in the resolved document.
+    labels = resolved.get("labels", {})
+    mismatched = {
+        k: v for k, v in WM_LABEL_SKIN.items() if not isinstance(labels, dict) or labels.get(k) != v
+    }
     if mismatched:
         print(
             f"  FATAL: WM skin did not resolve as expected: {mismatched}",
             file=sys.stderr,
         )
         sys.exit(1)
-    return labels
+    return resolved
 
 
 def main() -> int:
@@ -89,9 +95,18 @@ def main() -> int:
     parser.add_argument("--api-key", required=True, help="Admin API key for the tenant")
     args = parser.parse_args()
 
-    labels = apply_wm_skin(args.tenant_id, args.api_key)
-    applied = ", ".join(f"{k}->{labels[k]}" for k in sorted(WM_LABEL_SKIN))
-    print(f"  applied WM label skin to tenant {args.tenant_id}: {applied}")
+    resolved = apply_wm_presentation(args.tenant_id, args.api_key)
+    labels = resolved.get("labels", {})
+    skin = ", ".join(
+        f"{k}->{labels[k]}"
+        for k in sorted(WM_LABEL_SKIN)
+        if isinstance(labels, dict) and k in labels
+    )
+    leaves = ", ".join(sorted(WM_DEMO_PRESENTATION))
+    print(
+        f"  applied WM presentation to tenant {args.tenant_id}: "
+        f"leaves [{leaves}]; label skin {skin}"
+    )
     return 0
 
 

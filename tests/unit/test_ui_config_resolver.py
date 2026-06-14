@@ -277,6 +277,27 @@ def test_wm_label_skin_resolves() -> None:
     assert WM_LABEL_SKIN == {"device": "Reader"}  # sparse: only the decided term
 
 
+def test_wm_demo_presentation_is_valid_and_resolves() -> None:
+    """The concrete WM demo presentation (label skin + nav/cards/theme/columns/
+    tables) is a *valid* override that resolves through the real merge — so the
+    demo seed can never push a doc the schema would 422 on (ADR-032 §4)."""
+    from tagpulse.services.ui_config import WM_DEMO_PRESENTATION
+
+    # It passes the write-path validator (extra="forbid" + curated catalogues).
+    validate_ui_config_override(WM_DEMO_PRESENTATION)
+
+    resolved = resolve_ui_config([WM_DEMO_PRESENTATION])
+    # Each consumed leaf folds through to the resolved document.
+    assert resolved.labels["device"] == "Reader"
+    assert "sec-data-management" in resolved.nav.hidden
+    assert "reads-per-hour" in resolved.cards["dashboard"].hidden
+    assert resolved.theme.card_style == "sparkline"
+    assert resolved.columns["tag_reads"].advanced == ["tid", "user_memory_hex"]
+    assert resolved.tables["tag_reads"].default_sort is not None
+    assert resolved.tables["tag_reads"].default_sort.key == "timestamp"
+    assert resolved.tables["tag_reads"].default_sort.dir == "desc"
+
+
 def test_unknown_label_key_rejected_on_validate() -> None:
     """``labels`` is a curated surface — an unregistered key is rejected
     (ADR-032 §6.1)."""

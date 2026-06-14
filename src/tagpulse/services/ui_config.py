@@ -94,6 +94,38 @@ LABEL_KEYS: dict[str, str] = {
 # demo seed; never baked into the system default.
 WM_LABEL_SKIN: dict[str, str] = {"device": "Reader"}
 
+# The concrete WM-facing presentation values for the demo tenant (ADR-032 §4).
+# This is the demo's *interpretation* of the June 2026 WM focus-group asks
+# ("rename Device→Reader, hide plumbing columns, simplify nav, hide unused
+# cards, sparkline visuals"), expressed against the real nav-section / card /
+# page keys the UI uses. It is **demo seed data, not a product default** — every
+# value here is a per-tenant override a real WM rollout would tune; nothing is
+# baked into ``SYSTEM_DEFAULT_UI_CONFIG``. Keys must stay in lock-step with the
+# UI registries (``src/lib/nav.tsx`` section keys, ``Dashboard.tsx`` tile ids,
+# the per-page ``columns``/``tables`` page names).
+#   - ``labels``  — the decided ``Device``→``Reader`` skin.
+#   - ``nav``     — hide the operator-irrelevant "Data Management" section
+#                   (tag import / reconciliation / data mappings — pure plumbing
+#                   for a floor operator).
+#   - ``cards``   — hide the three technical dashboard cards a floor operator
+#                   doesn't action (raw reads/hour throughput, the tag registry
+#                   count, and the reconciliation backlog).
+#   - ``theme``   — the sparkline card style WM asked for (rides ADR-029 tokens).
+#   - ``columns`` — TID + raw user-memory default-OFF on the Tag Reads page
+#                   (the "hide plumbing columns" ask); the page already defaults
+#                   these to advanced, so this is belt-and-suspenders + the
+#                   explicit record of the WM keep/cut list.
+#   - ``tables``  — newest reads first on the Tag Reads page (sort-by-header
+#                   default ask).
+WM_DEMO_PRESENTATION: dict[str, Any] = {
+    "labels": dict(WM_LABEL_SKIN),
+    "nav": {"hidden": ["sec-data-management"]},
+    "cards": {"dashboard": {"hidden": ["reads-per-hour", "tags", "recon-backlog"]}},
+    "theme": {"cardStyle": "sparkline"},
+    "columns": {"tag_reads": {"advanced": ["tid", "user_memory_hex"]}},
+    "tables": {"tag_reads": {"defaultSort": {"key": "timestamp", "dir": "desc"}}},
+}
+
 # Curated theme catalogue (ADR-032 §4 ``theme``, §7 step 5). The ``theme`` leaf
 # rides the ADR-029 design tokens: a small allow-list of approved persona
 # *variants* and card *styles*, not unbounded styling knobs. A ``theme``
