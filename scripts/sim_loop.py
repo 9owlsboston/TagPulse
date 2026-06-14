@@ -385,8 +385,17 @@ def _devices_needing_heartbeat(state: SimState, now: float, interval: float) -> 
     Pure function for testability. At startup ``last_emit`` is empty so every
     active device qualifies (warm-up); thereafter only devices the normal
     shift-weighted emission hasn't touched recently surface here.
+
+    A device with no recorded ``last_emit`` is always stale — we must NOT fall
+    back to a ``0.0`` sentinel, because ``now`` is ``time.monotonic()`` whose
+    origin is arbitrary (on a freshly-booted host it can be < ``interval``,
+    which would wrongly suppress the cold-start warm-up).
     """
-    return [d for d in state.active_devices(now) if now - state.last_emit.get(d, 0.0) >= interval]
+    return [
+        d
+        for d in state.active_devices(now)
+        if d not in state.last_emit or now - state.last_emit[d] >= interval
+    ]
 
 
 async def _emit_heartbeats(
