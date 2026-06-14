@@ -95,21 +95,22 @@ LABEL_KEYS: dict[str, str] = {
 WM_LABEL_SKIN: dict[str, str] = {"device": "Reader"}
 
 # The concrete WM-facing presentation values for the demo tenant (ADR-032 §4).
-# This is the demo's *interpretation* of the June 2026 WM focus-group asks
-# ("rename Device→Reader, hide plumbing columns, simplify nav, hide unused
-# cards, sparkline visuals"), expressed against the real nav-section / card /
-# page keys the UI uses. It is **demo seed data, not a product default** — every
-# value here is a per-tenant override a real WM rollout would tune; nothing is
-# baked into ``SYSTEM_DEFAULT_UI_CONFIG``. Keys must stay in lock-step with the
-# UI registries (``src/lib/nav.tsx`` section keys, ``Dashboard.tsx`` tile ids,
-# the per-page ``columns``/``tables`` page names).
+# This is the demo's *interpretation* of the June 2026 WM focus-group asks,
+# reconciled against the hand-drawn focus-group wireframes (the four
+# ``wm-feedback`` sheets), expressed against the real nav-section / card /
+# page keys the UI uses. It is **demo seed data, not a product default** —
+# every value here is a per-tenant override a real WM rollout would tune;
+# nothing is baked into ``SYSTEM_DEFAULT_UI_CONFIG``. Keys must stay in
+# lock-step with the UI registries (``src/lib/nav.tsx`` section keys,
+# ``Dashboard.tsx`` tile ids, the per-page ``columns``/``tables`` page names).
 #   - ``labels``  — the decided ``Device``→``Reader`` skin.
-#   - ``nav``     — hide the operator-irrelevant "Data Management" section
-#                   (tag import / reconciliation / data mappings — pure plumbing
-#                   for a floor operator).
-#   - ``cards``   — hide the three technical dashboard cards a floor operator
-#                   doesn't action (raw reads/hour throughput, the tag registry
-#                   count, and the reconciliation backlog).
+#   - ``cards``   — the wireframe dashboard shows exactly four cards
+#                   (Readers, Assets, Tags, Alerts), so hide the other five
+#                   tiles (raw reads/hour throughput, the Locations rollup,
+#                   in-flight tag transfers, the reconciliation backlog, and
+#                   low-stock products). NOTE: the wireframe KEEPS the Tags
+#                   card and the Data Management nav section — earlier drafts
+#                   wrongly hid both; reconciled here.
 #   - ``theme``   — the sparkline card style WM asked for (rides ADR-029 tokens).
 #   - ``columns`` — TID + raw user-memory default-OFF on the Tag Reads page
 #                   (the "hide plumbing columns" ask); the page already defaults
@@ -117,10 +118,25 @@ WM_LABEL_SKIN: dict[str, str] = {"device": "Reader"}
 #                   explicit record of the WM keep/cut list.
 #   - ``tables``  — newest reads first on the Tag Reads page (sort-by-header
 #                   default ask).
+# The wireframe's *flat* nav (Assets/Tags/Readers promoted to top-level,
+# sections removed) is a structural redesign the ``nav`` leaf can't express
+# (it only hides/reorders within the existing hierarchy), so it is tracked as
+# a separate follow-up, not forced here. The ``nav`` leaf is therefore left at
+# the system default (no section hidden) — Data Management stays visible per
+# the wireframe.
 WM_DEMO_PRESENTATION: dict[str, Any] = {
     "labels": dict(WM_LABEL_SKIN),
-    "nav": {"hidden": ["sec-data-management"]},
-    "cards": {"dashboard": {"hidden": ["reads-per-hour", "tags", "recon-backlog"]}},
+    "cards": {
+        "dashboard": {
+            "hidden": [
+                "reads-per-hour",
+                "locations",
+                "transfers-in-flight",
+                "recon-backlog",
+                "low-stock",
+            ]
+        }
+    },
     "theme": {"cardStyle": "sparkline"},
     "columns": {"tag_reads": {"advanced": ["tid", "user_memory_hex"]}},
     "tables": {"tag_reads": {"defaultSort": {"key": "timestamp", "dir": "desc"}}},
