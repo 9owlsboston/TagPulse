@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -265,6 +265,69 @@ _SPARKLINE_ALERTS_SQL = text(
     """
 )
 
+# Sprint 60 — real activity series for the three count tiles WM surfaces on the
+# demo dashboard (Readers, Assets, Tags). These were point-in-time counts
+# repeated across every bucket (``_flat_series``), so the sparklines were
+# always flat. Each is now a genuine ``date_bin``-bucketed series derived from
+# ``tag_reads`` activity over the window:
+#   - ``devices`` (Readers)  → distinct readers that reported a read per bucket.
+#   - ``tags``               → distinct tags seen per bucket.
+#   - ``assets-active``      → distinct assets seen per bucket, resolving each
+#                              read's ``epc_hex`` through the asset binding that
+#                              was active *at read time*.
+# The headline tile number stays the current total/state; the sparkline is the
+# recent *activity* trend (the same number-vs-series split ``reads-per-hour``
+# already uses). Tiles with no honest historical source (locations, in-flight
+# transfers, recon backlog, low-stock) remain flat.
+_SPARKLINE_ACTIVE_READERS_SQL = text(
+    """
+    SELECT
+        date_bin(:stride, "timestamp", :origin) AS bucket_start,
+        COUNT(DISTINCT device_id)::bigint        AS v
+    FROM tag_reads
+    WHERE tenant_id = :tenant_id
+      AND "timestamp" >= :since
+      AND "timestamp" <  :until
+    GROUP BY bucket_start
+    ORDER BY bucket_start
+    """
+)
+
+_SPARKLINE_TAGS_SEEN_SQL = text(
+    """
+    SELECT
+        date_bin(:stride, "timestamp", :origin) AS bucket_start,
+        COUNT(DISTINCT tag_id)::bigint           AS v
+    FROM tag_reads
+    WHERE tenant_id = :tenant_id
+      AND "timestamp" >= :since
+      AND "timestamp" <  :until
+    GROUP BY bucket_start
+    ORDER BY bucket_start
+    """
+)
+
+_SPARKLINE_ASSETS_SEEN_SQL = text(
+    """
+    SELECT
+        date_bin(:stride, tr."timestamp", :origin) AS bucket_start,
+        COUNT(DISTINCT atb.asset_id)::bigint        AS v
+    FROM tag_reads tr
+    JOIN asset_tag_bindings atb
+      ON atb.tenant_id     = tr.tenant_id
+     AND atb.binding_kind  = 'epc'
+     AND atb.binding_value = tr.epc_hex
+     AND atb.bound_at     <= tr."timestamp"
+     AND (atb.unbound_at IS NULL OR tr."timestamp" < atb.unbound_at)
+    WHERE tr.tenant_id = :tenant_id
+      AND tr."timestamp" >= :since
+      AND tr."timestamp" <  :until
+      AND tr.epc_hex IS NOT NULL
+    GROUP BY bucket_start
+    ORDER BY bucket_start
+    """
+)
+
 
 def _classify_trend(values: list[int]) -> Literal["up", "down", "flat"]:
     """Compare last-quarter mean vs first-quarter mean.
@@ -317,6 +380,38 @@ def _flat_series(starts: list[datetime], value: int) -> SparklineSeries:
     return SparklineSeries(series=series, trend="flat")
 
 
+async def _bucketed_series(
+    session: AsyncSession,
+    sql: Any,
+    *,
+    stride: timedelta,
+    origin: datetime,
+    tenant_id: uuid.UUID,
+    since: datetime,
+    until: datetime,
+    starts: list[datetime],
+) -> SparklineSeries:
+    """Run a ``date_bin``-bucketed COUNT query and build a gap-filled series.
+
+    The query must return ``(bucket_start, v)`` rows; missing buckets are
+    zero-filled and the trend is classified from the resulting values. Shared
+    by every real (non-flat) tile so the bucket/gap/trend handling lives once.
+    """
+    rows = await session.execute(
+        sql,
+        {
+            "stride": stride,
+            "origin": origin,
+            "tenant_id": tenant_id,
+            "since": since,
+            "until": until,
+        },
+    )
+    row_map = {row.bucket_start: int(row.v) for row in rows}
+    points = _gap_filled_series(starts, row_map)
+    return SparklineSeries(series=points, trend=_classify_trend([p.v for p in points]))
+
+
 async def get_sparklines(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -325,13 +420,15 @@ async def get_sparklines(
 ) -> DashboardSparklines:
     """Compute 7-day downsampled sparkline series for each KPI tile.
 
-    Two tiles (``reads-per-hour``, ``alerts-open``) run real
-    ``date_bin``-bucketed queries against the live tables. The other
-    seven reuse the current point-in-time counts from
-    :func:`get_summary`, repeated across every bucket as a flat
-    series. Honest about what's a true time series in our schema and
-    keeps the per-Dashboard-load cost to ``get_summary`` + 2 extra
-    bucket queries.
+    Five tiles run real ``date_bin``-bucketed queries against the live
+    tables: ``reads-per-hour`` and ``alerts-open`` (raw event counts), plus
+    Sprint 60's ``devices`` (distinct active readers), ``tags`` (distinct
+    tags seen), and ``assets-active`` (distinct assets seen, resolved through
+    the read-time asset binding). The remaining four — ``locations``,
+    ``transfers-in-flight``, ``recon-backlog``, ``low-stock`` — have no honest
+    historical source in our schema, so they stay flat (the current
+    point-in-time count repeated across every bucket). Cost is
+    ``get_summary`` + five small bucket queries.
 
     Tile keys match the ``id`` field in ``src/pages/Dashboard.tsx``
     (``TILES``) so client lookup is a direct dict access. New UI
@@ -349,46 +446,31 @@ async def get_sparklines(
     # Reuse the full summary for current counts feeding the flat tiles.
     summary = await get_summary(session, tenant_id)
 
-    reads_rows = await session.execute(
-        _SPARKLINE_READS_SQL,
-        {
-            "stride": bucket,
-            "origin": origin,
-            "tenant_id": tenant_id,
-            "since": since,
-            "until": until,
-        },
-    )
-    reads_map = {row.bucket_start: int(row.v) for row in reads_rows}
-    reads_points = _gap_filled_series(starts, reads_map)
-    reads_series = SparklineSeries(
-        series=reads_points,
-        trend=_classify_trend([p.v for p in reads_points]),
-    )
+    # The real (bucketed) series share one helper; each is a small query.
+    async def _real(sql: Any) -> SparklineSeries:
+        return await _bucketed_series(
+            session,
+            sql,
+            stride=bucket,
+            origin=origin,
+            tenant_id=tenant_id,
+            since=since,
+            until=until,
+            starts=starts,
+        )
 
-    alerts_rows = await session.execute(
-        _SPARKLINE_ALERTS_SQL,
-        {
-            "stride": bucket,
-            "origin": origin,
-            "tenant_id": tenant_id,
-            "since": since,
-            "until": until,
-        },
-    )
-    alerts_map = {row.bucket_start: int(row.v) for row in alerts_rows}
-    alerts_points = _gap_filled_series(starts, alerts_map)
-    alerts_series = SparklineSeries(
-        series=alerts_points,
-        trend=_classify_trend([p.v for p in alerts_points]),
-    )
+    reads_series = await _real(_SPARKLINE_READS_SQL)
+    alerts_series = await _real(_SPARKLINE_ALERTS_SQL)
+    active_readers_series = await _real(_SPARKLINE_ACTIVE_READERS_SQL)
+    tags_seen_series = await _real(_SPARKLINE_TAGS_SEEN_SQL)
+    assets_seen_series = await _real(_SPARKLINE_ASSETS_SEEN_SQL)
 
     tiles: dict[str, SparklineSeries] = {
-        "devices": _flat_series(starts, summary.devices_total),
+        "devices": active_readers_series,
         "alerts-open": alerts_series,
         "reads-per-hour": reads_series,
-        "assets-active": _flat_series(starts, summary.assets_active),
-        "tags": _flat_series(starts, summary.tags_total),
+        "assets-active": assets_seen_series,
+        "tags": tags_seen_series,
         "locations": _flat_series(starts, summary.sites_total + summary.zones_total),
         "transfers-in-flight": _flat_series(starts, summary.tag_transfers_in_flight),
         "recon-backlog": _flat_series(starts, summary.tag_recon_backlog),
