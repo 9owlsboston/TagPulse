@@ -1,35 +1,40 @@
 #!/usr/bin/env python3
-"""Continuous demo-tenant simulator (Sprint 58 Phase C).
+"""Continuous demo-tenant simulator (Sprint 58 Phase C; Sprint 59 multi-tenant).
 
-Long-running async orchestrator that keeps the demo tenant alive between
-``make demo-tenant`` runs. Issues realistic tag reads on a shift-aware
-schedule, simulates intermittent reader outages, and periodically fires
-alert-shaped reads so the dashboard stays animated during a review session.
+Long-running async orchestrator that keeps the demo tenants alive between
+``make demo-*`` runs. Issues realistic tag reads on a shift-aware schedule,
+simulates intermittent reader outages, periodically fires alert-shaped reads,
+and heartbeats every reader so the dashboard stays animated — and never drops
+to "0 online" — during a review session.
 
 This script is deliberately ``HTTP-only`` (POST /tag-reads); it does not talk
 to MQTT, the database, or Key Vault. The same binary runs locally under the
 ``sim`` docker-compose profile (``make sim-start``) and as a manual-trigger
 Azure Container Apps Job in the dev environment
 (``scripts/azd-job.sh dev sim_loop.py``). See sprint-58 design doc D1 + D5
-+ D6 for the rationale.
++ D6 for the rationale; sprint-59 §59.4 for the multi-tenant extension.
 
 Configuration precedence (highest first):
   1. command-line flags
   2. environment variables (``SIM_*`` + ``TAGPULSE_*``)
   3. built-in defaults
 
-Hard rate ceiling: 600 reads/min/tenant, enforced regardless of flag/env
-overrides. The Sprint 38 per-tenant rate limit sits around 1 k/min for
-unsubscribed tenants, so the ceiling leaves room for real test traffic on
-the same dev cluster.
+Hard rate ceiling: 600 reads/min in AGGREGATE across all driven tenants,
+enforced regardless of flag/env overrides. The Sprint 38 per-tenant rate limit
+sits around 1 k/min for unsubscribed tenants, so splitting the aggregate across
+2–3 tenants leaves ample room for real test traffic on the same dev cluster.
 
 Usage examples:
 
-    # Local: run forever against docker-compose stack, default 200 reads/min
-    python scripts/sim_loop.py
+    # Single tenant (default = combined demo tenant), 200 reads/min
+    python scripts/sim_loop.py --api-key "$TAGPULSE_API_KEY"
 
-    # Local: run for 30 minutes at a brisker pace
-    python scripts/sim_loop.py --duration 30m --rate 400
+    # Multi-tenant: drive all three demo tenants, 200/min split ~67 each
+    python scripts/sim_loop.py \\
+        --tenants demo-wm-dc:KEY1,demo-inv-coldchain:KEY2,demo-asset-fleet:KEY3
+
+    # Local: run for 30 minutes at a brisker aggregate pace
+    python scripts/sim_loop.py --duration 30m --rate 400 --api-key "$KEY"
 
     # Dev (ACA job, 8 h ceiling matches the replicaTimeout):
     scripts/azd-job.sh dev sim_loop.py -- --duration 8h --rate 200
@@ -83,6 +88,12 @@ _OUTAGE_MAX_SECONDS = 8 * 60
 _ALERT_INTERVAL_SECONDS = 15 * 60
 _ALERT_TEMP_MIN = 35.0
 _ALERT_TEMP_MAX = 42.0
+
+# Heartbeat (Sprint 59 §59.7): guarantee every active reader emits at least one
+# read within this window so a low-rate / off-hours tenant never drifts past the
+# Dashboard's 5-min ``devices_online`` window and shows "0 online" on a cold
+# open. Kept comfortably under that 5-min window.
+_HEARTBEAT_INTERVAL_SECONDS = 4 * 60
 
 # Shift schedule. Peaks at 08:00 and 13:00 local time (1 h window), 1.5x
 # multiplier; off-hours (20:00-06:00) damped to 0.3x. The local timezone is
@@ -166,6 +177,9 @@ class SimState:
     total_reads: int = 0
     total_alerts: int = 0
     started_at: float = field(default_factory=time.monotonic)
+    # device_id -> monotonic timestamp of its most recent emitted read. Drives
+    # the heartbeat (see ``_devices_needing_heartbeat``).
+    last_emit: dict[str, float] = field(default_factory=dict)
 
     def active_devices(self, now: float) -> list[str]:
         return [d for d in self.devices if self.offline_until.get(d, 0.0) <= now]
@@ -269,7 +283,7 @@ async def _emit_tick(
     api_key: str,
     state: SimState,
     bucket: TokenBucket,
-    base_rate_per_min: int,
+    base_rate_per_min: float,
 ) -> None:
     """One 1-second tick: emit ~rate/60 reads, gated by the token bucket."""
     now = time.monotonic()
@@ -295,6 +309,7 @@ async def _emit_tick(
         payload = _build_normal_read(device_id, tag_id)
         if await _post_read(client, tenant_id, api_key, payload):
             state.total_reads += 1
+            state.last_emit[device_id] = now
 
 
 def _maybe_schedule_outage(state: SimState, now: float) -> None:
@@ -341,26 +356,101 @@ async def _maybe_fire_alert(
         )
 
 
-async def _run_loop(
-    *,
+# ----------------------------------------------------------------------------
+# Multi-tenant runtime (Sprint 59 §59.4)
+# ----------------------------------------------------------------------------
+
+
+@dataclass
+class TenantRuntime:
+    """Per-tenant simulator state: identity + its own bucket + read state.
+
+    One ``TenantRuntime`` per active demo tenant. Each carries an independent
+    ``TokenBucket`` sized to its slice of the aggregate budget, so the loop
+    drives N tenants concurrently while the *combined* emission rate stays
+    under the aggregate ceiling.
+    """
+
+    slug: str
+    tenant_id: str
+    api_key: str
+    state: SimState
+    bucket: TokenBucket
+    base_rate_per_min: float
+
+
+def _devices_needing_heartbeat(state: SimState, now: float, interval: float) -> list[str]:
+    """Active devices whose most recent emitted read is older than ``interval``.
+
+    Pure function for testability. At startup ``last_emit`` is empty so every
+    active device qualifies (warm-up); thereafter only devices the normal
+    shift-weighted emission hasn't touched recently surface here.
+    """
+    return [d for d in state.active_devices(now) if now - state.last_emit.get(d, 0.0) >= interval]
+
+
+async def _emit_heartbeats(
+    client: httpx.AsyncClient,
     tenant_id: str,
     api_key: str,
-    rate_per_min: int,
-    duration_seconds: float,
     state: SimState,
     bucket: TokenBucket,
+    now: float,
+) -> None:
+    """Emit one read per stale active device so no reader drifts offline.
+
+    Bounded by the same token bucket as normal traffic, but stale devices are
+    served first (called before the next tick) so a low-rate tenant still keeps
+    every reader inside the Dashboard's online window.
+    """
+    for device_id in _devices_needing_heartbeat(state, now, _HEARTBEAT_INTERVAL_SECONDS):
+        if not bucket.try_take(1.0):
+            return
+        tag_id = random.choice(state.tags)  # noqa: S311
+        payload = _build_normal_read(device_id, tag_id)
+        if await _post_read(client, tenant_id, api_key, payload):
+            state.total_reads += 1
+            state.last_emit[device_id] = now
+
+
+def _print_status(tenants: list[TenantRuntime], now: float, started: float) -> None:
+    """One aggregate status line with a per-tenant breakdown (R2 mitigation)."""
+    uptime = max(int(now - started), 1)
+    total_reads = 0
+    total_alerts = 0
+    parts: list[str] = []
+    for t in tenants:
+        offline = sum(1 for ts in t.state.offline_until.values() if ts > now)
+        rate = t.state.total_reads / uptime * 60
+        parts.append(f"{t.slug}={t.state.total_reads}({rate:.0f}/min,off={offline})")
+        total_reads += t.state.total_reads
+        total_alerts += t.state.total_alerts
+    agg_rate = total_reads / uptime * 60
+    print(
+        f"  [status] uptime={uptime}s reads={total_reads} ({agg_rate:.0f}/min agg)"
+        f" alerts={total_alerts} | " + " ".join(parts),
+        flush=True,
+    )
+
+
+async def _run_loop(
+    *,
+    tenants: list[TenantRuntime],
+    duration_seconds: float,
     stop_event: asyncio.Event,
 ) -> None:
-    """Drive the simulator until duration elapses or stop_event is set."""
-    deadline = state.started_at + duration_seconds if duration_seconds > 0 else None
-    last_outage_check = state.started_at
-    last_status_print = state.started_at
+    """Drive N tenants until duration elapses or stop_event is set."""
+    started = time.monotonic()
+    deadline = started + duration_seconds if duration_seconds > 0 else None
+    last_minute_check = started
 
     async with httpx.AsyncClient() as client:
-        # Discover devices ONCE at startup so a tenant-add mid-run isn't
-        # auto-picked up (operator can restart the loop to refresh).
-        state.devices = await _discover_devices(client, tenant_id, api_key)
-        print(f"  discovered {len(state.devices)} devices")
+        # Discover each tenant's devices ONCE at startup so a mid-run tenant
+        # change isn't auto-picked up (operator restarts the loop to refresh).
+        for t in tenants:
+            t.state.devices = await _discover_devices(client, t.tenant_id, t.api_key)
+            t.state.started_at = started
+            print(f"  [{t.slug}] discovered {len(t.state.devices)} devices")
 
         while not stop_event.is_set():
             now = time.monotonic()
@@ -368,29 +458,19 @@ async def _run_loop(
                 print(f"  duration elapsed ({duration_seconds}s); shutting down")
                 break
 
-            await _emit_tick(client, tenant_id, api_key, state, bucket, rate_per_min)
-
-            # Outage check once per minute (tick is 1s).
-            if now - last_outage_check >= 60.0:
-                _maybe_schedule_outage(state, now)
-                last_outage_check = now
-
-            # Alert check once per minute (we self-rate-limit to 15 min).
-            if int(now) % 60 == 0:
-                await _maybe_fire_alert(client, tenant_id, api_key, state, bucket)
-
-            # Status line every 60s.
-            if now - last_status_print >= 60.0:
-                uptime = int(now - state.started_at)
-                rate = state.total_reads / max(uptime, 1) * 60
-                offline = sum(1 for ts in state.offline_until.values() if ts > now)
-                print(
-                    f"  [status] uptime={uptime}s reads={state.total_reads}"
-                    f" ({rate:.0f}/min) alerts={state.total_alerts}"
-                    f" offline_devices={offline}",
-                    flush=True,
+            for t in tenants:
+                await _emit_tick(
+                    client, t.tenant_id, t.api_key, t.state, t.bucket, t.base_rate_per_min
                 )
-                last_status_print = now
+
+            # Once-per-minute housekeeping: outages, heartbeats, alerts, status.
+            if now - last_minute_check >= 60.0:
+                for t in tenants:
+                    _maybe_schedule_outage(t.state, now)
+                    await _emit_heartbeats(client, t.tenant_id, t.api_key, t.state, t.bucket, now)
+                    await _maybe_fire_alert(client, t.tenant_id, t.api_key, t.state, t.bucket)
+                _print_status(tenants, now, started)
+                last_minute_check = now
 
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), timeout=1.0)
@@ -410,6 +490,65 @@ def _parse_duration(text: str) -> float:
         )
     value, unit = match.groups()
     return float(value) * _DURATION_MULTIPLIER[unit]
+
+
+def _tenant_id_for_slug(slug: str) -> str:
+    """Deterministic ``uuid5`` for a demo slug — must match seed_demo_tenant.py."""
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{slug}.tagpulse.local"))
+
+
+def _parse_tenants(text: str) -> list[tuple[str, str, str]]:
+    """Parse ``slug:key,slug:key`` → ``[(slug, tenant_id, key)]``.
+
+    Multi-tenant entry point (Sprint 59 §59.4 D3): each demo tenant carries its
+    own admin key, and the tenant UUID is derived from the slug via the same
+    deterministic ``uuid5`` the composer uses, so operators only paste
+    ``slug:key`` pairs (no UUIDs). Raises ``ValueError`` on a malformed or
+    duplicate entry.
+    """
+    out: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for chunk in text.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if ":" not in chunk:
+            raise ValueError(f"invalid tenant spec {chunk!r}; expected 'slug:key'")
+        slug, key = (part.strip() for part in chunk.split(":", 1))
+        if not slug or not key:
+            raise ValueError(f"invalid tenant spec {chunk!r}; expected 'slug:key'")
+        if slug in seen:
+            raise ValueError(f"duplicate tenant slug {slug!r}")
+        seen.add(slug)
+        out.append((slug, _tenant_id_for_slug(slug), key))
+    if not out:
+        raise ValueError("no tenants parsed from --tenants / $SIM_TENANTS")
+    return out
+
+
+def _split_rate(aggregate_per_min: float, n_tenants: int) -> float:
+    """Divide the aggregate read budget evenly across active tenants.
+
+    The aggregate ceiling is preserved (sum of per-tenant rates == aggregate),
+    so adding tenants thins each one's stream rather than multiplying load —
+    keeping every tenant well under the Sprint 38 per-tenant limit.
+    """
+    if n_tenants <= 0:
+        raise ValueError("n_tenants must be positive")
+    return aggregate_per_min / n_tenants
+
+
+def _resolve_tenant_specs(args: argparse.Namespace) -> list[tuple[str, str, str]]:
+    """Return ``[(slug, tenant_id, key)]`` for the configured run.
+
+    ``--tenants`` / ``$SIM_TENANTS`` selects multi-tenant mode; otherwise the
+    legacy single-tenant ``--tenant-id`` / ``--api-key`` path is used unchanged
+    (R4: single-tenant stays the default, multi-tenant is opt-in).
+    """
+    if args.tenants:
+        return _parse_tenants(args.tenants)
+    label = DEMO_TENANT_SLUG if args.tenant_id == str(DEMO_TENANT_ID) else args.tenant_id
+    return [(label, args.tenant_id, args.api_key)]
 
 
 def _env_guard() -> None:
@@ -434,20 +573,31 @@ def main() -> int:
     parser.add_argument(
         "--tenant-id",
         default=os.environ.get("TAGPULSE_TENANT_ID", str(DEMO_TENANT_ID)),
-        help=f"Tenant UUID (default: {DEMO_TENANT_ID})",
+        help=f"Single-tenant mode: tenant UUID (default: {DEMO_TENANT_ID})",
     )
     parser.add_argument(
         "--api-key",
         default=os.environ.get("TAGPULSE_API_KEY", ""),
-        help="API key (default: $TAGPULSE_API_KEY)",
+        help="Single-tenant mode: API key (default: $TAGPULSE_API_KEY)",
+    )
+    parser.add_argument(
+        "--tenants",
+        default=os.environ.get("SIM_TENANTS", ""),
+        help=(
+            "Multi-tenant mode: comma-separated 'slug:key' pairs "
+            "(e.g. 'demo-wm-dc:KEY1,demo-inv-coldchain:KEY2'). Each tenant "
+            "UUID is derived from its slug. Overrides --tenant-id/--api-key. "
+            "Defaults to $SIM_TENANTS."
+        ),
     )
     parser.add_argument(
         "--rate",
         type=int,
         default=int(os.environ.get("SIM_RATE_PER_MIN", _DEFAULT_RATE_PER_MIN)),
         help=(
-            f"Target reads/min/tenant (default: {_DEFAULT_RATE_PER_MIN},"
-            f" hard ceiling: {_HARD_CEILING_PER_MIN})"
+            f"Target reads/min in AGGREGATE across all tenants (default:"
+            f" {_DEFAULT_RATE_PER_MIN}, hard aggregate ceiling:"
+            f" {_HARD_CEILING_PER_MIN}). Split evenly per tenant."
         ),
     )
     parser.add_argument(
@@ -466,13 +616,24 @@ def main() -> int:
 
     _env_guard()
 
-    if not args.api_key:
-        print("ERROR: --api-key or $TAGPULSE_API_KEY required", file=sys.stderr)
+    try:
+        specs = _resolve_tenant_specs(args)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 2
+
+    for slug, _tid, key in specs:
+        if not key:
+            print(
+                f"ERROR: missing API key for tenant {slug!r}"
+                " (set --api-key/$TAGPULSE_API_KEY or include it in --tenants)",
+                file=sys.stderr,
+            )
+            return 2
 
     if args.rate > _HARD_CEILING_PER_MIN:
         print(
-            f"ERROR: --rate {args.rate} exceeds hard ceiling {_HARD_CEILING_PER_MIN}",
+            f"ERROR: --rate {args.rate} exceeds aggregate hard ceiling {_HARD_CEILING_PER_MIN}",
             file=sys.stderr,
         )
         return 2
@@ -483,17 +644,32 @@ def main() -> int:
     if args.seed is not None:
         random.seed(args.seed)
 
-    rate_per_sec = args.rate / 60.0
-    bucket = TokenBucket(
-        rate_per_sec=rate_per_sec * _PEAK_MULTIPLIER,  # account for peak multiplier
-        capacity=_BUCKET_BURST_TOKENS,
-    )
-    state = SimState(devices=[], tags=list(_DEFAULT_TAG_POOL))
+    per_tenant_rate = _split_rate(args.rate, len(specs))
+    rate_per_sec = per_tenant_rate / 60.0
+
+    runtimes: list[TenantRuntime] = []
+    for slug, tenant_id, key in specs:
+        runtimes.append(
+            TenantRuntime(
+                slug=slug,
+                tenant_id=tenant_id,
+                api_key=key,
+                state=SimState(devices=[], tags=list(_DEFAULT_TAG_POOL)),
+                bucket=TokenBucket(
+                    rate_per_sec=rate_per_sec * _PEAK_MULTIPLIER,
+                    capacity=_BUCKET_BURST_TOKENS,
+                ),
+                base_rate_per_min=per_tenant_rate,
+            )
+        )
 
     print("Sim loop starting:")
     print(f"  api_url:    {API_URL}")
-    print(f"  tenant_id:  {args.tenant_id}")
-    print(f"  rate:       {args.rate} reads/min (peak ×{_PEAK_MULTIPLIER})")
+    print(f"  tenants:    {len(runtimes)} ({', '.join(r.slug for r in runtimes)})")
+    print(
+        f"  rate:       {args.rate} reads/min aggregate"
+        f" (~{per_tenant_rate:.0f}/tenant, peak ×{_PEAK_MULTIPLIER})"
+    )
     print(f"  duration:   {'forever' if args.duration == 0 else f'{int(args.duration)}s'}")
 
     stop_event = asyncio.Event()
@@ -505,26 +681,23 @@ def main() -> int:
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    try:
+    started = time.monotonic()
+    with suppress(KeyboardInterrupt):
         asyncio.run(
             _run_loop(
-                tenant_id=args.tenant_id,
-                api_key=args.api_key,
-                rate_per_min=args.rate,
+                tenants=runtimes,
                 duration_seconds=args.duration,
-                state=state,
-                bucket=bucket,
                 stop_event=stop_event,
             )
         )
-    except KeyboardInterrupt:
-        pass
 
-    uptime = int(time.monotonic() - state.started_at)
+    uptime = int(time.monotonic() - started)
+    total_reads = sum(r.state.total_reads for r in runtimes)
+    total_alerts = sum(r.state.total_alerts for r in runtimes)
     print("Sim loop finished:")
     print(f"  uptime:       {uptime}s")
-    print(f"  total_reads:  {state.total_reads}")
-    print(f"  total_alerts: {state.total_alerts}")
+    print(f"  total_reads:  {total_reads}")
+    print(f"  total_alerts: {total_alerts}")
     return 0
 
 

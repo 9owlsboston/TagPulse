@@ -124,14 +124,17 @@ demo-tenant-dev: ## Seed the demo tenant against the deployed dev env via tools-
 
 # ---------------------------------------------------------------------------
 # Sprint 58 Phase C — continuous demo-tenant simulator (docker compose).
-# Requires ``make demo-tenant`` to have run first and ``$TAGPULSE_API_KEY``
-# exported. Overrides: ``SIM_RATE_PER_MIN=400 make sim-start`` to push
-# harder; ``SIM_DURATION=30m make sim-start`` for a bounded run.
+# Sprint 59 §59.4 — drive multiple demo tenants at once via $SIM_TENANTS.
+# Single tenant: run ``make demo-tenant`` first + export ``$TAGPULSE_API_KEY``.
+# All demo tenants: export ``SIM_TENANTS='demo-wm-dc:KEY1,demo-inv-coldchain:KEY2,demo-asset-fleet:KEY3'``
+# (each KEY printed by the matching ``make demo-*`` / ``make demo-creds`` run).
+# Overrides: ``SIM_RATE_PER_MIN=400 make sim-start`` (aggregate) to push harder;
+# ``SIM_DURATION=30m make sim-start`` for a bounded run.
 # ---------------------------------------------------------------------------
 
-sim-start:   ## Sprint 58: start the continuous demo simulator (docker compose --profile sim)
-	@if [ -z "$$TAGPULSE_API_KEY" ]; then \
-	  echo "TAGPULSE_API_KEY must be exported (run 'make demo-tenant' first)" >&2; \
+sim-start:   ## Sprint 58/59: start the continuous demo simulator (docker compose --profile sim)
+	@if [ -z "$$SIM_TENANTS" ] && [ -z "$$TAGPULSE_API_KEY" ]; then \
+	  echo "Set SIM_TENANTS (multi-tenant) or export TAGPULSE_API_KEY (single, run 'make demo-tenant' first)" >&2; \
 	  exit 2; \
 	fi
 	docker compose --profile sim up -d sim

@@ -119,7 +119,9 @@ services:
   # ``docker compose --profile sim up -d sim`` (wrapped by ``make sim-start``).
   # Requires ``make demo-tenant`` to have run first so the tenant + devices
   # exist; expects ``$TAGPULSE_API_KEY`` to be set to the key printed by
-  # ``seed_demo_tenant.py``.
+  # ``seed_demo_tenant.py``. Sprint 59 §59.4: set ``$SIM_TENANTS`` to a
+  # ``slug:key,slug:key`` list to drive several demo tenants at once (the
+  # aggregate ``SIM_RATE_PER_MIN`` is split evenly across them).
   sim:
     profiles: ["sim"]
     build:
@@ -130,6 +132,7 @@ services:
       TAGPULSE_API_URL: http://app:8000
       TAGPULSE_API_KEY: ${TAGPULSE_API_KEY:-}
       TAGPULSE_TENANT_ID: ${TAGPULSE_TENANT_ID:-}
+      SIM_TENANTS: ${SIM_TENANTS:-}
       SIM_RATE_PER_MIN: ${SIM_RATE_PER_MIN:-200}
       SIM_DURATION: ${SIM_DURATION:-0}
       LOG_LEVEL: info
