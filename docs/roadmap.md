@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 60 — configurable ui · branch `sprint-60/configurable-ui` (full scope lands in §sprint-60 during the sprint).
+**Current sprint:** 60 — configurable ui · branch `sprint-60/configurable-ui`. **Mechanism shipped** (ADR-032 §7 steps 1–5; backend PR [#91](https://github.com/9owlsboston/TagPulse/pull/91), UI PR [#78](https://github.com/9owlsboston/TagPulse-UI/pull/78)). **WM-facing values now applied:** the UI consumes `labels` + `nav` + `cards` + `theme` + `columns` (UI PR [#80](https://github.com/9owlsboston/TagPulse-UI/pull/80)), the `device`→`Reader` skin is seeded onto the demo tenant (backend PR [#93](https://github.com/9owlsboston/TagPulse/pull/93)), and the **TID** + **User Memory** plumbing columns on Tag Reads are now default-OFF behind an "Advanced columns" toggle. **Remaining tail:** no `metadata` column has been *added* yet (so `columns.*.advanced` has nothing to cut there), and the `tables` leaf stays unconsumed.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1573,7 +1573,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 60 — Configurable UI: label skins · column presets · menu config (active)
+## Sprint 60 — Configurable UI: label skins · column presets · menu config (active — mechanism + WM values shipped, tail remaining)
+
+> **Status (2026-06-14).** The **mechanism is shipped end-to-end**: all five ADR-032 §7 rollout steps landed on backend PR [#91](https://github.com/9owlsboston/TagPulse/pull/91) (config storage `tenants.ui_config` + `user_ui_prefs`, the four-layer System→Tenant→Role→User resolver, the `GET/PUT /ui-config` family, the curated `labels` + `theme` catalogues) and [ADR-032](adr/032-configurable-ui.md) is **Accepted**. **UI consumption (UI PR [#80](https://github.com/9owlsboston/TagPulse-UI/pull/80))** lights up five leaves: `labels` (`Device`→`Reader` renders), `nav` (data-driven sidebar visibility/order via `applyNavConfig`, restrict-and-reorder only), `cards` (`cards.dashboard` is the default layer beneath device-local localStorage personalisation), `theme` (reflected onto `<html>` as `data-ui-variant`/`data-card-style`), and **`columns`** (via `applyColumnConfig` — the **TID** and **User Memory** plumbing columns on the Tag Reads page are now default-OFF behind an "Advanced columns" toggle, driven by `columns.tag_reads.advanced`). **The concrete WM values are applied:** `WM_LABEL_SKIN = {"device": "Reader"}` is now **seeded** onto the `combined` demo tenant via `PUT /ui-config/tenant` (backend PR [#93](https://github.com/9owlsboston/TagPulse/pull/93), a gated composer step), so the demo actually renders `Reader`. **What still remains (tail):** (1) no list page renders a **`metadata`** column yet — the TID cut is done, the `metadata` cut has nothing to act on until that column is added; (2) the **`tables` leaf** (default-sort) is still unconsumed by the UI.
 
 > **Re-scoped at kickoff.** Sprints 58–59 confirmed the May WM focus-group asks — rename `Device`→`Reader`, hide plumbing columns like **TID**, simplify nav — all want the *same underlying capability*: per-tenant (and per-user) UI configuration, not one-off hardcoded edits. So the originally-separate "Configurable UI" dedicated sprint and the "Terminology + nav rework" Sprint 60 are **merged**: Sprint 60 builds the mechanism *and* applies the concrete WM-facing values on top of it. The contract is ratified in [ADR-032](adr/032-configurable-ui.md).
 
