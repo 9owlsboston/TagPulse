@@ -1523,25 +1523,36 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 
 ---
 
-## Sprint 59 — Demo scenario depth: split inventory & asset demo tenants
+## Sprint 59 — Demo scenario depth + spatial foundation
 
 > Design: [docs/design/sprint-59-demo-scenarios.md](design/sprint-59-demo-scenarios.md)
-> ADRs: none new (reuses tenant-isolation 008, subject scoping 013, edge contract 017, wire format v2 025).
+> ADRs: **amends** [ADR-024 — Indoor position estimation](adr/024-position-estimation.md) (Track 2 — position moves devices→antennas; estimator contract becomes antenna-keyed + asset-grouped); reuses tenant-isolation 008, subject scoping 013, edge contract 017, wire format v2 025.
 > Backend PR: [#89](https://github.com/9owlsboston/TagPulse/pull/89). Builds on Sprint 58 ([design](design/sprint-58-demo-and-simulation.md)).
 
-**Goal.** Sprint 58 produced *one* combined demo tenant (`demo-wm-dc`); it's credible at a glance but a generalist — inventory and asset-tracking data share one tenant, so neither domain tells a complete business story. Sprint 59 splits the demo surface into **two purpose-built tenants, each with an extensive, realistic business scenario**, and teaches the seed composer + `sim_loop` to drive multiple tenants from named profiles. **Terminology/nav rework (the original Sprint 59 plan) is re-slotted to Sprint 60** — the May WM session was muddied by sparse data, and domain-deep tenants are the prerequisite for judging "the nav is confusing" separately from "there's nothing on the page."
+Sprint 59 runs **two tracks** with different engineering postures. **Track 1 — Demo scenario depth** is *compose, don't rewrite* (no new schema/endpoints). **Track 2 — Spatial foundation** is the opposite: it lays the net-new schema for indoor `(x, y)` positioning but **defers the positioning math** — schema and the EPC→asset fusion lookup only; no RSSI estimator, no wire-format change.
 
-**Cross-repo.** Backend-led (profile-driven composition of the existing simulators). The UI runs unchanged against whichever tenant you point it at. One candidate `[ui]` follow-up (§59.8 Units table) rides only if UI bandwidth exists.
+**Goal (Track 1).** Sprint 58 produced *one* combined demo tenant (`demo-wm-dc`); it's credible at a glance but a generalist — inventory and asset-tracking data share one tenant, so neither domain tells a complete business story. Sprint 59 splits the demo surface into **two purpose-built tenants, each with an extensive, realistic business scenario**, and teaches the seed composer + `sim_loop` to drive multiple tenants from named profiles. **Terminology/nav rework (the original Sprint 59 plan) is re-slotted to Sprint 60** — the May WM session was muddied by sparse data, and domain-deep tenants are the prerequisite for judging "the nav is confusing" separately from "there's nothing on the page."
 
-**Carry-forward principle (unchanged from 58).** *Compose, don't rewrite.* Extend the existing simulators via data/profiles and narrow shims; no new API endpoints (query-param toggles OK).
+**Goal (Track 2).** The location model is GPS-biased: there is no way to express *where an antenna is on a floor* or *where an asset is in `(x, y)`*. Track 2 lands the minimal schema to close that gap — an `antennas` table holding per-antenna `(x, y, z)`, a site `coord_system`, and an `asset_positions` hypertable — plus the **EPC→asset multi-binding fusion** lookup that both zone-presence and future positioning depend on. **Zone / choke-point presence is the headline "where is X" answer**, surfaced from the existing `tag_presence` + `subject_current_zone` state. The homegrown `rssi_weighted_centroid` estimator, the `rpk` (peak-RSSI) wire-format change, and BYO-precomputed ingest/render are **explicitly deferred** (Sprint 60/61 — see OOS).
 
-### Phases
+**Cross-repo.** Backend-led. Track 1: profile-driven composition of the existing simulators; UI runs unchanged. Track 2: backend schema + service only; the floor-map config UI and position render are Sprint 60 `[ui]`. One candidate Track 1 `[ui]` follow-up (§59.8 Units table) rides only if UI bandwidth exists.
+
+**Carry-forward principle (Track 1, unchanged from 58).** *Compose, don't rewrite.* Extend the existing simulators via data/profiles and narrow shims; no new API endpoints (query-param toggles OK). **Track 2 is exempt** — it is deliberately additive schema + one normalized table; it adds **no** new endpoint in Sprint 59 (BYO ingest endpoint lands in Sprint 60).
+
+### Phases — Track 1 (demo scenario depth)
 
 - **A — 59.1 Scenario design.** Design doc (two business narratives — cold-chain inventory + high-value asset fleet — catalog/asset rosters, per-tenant rule + alert mix, profile model, multi-tenant rate-cap math). Pick the asset narrative (D2). Lock decisions D1–D5. Pass bar: doc reviewed; no scope creep without an OOS note.
 - **B — 59.2 Profile-driven composer.** Parametrize `scripts/seed_demo_tenant.py` with `--profile {combined,inventory,asset}` (default `combined` = today's behaviour, unchanged). New `make demo-inventory` / `make demo-asset` targets + per-tenant reset. Pass bar: each profile idempotent; existing `make demo-tenant` byte-for-byte unchanged.
 - **C — 59.3 Scenario depth.** Extend the inventory catalog (~12–15 SKUs, staggered-expiry lots for FEFO) + asset roster (~20–30 named assets, geofenced + yard/exit zones); add narrow shims for the business events (quarantine/hold, cycle-count delta, geofence-breach read sequences, inactivity gaps, missing-asset). All via composition / existing write paths. Pass bar: every page in both tenants shows non-empty, domain-true data.
 - **D — 59.4 Multi-tenant `sim_loop`.** Teach `scripts/sim_loop.py` to drive N tenants from a profile list with per-tenant keys + per-tenant rate caps (aggregate ceiling preserved). `make sim-start` drives all active demo tenants. Folds in §59.7 (keep readers "online" regardless of dwell). Pass bar: runs ≥ 1 h across 2–3 tenants; aggregate under the per-tenant Sprint 38 limit; start/stop/status targets.
 - **E — 59.5 Docs + closeout.** Split `docs/guides/demo-guide.md` into a combined overview + two domain tours; update `docs/operator-quickstart.md`, CHANGELOG; this §59 section + the §60 stub. Pass bar: guides match what the seeds produce; `make check` green.
+
+### Phases — Track 2 (spatial foundation — schema + fusion only)
+
+> Scope discipline: Track 2 lands **schema and the fusion lookup**, nothing that computes a position from RF. It amends [ADR-024](adr/024-position-estimation.md); it does **not** add an endpoint, a wire-format field, or an estimator in Sprint 59.
+
+- **F — 59.9 Spatial schema + ADR-024 amendment.** New normalized **`antennas`** table (`device_id` FK, `port`, `x`, `y`, `z` nullable, `label`, `gain_dbi` nullable) — position lives per **antenna**, not per device, because a fixed reader fans 2–8 antennas across tens of metres of coax (ADR-024 originally put `position_*` on `devices`; the amendment moves it). Site **`coord_system`** JSONB (units, extent, origin anchor, rotation, optional geo-anchor) per the ADR-024 shape. New **`asset_positions`** hypertable (tenant, asset_id, site_id, ts, x, y, z, confidence, `source` enum `precomputed|zone|computed`, metadata) — Sprint 59 **creates** it but writes nothing to the `computed` source. Amend ADR-024: position→`antennas`; estimator contract becomes **antenna-keyed + asset-grouped**; reference algorithm renamed `weighted_centroid_log_distance` → **`rssi_weighted_centroid`** (relative RSSI, bounded to the antenna convex hull, calibration-free). Pass bar: migration up/down clean on a populated tenant; `mypy`/`ruff` green; ADR-024 amended + decision-history bumped; no FK on `asset_positions.asset_id` (hypertable, matches ADR-013/014).
+- **G — 59.10 EPC→asset multi-binding fusion lookup.** Service that resolves an EPC → `asset_id` via the existing `asset_tag_bindings` (one asset legitimately holds many active EPC bindings — the top+2-sides multi-tag item) and groups an asset's tags. Backs **zone-presence** ("where is this asset now", any of its tags) today and is **step 1 of the future positioning pipeline** (Sprint 61). No new endpoint — internal service consumed by the existing zone/presence read paths. Pass bar: a multi-bound asset resolves from **any** of its EPCs; unbinding history (`bound_at`/`unbound_at`) respected; unit tests cover 1-tag, 3-tag, and rebound cases.
 
 ### Carried-in fixes (surfaced by `chore/demo-data-fixes`)
 
@@ -1552,8 +1563,9 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 ### Out of scope
 
 - **Terminology renames / nav rework** (`Device`→`Reader`, etc.) — **Sprint 60**.
-- **Fixed-reader indoor RTLS / RSSI multilateration** — the location model is GPS-biased and can't answer "where is X" on a building floor (verified: zone presence is a client-side derivation; `/assets/current-locations` is GPS-only, returns 0 for the zone-based demo). Research-heavy, cross-layer; tracked as a **candidate Sprint 61 spike + design sprint**, building on the already-deferred [ADR 024 — Indoor position estimation](adr/024-position-estimation.md). Does **not** ride Sprint 59. (A small zone-fallback for the AssetList Location column is a separable Sprint 60 band-aid — don't conflate.)
-- New device types, new chart types, **rule-engine changes**, **new API endpoints** (query-param toggles OK).
+- **BYO-precomputed position ingest + render** (Track 2 phase "H") — **Sprint 60.** Accept vendor `(x, y)` fixes into `asset_positions` (`source=precomputed`) via **one narrow new endpoint** (`POST /assets/{id}/position`), retrieval with zone-source fallback, and the floor-map config + position render `[ui]`. Sprint 59 lands the *table*; Sprint 60 fills and draws it.
+- **Homegrown RSSI positioning math** — the `rssi_weighted_centroid` estimator (relative-RSSI, count-weighted, asset-grouped), confidence honesty, and the `rpk` (peak-RSSI) wire-format adjustment to [edge-wire-format-v2.md](design/edge-wire-format-v2.md) — **candidate Sprint 61 spike.** v2 already carries per-`(epc, antenna)` `rssi` + `cnt`; `rpk` is an *additive, optional* field (omit when `cnt==1`) the spike will add only if the surveyed-position data shows mean-RSSI dilutes the signal. The per-tenant weight formula is **not** baked into the wire or code — it is per-tenant `position_strategy` config. Builds on the Track 2 schema + the amended ADR-024.
+- New device types, new chart types, **rule-engine changes**, **new API endpoints** (Track 1 query-param toggles OK; the Track 2 BYO endpoint is explicitly a Sprint 60 item).
 - Demo tenants in CI (Sprint 58 D7 still stands), staging/prod simulators (dev-only ceiling).
 - Load testing at scale (`scripts/load_test.py` keeps that).
 
@@ -1564,10 +1576,12 @@ Findings reviewed during planning. Each gap is either closed below, deferred wit
 > Re-slotted from the original Sprint 59 plan: domain-deep demo tenants (Sprint 59) are the prerequisite for measuring nav/terminology changes against data that has something to look at.
 
 **Scope seed (not yet locked).**
-- **Terminology renames** (`Device` → `Reader`, `Telemetry` → ?) driven by the May WM focus-group feedback, validated against the Sprint 58 "before" baseline + the Sprint 59 domain tenants.
+- **Terminology renames** (`Device` → `Reader`, `Telemetry` → ?) driven by the May WM focus-group feedback, validated against the Sprint 58 "before" baseline + the Sprint 59 domain tenants. Open decision: **per-tenant display label vs. true global rename** — TagPulse is architected multi-device-type, so a label-skin keeps the door open for non-reader device types; lock this in Phase A.
+- **UI simplification (WM feedback).** Non-technical operators asked to hide plumbing columns (drop **TID** and others from the tag-reads view) and simplify nav. Needs the actual keep/cut column list from WM before scoping. Bound this so it doesn't become a reader-specific App redesign — generic, opt-in column presets, not a fork.
 - **Nav rework** beyond Sprint 54 / 56.
 - **§59.8 Units table** leads here if it didn't ride Sprint 59.
-- **Zone-fallback for the AssetList Location column** — when an asset has no GPS fix, show its current zone (from the same client-side derivation the AssetDetail timeline already uses) so "where is X" is honest at zone granularity. Separable band-aid; **not** the full RTLS capability (that's candidate Sprint 61).
+- **Track 2 phase H — BYO-precomputed position ingest + floor-map render.** On the Sprint 59 `asset_positions` table: **one narrow new endpoint** `POST /assets/{id}/position` to accept vendor `(x, y)` fixes (`source=precomputed`); a retrieval path that returns the latest fix with **zone-source fallback** when none exists; and the `[ui]` floor-map config (place antennas in the site `coord_system`) + position render. This is the "fill and draw the table" follow-on to Sprint 59 Track 2.
+- **Zone-fallback for the AssetList Location column** — when an asset has no GPS/precomputed fix, show its current zone (from `subject_current_zone` / the same client-side derivation the AssetDetail timeline uses) so "where is X" is honest at zone granularity. Separable band-aid; **not** the homegrown RSSI estimator (that's candidate Sprint 61).
 
 ---
 
