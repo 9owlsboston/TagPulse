@@ -245,3 +245,112 @@ def test_classify_trend_thresholds() -> None:
     assert _classify_trend([]) == "flat"
     # Zero baseline, positive tail — special-cased to "up".
     assert _classify_trend([0, 0, 0, 5, 5, 5]) == "up"
+
+
+# --- Sprint 60: real (bucketed) series for the WM demo cards ---------------
+
+
+class _Row:
+    """Minimal stand-in for a SQLAlchemy result row (``.bucket_start`` / ``.v``)."""
+
+    def __init__(self, bucket_start: datetime, v: int) -> None:
+        self.bucket_start = bucket_start
+        self.v = v
+
+
+class _Result:
+    def __init__(self, rows: list[_Row]) -> None:
+        self._rows = rows
+
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        return iter(self._rows)
+
+
+class _FakeSession:
+    """Fake async session that returns a fully-populated series per SQL.
+
+    It reconstructs the service's bucket boundaries from the query params, so
+    each registered SQL yields one row per bucket with a caller-supplied value
+    function — letting the test prove (a) the wiring maps each query to the
+    right tile and (b) the resulting series is genuinely bucketed, not flat.
+    """
+
+    def __init__(self, value_fns: dict[Any, Any]) -> None:
+        self._value_fns = value_fns
+        self.executed: list[Any] = []
+
+    async def execute(self, sql: Any, params: dict[str, Any]):  # type: ignore[no-untyped-def]
+        self.executed.append(sql)
+        from tagpulse.services.dashboard import _bucket_starts
+
+        starts = _bucket_starts(params["since"], params["until"], params["stride"])
+        fn = self._value_fns.get(sql)
+        if fn is None:
+            return _Result([])
+        return _Result([_Row(s, fn(i)) for i, s in enumerate(starts)])
+
+
+@pytest.mark.asyncio
+async def test_real_series_tiles_are_bucketed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``devices`` / ``tags`` / ``assets-active`` are real bucketed series
+    (one query each), no longer flat point-in-time repeats; the four tiles with
+    no historical source stay flat."""
+    from tagpulse.models.schemas import DashboardSummary
+    from tagpulse.services import dashboard as dash
+
+    async def _fake_summary(session: Any, tenant_id: uuid.UUID) -> DashboardSummary:
+        return DashboardSummary(
+            generated_at=datetime.now(UTC),
+            devices_online=3,
+            devices_total=14,
+            alerts_open_24h=1,
+            reads_per_hour_now=50,
+            assets_active=17,
+            tag_transfers_in_flight=2,
+            tag_recon_backlog=15,
+            low_stock_count=4,
+            tags_total=3,
+            sites_total=2,
+            zones_total=5,
+        )
+
+    monkeypatch.setattr(dash, "get_summary", _fake_summary)
+
+    # Each real SQL yields a *distinct* ramp so we can prove the mapping isn't
+    # swapped (e.g. the readers query must drive the `devices` tile).
+    value_fns = {
+        dash._SPARKLINE_READS_SQL: lambda i: 100 + i,
+        dash._SPARKLINE_ALERTS_SQL: lambda i: i % 2,
+        dash._SPARKLINE_ACTIVE_READERS_SQL: lambda i: 10 + i,
+        dash._SPARKLINE_TAGS_SEEN_SQL: lambda i: 200 + i,
+        dash._SPARKLINE_ASSETS_SEEN_SQL: lambda i: 300 + i,
+    }
+    session = _FakeSession(value_fns)
+
+    result = await dash.get_sparklines(session, uuid4())  # type: ignore[arg-type]
+    tiles = result.tiles
+
+    # All five real queries ran.
+    assert dash._SPARKLINE_ACTIVE_READERS_SQL in session.executed
+    assert dash._SPARKLINE_TAGS_SEEN_SQL in session.executed
+    assert dash._SPARKLINE_ASSETS_SEEN_SQL in session.executed
+
+    # Each real tile carries its own query's series (mapping not swapped) and
+    # is genuinely non-flat (distinct values → an "up" ramp).
+    assert [p.v for p in tiles["devices"].series][:3] == [10, 11, 12]
+    assert tiles["devices"].trend == "up"
+    assert [p.v for p in tiles["tags"].series][:3] == [200, 201, 202]
+    assert tiles["tags"].trend == "up"
+    assert [p.v for p in tiles["assets-active"].series][:3] == [300, 301, 302]
+    assert tiles["assets-active"].trend == "up"
+
+    # Tiles with no honest historical source stay flat at the current count.
+    for tile_id, value in (
+        ("locations", 7),  # sites_total + zones_total
+        ("transfers-in-flight", 2),
+        ("recon-backlog", 15),
+        ("low-stock", 4),
+    ):
+        series = tiles[tile_id].series
+        assert tiles[tile_id].trend == "flat"
+        assert all(p.v == value for p in series)
