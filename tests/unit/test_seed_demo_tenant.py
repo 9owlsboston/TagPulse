@@ -98,7 +98,7 @@ _COMPOSER_INVOCATIONS: list[tuple[str, str, frozenset[str]]] = [
     (
         "_step_simulate_inventory",
         "simulate_inventory.py",
-        frozenset({"--tenant-id", "--api-key", "--units", "--seed-only"}),
+        frozenset({"--tenant-id", "--api-key", "--scenario", "--units", "--seed-only"}),
     ),
     (
         "_step_simulate_assets",
@@ -107,6 +107,7 @@ _COMPOSER_INVOCATIONS: list[tuple[str, str, frozenset[str]]] = [
             {
                 "--tenant-id",
                 "--api-key",
+                "--scenario",
                 "--assets",
                 "--readers",
                 "--iterations",
@@ -433,3 +434,87 @@ def test_reset_known_slugs_cover_all_profiles() -> None:
         "reset_demo_tenant.KNOWN_DEMO_SLUGS is missing composer profile slugs: "
         f"{sorted(composer_slugs - reset_slugs)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 59 Phase C — scenario depth.
+# Each domain profile now selects a richer simulator preset via ``--scenario``.
+# The ``baseline`` preset in each simulator MUST reproduce the legacy
+# (Sprint 58) module constants so the combined tenant stays byte-for-byte.
+# ---------------------------------------------------------------------------
+
+
+def test_profile_scenarios_are_registered_in_their_simulators() -> None:
+    """Every profile's scenario name resolves to a real preset.
+
+    Catches drift where a profile points ``inventory_scenario`` /
+    ``asset_scenario`` at a preset key that the target simulator's
+    ``SCENARIOS`` dict doesn't define — which would crash the composer
+    mid-run with an argparse ``choices`` error.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    simulate_inventory = _load_script_module("simulate_inventory.py")
+    simulate_assets = _load_script_module("simulate_assets.py")
+
+    for profile in seed_demo_tenant.PROFILES.values():
+        assert profile.inventory_scenario in simulate_inventory.SCENARIOS, (
+            f"profile {profile.key!r} inventory_scenario "
+            f"{profile.inventory_scenario!r} not in simulate_inventory.SCENARIOS"
+        )
+        assert profile.asset_scenario in simulate_assets.SCENARIOS, (
+            f"profile {profile.key!r} asset_scenario "
+            f"{profile.asset_scenario!r} not in simulate_assets.SCENARIOS"
+        )
+
+
+def test_combined_profile_uses_baseline_scenarios() -> None:
+    """The combined tenant must run both simulators in their baseline preset.
+
+    This is the scenario-depth half of the byte-for-byte contract: the
+    domain profiles get the richer presets, but ``combined`` stays on
+    ``baseline`` so ``make demo-tenant`` reproduces the Sprint 58 build.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    combined = seed_demo_tenant.PROFILES["combined"]
+
+    assert combined.inventory_scenario == "baseline"
+    assert combined.asset_scenario == "baseline"
+
+
+def test_domain_profiles_select_deep_scenarios() -> None:
+    """Inventory selects coldchain catalog depth; asset selects the fleet roster."""
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    profiles = seed_demo_tenant.PROFILES
+
+    assert profiles["inventory"].inventory_scenario == "coldchain"
+    assert profiles["asset"].asset_scenario == "fleet"
+
+
+def test_inventory_baseline_scenario_matches_legacy_constants() -> None:
+    """``simulate_inventory`` baseline preset reuses the legacy module objects.
+
+    The combined tenant seeds inventory with ``--scenario baseline``; if that
+    preset ever diverged from the original ``CATALOG`` / ``ZONE_PIPELINE`` /
+    ``SITE_NAME`` constants, the combined build would silently change shape.
+    """
+    simulate_inventory = _load_script_module("simulate_inventory.py")
+    baseline = simulate_inventory.SCENARIOS["baseline"]
+
+    assert baseline.catalog is simulate_inventory.CATALOG
+    assert baseline.zone_pipeline is simulate_inventory.ZONE_PIPELINE
+    assert baseline.site_name == simulate_inventory.SITE_NAME
+    # Baseline has no quarantine divert (that's a coldchain-only feature).
+    assert baseline.quarantine_zone is None
+
+
+def test_assets_baseline_scenario_is_not_topology() -> None:
+    """``simulate_assets`` baseline preset keeps the legacy Sim-Pallet flow.
+
+    ``is_topology`` False routes ``main()`` down the unchanged Sprint 15
+    fetch_devices/ensure_assets/ensure_bindings/emit path the combined tenant
+    relies on; the ``fleet`` preset is the topology-driven one.
+    """
+    simulate_assets = _load_script_module("simulate_assets.py")
+
+    assert simulate_assets.SCENARIOS["baseline"].is_topology is False
+    assert simulate_assets.SCENARIOS["fleet"].is_topology is True

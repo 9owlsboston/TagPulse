@@ -124,6 +124,12 @@ class DemoProfile:
     seed_backfill: bool = True
     seed_alerts: bool = True
     seed_transfer: bool = True
+    # Sprint 59 Phase C: which simulator scenario preset each domain step runs.
+    # ``baseline`` reproduces the Sprint 58 combined build; the domain profiles
+    # select the richer single-domain presets (registered in each simulator's
+    # ``SCENARIOS`` dict).
+    inventory_scenario: str = "baseline"
+    asset_scenario: str = "baseline"
 
     @property
     def tenant_id(self) -> uuid.UUID:
@@ -155,6 +161,8 @@ PROFILES: dict[str, DemoProfile] = {
         # Inventory-only story: no asset roster, no cross-tenant transfer.
         seed_assets=False,
         seed_transfer=False,
+        # Domain-deep catalog: multi-lot cold-chain SKUs + quarantine zone.
+        inventory_scenario="coldchain",
     ),
     "asset": DemoProfile(
         key="asset",
@@ -164,6 +172,9 @@ PROFILES: dict[str, DemoProfile] = {
         admin_name="Asset Demo Admin",
         # Asset-tracking story: no inventory catalog.
         seed_inventory=False,
+        # Domain-deep roster: named returnables across 3 categories + a
+        # geofenced site with a yard/exit zone (breach + missing narratives).
+        asset_scenario="fleet",
     ),
 }
 
@@ -386,6 +397,8 @@ def _step_simulate_inventory(profile: DemoProfile, api_key: str, *, units: int) 
         str(profile.tenant_id),
         "--api-key",
         api_key,
+        "--scenario",
+        profile.inventory_scenario,
         "--units",
         str(units),
         "--seed-only",
@@ -403,6 +416,8 @@ def _step_simulate_assets(
         str(profile.tenant_id),
         "--api-key",
         api_key,
+        "--scenario",
+        profile.asset_scenario,
         "--assets",
         str(assets),
         "--readers",
