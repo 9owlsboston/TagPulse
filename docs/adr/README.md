@@ -33,3 +33,4 @@
 | 029 | [UI design tokens — semantic layer, dual theme, AntD ConfigProvider](029-ui-design-tokens.md) | accepted | 2026-05-24 |
 | 030 | [List-page column filters — standard checkbox + search pattern](030-list-page-column-filters.md) | proposed | 2026-06-13 |
 | 031 | [Force-delete of stock items never orphans the movement ledger](031-stock-item-force-delete-ledger.md) | accepted | 2026-06-13 |
+| 032 | [Configurable UI — presentation config as a per-viewer projection](032-configurable-ui.md) | proposed | 2026-06-13 |
