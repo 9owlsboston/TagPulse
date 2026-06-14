@@ -99,7 +99,7 @@ async def put_ui_config_me(
     try:
         override = validate_ui_config_override(body)
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+        raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
     await UserUiPrefsRepository(session).upsert(user.user_id, user.tenant_id, override)
     return await _resolve_for_user(user, session)
 
@@ -122,7 +122,7 @@ async def put_ui_config_tenant(
     try:
         override = validate_ui_config_override(body)
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+        raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
 
     repo = TenantUiConfigRepository(session)
     stored = await repo.get(user.tenant_id) or {}
@@ -166,7 +166,7 @@ async def put_ui_config_role(
     try:
         override = validate_ui_config_override(body)
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+        raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
 
     repo = TenantUiConfigRepository(session)
     stored = dict(await repo.get(user.tenant_id) or {})

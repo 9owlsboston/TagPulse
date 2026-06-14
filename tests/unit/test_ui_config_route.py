@@ -219,6 +219,16 @@ def test_put_ui_config_me_rejects_unknown_key(monkeypatch: pytest.MonkeyPatch) -
     assert resp.status_code == 422
 
 
+def test_put_ui_config_me_rejects_unknown_theme_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The theme leaf is a curated catalogue — an unregistered variant is a
+    422, not a silently-stored value (ADR-032 §7 step 5)."""
+    ctx = _build(monkeypatch, user_id=uuid4())
+    resp = ctx.client.put("/ui-config/me", json={"theme": {"variant": "rainbow"}})
+    assert resp.status_code == 422
+
+
 def test_put_ui_config_me_rejects_bad_leaf_type(monkeypatch: pytest.MonkeyPatch) -> None:
     ctx = _build(monkeypatch, user_id=uuid4())
     resp = ctx.client.put(

@@ -11,9 +11,11 @@ import pytest
 from pydantic import ValidationError
 
 from tagpulse.services.ui_config import (
+    CARD_STYLES,
     LABEL_KEYS,
     ROLES_KEY,
     SYSTEM_DEFAULT_UI_CONFIG,
+    THEME_VARIANTS,
     WM_LABEL_SKIN,
     ColumnGroup,
     ThemeConfig,
@@ -292,3 +294,50 @@ def test_validate_override_keeps_label_skin_sparse() -> None:
     catalogue, so it still falls through for every other term."""
     out = validate_ui_config_override({"labels": {"device": "Reader"}})
     assert out == {"labels": {"device": "Reader"}}
+
+
+# -- theme variants (increment 5) ------------------------------------------
+
+
+def test_theme_catalogue_includes_the_default() -> None:
+    """Both catalogues lead with today's UI value (ADR-032 §7 step 5)."""
+    assert "default" in THEME_VARIANTS
+    assert "default" in CARD_STYLES
+    assert SYSTEM_DEFAULT_UI_CONFIG.theme.variant == "default"
+    assert SYSTEM_DEFAULT_UI_CONFIG.theme.card_style == "default"
+
+
+def test_registered_theme_values_accepted() -> None:
+    """Every catalogued variant / card style validates."""
+    for variant in THEME_VARIANTS:
+        assert ThemeConfig.model_validate({"variant": variant}).variant == variant
+    for style in CARD_STYLES:
+        theme = ThemeConfig.model_validate({"cardStyle": style})
+        assert theme.card_style == style
+
+
+def test_unknown_theme_variant_rejected() -> None:
+    """``theme`` is a curated surface — an unregistered variant is rejected
+    (ADR-032 §4: '2–3 curated variants … not unbounded styling knobs')."""
+    with pytest.raises(ValidationError):
+        ThemeConfig.model_validate({"variant": "rainbow"})
+
+
+def test_unknown_card_style_rejected() -> None:
+    with pytest.raises(ValidationError):
+        ThemeConfig.model_validate({"cardStyle": "neon"})
+
+
+def test_validate_override_rejects_unknown_theme_value() -> None:
+    with pytest.raises(ValidationError):
+        validate_ui_config_override({"theme": {"variant": "rainbow"}})
+
+
+def test_theme_override_resolves_and_stays_sparse() -> None:
+    """A sparse theme override re-skins its key; the sibling falls through
+    to the default, and the persisted override carries only the set key."""
+    resolved = resolve_ui_config([{"theme": {"cardStyle": "sparkline"}}])
+    assert resolved.theme.card_style == "sparkline"
+    assert resolved.theme.variant == "default"  # sibling falls through
+    out = validate_ui_config_override({"theme": {"cardStyle": "sparkline"}})
+    assert out == {"theme": {"cardStyle": "sparkline"}}

@@ -1,10 +1,12 @@
 """Configurable UI — presentation-config resolution (ADR-032).
 
-Sprint 60 increments 1–4 (ADR-032 §7 steps 1–4): the server-resolved
+Sprint 60 increments 1–5 (ADR-032 §7 steps 1–5): the server-resolved
 ``GET /ui-config``, the per-user ``PUT /ui-config/me`` override layer, the
-admin-set ``PUT /ui-config/{tenant,role/{role}}`` default layers, and the
+admin-set ``PUT /ui-config/{tenant,role/{role}}`` default layers, the
 **label-skin** surface (increment 4 — the curated entity/nav display terms WM
-asked to rename, e.g. ``Device`` → ``Reader``).
+asked to rename, e.g. ``Device`` → ``Reader``), and the **theme-variant**
+catalogue (increment 5 — the curated persona theme + card-style values that
+ride the ADR-029 design tokens, e.g. the ``sparkline`` card style).
 
 This module owns the resolution machinery the routes/repositories only *feed*:
 
@@ -21,31 +23,36 @@ This module owns the resolution machinery the routes/repositories only *feed*:
    layer for ``labels`` — the resolved ``GET /ui-config`` always carries the
    **complete** effective label map (defaults overlaid with overrides), so the
    UI reads one authoritative ``labels[key]`` and never re-derives defaults.
-3. ``SYSTEM_DEFAULT_UI_CONFIG`` — the versioned, tested code constant that is
+3. ``THEME_VARIANTS`` / ``CARD_STYLES`` — the curated allow-lists for the
+   ``theme`` leaf (ADR-032 §4: "2–3 curated variants … not unbounded styling
+   knobs"). A ``theme`` override may only select a registered persona variant
+   or card style; an unknown value is rejected on write (→ ``ValidationError``
+   → 422). The catalogue grows here additively — a new approved variant ships
+   as data, never a fork — and the UI maps each value onto its ADR-029 tokens.
+4. ``SYSTEM_DEFAULT_UI_CONFIG`` — the versioned, tested code constant that is
    the bottom layer of the merge. Every leaf but ``labels`` is intentionally
-   **empty** (default theme, nothing hidden); ``labels`` carries the canonical
-   defaults (``LABEL_KEYS``) — which *are* today's UI terms, so configuring
-   nothing still reproduces today's UI. ``WM_LABEL_SKIN`` is the one decided
-   WM-facing value (``Device`` → ``Reader``), applied per-tenant via
-   ``PUT /ui-config/tenant`` (or the demo seed), **not** baked into the system
-   default.
-4. ``deep_merge`` / ``resolve_ui_config`` — the per-leaf
+   **empty** (``theme`` = the ``default`` variant + ``default`` card style,
+   nothing hidden); ``labels`` carries the canonical defaults (``LABEL_KEYS``)
+   — which *are* today's UI terms, so configuring nothing still reproduces
+   today's UI. ``WM_LABEL_SKIN`` is the one decided WM-facing value
+   (``Device`` → ``Reader``), applied per-tenant via ``PUT /ui-config/tenant``
+   (or the demo seed), **not** baked into the system default.
+5. ``deep_merge`` / ``resolve_ui_config`` — the per-leaf
    System → Tenant → Role → User deep-merge engine (ADR-032 §2). Callers pass
    the layers (tenant default, role default, user override) in that order;
    last writer wins per leaf.
-5. ``validate_ui_config_override`` — the ``PUT /ui-config/*`` write validator.
-   It rejects unknown/ill-typed keys (``extra="forbid"`` + the ``labels``
-   registry check) and returns the **sparse** canonical (camelCase) override to
-   persist — only the keys the caller actually set, so a one-leaf override
-   still falls through to the layers below for every other leaf.
-6. ``tenant_role_layers`` — splits a stored ``tenants.ui_config`` blob into its
+6. ``validate_ui_config_override`` — the ``PUT /ui-config/*`` write validator.
+   It rejects unknown/ill-typed keys (``extra="forbid"`` + the ``labels`` /
+   ``theme`` catalogue checks) and returns the **sparse** canonical (camelCase)
+   override to persist — only the keys the caller actually set, so a one-leaf
+   override still falls through to the layers below for every other leaf.
+7. ``tenant_role_layers`` — splits a stored ``tenants.ui_config`` blob into its
    ``[tenant_default, role_default]`` resolve layers for a given role (the
    role layer is keyed under a reserved ``roles`` sub-object, ADR-032 §3).
 
 Deferred to a later increment (kept out deliberately to avoid speculative
 code): the ``locked`` leaf-pinning flag (ADR-032 §2) — it only earns its
-complexity once the tenant/role floor layers are in real use; and the theme /
-``cardStyle`` variant catalogue (ADR-032 §7 step 5).
+complexity once the tenant/role floor layers are in real use.
 """
 
 from __future__ import annotations
@@ -87,6 +94,16 @@ LABEL_KEYS: dict[str, str] = {
 # demo seed; never baked into the system default.
 WM_LABEL_SKIN: dict[str, str] = {"device": "Reader"}
 
+# Curated theme catalogue (ADR-032 §4 ``theme``, §7 step 5). The ``theme`` leaf
+# rides the ADR-029 design tokens: a small allow-list of approved persona
+# *variants* and card *styles*, not unbounded styling knobs. A ``theme``
+# override may only select a registered value (unknown → ``ValidationError`` →
+# 422); the UI maps each value onto its token set. Both catalogues are additive
+# — a new approved variant/style ships as a tuple entry, never a fork — and
+# both lead with ``"default"`` (today's UI), which is the system default.
+THEME_VARIANTS: tuple[str, ...] = ("default", "operator", "power")
+CARD_STYLES: tuple[str, ...] = ("default", "sparkline")
+
 
 class _Leaf(BaseModel):
     """Base for every config node.
@@ -101,10 +118,30 @@ class _Leaf(BaseModel):
 
 
 class ThemeConfig(_Leaf):
-    """Theme variant + card style, riding the ADR-029 design tokens."""
+    """Theme variant + card style, riding the ADR-029 design tokens.
+
+    Both fields are curated surfaces (ADR-032 §4): ``variant`` must name a
+    registered persona theme (``THEME_VARIANTS``) and ``card_style`` a
+    registered card visual (``CARD_STYLES``). The default is today's UI
+    (``default`` / ``default``).
+    """
 
     variant: str = "default"
     card_style: str = Field(default="default", alias="cardStyle")
+
+    @field_validator("variant")
+    @classmethod
+    def _variant_is_registered(cls, value: str) -> str:
+        if value not in THEME_VARIANTS:
+            raise ValueError(f"unknown theme variant: {value!r}")
+        return value
+
+    @field_validator("card_style")
+    @classmethod
+    def _card_style_is_registered(cls, value: str) -> str:
+        if value not in CARD_STYLES:
+            raise ValueError(f"unknown card style: {value!r}")
+        return value
 
 
 class NavConfig(_Leaf):

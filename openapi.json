@@ -7261,7 +7261,7 @@
       },
       "ThemeConfig": {
         "additionalProperties": false,
-        "description": "Theme variant + card style, riding the ADR-029 design tokens.",
+        "description": "Theme variant + card style, riding the ADR-029 design tokens.\n\nBoth fields are curated surfaces (ADR-032 \u00a74): ``variant`` must name a\nregistered persona theme (``THEME_VARIANTS``) and ``card_style`` a\nregistered card visual (``CARD_STYLES``). The default is today's UI\n(``default`` / ``default``).",
         "properties": {
           "cardStyle": {
             "default": "default",
