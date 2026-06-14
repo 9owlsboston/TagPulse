@@ -25,10 +25,11 @@
 | 021 | [Configurable Sensing Events](021-configurable-sensing-events.md) | proposed | 2026-05-17 |
 | 022 | [Soft Assets — auto-creation policy](022-soft-assets.md) | proposed | 2026-05-17 |
 | 023 | [Outbound Connections — add MQTT dispatcher (Kafka/Pub-Sub deferred)](023-outbound-connections-mqtt-kafka.md) | proposed | 2026-05-17 |
-| 024 | [Indoor position estimation — trilateration processor + `asset_positions` hypertable](024-position-estimation.md) | proposed | 2026-05-17 |
+| 024 | [Indoor position estimation — trilateration processor + `asset_positions` hypertable](024-position-estimation.md) | amended | 2026-05-17 |
 | 025 | [Edge wire format v2 — JSON-over-MQTT with snap-based presence](025-edge-wire-format-v2.md) | accepted | 2026-05-23 |
 | 026 | [Server-side presence model — `tag_presence` + synchronous reconciler](026-presence-model.md) | accepted | 2026-05-23 |
 | 027 | [Reader-to-Edge LAN-side contract — CSV-over-TCP, Pi owns wall clock](027-reader-to-edge-contract.md) | proposed | 2026-05-23 |
 | 028 | [Tags as a first-class entity](028-tags-as-first-class-entity.md) | implemented | 2026-05-23 |
 | 029 | [UI design tokens — semantic layer, dual theme, AntD ConfigProvider](029-ui-design-tokens.md) | accepted | 2026-05-24 |
 | 030 | [List-page column filters — standard checkbox + search pattern](030-list-page-column-filters.md) | proposed | 2026-06-13 |
+| 031 | [Force-delete of stock items never orphans the movement ledger](031-stock-item-force-delete-ledger.md) | accepted | 2026-06-13 |

@@ -556,6 +556,18 @@ class TimescaleStockMovementRepository:
         await self._session.flush()
         return _movement_to_response(row)
 
+    async def count_for_stock_item(self, tenant_id: uuid.UUID, stock_item_id: uuid.UUID) -> int:
+        """Count ledger movements referencing a stock item (tenant-scoped)."""
+        stmt = (
+            select(func.count())
+            .select_from(StockMovementModel)
+            .where(
+                StockMovementModel.tenant_id == tenant_id,
+                StockMovementModel.stock_item_id == stock_item_id,
+            )
+        )
+        return (await self._session.execute(stmt)).scalar_one()
+
     async def list(  # noqa: A003
         self,
         tenant_id: uuid.UUID,

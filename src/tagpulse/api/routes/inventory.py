@@ -15,6 +15,7 @@ from tagpulse.api.dependencies import get_inventory_service
 from tagpulse.api.services.inventory_service import (
     InventoryService,
     ProductNotFoundError,
+    StockItemLedgerError,
 )
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.schemas import (
@@ -289,6 +290,19 @@ async def delete_stock_item(
         deleted = await service.delete_stock_item(
             user.tenant_id, user.user_id, stock_item_id, force=force
         )
+    except StockItemLedgerError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "stock_item_has_ledger",
+                "message": str(exc),
+                "movement_count": exc.movement_count,
+                "remediation": (
+                    "Retire the item instead: PATCH /stock-items/{id} with "
+                    "state=consumed to preserve its movement history."
+                ),
+            },
+        ) from None
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     if not deleted:
