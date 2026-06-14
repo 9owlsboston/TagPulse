@@ -1,9 +1,9 @@
 """Configurable UI — presentation-config resolution (ADR-032).
 
-Sprint 60 increment 1 (ADR-032 §7 step 1): the server-resolved
-``GET /ui-config`` over **system defaults only** — no persistence yet.
+Sprint 60 increments 1–2 (ADR-032 §7 steps 1–2): the server-resolved
+``GET /ui-config`` and the per-user ``PUT /ui-config/me`` override layer.
 
-This module owns three things the later increments only *feed*:
+This module owns four things the later increments only *feed*:
 
 1. ``UiConfig`` — the schema-validated presentation document (the six leaf
    namespaces from ADR-032 §4: ``labels`` / ``theme`` / ``nav`` / ``cards`` /
@@ -17,13 +17,17 @@ This module owns three things the later increments only *feed*:
    in the terminology sprint, not here (ADR-032 "out of scope").
 3. ``deep_merge`` / ``resolve_ui_config`` — the per-leaf
    System → Tenant → Role → User deep-merge engine (ADR-032 §2). Increment 1
-   resolves the system default only; increments 2–3 add ``user_ui_prefs`` and
-   ``tenants.ui_config`` as override layers without touching this contract.
+   resolved the system default only; increment 2 folds the caller's
+   ``user_ui_prefs`` row in as the top override layer.
+4. ``validate_ui_config_override`` — the ``PUT /ui-config/*`` write validator
+   (increment 2). It rejects unknown/ill-typed keys (``extra="forbid"``) and
+   returns the **sparse** canonical (camelCase) override to persist — only the
+   keys the caller actually set, so a one-leaf override still falls through to
+   the layers below for every other leaf.
 
 Deferred to later increments (kept out deliberately to avoid speculative
 code): the ``locked`` leaf-pinning flag (ADR-032 §2) only has meaning once the
-tenant/role layers exist, so it lands with increment 3; write validation for
-``PUT /ui-config/*`` lands with increment 2.
+tenant/role layers exist, so it lands with increment 3.
 """
 
 from __future__ import annotations
@@ -145,3 +149,19 @@ def resolve_ui_config(overrides: Sequence[Mapping[str, Any]] = ()) -> UiConfig:
     for layer in overrides:
         merged = deep_merge(merged, layer)
     return UiConfig.model_validate(merged)
+
+
+def validate_ui_config_override(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate a ``PUT /ui-config/*`` body and return the sparse override doc.
+
+    Runs the payload through :class:`UiConfig` so unknown keys and ill-typed
+    leaves are rejected (``extra="forbid"``; raises ``pydantic.ValidationError``
+    → the route maps it to 422), then returns **only the keys the caller set**
+    via ``model_dump(exclude_unset=True)``. Keeping the override sparse is what
+    makes the per-layer deep-merge work: a user who hides one column must still
+    inherit every other leaf from role/tenant/system, so we must not
+    materialise defaults for the keys they left untouched. The returned doc is
+    canonical camelCase (``by_alias=True``) for stable storage.
+    """
+    model = UiConfig.model_validate(payload)
+    return model.model_dump(by_alias=True, exclude_unset=True)

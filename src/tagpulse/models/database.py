@@ -510,6 +510,31 @@ class UserModel(Base):
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class UserUiPrefsModel(Base):
+    """Per-user UI presentation overrides (Sprint 60, ADR-032 §3 user layer).
+
+    Sibling of :class:`UserModel` (``user_id`` PK grain), so — like ``users`` —
+    it carries **no RLS**: the request path scopes by the globally-unique
+    ``user_id`` PK, not the ``app.current_tenant_id`` GUC. ``prefs`` is the
+    **sparse** per-leaf override (a subset of the ADR-032 §4 document); missing
+    keys fall through to role/tenant/system at resolve time. "Reset to team
+    default" = delete the row (``ON DELETE CASCADE`` from ``users``).
+    """
+
+    __tablename__ = "user_ui_prefs"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    prefs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class SiteModel(Base):
     """Physical location grouping (Sprint 15) — building/yard/warehouse.
 

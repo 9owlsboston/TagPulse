@@ -17,6 +17,7 @@ from tagpulse.services.ui_config import (
     UiConfig,
     deep_merge,
     resolve_ui_config,
+    validate_ui_config_override,
 )
 
 # -- system default --------------------------------------------------------
@@ -136,3 +137,43 @@ def test_resolve_reset_to_team_default_via_absent_layer() -> None:
 def test_resolve_rejects_malformed_override() -> None:
     with pytest.raises(ValidationError):
         resolve_ui_config([{"theme": {"variant": "operator", "bogus": 1}}])
+
+
+# -- validate_ui_config_override (write path, increment 2) ------------------
+
+
+def test_validate_override_keeps_only_set_keys() -> None:
+    """The stored override is sparse so untouched leaves fall through (ADR-032
+    §2). Setting one nested key must not materialise sibling defaults."""
+    out = validate_ui_config_override({"theme": {"cardStyle": "sparkline"}})
+    assert out == {"theme": {"cardStyle": "sparkline"}}
+
+
+def test_validate_override_normalises_to_camelcase() -> None:
+    """snake_case input is accepted (``populate_by_name``) but persisted as the
+    canonical camelCase wire key."""
+    out = validate_ui_config_override({"theme": {"card_style": "sparkline"}})
+    assert out == {"theme": {"cardStyle": "sparkline"}}
+
+
+def test_validate_override_empty_is_empty() -> None:
+    assert validate_ui_config_override({}) == {}
+
+
+def test_validate_override_rejects_unknown_key() -> None:
+    with pytest.raises(ValidationError):
+        validate_ui_config_override({"bogus": 1})
+
+
+def test_validate_override_rejects_bad_leaf_type() -> None:
+    with pytest.raises(ValidationError):
+        validate_ui_config_override(
+            {"tables": {"assets": {"defaultSort": {"key": "name", "dir": "up"}}}}
+        )
+
+
+def test_validate_override_round_trips_through_resolve() -> None:
+    """A persisted override folds back cleanly as the user layer."""
+    override = validate_ui_config_override({"columns": {"assets": {"advanced": ["tid"]}}})
+    resolved = resolve_ui_config([override])
+    assert resolved.columns["assets"].advanced == ["tid"]

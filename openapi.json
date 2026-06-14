@@ -16572,7 +16572,7 @@
     },
     "/ui-config": {
       "get": {
-        "description": "Return the presentation config resolved for the calling viewer.\n\nIncrement 1 resolves the system default only, so every authenticated\ncaller gets the same document; the ``user`` dependency is here so later\nincrements can fold this viewer's role/user override layers without an\nendpoint signature change.",
+        "description": "Return the presentation config resolved for the calling viewer.\n\nFolds System \u2192 User (tenant/role layers land in increment 3). The merge is\ndone server-side so the UI never reconstructs it.",
         "operationId": "get_ui_config_ui_config_get",
         "responses": {
           "200": {
@@ -16592,6 +16592,55 @@
           }
         ],
         "summary": "Get Ui Config",
+        "tags": [
+          "ui-config"
+        ]
+      }
+    },
+    "/ui-config/me": {
+      "put": {
+        "description": "Upsert the caller's UI override and return the freshly resolved config.\n\nThe body is a **sparse** subset of the ADR-032 \u00a74 document; unknown or\nill-typed keys are rejected (422). An empty body ``{}`` clears the\noverride (\"reset to team default\"). Requires a real user identity \u2014 the\nX-Tenant-ID backward-compat path has no user to attach prefs to.",
+        "operationId": "put_ui_config_me_ui_config_me_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Put Ui Config Me",
         "tags": [
           "ui-config"
         ]
