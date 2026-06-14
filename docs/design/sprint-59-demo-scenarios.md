@@ -1,7 +1,9 @@
 # Sprint 59 — Demo scenario depth + spatial foundation
 
-> Status: **Active** — kicked off on `sprint-59/demo-scenarios`
-> (backend PR [#89](https://github.com/9owlsboston/TagPulse/pull/89)).
+> Status: **Active** — Track 1 (Phases A–E) **complete** on backend PR
+> [#89](https://github.com/9owlsboston/TagPulse/pull/89); Track 2 (Phases F–G —
+> spatial schema + EPC→asset fusion) **not yet started** (only the doc-only
+> ADR-024 amendment has landed). Kicked off on `sprint-59/demo-scenarios`.
 > Supersedes the scratch notes in `/tmp`.
 
 ## Sprint goal
