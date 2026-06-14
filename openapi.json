@@ -780,6 +780,28 @@
         "title": "Body_import_tags_tags_import_post",
         "type": "object"
       },
+      "CardGroup": {
+        "additionalProperties": false,
+        "description": "Per-page dashboard-card visibility + ordering.",
+        "properties": {
+          "hidden": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hidden",
+            "type": "array"
+          },
+          "order": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Order",
+            "type": "array"
+          }
+        },
+        "title": "CardGroup",
+        "type": "object"
+      },
       "CategoryCreate": {
         "description": "Create a category.",
         "properties": {
@@ -1011,6 +1033,35 @@
           "other_tenant_collisions"
         ],
         "title": "CollisionPreflightRow",
+        "type": "object"
+      },
+      "ColumnGroup": {
+        "additionalProperties": false,
+        "description": "Per-page list-column config (ADR-030 surface).\n\n``advanced`` is the key move for the TID / ``metadata``-JSONB ask: those\ncolumns are default-OFF, revealed by an \"Advanced columns\" toggle. This is\n*default-hidden*, never deletion \u2014 the field still exists in the API and\nexports (ADR-032 \u00a74, \u00a76.3).",
+        "properties": {
+          "advanced": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Advanced",
+            "type": "array"
+          },
+          "hidden": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hidden",
+            "type": "array"
+          },
+          "order": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Order",
+            "type": "array"
+          }
+        },
+        "title": "ColumnGroup",
         "type": "object"
       },
       "DashboardSparklines": {
@@ -3053,6 +3104,28 @@
         "title": "MetricDefinition",
         "type": "object"
       },
+      "NavConfig": {
+        "additionalProperties": false,
+        "description": "Sidebar/nav section visibility + ordering (the menu system).",
+        "properties": {
+          "hidden": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hidden",
+            "type": "array"
+          },
+          "order": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Order",
+            "type": "array"
+          }
+        },
+        "title": "NavConfig",
+        "type": "object"
+      },
       "PendingBulkOperationResponse": {
         "description": "Persisted ``pending_bulk_operations`` row (ADR 028 \u00a7Governance #4).\n\nSurfaced on:\n\n- the **202** branch of ``POST /tags/import`` (via the\n  ``pending_id`` field on :class:`TagImportResult`) \u2014 operator A\n  learns \"your import is queued for approval, here is the id\";\n- ``GET /bulk-operations/{id}`` \u2014 operator B fetches the record\n  they're being asked to approve;\n- ``POST /bulk-operations/{id}/approve`` and ``/reject`` \u2014\n  the response echoes the updated row.\n\nThe CSV bytes themselves (``payload``) are deliberately **not**\nexposed \u2014 operator B sees ``row_count`` + ``sample`` (the same\n10-EPC preview operator A saw on dry-run) which is the\nintended review surface. ``content_hash`` is exposed for\ncross-system verification.",
         "properties": {
@@ -4678,6 +4751,30 @@
         "title": "SiteUpdate",
         "type": "object"
       },
+      "SortSpec": {
+        "additionalProperties": false,
+        "description": "A default sort for a list page (ADR-030 sort-by-header default).",
+        "properties": {
+          "dir": {
+            "default": "asc",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "title": "Dir",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "SortSpec",
+        "type": "object"
+      },
       "SparklinePoint": {
         "description": "One bucket in a dashboard-tile sparkline series.",
         "properties": {
@@ -5166,6 +5263,24 @@
           "occurred_at"
         ],
         "title": "StockMovementResponse",
+        "type": "object"
+      },
+      "TableConfig": {
+        "additionalProperties": false,
+        "description": "Per-page table defaults (the persisted default sort).",
+        "properties": {
+          "defaultSort": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SortSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "TableConfig",
         "type": "object"
       },
       "TagBulkOperationResult": {
@@ -7144,6 +7259,24 @@
         "title": "TenantConfigUpdate",
         "type": "object"
       },
+      "ThemeConfig": {
+        "additionalProperties": false,
+        "description": "Theme variant + card style, riding the ADR-029 design tokens.",
+        "properties": {
+          "cardStyle": {
+            "default": "default",
+            "title": "Cardstyle",
+            "type": "string"
+          },
+          "variant": {
+            "default": "default",
+            "title": "Variant",
+            "type": "string"
+          }
+        },
+        "title": "ThemeConfig",
+        "type": "object"
+      },
       "TileProviderUpdate": {
         "description": "Admin payload for setting the tenant's tile provider.\n\n``provider`` is the raw blob persisted to ``tenants.tile_provider``;\nschema is provider-specific (see ``services.map_config``).\nPass ``None`` to fall back to the system default (OSM public).",
         "properties": {
@@ -7161,6 +7294,48 @@
           }
         },
         "title": "TileProviderUpdate",
+        "type": "object"
+      },
+      "UiConfig": {
+        "additionalProperties": false,
+        "description": "The resolved presentation-config document served by ``GET /ui-config``.\n\n``cards`` / ``columns`` / ``tables`` are keyed by page name (e.g.\n``\"assets\"``, ``\"tag_reads\"``); ``labels`` is a free display-label skin\n(e.g. ``{\"device\": \"Reader\"}``).",
+        "properties": {
+          "cards": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CardGroup"
+            },
+            "title": "Cards",
+            "type": "object"
+          },
+          "columns": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ColumnGroup"
+            },
+            "title": "Columns",
+            "type": "object"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "object"
+          },
+          "nav": {
+            "$ref": "#/components/schemas/NavConfig"
+          },
+          "tables": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TableConfig"
+            },
+            "title": "Tables",
+            "type": "object"
+          },
+          "theme": {
+            "$ref": "#/components/schemas/ThemeConfig"
+          }
+        },
+        "title": "UiConfig",
         "type": "object"
       },
       "UniqueTagsPerWindow": {
@@ -16392,6 +16567,33 @@
         "summary": "Update Map Config",
         "tags": [
           "tenant"
+        ]
+      }
+    },
+    "/ui-config": {
+      "get": {
+        "description": "Return the presentation config resolved for the calling viewer.\n\nIncrement 1 resolves the system default only, so every authenticated\ncaller gets the same document; the ``user`` dependency is here so later\nincrements can fold this viewer's role/user override layers without an\nendpoint signature change.",
+        "operationId": "get_ui_config_ui_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Ui Config",
+        "tags": [
+          "ui-config"
         ]
       }
     },

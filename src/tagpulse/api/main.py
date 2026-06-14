@@ -38,6 +38,7 @@ from tagpulse.api.routes.telemetry import router as telemetry_router
 from tagpulse.api.routes.telemetry_models import router as telemetry_models_router
 from tagpulse.api.routes.tenant_branding import router as tenant_branding_router
 from tagpulse.api.routes.tenant_config import router as tenant_config_router
+from tagpulse.api.routes.ui_config import router as ui_config_router
 from tagpulse.api.routes.users import router as users_router
 from tagpulse.core.config import settings
 from tagpulse.core.logging import setup_logging
@@ -423,6 +424,7 @@ app.include_router(inventory_router)
 app.include_router(inventory_imports_router)
 app.include_router(tenant_config_router)
 app.include_router(tenant_branding_router)
+app.include_router(ui_config_router)
 app.include_router(categories_router)
 app.include_router(labels_router)
 app.include_router(tags_router)
