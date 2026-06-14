@@ -1,6 +1,7 @@
 .PHONY: lint typecheck test format check run export-openapi migration-check \
         smoke rotate-key logs doctor demo-tenant demo-tenant-reset demo-tenant-dev \
-        sim-start sim-stop sim-status help
+        demo-inventory demo-asset demo-inventory-reset demo-asset-reset \
+        demo-creds sim-start sim-stop sim-status help
 
 # Default ENV for ops targets — override on the command line: make logs ENV=prod
 ENV ?= dev
@@ -80,6 +81,23 @@ demo-tenant: ## Sprint 58: seed the SuperMart Distribution Center demo tenant (i
 
 demo-tenant-reset: ## Sprint 58: delete the demo tenant + recipient (local dev only)
 	python scripts/reset_demo_tenant.py
+
+# Sprint 59 Phase B — purpose-built per-domain demo tenants. Same composer,
+# selected via --profile. ``demo-inventory`` = cold-chain inventory story
+# (demo-inv-coldchain); ``demo-asset`` = returnable asset-fleet story
+# (demo-asset-fleet). Each is idempotent and independent of the combined
+# ``demo-tenant`` build. The *-reset targets delete only that domain tenant.
+demo-inventory: ## Sprint 59: seed the cold-chain inventory demo tenant (idempotent)
+	python scripts/seed_demo_tenant.py --profile inventory
+
+demo-asset:  ## Sprint 59: seed the returnable asset-fleet demo tenant (idempotent)
+	python scripts/seed_demo_tenant.py --profile asset
+
+demo-inventory-reset: ## Sprint 59: delete the inventory demo tenant (local dev only)
+	python scripts/reset_demo_tenant.py --slug demo-inv-coldchain
+
+demo-asset-reset: ## Sprint 59: delete the asset demo tenant (local dev only)
+	python scripts/reset_demo_tenant.py --slug demo-asset-fleet
 
 # ``make demo-creds`` rotates the demo admin API key and reprints the login
 # email + key WITHOUT re-seeding any data. Local plaintext keys are stored

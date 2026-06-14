@@ -321,3 +321,115 @@ def test_in_cluster_default_days_is_one_local_default_is_three() -> None:
 
     assert seed_demo_tenant._DEFAULT_DAYS_LOCAL == 3.0
     assert seed_demo_tenant._DEFAULT_DAYS_INCLUSTER == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Sprint 59 Phase B — per-domain demo profiles.
+# The composer now drives three tenants from one script via ``--profile``.
+# ``combined`` MUST stay byte-for-byte identical to the Sprint 58 build; the
+# two new profiles each toggle off the steps that belong to the other domain.
+# ---------------------------------------------------------------------------
+
+
+def test_combined_profile_matches_legacy_constants() -> None:
+    """The ``combined`` profile reproduces the frozen Sprint 58 identity.
+
+    Its slug/uuid/admin-email/KV-secret-name must equal the module-level
+    ``DEMO_*`` constants verbatim — that's the contract that guarantees
+    ``make demo-tenant`` (which defaults to ``--profile combined``) keeps
+    converging onto the existing ``demo-wm-dc`` tenant rather than spawning
+    a new one.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    combined = seed_demo_tenant.PROFILES["combined"]
+
+    assert seed_demo_tenant.DEFAULT_PROFILE == "combined"
+    assert combined.slug == seed_demo_tenant.DEMO_TENANT_SLUG == "demo-wm-dc"
+    assert combined.name == seed_demo_tenant.DEMO_TENANT_NAME
+    assert combined.tenant_id == seed_demo_tenant.DEMO_TENANT_ID
+    assert combined.admin_email == seed_demo_tenant.DEMO_ADMIN_EMAIL
+    assert combined.admin_name == seed_demo_tenant.DEMO_ADMIN_NAME
+    assert combined.admin_kv_secret_name == seed_demo_tenant.DEMO_ADMIN_KV_SECRET_NAME
+    # All six seed steps run for the combined build.
+    assert combined.seed_devices
+    assert combined.seed_inventory
+    assert combined.seed_assets
+    assert combined.seed_backfill
+    assert combined.seed_alerts
+    assert combined.seed_transfer
+
+
+def test_profile_ids_are_deterministic_and_distinct() -> None:
+    """Each profile's tenant_id is uuid5 of its slug, and all three differ.
+
+    Same idempotency contract as Sprint 58 D2: re-running a profile must
+    converge onto its own tenant row, and the three demo tenants must never
+    collide.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    profiles = seed_demo_tenant.PROFILES
+
+    assert set(profiles) == {"combined", "inventory", "asset"}
+
+    expected_slugs = {
+        "combined": "demo-wm-dc",
+        "inventory": "demo-inv-coldchain",
+        "asset": "demo-asset-fleet",
+    }
+    ids = set()
+    for key, profile in profiles.items():
+        assert profile.key == key
+        assert profile.slug == expected_slugs[key]
+        assert profile.tenant_id == uuid.uuid5(uuid.NAMESPACE_DNS, f"{profile.slug}.tagpulse.local")
+        assert profile.admin_kv_secret_name == f"tagpulse-{profile.slug}-admin-key"
+        ids.add(profile.tenant_id)
+
+    assert len(ids) == 3, "demo profiles must have distinct tenant UUIDs"
+
+
+def test_domain_profiles_toggle_off_the_other_domain() -> None:
+    """Inventory drops assets+transfer; asset drops inventory.
+
+    The toggles are what make each domain tenant tell *one* complete story
+    instead of the combined generalist. Devices/backfill/alerts stay on for
+    both so the dashboards animate.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    inventory = seed_demo_tenant.PROFILES["inventory"]
+    asset = seed_demo_tenant.PROFILES["asset"]
+
+    # Inventory story: no asset roster, no cross-tenant transfer.
+    assert inventory.seed_inventory
+    assert not inventory.seed_assets
+    assert not inventory.seed_transfer
+    assert inventory.seed_devices
+    assert inventory.seed_backfill
+    assert inventory.seed_alerts
+
+    # Asset story: no inventory catalog.
+    assert asset.seed_assets
+    assert asset.seed_transfer
+    assert not asset.seed_inventory
+    assert asset.seed_devices
+    assert asset.seed_backfill
+    assert asset.seed_alerts
+
+
+def test_reset_known_slugs_cover_all_profiles() -> None:
+    """``reset_demo_tenant`` can target every profile slug the composer seeds.
+
+    Guards the per-tenant reset targets (``make demo-inventory-reset`` /
+    ``demo-asset-reset``): if a profile slug is added to the composer but not
+    to the reset script's ``--slug`` choices, the operator can seed a tenant
+    they can't tear down.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    reset_demo_tenant = _load_script_module("reset_demo_tenant.py")
+
+    composer_slugs = {p.slug for p in seed_demo_tenant.PROFILES.values()}
+    reset_slugs = set(reset_demo_tenant.KNOWN_DEMO_SLUGS)
+
+    assert composer_slugs <= reset_slugs, (
+        "reset_demo_tenant.KNOWN_DEMO_SLUGS is missing composer profile slugs: "
+        f"{sorted(composer_slugs - reset_slugs)}"
+    )

@@ -46,6 +46,12 @@ DEMO_TENANT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, f"{DEMO_TENANT_SLUG}.tagpulse.lo
 RECIPIENT_SLUG = "demo-wm-recipient"
 RECIPIENT_TENANT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, f"{RECIPIENT_SLUG}.tagpulse.local")
 
+# Sprint 59 Phase B: the composer also seeds purpose-built per-domain tenants
+# (see scripts/seed_demo_tenant.py PROFILES). ``--slug`` lets this reset target
+# any of them by name; only the combined ``demo-wm-dc`` build owns the shared
+# ``demo-wm-recipient`` tenant, so the recipient is auto-included only for it.
+KNOWN_DEMO_SLUGS = ("demo-wm-dc", "demo-inv-coldchain", "demo-asset-fleet")
+
 _LOCAL_DB_HINTS = ("localhost", "127.0.0.1", "tagpulse-pg", "host.docker.internal")
 
 
@@ -218,6 +224,17 @@ def _safety_check(force: bool) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--slug",
+        default=DEMO_TENANT_SLUG,
+        choices=KNOWN_DEMO_SLUGS,
+        help=(
+            "Demo tenant slug to reset (default: demo-wm-dc). Use "
+            "demo-inv-coldchain or demo-asset-fleet to reset a Sprint 59 "
+            "domain tenant. The deterministic tenant UUID is derived from "
+            "this slug."
+        ),
+    )
+    parser.add_argument(
         "--include-recipient",
         action="store_true",
         default=True,
@@ -233,11 +250,17 @@ def main() -> int:
     force = os.environ.get("DEMO_RESET_FORCE") == "1"
     _safety_check(force)
 
-    tenant_ids = [DEMO_TENANT_ID]
-    if args.include_recipient and not args.source_only:
+    target_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"{args.slug}.tagpulse.local")
+    tenant_ids = [target_id]
+    # The recipient tenant is owned by the combined demo build only. Resetting
+    # a per-domain tenant must not delete a recipient another demo may share.
+    include_recipient = (
+        args.slug == DEMO_TENANT_SLUG and args.include_recipient and not args.source_only
+    )
+    if include_recipient:
         tenant_ids.append(RECIPIENT_TENANT_ID)
 
-    print(f"Resetting tenants: {[str(t) for t in tenant_ids]}")
+    print(f"Resetting tenant slug={args.slug}: {[str(t) for t in tenant_ids]}")
     deleted = asyncio.run(_reset(tenant_ids))
     total = sum(deleted.values())
     print(f"Done. Deleted {total} rows across {len(deleted)} tables.")
