@@ -1,9 +1,10 @@
 """Configurable UI — presentation-config resolution (ADR-032).
 
-Sprint 60 increments 1–2 (ADR-032 §7 steps 1–2): the server-resolved
-``GET /ui-config`` and the per-user ``PUT /ui-config/me`` override layer.
+Sprint 60 increments 1–3 (ADR-032 §7 steps 1–3): the server-resolved
+``GET /ui-config``, the per-user ``PUT /ui-config/me`` override layer, and the
+admin-set ``PUT /ui-config/{tenant,role/{role}}`` default layers.
 
-This module owns four things the later increments only *feed*:
+This module owns the resolution machinery the routes/repositories only *feed*:
 
 1. ``UiConfig`` — the schema-validated presentation document (the six leaf
    namespaces from ADR-032 §4: ``labels`` / ``theme`` / ``nav`` / ``cards`` /
@@ -16,18 +17,21 @@ This module owns four things the later increments only *feed*:
    today's UI byte-for-byte. The concrete WM-facing label values are chosen
    in the terminology sprint, not here (ADR-032 "out of scope").
 3. ``deep_merge`` / ``resolve_ui_config`` — the per-leaf
-   System → Tenant → Role → User deep-merge engine (ADR-032 §2). Increment 1
-   resolved the system default only; increment 2 folds the caller's
-   ``user_ui_prefs`` row in as the top override layer.
-4. ``validate_ui_config_override`` — the ``PUT /ui-config/*`` write validator
-   (increment 2). It rejects unknown/ill-typed keys (``extra="forbid"``) and
-   returns the **sparse** canonical (camelCase) override to persist — only the
-   keys the caller actually set, so a one-leaf override still falls through to
-   the layers below for every other leaf.
+   System → Tenant → Role → User deep-merge engine (ADR-032 §2). Callers pass
+   the layers (tenant default, role default, user override) in that order;
+   last writer wins per leaf.
+4. ``validate_ui_config_override`` — the ``PUT /ui-config/*`` write validator.
+   It rejects unknown/ill-typed keys (``extra="forbid"``) and returns the
+   **sparse** canonical (camelCase) override to persist — only the keys the
+   caller actually set, so a one-leaf override still falls through to the
+   layers below for every other leaf.
+5. ``tenant_role_layers`` — splits a stored ``tenants.ui_config`` blob into its
+   ``[tenant_default, role_default]`` resolve layers for a given role (the
+   role layer is keyed under a reserved ``roles`` sub-object, ADR-032 §3).
 
-Deferred to later increments (kept out deliberately to avoid speculative
-code): the ``locked`` leaf-pinning flag (ADR-032 §2) only has meaning once the
-tenant/role layers exist, so it lands with increment 3.
+Deferred to a later increment (kept out deliberately to avoid speculative
+code): the ``locked`` leaf-pinning flag (ADR-032 §2) — it only earns its
+complexity once the tenant/role floor layers are in real use.
 """
 
 from __future__ import annotations
@@ -36,6 +40,10 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# Reserved key inside ``tenants.ui_config`` that holds the per-role default
+# layer; everything else at the top level is the tenant-default layer.
+ROLES_KEY = "roles"
 
 
 class _Leaf(BaseModel):
@@ -165,3 +173,28 @@ def validate_ui_config_override(payload: Mapping[str, Any]) -> dict[str, Any]:
     """
     model = UiConfig.model_validate(payload)
     return model.model_dump(by_alias=True, exclude_unset=True)
+
+
+def tenant_role_layers(stored: Mapping[str, Any] | None, role: str) -> list[dict[str, Any]]:
+    """Split a stored ``tenants.ui_config`` blob into resolve layers.
+
+    Returns ``[tenant_default, role_default]`` (ADR-032 §2–§3 order), omitting
+    either if empty. The tenant-default layer is every top-level leaf *except*
+    the reserved ``roles`` sub-object; the role-default layer is
+    ``stored["roles"][role]`` when present. ``None``/empty input yields no
+    layers, so a tenant with no ``ui_config`` falls straight through to the
+    system default. Each layer is itself sparse, so untouched leaves fall
+    through to the layer below (the per-leaf merge invariant).
+    """
+    if not stored:
+        return []
+    layers: list[dict[str, Any]] = []
+    tenant_layer = {k: v for k, v in stored.items() if k != ROLES_KEY}
+    if tenant_layer:
+        layers.append(tenant_layer)
+    roles = stored.get(ROLES_KEY)
+    if isinstance(roles, Mapping):
+        role_layer = roles.get(role)
+        if isinstance(role_layer, Mapping) and role_layer:
+            layers.append(dict(role_layer))
+    return layers

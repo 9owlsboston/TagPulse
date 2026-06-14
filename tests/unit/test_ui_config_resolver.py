@@ -11,12 +11,14 @@ import pytest
 from pydantic import ValidationError
 
 from tagpulse.services.ui_config import (
+    ROLES_KEY,
     SYSTEM_DEFAULT_UI_CONFIG,
     ColumnGroup,
     ThemeConfig,
     UiConfig,
     deep_merge,
     resolve_ui_config,
+    tenant_role_layers,
     validate_ui_config_override,
 )
 
@@ -177,3 +179,62 @@ def test_validate_override_round_trips_through_resolve() -> None:
     override = validate_ui_config_override({"columns": {"assets": {"advanced": ["tid"]}}})
     resolved = resolve_ui_config([override])
     assert resolved.columns["assets"].advanced == ["tid"]
+
+
+# -- tenant_role_layers (increment 3) --------------------------------------
+
+
+def test_tenant_role_layers_none_is_empty() -> None:
+    assert tenant_role_layers(None, "viewer") == []
+    assert tenant_role_layers({}, "viewer") == []
+
+
+def test_tenant_role_layers_tenant_only() -> None:
+    """Top-level (non-``roles``) keys form the single tenant-default layer."""
+    stored = {"labels": {"device": "Reader"}, "theme": {"variant": "operator"}}
+    assert tenant_role_layers(stored, "viewer") == [stored]
+
+
+def test_tenant_role_layers_splits_tenant_then_role() -> None:
+    """The blob splits into [tenant-default, role-default] in precedence order."""
+    stored = {
+        "theme": {"variant": "operator"},
+        ROLES_KEY: {"viewer": {"theme": {"cardStyle": "sparkline"}}},
+    }
+    assert tenant_role_layers(stored, "viewer") == [
+        {"theme": {"variant": "operator"}},
+        {"theme": {"cardStyle": "sparkline"}},
+    ]
+
+
+def test_tenant_role_layers_role_absent() -> None:
+    """A role with no layer contributes nothing beyond the tenant default."""
+    stored = {
+        "theme": {"variant": "operator"},
+        ROLES_KEY: {"editor": {"theme": {"cardStyle": "sparkline"}}},
+    }
+    assert tenant_role_layers(stored, "viewer") == [{"theme": {"variant": "operator"}}]
+
+
+def test_tenant_role_layers_role_only() -> None:
+    """A blob with only a ``roles`` sub-object yields just the role layer."""
+    stored = {ROLES_KEY: {"viewer": {"theme": {"cardStyle": "sparkline"}}}}
+    assert tenant_role_layers(stored, "viewer") == [{"theme": {"cardStyle": "sparkline"}}]
+
+
+def test_tenant_role_layers_empty_role_layer_omitted() -> None:
+    stored = {"theme": {"variant": "operator"}, ROLES_KEY: {"viewer": {}}}
+    assert tenant_role_layers(stored, "viewer") == [{"theme": {"variant": "operator"}}]
+
+
+def test_tenant_role_layers_round_trip_through_resolve() -> None:
+    """Folding tenant + role + user shows per-leaf precedence (ADR-032 §2)."""
+    stored = {
+        "theme": {"variant": "operator", "cardStyle": "default"},
+        ROLES_KEY: {"viewer": {"theme": {"cardStyle": "sparkline"}}},
+    }
+    layers = tenant_role_layers(stored, "viewer")
+    user = {"theme": {"variant": "power"}}
+    resolved = resolve_ui_config([*layers, user])
+    assert resolved.theme.variant == "power"  # user wins
+    assert resolved.theme.card_style == "sparkline"  # role wins over tenant

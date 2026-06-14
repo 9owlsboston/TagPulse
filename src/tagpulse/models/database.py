@@ -97,6 +97,13 @@ class TenantModel(Base):
     # Sprint 59 — the RSSI/count weight formula varies company-to-company, so
     # it must be config, never hardcoded; the Sprint 61 estimator reads it. --
     position_strategy: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # -- Sprint 60 increment 3 (ADR-032 §3): per-tenant Configurable-UI
+    # presentation defaults. NULL = pure system default. Tenant-default leaves
+    # live at the top level; the role layer is keyed under a reserved ``roles``
+    # sub-object (``{"theme": {...}, "roles": {"viewer": {...}}}``). Reuses the
+    # tenant-JSONB precedent above — resolution onto role/user/system happens in
+    # tagpulse.services.ui_config, never here. --
+    ui_config: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

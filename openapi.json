@@ -16572,7 +16572,7 @@
     },
     "/ui-config": {
       "get": {
-        "description": "Return the presentation config resolved for the calling viewer.\n\nFolds System \u2192 User (tenant/role layers land in increment 3). The merge is\ndone server-side so the UI never reconstructs it.",
+        "description": "Return the presentation config resolved for the calling viewer.\n\nFolds System \u2192 Tenant \u2192 Role \u2192 User server-side so the UI never\nreconstructs the merge.",
         "operationId": "get_ui_config_ui_config_get",
         "responses": {
           "200": {
@@ -16641,6 +16641,115 @@
           }
         ],
         "summary": "Put Ui Config Me",
+        "tags": [
+          "ui-config"
+        ]
+      }
+    },
+    "/ui-config/role/{role}": {
+      "put": {
+        "description": "Set a per-role default presentation layer (admin only).\n\n``role`` must be one of the known roles (``admin`` / ``editor`` /\n``viewer``); an unknown role is rejected (422). The body is a **sparse**\nsubset of the ADR-032 \u00a74 document, rejecting unknown/ill-typed keys (422).\nIt replaces that role's layer wholesale; an empty body ``{}`` removes the\nrole layer (reset). The tenant-default leaves and other roles are\nuntouched. Audited. Returns the caller's freshly resolved config.",
+        "operationId": "put_ui_config_role_ui_config_role__role__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Put Ui Config Role",
+        "tags": [
+          "ui-config"
+        ]
+      }
+    },
+    "/ui-config/tenant": {
+      "put": {
+        "description": "Set the tenant-default presentation layer (admin only).\n\nThe body is a **sparse** subset of the ADR-032 \u00a74 document; unknown or\nill-typed keys are rejected (422). It replaces the tenant-default leaves\nwholesale while preserving the per-role layer (managed via\n``PUT /ui-config/role/{role}``). An empty body ``{}`` clears the\ntenant-default leaves. Audited. Returns the caller's freshly resolved\nconfig.",
+        "operationId": "put_ui_config_tenant_ui_config_tenant_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Put Ui Config Tenant",
         "tags": [
           "ui-config"
         ]
