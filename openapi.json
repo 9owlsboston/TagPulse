@@ -7298,7 +7298,7 @@
       },
       "UiConfig": {
         "additionalProperties": false,
-        "description": "The resolved presentation-config document served by ``GET /ui-config``.\n\n``cards`` / ``columns`` / ``tables`` are keyed by page name (e.g.\n``\"assets\"``, ``\"tag_reads\"``); ``labels`` is a free display-label skin\n(e.g. ``{\"device\": \"Reader\"}``).",
+        "description": "The resolved presentation-config document served by ``GET /ui-config``.\n\n``cards`` / ``columns`` / ``tables`` are keyed by page name (e.g.\n``\"assets\"``, ``\"tag_reads\"``); ``labels`` is the display-label skin \u2014 a\nmap of curated term keys (``LABEL_KEYS``) to display strings. ``labels``\ndefaults to the full canonical registry so the resolved document always\ncarries every term (the UI reads one authoritative ``labels[key]``).",
         "properties": {
           "cards": {
             "additionalProperties": {

@@ -1,8 +1,10 @@
 """Configurable UI — presentation-config resolution (ADR-032).
 
-Sprint 60 increments 1–3 (ADR-032 §7 steps 1–3): the server-resolved
-``GET /ui-config``, the per-user ``PUT /ui-config/me`` override layer, and the
-admin-set ``PUT /ui-config/{tenant,role/{role}}`` default layers.
+Sprint 60 increments 1–4 (ADR-032 §7 steps 1–4): the server-resolved
+``GET /ui-config``, the per-user ``PUT /ui-config/me`` override layer, the
+admin-set ``PUT /ui-config/{tenant,role/{role}}`` default layers, and the
+**label-skin** surface (increment 4 — the curated entity/nav display terms WM
+asked to rename, e.g. ``Device`` → ``Reader``).
 
 This module owns the resolution machinery the routes/repositories only *feed*:
 
@@ -11,27 +13,39 @@ This module owns the resolution machinery the routes/repositories only *feed*:
    ``columns`` / ``tables``). Every leaf is presentation only — visibility,
    order, density, theme, label skins — never behaviour/semantics (the §1
    governing invariant).
-2. ``SYSTEM_DEFAULT_UI_CONFIG`` — the versioned, tested code constant that is
-   the bottom layer of the merge. It is intentionally **empty** (no label
-   skins, default theme, nothing hidden): configuring nothing reproduces
-   today's UI byte-for-byte. The concrete WM-facing label values are chosen
-   in the terminology sprint, not here (ADR-032 "out of scope").
-3. ``deep_merge`` / ``resolve_ui_config`` — the per-leaf
+2. ``LABEL_KEYS`` — the curated registry of skinnable entity/nav terms and
+   their canonical default display labels (ADR-032 §4 ``labels``). It is the
+   *catalogue* that makes ``labels`` a curated surface rather than a free JSON
+   dump (§6.1): a ``labels`` override may only re-skin a key in this registry
+   (unknown keys → ``ValidationError`` → 422). The registry is also the bottom
+   layer for ``labels`` — the resolved ``GET /ui-config`` always carries the
+   **complete** effective label map (defaults overlaid with overrides), so the
+   UI reads one authoritative ``labels[key]`` and never re-derives defaults.
+3. ``SYSTEM_DEFAULT_UI_CONFIG`` — the versioned, tested code constant that is
+   the bottom layer of the merge. Every leaf but ``labels`` is intentionally
+   **empty** (default theme, nothing hidden); ``labels`` carries the canonical
+   defaults (``LABEL_KEYS``) — which *are* today's UI terms, so configuring
+   nothing still reproduces today's UI. ``WM_LABEL_SKIN`` is the one decided
+   WM-facing value (``Device`` → ``Reader``), applied per-tenant via
+   ``PUT /ui-config/tenant`` (or the demo seed), **not** baked into the system
+   default.
+4. ``deep_merge`` / ``resolve_ui_config`` — the per-leaf
    System → Tenant → Role → User deep-merge engine (ADR-032 §2). Callers pass
    the layers (tenant default, role default, user override) in that order;
    last writer wins per leaf.
-4. ``validate_ui_config_override`` — the ``PUT /ui-config/*`` write validator.
-   It rejects unknown/ill-typed keys (``extra="forbid"``) and returns the
-   **sparse** canonical (camelCase) override to persist — only the keys the
-   caller actually set, so a one-leaf override still falls through to the
-   layers below for every other leaf.
-5. ``tenant_role_layers`` — splits a stored ``tenants.ui_config`` blob into its
+5. ``validate_ui_config_override`` — the ``PUT /ui-config/*`` write validator.
+   It rejects unknown/ill-typed keys (``extra="forbid"`` + the ``labels``
+   registry check) and returns the **sparse** canonical (camelCase) override to
+   persist — only the keys the caller actually set, so a one-leaf override
+   still falls through to the layers below for every other leaf.
+6. ``tenant_role_layers`` — splits a stored ``tenants.ui_config`` blob into its
    ``[tenant_default, role_default]`` resolve layers for a given role (the
    role layer is keyed under a reserved ``roles`` sub-object, ADR-032 §3).
 
 Deferred to a later increment (kept out deliberately to avoid speculative
 code): the ``locked`` leaf-pinning flag (ADR-032 §2) — it only earns its
-complexity once the tenant/role floor layers are in real use.
+complexity once the tenant/role floor layers are in real use; and the theme /
+``cardStyle`` variant catalogue (ADR-032 §7 step 5).
 """
 
 from __future__ import annotations
@@ -39,11 +53,39 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Reserved key inside ``tenants.ui_config`` that holds the per-role default
 # layer; everything else at the top level is the tenant-default layer.
 ROLES_KEY = "roles"
+
+# Curated label-skin registry (ADR-032 §4 ``labels``, §7 step 4). Maps each
+# skinnable entity/nav term to its canonical default display label. This is the
+# allow-list a ``labels`` override is validated against (unknown keys rejected)
+# *and* the bottom layer of the ``labels`` merge, so the resolved document
+# always carries every term. Grounded in the primary entities of
+# docs/data-models.md / domain-concepts-101.md. Extend here (additive) as the
+# UI surfaces more skinnable terms — a new key ships as data, never a fork.
+LABEL_KEYS: dict[str, str] = {
+    "device": "Device",
+    "telemetry": "Telemetry",
+    "asset": "Asset",
+    "tag": "Tag",
+    "tagRead": "Tag Read",
+    "zone": "Zone",
+    "site": "Site",
+    "lot": "Lot",
+    "stockItem": "Stock Item",
+    "alert": "Alert",
+    "rule": "Rule",
+}
+
+# The one WM-facing label value decided for Sprint 60 (ADR-032 §4: ``Device`` →
+# ``Reader``; the ``Telemetry`` rename stayed TBD with WM, so it is *not*
+# skinned here). Sparse on purpose — every other term falls through to its
+# canonical default. Applied per-tenant via ``PUT /ui-config/tenant`` or the
+# demo seed; never baked into the system default.
+WM_LABEL_SKIN: dict[str, str] = {"device": "Reader"}
 
 
 class _Leaf(BaseModel):
@@ -110,16 +152,29 @@ class UiConfig(_Leaf):
     """The resolved presentation-config document served by ``GET /ui-config``.
 
     ``cards`` / ``columns`` / ``tables`` are keyed by page name (e.g.
-    ``"assets"``, ``"tag_reads"``); ``labels`` is a free display-label skin
-    (e.g. ``{"device": "Reader"}``).
+    ``"assets"``, ``"tag_reads"``); ``labels`` is the display-label skin — a
+    map of curated term keys (``LABEL_KEYS``) to display strings. ``labels``
+    defaults to the full canonical registry so the resolved document always
+    carries every term (the UI reads one authoritative ``labels[key]``).
     """
 
-    labels: dict[str, str] = Field(default_factory=dict)
+    labels: dict[str, str] = Field(default_factory=lambda: dict(LABEL_KEYS))
     theme: ThemeConfig = Field(default_factory=ThemeConfig)
     nav: NavConfig = Field(default_factory=NavConfig)
     cards: dict[str, CardGroup] = Field(default_factory=dict)
     columns: dict[str, ColumnGroup] = Field(default_factory=dict)
     tables: dict[str, TableConfig] = Field(default_factory=dict)
+
+    @field_validator("labels")
+    @classmethod
+    def _labels_are_registered(cls, value: dict[str, str]) -> dict[str, str]:
+        """Curate the label surface (ADR-032 §6.1): only registered term keys
+        may be skinned, so a typo'd or behaviour-smuggling key is rejected on
+        write (→ ``ValidationError`` → 422) rather than silently stored."""
+        unknown = sorted(set(value) - set(LABEL_KEYS))
+        if unknown:
+            raise ValueError(f"unknown label key(s): {', '.join(unknown)}")
+        return value
 
 
 # The bottom merge layer. Empty = today's UI unchanged (ADR-032 §3, §7 step 1).

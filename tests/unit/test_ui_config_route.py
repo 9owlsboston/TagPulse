@@ -97,8 +97,10 @@ def test_get_ui_config_returns_system_default(monkeypatch: pytest.MonkeyPatch) -
     response = ctx.client.get("/ui-config")
     assert response.status_code == 200
     body = response.json()
-    # No stored layers → system default (today's UI, empty).
-    assert body["labels"] == {}
+    # No stored layers → system default (today's UI). ``labels`` carries the
+    # canonical term catalogue; every other leaf is empty.
+    assert body["labels"]["device"] == "Device"
+    assert body["labels"]["telemetry"] == "Telemetry"
     assert body["theme"] == {"variant": "default", "cardStyle": "default"}
     assert body["nav"] == {"hidden": [], "order": []}
     assert body["cards"] == {}
@@ -156,7 +158,9 @@ def test_get_folds_tenant_default_layer(monkeypatch: pytest.MonkeyPatch) -> None
     ctx = _build(monkeypatch, user_id=uuid4())
     ctx.tenant_store[ctx.tenant_id] = {"labels": {"device": "Reader"}}
     body = ctx.client.get("/ui-config").json()
-    assert body["labels"] == {"device": "Reader"}
+    assert body["labels"]["device"] == "Reader"
+    # untouched terms still fall through to the canonical default
+    assert body["labels"]["telemetry"] == "Telemetry"
 
 
 def test_get_folds_role_default_layer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -251,7 +255,8 @@ def test_put_tenant_sets_default_layer(monkeypatch: pytest.MonkeyPatch) -> None:
     ctx = _build(monkeypatch, user_id=uuid4(), role="admin")
     resp = ctx.client.put("/ui-config/tenant", json={"labels": {"device": "Reader"}})
     assert resp.status_code == 200
-    assert resp.json()["labels"] == {"device": "Reader"}
+    # resolved doc reflects the skin; stored blob stays sparse.
+    assert resp.json()["labels"]["device"] == "Reader"
     assert ctx.tenant_store[ctx.tenant_id] == {"labels": {"device": "Reader"}}
 
 

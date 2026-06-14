@@ -11,8 +11,10 @@ import pytest
 from pydantic import ValidationError
 
 from tagpulse.services.ui_config import (
+    LABEL_KEYS,
     ROLES_KEY,
     SYSTEM_DEFAULT_UI_CONFIG,
+    WM_LABEL_SKIN,
     ColumnGroup,
     ThemeConfig,
     UiConfig,
@@ -26,10 +28,12 @@ from tagpulse.services.ui_config import (
 
 
 def test_system_default_is_empty_today_ui() -> None:
-    """Configuring nothing reproduces today's UI: no skins, default theme,
-    nothing hidden (ADR-032 §3, §7 step 1)."""
+    """Configuring nothing reproduces today's UI: no skins beyond the canonical
+    label defaults, default theme, nothing hidden (ADR-032 §3, §7 step 1)."""
     cfg = SYSTEM_DEFAULT_UI_CONFIG
-    assert cfg.labels == {}
+    # ``labels`` carries the canonical registry defaults — which *are* today's
+    # UI terms ("Device", "Telemetry", …), so this is still the unchanged UI.
+    assert cfg.labels == LABEL_KEYS
     assert cfg.nav.hidden == [] and cfg.nav.order == []
     assert cfg.cards == {} and cfg.columns == {} and cfg.tables == {}
     assert cfg.theme.variant == "default"
@@ -124,7 +128,8 @@ def test_resolve_folds_layers_in_precedence_order() -> None:
     role = {"theme": {"cardStyle": "sparkline"}}
     user = {"theme": {"variant": "power"}}
     resolved = resolve_ui_config([tenant, role, user])
-    assert resolved.labels == {"device": "Reader"}  # tenant, untouched below
+    assert resolved.labels["device"] == "Reader"  # tenant skin, untouched below
+    assert resolved.labels["telemetry"] == "Telemetry"  # canonical default falls through
     assert resolved.theme.variant == "power"  # user wins over tenant
     assert resolved.theme.card_style == "sparkline"  # role, untouched by user
 
@@ -238,3 +243,52 @@ def test_tenant_role_layers_round_trip_through_resolve() -> None:
     resolved = resolve_ui_config([*layers, user])
     assert resolved.theme.variant == "power"  # user wins
     assert resolved.theme.card_style == "sparkline"  # role wins over tenant
+
+
+# -- label skins (increment 4) ---------------------------------------------
+
+
+def test_system_default_labels_are_the_registry() -> None:
+    """The resolved system default carries the full canonical label catalogue,
+    so the UI reads one authoritative ``labels[key]`` (ADR-032 §7 step 4)."""
+    dumped = SYSTEM_DEFAULT_UI_CONFIG.model_dump(by_alias=True)
+    assert dumped["labels"] == LABEL_KEYS
+    assert dumped["labels"]["device"] == "Device"
+    assert dumped["labels"]["telemetry"] == "Telemetry"
+
+
+def test_label_override_reskins_one_term_keeps_the_rest() -> None:
+    """A sparse label override re-skins its keys; every other term falls
+    through to the canonical default (the per-leaf merge, ADR-032 §2)."""
+    resolved = resolve_ui_config([{"labels": {"device": "Reader"}}])
+    assert resolved.labels["device"] == "Reader"
+    assert resolved.labels["telemetry"] == "Telemetry"
+    # the full catalogue is still present
+    assert set(resolved.labels) == set(LABEL_KEYS)
+
+
+def test_wm_label_skin_resolves() -> None:
+    """The decided WM value (Device → Reader) applied as a tenant default
+    resolves through (ADR-032 §4)."""
+    resolved = resolve_ui_config([{"labels": WM_LABEL_SKIN}])
+    assert resolved.labels["device"] == "Reader"
+    assert WM_LABEL_SKIN == {"device": "Reader"}  # sparse: only the decided term
+
+
+def test_unknown_label_key_rejected_on_validate() -> None:
+    """``labels`` is a curated surface — an unregistered key is rejected
+    (ADR-032 §6.1)."""
+    with pytest.raises(ValidationError):
+        UiConfig.model_validate({"labels": {"gadget": "Thing"}})
+
+
+def test_validate_override_rejects_unknown_label_key() -> None:
+    with pytest.raises(ValidationError):
+        validate_ui_config_override({"labels": {"gadget": "Thing"}})
+
+
+def test_validate_override_keeps_label_skin_sparse() -> None:
+    """A label override persists only the re-skinned keys, not the whole
+    catalogue, so it still falls through for every other term."""
+    out = validate_ui_config_override({"labels": {"device": "Reader"}})
+    assert out == {"labels": {"device": "Reader"}}
