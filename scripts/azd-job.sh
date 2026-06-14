@@ -31,6 +31,19 @@
 
 set -euo pipefail
 
+# Make every `az` call in this script fully non-interactive. The Container Apps
+# data-plane log command (`az containerapp job logs show`) lives in the
+# `containerapp` CLI extension; on a host where that extension isn't present
+# (or needs an update) az prints "The command requires the extension
+# containerapp. Do you want to install it now? (Y/n):" and **blocks on stdin
+# forever** — which is the real cause of the multi-minute "the job succeeded
+# but the wrapper never returns" hangs (a `$(…)` capture swallows the prompt,
+# so it's invisible). `yes_without_prompt` makes az auto-install the extension
+# silently and proceed; redirecting stdin from /dev/null on the log calls below
+# is a second guard so no az prompt can ever block this script.
+export AZURE_EXTENSION_USE_DYNAMIC_INSTALL=yes_without_prompt
+export AZURE_CORE_NO_COLOR=1
+
 usage() {
   sed -n '2,30p' "$0"
   exit 1
@@ -286,15 +299,24 @@ echo "==> Execution status: $STATUS"
 
 # Try data-plane log stream first. Suppress preview-extension warnings to keep
 # stdout clean (azd-kv-get.sh greps between sentinels).
+#
+# IMPORTANT: `az containerapp job logs show` can hang indefinitely after the
+# job has already reached a terminal state — in this azure-cli/containerapp
+# version it opens a streaming connection to a replica that may be gone and
+# never returns, so a command-substitution `$(…)` around it blocks the whole
+# wrapper forever (the job *succeeded* but the script never exits). We bound
+# it with `timeout` so a stall just falls through to the Log Analytics path
+# (which has its own retry loop). 25s is comfortably longer than a healthy
+# data-plane fetch (~1–2s) but short enough to not feel like a hang.
 echo "==> Fetching logs (data-plane first, Log Analytics fallback)"
-DATAPLANE_OUT="$(az containerapp job logs show \
+DATAPLANE_OUT="$(timeout 25 az containerapp job logs show \
   --name "$JOB_NAME" \
   --resource-group "$RG" \
   --container tools \
   --execution "$EXEC_NAME" \
   --format text \
   --tail 300 \
-  --only-show-errors 2>/dev/null || true)"
+  --only-show-errors </dev/null 2>/dev/null || true)"
 
 if [[ -n "$DATAPLANE_OUT" ]]; then
   # Data-plane format is "<RFC3339-timestamp> <stream> F <message>". Strip
@@ -313,7 +335,7 @@ else
   LA_OUT=""
   for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
     sleep 20
-    LA_OUT="$(az monitor log-analytics query \
+    LA_OUT="$(timeout 40 az monitor log-analytics query \
       --workspace "$LOG_WORKSPACE_ID" \
       --analytics-query "$LA_QUERY" \
       -o tsv 2>/dev/null | awk -F'\t' '{print $1}' || true)"
