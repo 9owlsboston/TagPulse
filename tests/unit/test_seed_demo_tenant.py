@@ -135,6 +135,11 @@ _COMPOSER_INVOCATIONS: list[tuple[str, str, frozenset[str]]] = [
         "seed_ui_config.py",
         frozenset({"--tenant-id", "--api-key"}),
     ),
+    (
+        "_step_seed_branding",
+        "seed_branding.py",
+        frozenset({"--tenant-id", "--api-key"}),
+    ),
 ]
 
 
@@ -439,6 +444,19 @@ def test_only_combined_profile_applies_wm_ui_config() -> None:
     assert not profiles["asset"].seed_ui_config
 
 
+def test_only_combined_profile_applies_branding() -> None:
+    """The SuperMart logo kit (branding-logo-upload chore) is applied to the
+    WM-facing ``combined`` tenant only; the neutral domain demos keep the bare
+    display-name fallback so they tell their own unbranded story.
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    profiles = seed_demo_tenant.PROFILES
+
+    assert profiles["combined"].seed_branding
+    assert not profiles["inventory"].seed_branding
+    assert not profiles["asset"].seed_branding
+
+
 def test_seed_ui_config_applies_canonical_wm_presentation() -> None:
     """The shim PUTs the *canonical* ``WM_DEMO_PRESENTATION`` (imported, not
     hardcoded) so the demo can never drift from the backend registry, and
@@ -489,6 +507,68 @@ def test_seed_ui_config_applies_canonical_wm_presentation() -> None:
     assert captured["headers"]["Authorization"] == "Bearer tp_demo_key"
     assert captured["headers"]["X-Tenant-ID"] == "tid-123"
     assert resolved["labels"]["device"] == "Reader"
+
+
+def test_seed_branding_assets_are_bundled() -> None:
+    """The SuperMart logo kit ships in-repo so the demo travels self-contained.
+
+    Both default asset files must exist and be non-trivial PNGs; the data-URL
+    encoding must stay under the backend's 96 KiB ``data:`` cap so the PATCH is
+    accepted (see ``tenant_branding._MAX_LOGO_DATA_URL_LEN``).
+    """
+    seed_branding = _load_script_module("seed_branding.py")
+
+    for path in (seed_branding.DEFAULT_FULL_LOGO, seed_branding.DEFAULT_COLLAPSED_LOGO):
+        assert path.is_file(), f"bundled logo missing: {path}"
+        assert path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", f"not a PNG: {path}"
+        data_url = seed_branding._data_url(path)
+        assert data_url.startswith("data:image/png;base64,")
+        assert len(data_url) < 96 * 1024, f"{path} data-URL exceeds 96 KiB cap"
+
+
+def test_seed_branding_patches_logo_kit() -> None:
+    """The shim PATCHes both logos + the teal accent and verifies both logos
+    resolved in the response before returning, failing fast otherwise.
+    """
+    seed_branding = _load_script_module("seed_branding.py")
+
+    captured: dict[str, object] = {}
+
+    def _fake_patch(url: str, *, headers: dict[str, str], json: dict, timeout: float):  # type: ignore[no-untyped-def]
+        captured["url"] = url
+        captured["json"] = json
+        captured["headers"] = headers
+
+        class _Resp:
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict:
+                return {
+                    "logo_url": json["logo_url"],
+                    "logo_collapsed_url": json["logo_collapsed_url"],
+                    "brand_color": json["brand_color"],
+                }
+
+        return _Resp()
+
+    seed_branding.httpx.patch = _fake_patch  # type: ignore[assignment]
+    resolved = seed_branding.apply_branding(
+        "tid-xyz",
+        "tp_demo_key",
+        full_logo=seed_branding.DEFAULT_FULL_LOGO,
+        collapsed_logo=seed_branding.DEFAULT_COLLAPSED_LOGO,
+        brand_color=seed_branding.DEMO_BRAND_COLOR,
+    )
+
+    assert captured["url"].endswith("/tenant/branding")
+    body = captured["json"]
+    assert body["logo_url"].startswith("data:image/png;base64,")
+    assert body["logo_collapsed_url"].startswith("data:image/png;base64,")
+    assert body["brand_color"] == "#14B8A6"
+    assert captured["headers"]["Authorization"] == "Bearer tp_demo_key"
+    assert captured["headers"]["X-Tenant-ID"] == "tid-xyz"
+    assert resolved["logo_url"] and resolved["logo_collapsed_url"]
 
 
 def test_reset_known_slugs_cover_all_profiles() -> None:
