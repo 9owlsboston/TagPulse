@@ -52,13 +52,37 @@ env the key is pulled from Key Vault instead.
 | [`check_devices_online.py`](check_devices_online.py) | check (read-only) | Lists devices with `connection_state` + `last_seen` age and flags which count as online in the Dashboard's 5-minute window. |
 | [`cleanup_demo_stock_items.py`](cleanup_demo_stock_items.py) | cleanup | Retires stock items for the 5 non-perishable demo SKUs (PATCH `state=consumed`) so the seeder can re-materialize cleanly. Soft, not a hard delete: `stock_movements` has an `ON DELETE RESTRICT` FK (migration 021), so consuming a unit frees its EPC binding (partial unique index excludes terminal states) without orphaning the append-only ledger. Scoped to those SKUs only. |
 | [`seed_stock_items.py`](seed_stock_items.py) | ⚠️ workaround | Materializes perishable stock items via direct `POST /stock-items` (binds by decoded URI). Works around the latent ingest gate bug. **Remove once that bug is fixed.** |
-| [`register_inventory_tags.py`](register_inventory_tags.py) | ⚠️ workaround | Pre-registers the simulator's SGTIN EPCs in the tags registry so the gate passes. Alternative to `seed_stock_items.py`. **Remove once the gate bug is fixed.** |
+| [`register_inventory_tags.py`](register_inventory_tags.py) | ⚠️ workaround | Pre-registers the simulator's SGTIN EPCs in the tags registry. **Mostly superseded:** the composer now registers inventory EPCs automatically via the `seed_register_tags` step (see below), so a fresh `make demo-tenant` already has them. Keep this only as a manual one-off for a tenant seeded outside the composer. The ingest-gate bug it was meant to work around is separate (see note). |
 
-The two ⚠️ workaround scripts exist only because of a latent ingest bug (the
+The ⚠️ workaround scripts exist because of a latent ingest bug (the
 auto-create gate compares the decoded GS1 URI against the hex-keyed `tags`
-table). That bug and the simulator gaps these scripts paper over are tracked in
-[`docs/backlog.md`](../docs/backlog.md) under the **Post-Sprint-58 demo-data
-chore cluster**.
+table, so registering hex tags does **not** by itself materialize stock
+items). That bug and the simulator gaps these scripts paper over are tracked
+in [`docs/backlog.md`](../docs/backlog.md) under the **Post-Sprint-58
+demo-data chore cluster**.
+
+## Demo composer (`seed_demo_tenant.py`)
+
+`make demo-tenant` / `make demo-inventory` / `make demo-asset` drive
+[`seed_demo_tenant.py`](seed_demo_tenant.py), which `subprocess`-runs the
+sibling seeders/simulators in order (per `--profile`). Each step targets a
+single script — the table below names them so a flag rename surfaces as a
+fast composer failure rather than a silent skip (enforced by
+`tests/unit/test_seed_demo_tenant.py`). Steps marked **combined-only** apply
+to the WM-facing `demo-wm-dc` tenant; the neutral domain tenants skip them.
+
+| Composer step | Script | Purpose |
+|---|---|---|
+| `smoke_setup` | [`smoke_setup.py`](smoke_setup.py) | Tenant + users + base site/zones/assets/rules. |
+| `simulate_devices` | [`simulate_devices.py`](simulate_devices.py) | Reader devices. |
+| `seed_register_tags` | [`seed_register_tags.py`](seed_register_tags.py) | Registers inventory SGTIN EPCs in the tags registry so the **Tags** KPI reflects the fleet. Deterministic (same serial scheme `simulate_inventory` streams); runs before the read stream. Inventory-seeding profiles only. |
+| `simulate_inventory` | [`simulate_inventory.py`](simulate_inventory.py) | Products, lots, inventory read stream (per `--scenario`). |
+| `simulate_assets` | [`simulate_assets.py`](simulate_assets.py) | Assets + tag bindings + seed reads. |
+| `backfill_history` | [`backfill_history.py`](backfill_history.py) | Historical read density for charts. |
+| `seed_alerts` | [`seed_alerts.py`](seed_alerts.py) | Open + resolved alert mix. |
+| `seed_transfer` | [`seed_transfer.py`](seed_transfer.py) | One in-flight cross-tenant transfer. |
+| `seed_ui_config` | [`seed_ui_config.py`](seed_ui_config.py) | WM presentation skin (`Device`→`Reader`, entity-first nav). **Combined-only.** |
+| `seed_branding` | [`seed_branding.py`](seed_branding.py) | SuperMart logo kit (full + collapsed logos, teal accent). **Combined-only.** |
 
 ### Typical mixed-catalog demo flow
 

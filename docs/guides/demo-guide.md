@@ -127,18 +127,23 @@ it will rotate keys and reprint them.
 ### What gets seeded (static snapshot)
 
 `make demo-tenant` runs [scripts/seed_demo_tenant.py](../../scripts/seed_demo_tenant.py),
-which composes seven steps. Each step is idempotent (re-runs converge,
-they do not duplicate).
+which composes the steps below. Each step is idempotent (re-runs converge,
+they do not duplicate). Step 1 (`smoke_setup`) always runs; the rest are
+gated per-profile, so the live `[n/N]` counter renumbers for the domain
+tenants (which drop the steps belonging to the other domain).
 
 | # | Step | What it creates |
 |---|---|---|
 | 1 | `smoke_setup` | Tenant row, 3 users (admin / editor / viewer), 1 site (`Bay Area HQ`), 2 zones (geofence `Bay Area West Block` + reader-bound `Sim-Reader-01 Dock`), 5 assets (`Sim-Pallet-01..05`) bound to `TAG0001..TAG0005`, telemetry model `rfid_reader` (temperature, humidity, battery_pct), 3 rules (high-temp threshold, zone entered, zone exited). |
 | 2 | `simulate_devices` | 10 RFID reader devices (`Sim-Reader-01..10`) registered against the tenant. |
-| 3 | `simulate_inventory` | 1 second site (`Boston DC`), 4 anchor devices (`DC-Receiving`, `DC-ColdStorage`, `DC-PickFloor`, `DC-Shipping`), 4 reader-bound zones, 4 products (vaccine, milk, yogurt, cheese), 4 lots. |
-| 4 | `simulate_assets` | 12 additional assets (`Sim-Pallet-001..012`) bound to tag IDs + ~20 live reads to seed `last_seen`. |
-| 5 | `backfill_history` | ~5,000 historical reads spread over the last 3 days. Many are rejected by the ingest clock window — expected; the seed tunes for "enough density to populate charts". |
-| 6 | `seed_alerts` | 4 fresh open alerts (mixed severity) + 3 resolved alerts (timestamps 6h, 24h, 42h ago). |
-| 7 | `seed_transfer` | 1 in-flight cross-tenant transfer to `demo-wm-recipient` with 3 EPCs. Bootstraps the tag registry rows + reads needed for the transfer to be eligible. |
+| 3 | `seed_register_tags` | Registers the inventory simulator's SGTIN EPCs in the **tags registry** (`source='backfill'`), derived from the same catalog + serial scheme step 4 streams — so the dashboard **Tags** KPI reflects the real fleet instead of just the 3 transfer-bootstrap EPCs. Runs before the read stream; gated on inventory-seeding profiles. |
+| 4 | `simulate_inventory` | 1 second site (`Boston DC`), 4 anchor devices (`DC-Receiving`, `DC-ColdStorage`, `DC-PickFloor`, `DC-Shipping`), 4 reader-bound zones, 4 products (vaccine, milk, yogurt, cheese), 4 lots. |
+| 5 | `simulate_assets` | 12 additional assets (`Sim-Pallet-001..012`) bound to tag IDs + ~20 live reads to seed `last_seen`. |
+| 6 | `backfill_history` | ~5,000 historical reads spread over the last 3 days. Many are rejected by the ingest clock window — expected; the seed tunes for "enough density to populate charts". |
+| 7 | `seed_alerts` | 4 fresh open alerts (mixed severity) + 3 resolved alerts (timestamps 6h, 24h, 42h ago). |
+| 8 | `seed_transfer` | 1 in-flight cross-tenant transfer to `demo-wm-recipient` with 3 EPCs. Bootstraps the tag registry rows + reads needed for the transfer to be eligible. |
+| 9 | `seed_ui_config` | Applies the WM-facing presentation config (the `Device` → `Reader` label skin + entity-first nav). Combined tenant only — the domain demos stay on neutral system defaults. |
+| 10 | `seed_branding` | Applies the SuperMart logo kit (full + collapsed logos, teal accent) so the tenant comes up branded. Combined tenant only. |
 
 Total wall-clock: ~2-3 min on a clean DB, ~20 sec on subsequent runs
 (skips the backfill phase if `DEMO_SKIP_BACKFILL=1` is set).
@@ -157,7 +162,7 @@ This is the single most important distinction. The seed is a
 | Assets active | 17 | 17 |
 | Tag transfers in flight | 3 | 3 |
 | Tag reconciliation backlog | 60 | grows as live reads hit unregistered tags |
-| Tags total | 3 (the bootstrap EPCs for transfers) | grows as registrar promotes new EPCs to `active` |
+| Tags total | ~43 (40 registered inventory EPCs + 3 transfer bootstrap) | grows as the registrar promotes newly-seen EPCs to `active` |
 | Sites / Zones | 2 / 5 | 2 / 5 |
 | Low-stock products | 0 | 0 |
 
@@ -265,6 +270,53 @@ The tenant UUID for each slug is derived the same way the composer does
 (`uuid5(NAMESPACE_DNS, "<slug>.tagpulse.local")`), so you only ever
 supply `slug:key`, never the raw UUID.
 
+## Running the simulator against Azure dev
+
+`sim_loop.py` is **HTTP-only** — it just `POST`s `/tag-reads` to whatever
+`$TAGPULSE_API_URL` points at — so the same binary that drives the local
+stack can drive the deployed **dev** environment. Two ways:
+
+### From your laptop → public dev API (simplest)
+
+```bash
+cd ~/ws/TagPulse
+export TAGPULSE_API_URL="https://<dev-api-fqdn>"   # the tpdev-api ACA FQDN
+export TAGPULSE_API_KEY="$(cat /tmp/admin.key)"     # or pull from Key Vault
+
+# bounded run against the SuperMart demo tenant (default = demo-wm-dc)
+python scripts/sim_loop.py --duration 30m --rate 200
+```
+
+- The tenant defaults to `demo-wm-dc`, so no `--tenant-id` is needed.
+- The `ENV` guard is a no-op locally (`ENV` is unset), so it runs fine
+  against the remote FQDN. `--duration 0` runs forever; **Ctrl-C** stops
+  it cleanly (the loop installs a SIGINT/SIGTERM handler).
+- All three demo tenants at once: pass `--tenants slug:KEY1,slug:KEY2,…`
+  (same `$SIM_TENANTS` shape as above).
+
+### As an in-cluster ACA job (canonical, up to 8 h)
+
+```bash
+scripts/azd-job.sh dev sim_loop.py -- --duration 8h --rate 200
+```
+
+This runs the **deployed** tools-job image inside the VNet (the job
+bicep sets `ENV=dev`). It refuses on a dirty tree / stale image unless
+you pass `--allow-stale`, and the job needs the key in its env
+(`$TAGPULSE_API_KEY` / `$SIM_TENANTS`). For a quick run the laptop path
+above is the zero-setup option.
+
+> **This writes real tag-reads into the dev demo tenant** (current
+> timestamps, so they land inside the 24 h clock window — unlike
+> `backfill_history`). That's exactly what keeps the dev dashboard
+> animated during a review. It is **dev-only**: the loop hard-refuses
+> any `ENV` other than `dev`.
+
+To **stop** a laptop run, Ctrl-C (or `pkill -f sim_loop.py`). For an ACA
+job, Ctrl-C only detaches the log tail — stop the execution with
+`az containerapp job stop -n <tools-job> -g <rg> --job-execution-name <name>`
+(or let `--duration` / the job's `replicaTimeout` end it).
+
 ## Reset and restart
 
 The composer is idempotent, so re-running `make demo-tenant` is safe
@@ -305,7 +357,7 @@ teardown can't orphan a recipient another demo shares.
 | Dashboard tiles say "Unexpected token '<', '<!doctype'..." | UI proxy missing the new backend prefix | `cd ~/ws/TagPulse-UI && docker compose up -d --build --no-deps ui` after pulling the latest [nginx.conf](https://github.com/9owlsboston/TagPulse-UI/blob/main/nginx.conf) |
 | `make demo-tenant-reset` fails with FK errors on `tenants` | View or non-standard FK column not in discovery | Already handled by the FK-walking reset; if it recurs, run `DEMO_RESET_FORCE=1 make demo-tenant-reset` |
 | Assets page spins forever | Browser cached the old SPA bundle | Hard refresh (Ctrl+Shift+R) or open in an incognito window |
-| `make demo-tenant` hangs on `[1/7] smoke_setup` | API container restarting / unhealthy | `docker compose ps` to confirm; the composer auto-retries the API health probe for 30 s before failing |
+| `make demo-tenant` hangs on `[1/N] smoke_setup` | API container restarting / unhealthy | `docker compose ps` to confirm; the composer auto-retries the API health probe for 30 s before failing |
 
 ## Developer tips
 
