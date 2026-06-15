@@ -3106,7 +3106,7 @@
       },
       "NavConfig": {
         "additionalProperties": false,
-        "description": "Sidebar/nav section visibility + ordering (the menu system).",
+        "description": "Sidebar/nav section visibility + ordering + item placement (the menu).\n\n``hidden`` / ``order`` restrict + reorder within the existing hierarchy.\n``placement`` (Sprint 61) relocates a *movable* item (``MOVABLE_ITEMS``) to\none of its enumerated candidate parents \u2014 the one capability hide/order\ncan't express. A placement entry is validated against the registry: the\nitem must be movable and the chosen parent one of its candidates, else\n``ValidationError`` \u2192 422. Each movable item still renders in exactly one\nparent (its resolved placement \u2192 default), so mutual exclusion is structural.",
         "properties": {
           "hidden": {
             "items": {
@@ -3121,6 +3121,13 @@
             },
             "title": "Order",
             "type": "array"
+          },
+          "placement": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Placement",
+            "type": "object"
           }
         },
         "title": "NavConfig",

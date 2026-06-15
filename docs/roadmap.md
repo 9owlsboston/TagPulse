@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 60 — configurable ui · branch `sprint-60/configurable-ui`. **Mechanism + WM values shipped, gaps remediated.** Backend (ADR-032 §7 steps 1–5, PR [#91](https://github.com/9owlsboston/TagPulse/pull/91)); UI consumes **all six leaves** — `labels` + `nav` + `cards` + `theme` + `columns` + `tables` — with a **user write surface** (`Preferences` page → `PUT /ui-config/me`, + "Reset to team default"), column presets on **Tag Reads + Assets**, and the **§59.8 Units table** on Product detail. The full WM persona (`Device`→`Reader`, nav-simplification, hidden cards, sparkline, advanced columns, newest-first sort) is seeded onto the demo tenant from `WM_DEMO_PRESENTATION`. **Remaining tail:** an in-app **admin UI** to edit tenant/role defaults (today via API/seed), the deferred `locked` leaf-pin, and a `metadata` list column (none exists to cut yet).
+**Current sprint:** 61 — entity first nav · branch `sprint-61/entity-first-nav` (full scope lands in §sprint-61 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1593,6 +1593,26 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 **Deferred out of Sprint 60 (Track 2 / spatial — re-slotted to a later sprint).**
 - **Track 2 phase H — BYO-precomputed position ingest + floor-map render.** On the Sprint 59 `asset_positions` table: `POST /assets/{id}/position` for vendor `(x, y)` fixes (`source=precomputed`); latest-fix retrieval with **zone-source fallback**; `[ui]` floor-map config + position render. The "fill and draw the table" follow-on to Sprint 59 Track 2.
 - **Zone-fallback for the AssetList Location column** — show current zone (from `subject_current_zone`) when an asset has no GPS/precomputed fix. Separable band-aid; **not** the homegrown RSSI estimator (candidate Sprint 61).
+
+---
+
+## Sprint 61 — Entity-first IA + nav placement mechanism (active — planning)
+
+> **Status (2026-06-14, kickoff).** Design-doc-first per the 3+-component convention — see [docs/design/sprint-61-entity-first-nav.md](design/sprint-61-entity-first-nav.md). Cross-repo (`sprint-61/entity-first-nav` in both repos; backend PR [#99](https://github.com/9owlsboston/TagPulse/pull/99), UI PR [#83](https://github.com/9owlsboston/TagPulse-UI/pull/83)). Extends [ADR-032](adr/032-configurable-ui.md) with a new `nav.placement` leaf (ADR-032 `v1.2` amendment).
+
+**Why now.** Verifying the Sprint 60 demo config against the WM focus-group wireframes showed the nav should be **entity-first** — the top-level menu is the domain nouns (*Assets, Tags, Readers, Alerts*) plus one operational catch-all (*Data Management*), not the current mix of activity-named / entity-ish / over-broad sections. Two WM asks (*Tag Reads* under *Tags* vs. top-level; *Locations/Map* under *Assets* vs. their own section) need a capability the Sprint 60 `nav` leaf can't express: **relocating an item to a different parent**. That `nav.placement` mechanism is this sprint's core new work.
+
+**Governing invariant (ADR-032).** Still presentation-only — this is a regrouping + one additive presentation-config leaf. No routes, behavior, or data change.
+
+**Scope seed (locked at kickoff).**
+- **IA restructure (`[ui]`).** Regroup `NAV_SECTIONS` / `NAV_TOP` entity-first: Tag operations (Import/Transfers/Reconciliation) → **Tags**; Rules → **Alerts**; Locations/Map → **Assets** (default); *Data Management* shrinks to reference data + bulk I/O (Categories, Labels, Inventory CSV Import). Every route stays reachable; mode/role gating untouched.
+- **`nav.placement` mechanism (backend + `[ui]`; OpenAPI change).** A curated `MOVABLE_ITEMS` registry (each item → enumerated candidate parents + default) and a `placement` sub-leaf on `nav`. Closed-vocabulary validation (unknown item/parent → 422); each movable item renders in **exactly one** parent (mutual exclusion is structural); folds through the four-layer merge. Default placements: **Tag Reads under Tags**, **Locations/Map under Assets**.
+- **Preferences "Menu" panel (`[ui]`).** Mirror the dashboard-card check/uncheck UX — hide/show menu entries (`nav.hidden`) + a "where should this live" picker for movable items (`nav.placement`), persisted via `PUT /ui-config/me`; "Reset to team default" already clears it.
+- **WM demo seed (backend).** Extend `WM_DEMO_PRESENTATION` with the reconciled WM nav: `hidden: ["sec-inventory"]` (Inventory hidden **via presentation, not `tracking_modes`** — data/pages survive, reversible), entity-first section `order`, WM placement choices.
+
+**Accepted constraint (not fixed).** Layout renders `[...topItems, ...sections]`, so a top-level page can't sort *below* a section by config — the literal "Alerts last, below Data Management" wireframe order isn't reachable without a deeper Layout change. Kept out of scope; the entity sections are what the wireframe is really about.
+
+**Out of scope.** Top-band/section-band cross-ordering; arbitrary drag-and-drop nav builder; `tracking_modes` changes; any new routes/pages. The homegrown RSSI positioning spike previously pencilled as "candidate Sprint 61" **renumbers** to a later sprint — Sprint 61 is the nav/IA work.
 
 ---
 

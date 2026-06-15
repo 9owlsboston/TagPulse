@@ -104,6 +104,14 @@ WM_LABEL_SKIN: dict[str, str] = {"device": "Reader"}
 # lock-step with the UI registries (``src/lib/nav.tsx`` section keys,
 # ``Dashboard.tsx`` tile ids, the per-page ``columns``/``tables`` page names).
 #   - ``labels``  — the decided ``Device``→``Reader`` skin.
+#   - ``nav``     — Sprint 61 entity-first IA. The wireframe menu is the domain
+#                   nouns (Assets · Tags · Readers · Data Management · Alerts);
+#                   Inventory is **hidden for WM** (``sec-inventory`` in
+#                   ``hidden`` — a *presentation* hide that keeps the demo's
+#                   cold-chain inventory data/pages intact and reversible, NOT a
+#                   ``tracking_modes`` capability change), and the sections are
+#                   ordered to match the sketch. Tag Reads stays under Tags (its
+#                   registry default), so no ``placement`` override is needed.
 #   - ``cards``   — the wireframe dashboard shows exactly four cards
 #                   (Readers, Assets, Tags, Alerts), so hide the other five
 #                   tiles (raw reads/hour throughput, the Locations rollup,
@@ -118,14 +126,22 @@ WM_LABEL_SKIN: dict[str, str] = {"device": "Reader"}
 #                   explicit record of the WM keep/cut list.
 #   - ``tables``  — newest reads first on the Tag Reads page (sort-by-header
 #                   default ask).
-# The wireframe's *flat* nav (Assets/Tags/Readers promoted to top-level,
-# sections removed) is a structural redesign the ``nav`` leaf can't express
-# (it only hides/reorders within the existing hierarchy), so it is tracked as
-# a separate follow-up, not forced here. The ``nav`` leaf is therefore left at
-# the system default (no section hidden) — Data Management stays visible per
-# the wireframe.
+# The wireframe's *flat* nav (entity sections collapsed to bare top-level
+# links) is a structural redesign the ``nav`` leaf still can't express — top
+# items always render above sections — so it stays a tracked follow-up. The
+# entity-first IA (Sprint 61) + this section ordering get WM very close.
 WM_DEMO_PRESENTATION: dict[str, Any] = {
     "labels": dict(WM_LABEL_SKIN),
+    "nav": {
+        "hidden": ["sec-inventory"],
+        "order": [
+            "sec-assets",
+            "sec-tags",
+            "sec-readers",
+            "sec-data-management",
+            "sec-alerts",
+        ],
+    },
     "cards": {
         "dashboard": {
             "hidden": [
@@ -151,6 +167,37 @@ WM_DEMO_PRESENTATION: dict[str, Any] = {
 # both lead with ``"default"`` (today's UI), which is the system default.
 THEME_VARIANTS: tuple[str, ...] = ("default", "operator", "power")
 CARD_STYLES: tuple[str, ...] = ("default", "sparkline")
+
+# Curated registry of *movable* nav items (Sprint 61, ADR-032 §4 `nav`). The
+# entity-first IA puts each item under a sensible default parent, but a few
+# items legitimately belong in one of *several* places depending on the tenant's
+# mental model. Rather than hardcode that choice, those items are **movable**:
+# the `nav.placement` leaf pins each to one of its enumerated candidate parents.
+#
+#   { item-key: (candidate parents…) }   — the first entry is the DEFAULT parent.
+#
+# A `placement` override is valid only if the item is registered here AND the
+# chosen parent is one of its candidates (unknown → ValidationError → 422). The
+# reserved parent token ``"top"`` means "ungrouped top-level page" (rendered in
+# NAV_TOP, above the sections). Each movable item renders in **exactly one**
+# parent — its resolved placement — so there is never a "checked in two places"
+# state to reconcile (mutual exclusion is structural, not config'd). Keys must
+# stay in lock-step with the UI registry in ``src/lib/nav.tsx``.
+MOVABLE_ITEMS: dict[str, tuple[str, ...]] = {
+    # Tag Reads: defaults under the Tags section; can be pinned top-level for
+    # one-click operator access.
+    "/tag-reads": ("sec-tags", "top"),
+    # Locations / Map: default under Assets; can be split into a dedicated
+    # Locations section.
+    "/sites": ("sec-assets", "sec-locations"),
+    "/map": ("sec-assets", "sec-locations"),
+}
+
+
+def movable_default_parent(item_key: str) -> str | None:
+    """The default (first-listed) parent for a movable item, or ``None``."""
+    candidates = MOVABLE_ITEMS.get(item_key)
+    return candidates[0] if candidates else None
 
 
 class _Leaf(BaseModel):
@@ -193,10 +240,34 @@ class ThemeConfig(_Leaf):
 
 
 class NavConfig(_Leaf):
-    """Sidebar/nav section visibility + ordering (the menu system)."""
+    """Sidebar/nav section visibility + ordering + item placement (the menu).
+
+    ``hidden`` / ``order`` restrict + reorder within the existing hierarchy.
+    ``placement`` (Sprint 61) relocates a *movable* item (``MOVABLE_ITEMS``) to
+    one of its enumerated candidate parents — the one capability hide/order
+    can't express. A placement entry is validated against the registry: the
+    item must be movable and the chosen parent one of its candidates, else
+    ``ValidationError`` → 422. Each movable item still renders in exactly one
+    parent (its resolved placement → default), so mutual exclusion is structural.
+    """
 
     hidden: list[str] = Field(default_factory=list)
     order: list[str] = Field(default_factory=list)
+    placement: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("placement")
+    @classmethod
+    def _placement_is_registered(cls, value: dict[str, str]) -> dict[str, str]:
+        for item_key, parent in value.items():
+            candidates = MOVABLE_ITEMS.get(item_key)
+            if candidates is None:
+                raise ValueError(f"unknown movable nav item: {item_key!r}")
+            if parent not in candidates:
+                raise ValueError(
+                    f"invalid placement for {item_key!r}: {parent!r} "
+                    f"(allowed: {', '.join(candidates)})"
+                )
+        return value
 
 
 class CardGroup(_Leaf):
