@@ -102,7 +102,7 @@ def test_get_ui_config_returns_system_default(monkeypatch: pytest.MonkeyPatch) -
     assert body["labels"]["device"] == "Device"
     assert body["labels"]["telemetry"] == "Telemetry"
     assert body["theme"] == {"variant": "default", "cardStyle": "default"}
-    assert body["nav"] == {"hidden": [], "order": []}
+    assert body["nav"] == {"hidden": [], "order": [], "placement": {}}
     assert body["cards"] == {}
     assert body["columns"] == {}
     assert body["tables"] == {}
@@ -127,7 +127,7 @@ def test_get_ui_config_folds_stored_user_override(monkeypatch: pytest.MonkeyPatc
     assert body["theme"] == {"variant": "default", "cardStyle": "sparkline"}
     assert body["columns"]["assets"]["hidden"] == ["metadata"]
     # Untouched leaves still fall through to the system default.
-    assert body["nav"] == {"hidden": [], "order": []}
+    assert body["nav"] == {"hidden": [], "order": [], "placement": {}}
 
 
 def test_get_ui_config_no_user_identity_is_system_default(

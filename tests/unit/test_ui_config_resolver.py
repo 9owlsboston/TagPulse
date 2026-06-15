@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from tagpulse.services.ui_config import (
     CARD_STYLES,
     LABEL_KEYS,
+    MOVABLE_ITEMS,
     ROLES_KEY,
     SYSTEM_DEFAULT_UI_CONFIG,
     THEME_VARIANTS,
@@ -21,6 +22,7 @@ from tagpulse.services.ui_config import (
     ThemeConfig,
     UiConfig,
     deep_merge,
+    movable_default_parent,
     resolve_ui_config,
     tenant_role_layers,
     validate_ui_config_override,
@@ -146,6 +148,55 @@ def test_resolve_reset_to_team_default_via_absent_layer() -> None:
 def test_resolve_rejects_malformed_override() -> None:
     with pytest.raises(ValidationError):
         resolve_ui_config([{"theme": {"variant": "operator", "bogus": 1}}])
+
+
+# -- nav.placement (Sprint 61) ---------------------------------------------
+
+
+def test_placement_defaults_empty_in_system_default() -> None:
+    assert SYSTEM_DEFAULT_UI_CONFIG.nav.placement == {}
+
+
+def test_movable_default_parent_is_first_candidate() -> None:
+    # The default parent is the first listed candidate for each movable item.
+    assert movable_default_parent("/tag-reads") == "sec-tags"
+    assert movable_default_parent("/sites") == "sec-assets"
+    assert movable_default_parent("/map") == "sec-assets"
+    assert movable_default_parent("/not-movable") is None
+
+
+def test_valid_placement_folds_through_merge() -> None:
+    resolved = resolve_ui_config(
+        [{"nav": {"placement": {"/tag-reads": "top", "/sites": "sec-locations"}}}]
+    )
+    assert resolved.nav.placement == {"/tag-reads": "top", "/sites": "sec-locations"}
+
+
+def test_placement_rejects_unknown_item() -> None:
+    with pytest.raises(ValidationError):
+        validate_ui_config_override({"nav": {"placement": {"/not-movable": "sec-tags"}}})
+
+
+def test_placement_rejects_non_candidate_parent() -> None:
+    # /tag-reads may live in sec-tags or top, not sec-readers.
+    with pytest.raises(ValidationError):
+        validate_ui_config_override({"nav": {"placement": {"/tag-reads": "sec-readers"}}})
+
+
+def test_placement_merges_per_item_across_layers() -> None:
+    # Tenant pins Tag Reads top-level; user relocates Locations — both survive
+    # (per-key deep-merge), neither clobbers the other.
+    tenant = {"nav": {"placement": {"/tag-reads": "top"}}}
+    user = {"nav": {"placement": {"/sites": "sec-locations"}}}
+    resolved = resolve_ui_config([tenant, user])
+    assert resolved.nav.placement == {"/tag-reads": "top", "/sites": "sec-locations"}
+
+
+def test_movable_registry_defaults_are_valid_candidates() -> None:
+    # Every registered movable item's default parent is itself a candidate.
+    for item, candidates in MOVABLE_ITEMS.items():
+        assert candidates, f"{item} has no candidate parents"
+        assert movable_default_parent(item) in candidates
 
 
 # -- validate_ui_config_override (write path, increment 2) ------------------
