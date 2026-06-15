@@ -88,8 +88,12 @@ class TenantModel(Base):
         String(16), nullable=False, server_default="live"
     )
     # -- Sprint 33 QW6: per-tenant branding (NULL = use system defaults).
-    # See docs/design/reference-design-remediation.md §3.3. --
-    logo_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # See docs/design/reference-design-remediation.md §3.3.
+    # Widened to Text (migration 054) so logo_url can hold a small base64
+    # ``data:`` URL (uploaded logo), not just an ``https://`` URL.
+    # ``logo_collapsed_url`` is the second logo shown on the collapsed sidebar. --
+    logo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    logo_collapsed_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     brand_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
     # -- Sprint 59 Track 2 (59.9, ADR-024 D8): per-tenant indoor-position

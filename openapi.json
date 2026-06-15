@@ -3560,6 +3560,17 @@
             ],
             "title": "Display Name"
           },
+          "logo_collapsed_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Collapsed Url"
+          },
           "logo_url": {
             "anyOf": [
               {
@@ -7030,17 +7041,28 @@
             "description": "Friendly name shown in the Sider/login in place of tenants.name.",
             "title": "Display Name"
           },
-          "logo_url": {
+          "logo_collapsed_url": {
             "anyOf": [
               {
-                "maxLength": 2048,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "HTTPS URL to the logo image hosted by the operator.",
+            "description": "Collapsed-sidebar logo (square icon/mark): an https:// URL or an uploaded base64 data:image/... URL. Falls back to logo_url, then the monogram, when unset.",
+            "title": "Logo Collapsed Url"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Full/expanded logo: an https:// URL or an uploaded base64 data:image/... URL. Shown in the expanded sidebar header.",
             "title": "Logo Url"
           }
         },
@@ -7073,10 +7095,20 @@
             ],
             "title": "Display Name"
           },
+          "logo_collapsed_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Collapsed Url"
+          },
           "logo_url": {
             "anyOf": [
               {
-                "maxLength": 2048,
                 "type": "string"
               },
               {

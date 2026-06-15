@@ -55,6 +55,36 @@ _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 _MAX_LOGO_URL_LEN = 2048
 _MAX_DISPLAY_NAME_LEN = 255
 
+# An uploaded logo is stored inline as a base64 ``data:`` URL (chore: branding
+# logo upload — no blob storage). Cap the encoded length so a logo can't bloat
+# the branding row (fetched on every page load). 96 KB of base64 ≈ 70 KB of
+# image — generous for an SVG wordmark or a small PNG icon, tiny for the row.
+_MAX_LOGO_DATA_URL_LEN = 96 * 1024
+# Allowed inline image media types (kept tight — these are *logos*, not media).
+_DATA_URL_RE = re.compile(r"^data:image/(png|jpeg|svg\+xml|webp|gif);base64,[A-Za-z0-9+/=\s]+$")
+
+
+def _validate_logo(v: str | None) -> str | None:
+    """A logo may be an ``https://`` URL (operator-hosted) or an uploaded
+    base64 ``data:image/...`` URL (capped). Empty/``None`` clears it."""
+    if v is None or v == "":
+        return None
+    if v.startswith("data:"):
+        if len(v) > _MAX_LOGO_DATA_URL_LEN:
+            raise ValueError(
+                f"uploaded logo is too large (max {_MAX_LOGO_DATA_URL_LEN // 1024} KB encoded)"
+            )
+        if not _DATA_URL_RE.match(v):
+            raise ValueError(
+                "logo data URL must be a base64 data:image/(png|jpeg|svg+xml|webp|gif)"
+            )
+        return v
+    if v.startswith("https://"):
+        if len(v) > _MAX_LOGO_URL_LEN:
+            raise ValueError(f"logo URL too long (max {_MAX_LOGO_URL_LEN} chars)")
+        return v
+    raise ValueError("logo must be an https:// URL or a base64 data:image/... URL")
+
 
 class TenantBranding(BaseModel):
     """Per-tenant branding overrides. ``None`` on any field means
@@ -62,8 +92,14 @@ class TenantBranding(BaseModel):
 
     logo_url: str | None = Field(
         default=None,
-        max_length=_MAX_LOGO_URL_LEN,
-        description="HTTPS URL to the logo image hosted by the operator.",
+        description="Full/expanded logo: an https:// URL or an uploaded "
+        "base64 data:image/... URL. Shown in the expanded sidebar header.",
+    )
+    logo_collapsed_url: str | None = Field(
+        default=None,
+        description="Collapsed-sidebar logo (square icon/mark): an https:// "
+        "URL or an uploaded base64 data:image/... URL. Falls back to "
+        "logo_url, then the monogram, when unset.",
     )
     display_name: str | None = Field(
         default=None,
@@ -80,18 +116,15 @@ class TenantBrandingUpdate(BaseModel):
     """Admin payload. PATCH semantics: missing fields keep their
     current value, explicit ``null`` clears the override."""
 
-    logo_url: str | None = Field(default=None, max_length=_MAX_LOGO_URL_LEN)
+    logo_url: str | None = Field(default=None)
+    logo_collapsed_url: str | None = Field(default=None)
     display_name: str | None = Field(default=None, max_length=_MAX_DISPLAY_NAME_LEN)
     brand_color: str | None = None
 
-    @field_validator("logo_url")
+    @field_validator("logo_url", "logo_collapsed_url")
     @classmethod
-    def _validate_logo_url(cls, v: str | None) -> str | None:
-        if v is None or v == "":
-            return None
-        if not v.startswith("https://"):
-            raise ValueError("logo_url must be an https:// URL")
-        return v
+    def _validate_logo_field(cls, v: str | None) -> str | None:
+        return _validate_logo(v)
 
     @field_validator("display_name")
     @classmethod
@@ -119,12 +152,14 @@ class PublicBranding(BaseModel):
     name: str
     display_name: str | None = None
     logo_url: str | None = None
+    logo_collapsed_url: str | None = None
     brand_color: str | None = None
 
 
 def _to_branding(row: TenantModel) -> TenantBranding:
     return TenantBranding(
         logo_url=row.logo_url,
+        logo_collapsed_url=row.logo_collapsed_url,
         display_name=row.display_name,
         brand_color=row.brand_color,
     )
@@ -160,7 +195,7 @@ async def update_tenant_branding(
     provided = body.model_dump(exclude_unset=True)
     changes: dict[str, dict[str, str | None]] = {}
 
-    for column in ("logo_url", "display_name", "brand_color"):
+    for column in ("logo_url", "logo_collapsed_url", "display_name", "brand_color"):
         if column not in provided:
             continue
         old_value: str | None = getattr(row, column)
@@ -201,5 +236,6 @@ async def get_public_branding(
         name=row.name,
         display_name=row.display_name,
         logo_url=row.logo_url,
+        logo_collapsed_url=row.logo_collapsed_url,
         brand_color=row.brand_color,
     )
