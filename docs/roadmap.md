@@ -1596,6 +1596,26 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 61 — Entity-first IA + nav placement mechanism (active — planning)
+
+> **Status (2026-06-14, kickoff).** Design-doc-first per the 3+-component convention — see [docs/design/sprint-61-entity-first-nav.md](design/sprint-61-entity-first-nav.md). Cross-repo (`sprint-61/entity-first-nav` in both repos; backend PR [#99](https://github.com/9owlsboston/TagPulse/pull/99), UI PR [#83](https://github.com/9owlsboston/TagPulse-UI/pull/83)). Extends [ADR-032](adr/032-configurable-ui.md) with a new `nav.placement` leaf (ADR-032 `v1.2` amendment).
+
+**Why now.** Verifying the Sprint 60 demo config against the WM focus-group wireframes showed the nav should be **entity-first** — the top-level menu is the domain nouns (*Assets, Tags, Readers, Alerts*) plus one operational catch-all (*Data Management*), not the current mix of activity-named / entity-ish / over-broad sections. Two WM asks (*Tag Reads* under *Tags* vs. top-level; *Locations/Map* under *Assets* vs. their own section) need a capability the Sprint 60 `nav` leaf can't express: **relocating an item to a different parent**. That `nav.placement` mechanism is this sprint's core new work.
+
+**Governing invariant (ADR-032).** Still presentation-only — this is a regrouping + one additive presentation-config leaf. No routes, behavior, or data change.
+
+**Scope seed (locked at kickoff).**
+- **IA restructure (`[ui]`).** Regroup `NAV_SECTIONS` / `NAV_TOP` entity-first: Tag operations (Import/Transfers/Reconciliation) → **Tags**; Rules → **Alerts**; Locations/Map → **Assets** (default); *Data Management* shrinks to reference data + bulk I/O (Categories, Labels, Inventory CSV Import). Every route stays reachable; mode/role gating untouched.
+- **`nav.placement` mechanism (backend + `[ui]`; OpenAPI change).** A curated `MOVABLE_ITEMS` registry (each item → enumerated candidate parents + default) and a `placement` sub-leaf on `nav`. Closed-vocabulary validation (unknown item/parent → 422); each movable item renders in **exactly one** parent (mutual exclusion is structural); folds through the four-layer merge. Default placements: **Tag Reads under Tags**, **Locations/Map under Assets**.
+- **Preferences "Menu" panel (`[ui]`).** Mirror the dashboard-card check/uncheck UX — hide/show menu entries (`nav.hidden`) + a "where should this live" picker for movable items (`nav.placement`), persisted via `PUT /ui-config/me`; "Reset to team default" already clears it.
+- **WM demo seed (backend).** Extend `WM_DEMO_PRESENTATION` with the reconciled WM nav: `hidden: ["sec-inventory"]` (Inventory hidden **via presentation, not `tracking_modes`** — data/pages survive, reversible), entity-first section `order`, WM placement choices.
+
+**Accepted constraint (not fixed).** Layout renders `[...topItems, ...sections]`, so a top-level page can't sort *below* a section by config — the literal "Alerts last, below Data Management" wireframe order isn't reachable without a deeper Layout change. Kept out of scope; the entity sections are what the wireframe is really about.
+
+**Out of scope.** Top-band/section-band cross-ordering; arbitrary drag-and-drop nav builder; `tracking_modes` changes; any new routes/pages. The homegrown RSSI positioning spike previously pencilled as "candidate Sprint 61" **renumbers** to a later sprint — Sprint 61 is the nav/IA work.
+
+---
+
 ## Backlog (not scheduled)
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock.
