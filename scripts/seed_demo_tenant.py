@@ -129,6 +129,10 @@ class DemoProfile:
     # Only the WM-facing ``combined`` tenant gets it; the domain demos stay on
     # system defaults so they tell their own neutral story.
     seed_ui_config: bool = False
+    # branding-logo-upload chore: apply the SuperMart brand kit (full +
+    # collapsed logos, teal accent). Only the WM-facing ``combined`` tenant
+    # gets a brand; the domain demos stay on the neutral display-name fallback.
+    seed_branding: bool = False
     # Sprint 59 Phase C: which simulator scenario preset each domain step runs.
     # ``baseline`` reproduces the Sprint 58 combined build; the domain profiles
     # select the richer single-domain presets (registered in each simulator's
@@ -158,6 +162,8 @@ PROFILES: dict[str, DemoProfile] = {
         admin_name=DEMO_ADMIN_NAME,
         # The WM-facing tenant renders the `Device` -> `Reader` skin.
         seed_ui_config=True,
+        # ...and comes up pre-branded with the SuperMart logo kit.
+        seed_branding=True,
     ),
     "inventory": DemoProfile(
         key="inventory",
@@ -502,6 +508,18 @@ def _step_seed_ui_config(profile: DemoProfile, api_key: str) -> None:
     _run(cmd)
 
 
+def _step_seed_branding(profile: DemoProfile, api_key: str) -> None:
+    cmd = [
+        sys.executable,
+        str(SCRIPTS_DIR / "seed_branding.py"),
+        "--tenant-id",
+        str(profile.tenant_id),
+        "--api-key",
+        api_key,
+    ]
+    _run(cmd)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -694,6 +712,11 @@ def main() -> int:
             profile.seed_ui_config,
             "seed_ui_config — apply WM label skin (Device -> Reader)",
             lambda: _step_seed_ui_config(profile, api_key),
+        ),
+        (
+            profile.seed_branding,
+            "seed_branding — apply SuperMart logo kit (full + collapsed)",
+            lambda: _step_seed_branding(profile, api_key),
         ),
     ]
     enabled_steps = [(title, run) for ok, title, run in seed_steps if ok]
