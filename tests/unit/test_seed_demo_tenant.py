@@ -507,7 +507,7 @@ def test_seed_register_tags_matches_inventory_serial_scheme() -> None:
         assert len(actual) == total_units
 
 
-def test_seed_register_tags_posts_each_epc() -> None:
+def test_seed_register_tags_posts_each_epc(monkeypatch: pytest.MonkeyPatch) -> None:
     """The shim POSTs every EPC to ``/tags`` with ``source='backfill'`` and the
     right auth headers, tolerating 409 (already-registered) idempotently.
     """
@@ -532,8 +532,10 @@ def test_seed_register_tags_posts_each_epc() -> None:
             # First half new (201), second half already-exist (409).
             return _Resp(201 if len(posted) % 2 else 409)
 
-    seed_register_tags.httpx.Client = lambda *a, **k: _Client()  # type: ignore[assignment]
-    seed_register_tags.time.sleep = lambda _s: None  # type: ignore[assignment]
+    # NOTE: use monkeypatch (auto-restored) — a raw ``seed_register_tags.time.sleep =``
+    # assignment would nuke the global ``time.sleep`` for the rest of the suite.
+    monkeypatch.setattr(seed_register_tags.httpx, "Client", lambda *a, **k: _Client())
+    monkeypatch.setattr(seed_register_tags.time, "sleep", lambda _s: None)
 
     created, existing, failed = seed_register_tags.register_tags(
         "tid-abc", "tp_demo_key", "baseline"
