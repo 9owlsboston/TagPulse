@@ -140,6 +140,11 @@ _COMPOSER_INVOCATIONS: list[tuple[str, str, frozenset[str]]] = [
         "seed_branding.py",
         frozenset({"--tenant-id", "--api-key"}),
     ),
+    (
+        "_step_seed_register_tags",
+        "seed_register_tags.py",
+        frozenset({"--tenant-id", "--api-key", "--scenario"}),
+    ),
 ]
 
 
@@ -455,6 +460,94 @@ def test_only_combined_profile_applies_branding() -> None:
     assert profiles["combined"].seed_branding
     assert not profiles["inventory"].seed_branding
     assert not profiles["asset"].seed_branding
+
+
+def test_register_tags_runs_for_inventory_seeding_profiles() -> None:
+    """The tags-registry registration step runs wherever inventory is seeded.
+
+    The demo Tags KPI counts ``tags`` rows; the inventory simulator streams
+    SGTIN reads but never registers their EPCs, so the step must run for every
+    inventory-seeding profile (``combined`` + ``inventory``) and be skipped for
+    the asset-only profile (which seeds no inventory units).
+    """
+    seed_demo_tenant = _load_script_module("seed_demo_tenant.py")
+    profiles = seed_demo_tenant.PROFILES
+
+    assert profiles["combined"].seed_inventory
+    assert profiles["inventory"].seed_inventory
+    assert not profiles["asset"].seed_inventory
+
+
+def test_seed_register_tags_matches_inventory_serial_scheme() -> None:
+    """The shim derives the exact EPC set the inventory simulator streams.
+
+    The registered set must equal ``_build_units``' serial scheme
+    (``(product_idx+1) * 100_000 + unit_idx``) so the Tags KPI reflects the
+    real fleet and no EPC is over- or under-registered. EPCs must be uppercase
+    hex (``TagCreate.epc_hex`` pattern).
+    """
+    seed_register_tags = _load_script_module("seed_register_tags.py")
+    simulate_inventory = _load_script_module("simulate_inventory.py")
+
+    for scenario_name, scenario in simulate_inventory.SCENARIOS.items():
+        expected = {
+            simulate_inventory._sgtin96_hex(
+                simulate_inventory.COMPANY_PREFIX,
+                item.item_ref,
+                (product_idx + 1) * 100_000 + unit_idx,
+            ).upper()
+            for product_idx, item in enumerate(scenario.catalog)
+            for unit_idx in range(item.units)
+        }
+        actual = set(seed_register_tags.scenario_epc_hexes(scenario_name))
+        assert actual == expected, scenario_name
+        assert all(e == e.upper() for e in actual)
+        # Count parity: one tag per seeded unit.
+        total_units = sum(item.units for item in scenario.catalog)
+        assert len(actual) == total_units
+
+
+def test_seed_register_tags_posts_each_epc() -> None:
+    """The shim POSTs every EPC to ``/tags`` with ``source='backfill'`` and the
+    right auth headers, tolerating 409 (already-registered) idempotently.
+    """
+    seed_register_tags = _load_script_module("seed_register_tags.py")
+
+    posted: list[dict[str, object]] = []
+
+    class _Resp:
+        def __init__(self, status_code: int) -> None:
+            self.status_code = status_code
+            self.text = ""
+
+    class _Client:
+        def __enter__(self) -> _Client:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def post(self, url: str, *, headers: dict[str, str], json: dict) -> _Resp:
+            posted.append({"url": url, "headers": headers, "json": json})
+            # First half new (201), second half already-exist (409).
+            return _Resp(201 if len(posted) % 2 else 409)
+
+    seed_register_tags.httpx.Client = lambda *a, **k: _Client()  # type: ignore[assignment]
+    seed_register_tags.time.sleep = lambda _s: None  # type: ignore[assignment]
+
+    created, existing, failed = seed_register_tags.register_tags(
+        "tid-abc", "tp_demo_key", "baseline"
+    )
+
+    expected = seed_register_tags.scenario_epc_hexes("baseline")
+    assert len(posted) == len(expected)
+    assert {p["json"]["epc_hex"] for p in posted} == set(expected)
+    assert all(p["json"]["source"] == "backfill" for p in posted)
+    assert all(p["url"].endswith("/tags") for p in posted)
+    assert all(p["headers"]["Authorization"] == "Bearer tp_demo_key" for p in posted)
+    assert all(p["headers"]["X-Tenant-ID"] == "tid-abc" for p in posted)
+    assert failed == 0
+    assert created + existing == len(expected)
 
 
 def test_seed_ui_config_applies_canonical_wm_presentation() -> None:

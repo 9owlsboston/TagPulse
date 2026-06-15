@@ -520,6 +520,20 @@ def _step_seed_branding(profile: DemoProfile, api_key: str) -> None:
     _run(cmd)
 
 
+def _step_seed_register_tags(profile: DemoProfile, api_key: str) -> None:
+    cmd = [
+        sys.executable,
+        str(SCRIPTS_DIR / "seed_register_tags.py"),
+        "--tenant-id",
+        str(profile.tenant_id),
+        "--api-key",
+        api_key,
+        "--scenario",
+        profile.inventory_scenario,
+    ]
+    _run(cmd)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -665,6 +679,11 @@ def main() -> int:
             profile.seed_devices,
             "simulate_devices — seed reader devices",
             lambda: _step_simulate_devices(profile, api_key, devices=args.devices, tags=args.tags),
+        ),
+        (
+            profile.seed_inventory,
+            "seed_register_tags — register inventory EPCs in the tags registry",
+            lambda: _step_seed_register_tags(profile, api_key),
         ),
         (
             profile.seed_inventory,
