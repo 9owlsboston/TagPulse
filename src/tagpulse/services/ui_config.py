@@ -104,6 +104,14 @@ WM_LABEL_SKIN: dict[str, str] = {"device": "Reader"}
 # lock-step with the UI registries (``src/lib/nav.tsx`` section keys,
 # ``Dashboard.tsx`` tile ids, the per-page ``columns``/``tables`` page names).
 #   - ``labels``  — the decided ``Device``→``Reader`` skin.
+#   - ``nav``     — Sprint 61 entity-first IA. The wireframe menu is the domain
+#                   nouns (Assets · Tags · Readers · Data Management · Alerts);
+#                   Inventory is **hidden for WM** (``sec-inventory`` in
+#                   ``hidden`` — a *presentation* hide that keeps the demo's
+#                   cold-chain inventory data/pages intact and reversible, NOT a
+#                   ``tracking_modes`` capability change), and the sections are
+#                   ordered to match the sketch. Tag Reads stays under Tags (its
+#                   registry default), so no ``placement`` override is needed.
 #   - ``cards``   — the wireframe dashboard shows exactly four cards
 #                   (Readers, Assets, Tags, Alerts), so hide the other five
 #                   tiles (raw reads/hour throughput, the Locations rollup,
@@ -118,14 +126,22 @@ WM_LABEL_SKIN: dict[str, str] = {"device": "Reader"}
 #                   explicit record of the WM keep/cut list.
 #   - ``tables``  — newest reads first on the Tag Reads page (sort-by-header
 #                   default ask).
-# The wireframe's *flat* nav (Assets/Tags/Readers promoted to top-level,
-# sections removed) is a structural redesign the ``nav`` leaf can't express
-# (it only hides/reorders within the existing hierarchy), so it is tracked as
-# a separate follow-up, not forced here. The ``nav`` leaf is therefore left at
-# the system default (no section hidden) — Data Management stays visible per
-# the wireframe.
+# The wireframe's *flat* nav (entity sections collapsed to bare top-level
+# links) is a structural redesign the ``nav`` leaf still can't express — top
+# items always render above sections — so it stays a tracked follow-up. The
+# entity-first IA (Sprint 61) + this section ordering get WM very close.
 WM_DEMO_PRESENTATION: dict[str, Any] = {
     "labels": dict(WM_LABEL_SKIN),
+    "nav": {
+        "hidden": ["sec-inventory"],
+        "order": [
+            "sec-assets",
+            "sec-tags",
+            "sec-readers",
+            "sec-data-management",
+            "sec-alerts",
+        ],
+    },
     "cards": {
         "dashboard": {
             "hidden": [

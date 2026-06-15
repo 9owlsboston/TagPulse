@@ -340,10 +340,14 @@ def test_wm_demo_presentation_is_valid_and_resolves() -> None:
     resolved = resolve_ui_config([WM_DEMO_PRESENTATION])
     # Each consumed leaf folds through to the resolved document.
     assert resolved.labels["device"] == "Reader"
-    # Reconciled against the wireframe: Data Management stays visible (no nav
-    # override) and the Tags card stays visible; only the five non-wireframe
-    # tiles are hidden.
-    assert resolved.nav.hidden == []
+    # Sprint 61 entity-first IA: Inventory is hidden (presentation hide), the
+    # sections are ordered per the wireframe, and Data Management stays visible.
+    assert resolved.nav.hidden == ["sec-inventory"]
+    assert "sec-data-management" not in resolved.nav.hidden
+    assert resolved.nav.order[0] == "sec-assets"
+    assert "sec-alerts" in resolved.nav.order
+    # Tag Reads keeps its default placement (under Tags) — no override needed.
+    assert resolved.nav.placement == {}
     assert "tags" not in resolved.cards["dashboard"].hidden
     assert "reads-per-hour" in resolved.cards["dashboard"].hidden
     assert "low-stock" in resolved.cards["dashboard"].hidden
