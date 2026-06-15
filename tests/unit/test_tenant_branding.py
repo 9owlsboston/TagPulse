@@ -18,7 +18,12 @@ class TestTenantBrandingResponse:
     def test_all_fields_default_to_none(self) -> None:
         body = TenantBranding()
         dumped = body.model_dump()
-        assert dumped == {"logo_url": None, "display_name": None, "brand_color": None}
+        assert dumped == {
+            "logo_url": None,
+            "logo_collapsed_url": None,
+            "display_name": None,
+            "brand_color": None,
+        }
 
     def test_populated_values_round_trip(self) -> None:
         body = TenantBranding(
@@ -31,10 +36,12 @@ class TestTenantBrandingResponse:
         assert dumped["display_name"] == "Acme Corp"
         assert dumped["brand_color"] == "#14B8A6"
 
-    def test_logo_url_length_capped_at_2048(self) -> None:
-        too_long = "https://cdn.example.com/" + ("a" * 2100)
-        with pytest.raises(ValidationError):
-            TenantBranding(logo_url=too_long)
+    def test_read_model_accepts_a_data_url_logo(self) -> None:
+        # The read side no longer caps logo length (it can hold a data: URL).
+        data_url = "data:image/png;base64," + ("A" * 5000)
+        body = TenantBranding(logo_url=data_url, logo_collapsed_url=data_url)
+        assert body.logo_url == data_url
+        assert body.logo_collapsed_url == data_url
 
     def test_display_name_length_capped_at_255(self) -> None:
         with pytest.raises(ValidationError):
@@ -102,6 +109,42 @@ class TestTenantBrandingUpdateValidation:
         with pytest.raises(ValidationError):
             TenantBrandingUpdate(logo_url=too_long)
 
+    # -- uploaded logo (data: URL) — branding logo upload chore ----------------
+
+    def test_data_url_logo_accepted(self) -> None:
+        # A 1x1 transparent PNG as a base64 data URL.
+        data_url = (
+            "data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4n"
+            "GNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+        )
+        payload = TenantBrandingUpdate(logo_url=data_url, logo_collapsed_url=data_url)
+        assert payload.logo_url == data_url
+        assert payload.logo_collapsed_url == data_url
+
+    def test_svg_data_url_logo_accepted(self) -> None:
+        payload = TenantBrandingUpdate(logo_url="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=")
+        assert payload.logo_url is not None
+
+    def test_oversized_data_url_logo_rejected(self) -> None:
+        # 96 KB encoded cap.
+        too_big = "data:image/png;base64," + ("A" * (96 * 1024 + 1))
+        with pytest.raises(ValidationError) as exc:
+            TenantBrandingUpdate(logo_url=too_big)
+        assert "too large" in str(exc.value)
+
+    def test_non_image_data_url_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TenantBrandingUpdate(logo_url="data:text/html;base64,PHNjcmlwdD4=")
+
+    def test_collapsed_logo_validated_like_logo(self) -> None:
+        with pytest.raises(ValidationError):
+            TenantBrandingUpdate(logo_collapsed_url="ftp://nope/x.png")
+
+    def test_collapsed_logo_https_accepted(self) -> None:
+        payload = TenantBrandingUpdate(logo_collapsed_url="https://cdn.example.com/icon.svg")
+        assert payload.logo_collapsed_url == "https://cdn.example.com/icon.svg"
+
 
 class TestPublicBranding:
     """Payload returned to the unauthenticated login page."""
@@ -114,6 +157,7 @@ class TestPublicBranding:
             "name": "Acme",
             "display_name": None,
             "logo_url": None,
+            "logo_collapsed_url": None,
             "brand_color": None,
         }
 
