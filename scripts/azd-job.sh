@@ -164,14 +164,22 @@ if [[ -z "$LOG_WORKSPACE_ID" ]]; then
 fi
 echo "    workspace:  $LOG_WORKSPACE_ID"
 
-# Build the args[] array Azure expects: comma-separated string of values.
-# `--args 'a,b,c'` arrives in the container as ["a","b","c"]. We always
-# invoke `python scripts/<name>.py [args…]` so the operator never has to
-# think about /app/scripts/.
-JOIN_ARGS=$(printf "scripts/%s" "$SCRIPT_NAME")
-for a in "${SCRIPT_ARGS[@]}"; do
-  JOIN_ARGS+=",${a}"
-done
+# Build the container args[] JSON array directly from the bash array, one
+# element per arg, preserving each value verbatim. We always invoke
+# `python scripts/<name>.py [args…]` so the operator never has to think
+# about /app/scripts/.
+#
+# Build it element-by-element (NOT by joining on a delimiter and re-splitting)
+# so an arg whose *value* contains a comma — e.g. get_kv_secret.py's
+# `--names a,b,c` batch mode — survives intact. The previous comma-join/
+# comma-split round-trip turned `--names a,b,c` into four args
+# (`--names`, `a`, `b`, `c`), breaking every batch/multi-secret call.
+#
+# `jq -Rn '[inputs]'` collects one raw line per arg into a JSON array. We use
+# newline as the delimiter (safe: script args never contain newlines) rather
+# than jq's `--args`, which mis-parses values that start with `-` (e.g.
+# `--names`) as jq options.
+ARGS_JSON=$(printf '%s\n' "scripts/$SCRIPT_NAME" "${SCRIPT_ARGS[@]}" | jq -Rnc '[inputs]')
 
 EXEC_NAME=""
 if [[ "$UPDATE_ONLY" -eq 0 ]]; then
@@ -227,7 +235,7 @@ if [[ "$UPDATE_ONLY" -eq 0 ]]; then
     --arg image "$EXISTING_IMAGE" \
     --argjson env "$EXISTING_ENV" \
     --argjson resources "$EXISTING_RESOURCES" \
-    --argjson args "$(echo "$JOIN_ARGS" | jq -Rc 'split(",")')" \
+    --argjson args "$ARGS_JSON" \
     '{
       properties: {
         template: {
