@@ -16637,6 +16637,53 @@
       }
     },
     "/ui-config/me": {
+      "patch": {
+        "description": "Deep-merge a sparse override into the caller's stored prefs (Sprint 63).\n\nUnlike ``PUT /me`` (which replaces the whole user layer), ``PATCH`` folds\nthe body into the existing prefs per leaf (ADR-032 \u00a72 deep-merge: nested\ndicts recurse, a list *is* a leaf and replaces wholesale). This lets\nindependent write surfaces compose without clobbering one another \u2014 e.g.\nthe column chooser writing ``columns.<page>.hidden`` no longer wipes the\nPreferences page's ``cards`` / ``nav`` choices. The body is the usual\n**sparse** ADR-032 \u00a74 subset; unknown/ill-typed keys are rejected (422).\nAn empty body is a no-op (use ``PUT /me`` with ``{}`` or\n``DELETE /me/columns/{page}`` to reset). Requires a real user identity.",
+        "operationId": "patch_ui_config_me_ui_config_me_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Patch Ui Config Me",
+        "tags": [
+          "ui-config"
+        ]
+      },
       "put": {
         "description": "Upsert the caller's UI override and return the freshly resolved config.\n\nThe body is a **sparse** subset of the ADR-032 \u00a74 document; unknown or\nill-typed keys are rejected (422). An empty body ``{}`` clears the\noverride (\"reset to team default\"). Requires a real user identity \u2014 the\nX-Tenant-ID backward-compat path has no user to attach prefs to.",
         "operationId": "put_ui_config_me_ui_config_me_put",
@@ -16680,6 +16727,54 @@
           }
         ],
         "summary": "Put Ui Config Me",
+        "tags": [
+          "ui-config"
+        ]
+      }
+    },
+    "/ui-config/me/columns/{page}": {
+      "delete": {
+        "description": "Reset one list page's column override to the team default (Sprint 63).\n\nRemoves ``columns.<page>`` from the caller's stored prefs so that page's\ncolumns re-inherit the tenant/role/system layers (the per-table \"reset to\nteam default\" \u2014 distinct from the *show everything* a user gets by setting\n``columns.<page>.hidden = []`` via ``PATCH``). Idempotent: resetting a page\nwith no stored override is a no-op (200). Other leaves \u2014 and other pages'\ncolumn overrides \u2014 are untouched. Requires a real user identity.",
+        "operationId": "delete_ui_config_me_columns_ui_config_me_columns__page__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "page",
+            "required": true,
+            "schema": {
+              "title": "Page",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Delete Ui Config Me Columns",
         "tags": [
           "ui-config"
         ]

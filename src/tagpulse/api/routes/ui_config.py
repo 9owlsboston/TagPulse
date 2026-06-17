@@ -13,9 +13,14 @@ Storage (ADR-032 §3): the tenant + role layers live on ``tenants.ui_config``
 (tenant-default leaves at the top level, the role layer under a reserved
 ``roles`` sub-object); the user layer lives on ``user_ui_prefs``.
 
-"Reset to team default" (ADR-032 §2): a user ``PUT``s ``/me`` with an empty
-body ``{}`` → their override clears and they fall back to role/tenant/system.
-The same empty-body convention resets a tenant or role layer.
+"Reset to team default" (ADR-032 §2) comes in two scopes: a user ``PUT``s
+``/me`` with an empty body ``{}`` to clear their **whole** override (fall back to
+role/tenant/system), or ``DELETE``s ``/me/columns/{page}`` to reset just one
+list page's column leaf. ``PATCH /me`` (Sprint 63) **deep-merges** a sparse body
+into the stored prefs so independent write surfaces (the column chooser, the
+Preferences page) compose instead of clobbering each other (``PUT`` still
+replaces the whole layer). The same empty-body convention resets a tenant or
+role layer.
 
 The ``locked`` leaf-pin (ADR-032 §2) stays deferred to a later increment.
 """
@@ -36,6 +41,7 @@ from tagpulse.repositories.timescaledb.user_ui_prefs import UserUiPrefsRepositor
 from tagpulse.services.ui_config import (
     ROLES_KEY,
     UiConfig,
+    deep_merge,
     resolve_ui_config,
     tenant_role_layers,
     validate_ui_config_override,
@@ -101,6 +107,80 @@ async def put_ui_config_me(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
     await UserUiPrefsRepository(session).upsert(user.user_id, user.tenant_id, override)
+    return await _resolve_for_user(user, session)
+
+
+@router.patch("/me", response_model=UiConfig)
+async def patch_ui_config_me(
+    body: dict[str, Any],
+    user: AuthenticatedUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UiConfig:
+    """Deep-merge a sparse override into the caller's stored prefs (Sprint 63).
+
+    Unlike ``PUT /me`` (which replaces the whole user layer), ``PATCH`` folds
+    the body into the existing prefs per leaf (ADR-032 §2 deep-merge: nested
+    dicts recurse, a list *is* a leaf and replaces wholesale). This lets
+    independent write surfaces compose without clobbering one another — e.g.
+    the column chooser writing ``columns.<page>.hidden`` no longer wipes the
+    Preferences page's ``cards`` / ``nav`` choices. The body is the usual
+    **sparse** ADR-032 §4 subset; unknown/ill-typed keys are rejected (422).
+    An empty body is a no-op (use ``PUT /me`` with ``{}`` or
+    ``DELETE /me/columns/{page}`` to reset). Requires a real user identity.
+    """
+    if user.user_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="A user identity is required to save UI preferences",
+        )
+    try:
+        incoming = validate_ui_config_override(body)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
+
+    repo = UserUiPrefsRepository(session)
+    existing = await repo.get_for_user(user.user_id) or {}
+    merged = deep_merge(existing, incoming)
+    # Re-validate the merged result so a stored doc can never drift out of the
+    # ADR-032 §4 schema, and normalise it back to the sparse canonical shape.
+    try:
+        merged = validate_ui_config_override(merged)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
+    await repo.upsert(user.user_id, user.tenant_id, merged)
+    return await _resolve_for_user(user, session)
+
+
+@router.delete("/me/columns/{page}", response_model=UiConfig)
+async def delete_ui_config_me_columns(
+    page: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UiConfig:
+    """Reset one list page's column override to the team default (Sprint 63).
+
+    Removes ``columns.<page>`` from the caller's stored prefs so that page's
+    columns re-inherit the tenant/role/system layers (the per-table "reset to
+    team default" — distinct from the *show everything* a user gets by setting
+    ``columns.<page>.hidden = []`` via ``PATCH``). Idempotent: resetting a page
+    with no stored override is a no-op (200). Other leaves — and other pages'
+    column overrides — are untouched. Requires a real user identity.
+    """
+    if user.user_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="A user identity is required to save UI preferences",
+        )
+    repo = UserUiPrefsRepository(session)
+    existing = dict(await repo.get_for_user(user.user_id) or {})
+    columns = dict(existing.get("columns") or {})
+    if page in columns:
+        columns.pop(page, None)
+        if columns:
+            existing["columns"] = columns
+        else:
+            existing.pop("columns", None)
+        await repo.upsert(user.user_id, user.tenant_id, existing)
     return await _resolve_for_user(user, session)
 
 

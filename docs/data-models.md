@@ -283,9 +283,9 @@ Per-user Configurable-UI **presentation** overrides — the *user* layer of the 
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
-| `user_id` | UUID | PK, FK → users.id (`ON DELETE CASCADE`) | One row per user. "Reset to team default" = delete the row → the user falls through to role/tenant/system. |
+| `user_id` | UUID | PK, FK → users.id (`ON DELETE CASCADE`) | One row per user. "Reset to team default" has two scopes: clear the whole layer (`PUT /ui-config/me` with `{}` → fall through to role/tenant/system for every leaf) or drop one leaf (`DELETE /ui-config/me/columns/{page}`, Sprint 63 — just that page re-inherits the floor). |
 | `tenant_id` | UUID | FK → tenants.id (`ON DELETE CASCADE`), NOT NULL | Stored for audit + scoping, not isolation (the `user_id` PK already pins one user → one tenant). |
-| `prefs` | JSONB | NOT NULL, default `'{}'` | The **sparse** per-leaf override (a subset of the ADR-032 §4 leaf document — missing keys fall through to the layer below). Validated on write via `PUT /ui-config/me`. |
+| `prefs` | JSONB | NOT NULL, default `'{}'` | The **sparse** per-leaf override (a subset of the ADR-032 §4 leaf document — missing keys fall through to the layer below). Written via `PUT /ui-config/me` (replace whole layer) or `PATCH /ui-config/me` (deep-merge a sparse body per leaf; lists replace wholesale — Sprint 63); validated against the §4 schema on every write. |
 | `updated_at` | TIMESTAMPTZ | NOT NULL, default `now()` | Touched on every upsert. |
 
 **Migration:** 052
