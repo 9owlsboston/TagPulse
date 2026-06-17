@@ -257,6 +257,125 @@ def test_put_ui_config_me_requires_user_identity(monkeypatch: pytest.MonkeyPatch
 
 
 # ---------------------------------------------------------------------------
+# PATCH /ui-config/me — deep-merge (Sprint 63, the multi-writer clobber fix)
+# ---------------------------------------------------------------------------
+
+
+def test_patch_me_merges_without_clobbering_other_leaves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A column writer must not wipe the Preferences page's cards/nav choices."""
+    uid = uuid4()
+    users: dict[UUID, dict[str, Any]] = {
+        uid: {"cards": {"dashboard": {"hidden": ["reads-per-hour"]}}, "nav": {"hidden": ["sec-x"]}}
+    }
+    ctx = _build(monkeypatch, user_id=uid, user_store=users)
+    resp = ctx.client.patch(
+        "/ui-config/me", json={"columns": {"tag_reads": {"hidden": ["epc_scheme"]}}}
+    )
+    assert resp.status_code == 200
+    stored = ctx.user_store[uid]
+    # All three leaves coexist — the merge composed, nothing was clobbered.
+    assert stored["cards"]["dashboard"]["hidden"] == ["reads-per-hour"]
+    assert stored["nav"]["hidden"] == ["sec-x"]
+    assert stored["columns"]["tag_reads"]["hidden"] == ["epc_scheme"]
+
+
+def test_patch_me_replaces_list_leaf_wholesale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A list *is* a leaf: PATCHing hidden replaces the list, not appends."""
+    uid = uuid4()
+    users: dict[UUID, dict[str, Any]] = {uid: {"columns": {"tag_reads": {"hidden": ["a"]}}}}
+    ctx = _build(monkeypatch, user_id=uid, user_store=users)
+    resp = ctx.client.patch(
+        "/ui-config/me", json={"columns": {"tag_reads": {"hidden": ["b", "c"]}}}
+    )
+    assert resp.status_code == 200
+    assert ctx.user_store[uid]["columns"]["tag_reads"]["hidden"] == ["b", "c"]
+
+
+def test_patch_me_show_all_via_empty_hidden_overrides_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """'Show all' = PATCH hidden=[] overrides a tenant column-hide (reset A)."""
+    uid = uuid4()
+    tid_blob = {"columns": {"tag_reads": {"hidden": ["epc_scheme"]}}}
+    tenants: dict[UUID, dict[str, Any] | None] = {}
+    ctx = _build(monkeypatch, user_id=uid, tenant_store=tenants)
+    tenants[ctx.tenant_id] = tid_blob
+    resp = ctx.client.patch("/ui-config/me", json={"columns": {"tag_reads": {"hidden": []}}})
+    assert resp.status_code == 200
+    # User layer's empty list replaces the tenant's hide → column shown again.
+    assert resp.json()["columns"]["tag_reads"]["hidden"] == []
+
+
+def test_patch_me_empty_body_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    uid = uuid4()
+    users: dict[UUID, dict[str, Any]] = {uid: {"theme": {"cardStyle": "sparkline"}}}
+    ctx = _build(monkeypatch, user_id=uid, user_store=users)
+    resp = ctx.client.patch("/ui-config/me", json={})
+    assert resp.status_code == 200
+    assert ctx.user_store[uid] == {"theme": {"cardStyle": "sparkline"}}
+
+
+def test_patch_me_rejects_unknown_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = _build(monkeypatch, user_id=uuid4())
+    resp = ctx.client.patch("/ui-config/me", json={"bogus": True})
+    assert resp.status_code == 422
+
+
+def test_patch_me_requires_user_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = _build(monkeypatch, user_id=None)
+    resp = ctx.client.patch("/ui-config/me", json={"columns": {"tag_reads": {"hidden": ["a"]}}})
+    assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# DELETE /ui-config/me/columns/{page} — per-table reset to team default (reset B)
+# ---------------------------------------------------------------------------
+
+
+def test_delete_me_columns_resets_one_page_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    uid = uuid4()
+    users: dict[UUID, dict[str, Any]] = {
+        uid: {"columns": {"tag_reads": {"hidden": ["a"]}, "assets": {"hidden": ["b"]}}}
+    }
+    ctx = _build(monkeypatch, user_id=uid, user_store=users)
+    resp = ctx.client.delete("/ui-config/me/columns/tag_reads")
+    assert resp.status_code == 200
+    # Only tag_reads was removed; the assets override survives.
+    assert "tag_reads" not in ctx.user_store[uid]["columns"]
+    assert ctx.user_store[uid]["columns"]["assets"]["hidden"] == ["b"]
+
+
+def test_delete_me_columns_prunes_empty_columns_keeps_other_leaves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uid = uuid4()
+    users: dict[UUID, dict[str, Any]] = {
+        uid: {"columns": {"tag_reads": {"hidden": ["a"]}}, "nav": {"hidden": ["sec-x"]}}
+    }
+    ctx = _build(monkeypatch, user_id=uid, user_store=users)
+    resp = ctx.client.delete("/ui-config/me/columns/tag_reads")
+    assert resp.status_code == 200
+    # The now-empty columns leaf is pruned; nav is untouched.
+    assert "columns" not in ctx.user_store[uid]
+    assert ctx.user_store[uid]["nav"]["hidden"] == ["sec-x"]
+
+
+def test_delete_me_columns_idempotent_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    uid = uuid4()
+    ctx = _build(monkeypatch, user_id=uid)
+    resp = ctx.client.delete("/ui-config/me/columns/tag_reads")
+    assert resp.status_code == 200  # no override to reset → no-op
+
+
+def test_delete_me_columns_requires_user_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = _build(monkeypatch, user_id=None)
+    resp = ctx.client.delete("/ui-config/me/columns/tag_reads")
+    assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
 # PUT /ui-config/tenant (admin)
 # ---------------------------------------------------------------------------
 

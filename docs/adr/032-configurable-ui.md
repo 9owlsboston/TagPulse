@@ -1,6 +1,6 @@
 # ADR-032: Configurable UI — presentation config as a per-viewer projection of one engine
 
-- Status: **Accepted (sprint-60/configurable-ui, June 2026)**
+- Status: **Accepted (sprint-60/configurable-ui, June 2026); amended v1.3 (sprint-63/column-visibility-tier2, June 2026)**
 - Scope: **backend + `TagPulse-UI`.** The backend owns the config storage,
   resolution, and `GET /ui-config` contract; `TagPulse-UI` consumes the
   resolved document. Recorded in the backend repo per the standing arrangement
@@ -78,9 +78,27 @@ System default  →  Tenant default  →  Role default  →  User override
   choices; a missing key falls through to the layer below. This is the exact
   semantics `tenants.rate_limit_overrides` already uses ("any subset of keys;
   missing keys fall back to Settings").
-- **"Reset to team default"** = delete the user-override row → the user falls
-  back to role / tenant / system automatically. No unrecoverable corner state
-  is reachable.
+- **"Reset to team default"** comes in two scopes (both keep the four-layer
+  floor reachable, never an unrecoverable corner state):
+  - **Whole layer** = clear the user-override row (`PUT /ui-config/me` with an
+    empty body `{}`) → the user falls back to role / tenant / system for
+    *every* leaf.
+  - **One leaf** = remove a single sub-tree without touching the rest
+    (`DELETE /ui-config/me/columns/{page}`, Sprint 63) → just that page's
+    column override re-inherits the floor while the user's other choices
+    (other pages, `cards`, `nav`, …) stand. This is distinct from a user
+    *showing every column* by setting `columns.<page>.hidden = []` (a list-leaf
+    replace that overrides the floor's hides — see the write-semantics note).
+- **Write semantics — `PUT` replaces, `PATCH` deep-merges (Sprint 63).** A
+  `PUT /ui-config/me` replaces the caller's **whole** user layer (the original
+  single-write-surface path). A `PATCH /ui-config/me` deep-merges a *sparse*
+  body into the stored prefs per leaf — nested dicts recurse, a **list is a
+  leaf and replaces wholesale** (so `columns.assets.hidden` is set, not
+  unioned). This lets independent write surfaces compose instead of clobbering
+  each other: the column chooser writing `columns.<page>` no longer wipes the
+  Preferences page's `cards` / `nav` choices, even with no endpoint to read the
+  user's own unmerged layer. The merged result is re-validated against the §4
+  schema on every write so a stored doc can never drift out of shape.
 - **`locked: true`** on a tenant/role leaf prevents lower layers from
   overriding it (e.g. a compliance-mandated column hide that a user may not
   re-enable).
@@ -136,7 +154,14 @@ reuses the pattern rather than inventing a relational schema.
 - `GET  /ui-config` → returns the **resolved** document for the caller; the
   server performs the four-layer merge so the UI never reconstructs it.
   Cacheable per `(tenant, role, user)`.
-- `PUT  /ui-config/me` → upsert the caller's `user_ui_prefs.prefs`.
+- `PUT  /ui-config/me` → **replace** the caller's `user_ui_prefs.prefs`
+  wholesale (empty body `{}` = reset the whole user layer).
+- `PATCH /ui-config/me` → **deep-merge** a sparse body into the caller's stored
+  prefs per leaf (Sprint 63), so independent write surfaces compose (§2
+  write-semantics). Lists replace wholesale; the merged result is re-validated.
+- `DELETE /ui-config/me/columns/{page}` → granular reset (Sprint 63): drop just
+  `columns.<page>` from the user layer so that page re-inherits the
+  tenant/role/system floor; idempotent (resetting an unset page is a 200 no-op).
 - `PUT  /ui-config/tenant` and `PUT /ui-config/role/{role}` → admin-gated
   tenant / role defaults.
 
@@ -203,6 +228,20 @@ the regenerated contract (the standing cross-repo convention).
 
 ## Decision history
 
+- **v1.3 (sprint-63/column-visibility-tier2, June 2026)** — Amended. Added the
+  two Sprint 63 write surfaces backing in-app configurable column visibility
+  (Tier 2, cross-device) without changing the contract's shape: `PATCH
+  /ui-config/me` **deep-merges** a sparse body into the user layer (vs. `PUT`'s
+  wholesale replace) so the column chooser and the Preferences page compose
+  instead of clobbering each other, and `DELETE /ui-config/me/columns/{page}`
+  resets one list page's column override to the team default while leaving the
+  rest of the user layer intact. §2 now spells out the **two reset scopes**
+  (whole-layer via `PUT {}` vs. one-leaf via `DELETE`) and the `PUT`-replaces /
+  `PATCH`-merges write semantics (list leaves replace wholesale; merged result
+  re-validated against §4). §5 gains both endpoints; `openapi.json` regenerated.
+  No schema change (reuses `user_ui_prefs`). The `locked` leaf-pin stays the one
+  deferred §2 increment. `TagPulse-UI` consumes the new endpoints (retire the
+  Tier 1 `localStorage` path) as the paired cross-repo follow-on.
 - **v1.1 (sprint-60/configurable-ui, June 2026)** — Accepted. The full §7
   backend rollout shipped over Sprint 60 (steps 1–5): server-resolved
   `GET /ui-config` over system defaults, the `user_ui_prefs` user-override
