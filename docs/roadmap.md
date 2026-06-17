@@ -1633,9 +1633,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 63 — In-app column visibility, Tier 2: cross-device persistence + clean reset (active)
+## Sprint 63 — In-app column visibility, Tier 2: cross-device persistence + clean reset (code complete — in review)
 
-> **Status.** Active — kicked off on `sprint-63/column-visibility-tier2` (backend PR [#107](https://github.com/9owlsboston/TagPulse/pull/107), UI PR [#89](https://github.com/9owlsboston/TagPulse-UI/pull/89)). Design-doc-first — see [docs/design/configurable-column-visibility.md](design/configurable-column-visibility.md). Cross-repo (backend + UI); changes `PUT /ui-config/me` write semantics, so it carries an **ADR-032 amendment** (proposed `v1.3`) and an `openapi.json` regen (backend-first merge order). Second of the two tiers (Tier 1 = Sprint 62, shipped).
+> **Status.** Code complete, in review — backend PR [#107](https://github.com/9owlsboston/TagPulse/pull/107) and UI PR [#89](https://github.com/9owlsboston/TagPulse-UI/pull/89) both pushed with green CI; awaiting review + merge (backend-first). Backend added the merge-style **`PATCH /ui-config/me`** + granular **`DELETE /ui-config/me/columns/{page}`**, landed the **ADR-032 v1.3** amendment, and regenerated `openapi.json` (no schema change — reuses `user_ui_prefs`); `make check` green (1584). UI **retired** the Tier 1 `localStorage` layer for a server-backed `useColumnVisibility` (optimistic `PATCH` cache), added the "Reset to team default" control, adopted it on Assets + Tag Reads, and moved the `Preferences` save onto `PATCH`; `npm run check` green (478). Design-doc-first — see [docs/design/configurable-column-visibility.md](design/configurable-column-visibility.md). Second of the two tiers (Tier 1 = Sprint 62, shipped).
 
 **Why now.** Tier 1 persists per-device only. The Office-grade version persists per-login (cross-device) via `PUT /ui-config/me` — but that path replaces the user's prefs blob **wholesale** and there is no endpoint to read the user's own layer, so a naive column writer would clobber the existing `Preferences` (`cards`/`nav`) override and a clean "reset this table to team default" isn't expressible. Tier 2 fixes the write semantics.
 
@@ -1646,7 +1646,7 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 - **Cross-device `ColumnChooser` (`[ui]`).** Route the Tier 1 control's writes through `useUpdateMyUiConfig` on the new merge verb; "Show all" = user `columns.<page>.hidden = []` (reset **A**, overrides the floor via list-replace merge), "Reset to team default" = granular delete (reset **B**).
 - **`Preferences` save rework (`[ui]`).** Move the existing `cards`/`nav` save onto the merge verb so it and the column writer no longer clobber each other.
 
-**Decisions to settle at kickoff** (see design doc): whether Tier 2 depends on `locked` enforcement; whether "show all" also clears `advanced`; per-device vs per-login precedence.
+**Decisions settled.** (1) Tier 2 does **not** depend on `locked` enforcement — it stays the one deferred ADR-032 §2 increment; "Show all" can override a floor hide today. (2) "Show all" clears the user's **`hidden`** leaf only (`columns.<page>.hidden = []`); `advanced` columns keep their separate "Advanced columns" toggle. (3) Per-device vs per-login precedence is moot — the Tier 1 `localStorage` layer was **retired**, so the server user-layer is the single source of truth (choices follow the login, not the browser).
 
 **Out of scope.** Drag-and-drop reorder; tenant/role admin UI; `locked` enforcement itself; ADR-030 value-filtering.
 
