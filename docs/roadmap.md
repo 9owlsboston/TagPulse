@@ -1616,6 +1616,42 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 62 — In-app column visibility, Tier 1: per-device "Columns" chooser + "Show all" (planned)
+
+> **Status.** Planned, design-doc-first per the 3+-component convention — see [docs/design/configurable-column-visibility.md](design/configurable-column-visibility.md). UI-only; no backend / no `openapi.json` change. First of two tiers planned on `chore/plan-configurable-columns`.
+
+**Why now.** Sprint 60 shipped the [ADR-032](adr/032-configurable-ui.md) `columns` leaf and the UI *consumes* it, but operators can only *change* column visibility via the API or the demo seed — there is no in-app way to hide a column. The ask is the spreadsheet/Office pattern: hide a column from its header + one "show all" control. Tier 1 delivers that UX with zero backend risk.
+
+**Governing invariant (ADR-032).** Presentation-only — visibility never removes a field from the API or CSV export.
+
+**Scope seed.**
+- **Reusable `ColumnChooser` (`[ui]`).** A toolbar "Columns" popover (checkbox per addressable column) + a **"Show all"** action, optionally a per-header "Hide column" dropdown. Built once so all list pages inherit it; Tag Reads + Assets are the first adopters.
+- **Per-device persistence (`[ui]`).** Hidden set in `localStorage`, keyed by page, layered beneath the server `columns` floor — mirrors the Dashboard "Customize" precedent. Choices do **not** follow across devices (that is Tier 2 / Sprint 63).
+- **Addressable keys (`[ui]`).** Ensure every toggleable column has a stable `key`; add keys to the few computed/unaddressable columns that currently always show.
+
+**Out of scope.** Cross-device persistence, "reset to team default" (both Sprint 63); drag-and-drop reorder; tenant/role admin UI; `locked` enforcement; ADR-030 value-filtering.
+
+---
+
+## Sprint 63 — In-app column visibility, Tier 2: cross-device persistence + clean reset (planned)
+
+> **Status.** Planned, design-doc-first — see [docs/design/configurable-column-visibility.md](design/configurable-column-visibility.md). Cross-repo (backend + UI); changes `PUT /ui-config/me` write semantics, so it carries an **ADR-032 amendment** (proposed `v1.3`) and an `openapi.json` regen (backend-first merge order). Second of the two tiers planned on `chore/plan-configurable-columns`.
+
+**Why now.** Tier 1 persists per-device only. The Office-grade version persists per-login (cross-device) via `PUT /ui-config/me` — but that path replaces the user's prefs blob **wholesale** and there is no endpoint to read the user's own layer, so a naive column writer would clobber the existing `Preferences` (`cards`/`nav`) override and a clean "reset this table to team default" isn't expressible. Tier 2 fixes the write semantics.
+
+**Governing invariant (ADR-032).** Still presentation-only.
+
+**Scope seed.**
+- **Write-semantics change (backend; OpenAPI change).** Add `PATCH /ui-config/me` that **deep-merges** the body into stored prefs (so independent surfaces compose instead of clobbering) + a granular reset (e.g. `DELETE /ui-config/me/columns/{page}`) for "reset to team default" (reset **B**). `PUT /ui-config/me` stays the explicit "replace my whole layer" verb; `{}` stays the global reset. Recorded as an **ADR-032 amendment**.
+- **Cross-device `ColumnChooser` (`[ui]`).** Route the Tier 1 control's writes through `useUpdateMyUiConfig` on the new merge verb; "Show all" = user `columns.<page>.hidden = []` (reset **A**, overrides the floor via list-replace merge), "Reset to team default" = granular delete (reset **B**).
+- **`Preferences` save rework (`[ui]`).** Move the existing `cards`/`nav` save onto the merge verb so it and the column writer no longer clobber each other.
+
+**Decisions to settle at kickoff** (see design doc): whether Tier 2 depends on `locked` enforcement; whether "show all" also clears `advanced`; per-device vs per-login precedence.
+
+**Out of scope.** Drag-and-drop reorder; tenant/role admin UI; `locked` enforcement itself; ADR-030 value-filtering.
+
+---
+
 ## Backlog (not scheduled)
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock.
