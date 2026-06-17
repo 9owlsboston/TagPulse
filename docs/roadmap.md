@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 61 — entity first nav · branch `sprint-61/entity-first-nav` (full scope lands in §sprint-61 during the sprint).
+**Current sprint:** 62 — column visibility · branch `sprint-62/column-visibility` (full scope lands in §sprint-62 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1616,9 +1616,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 62 — In-app column visibility, Tier 1: per-device "Columns" chooser + "Show all" (planned)
+## Sprint 62 — In-app column visibility, Tier 1: per-device "Columns" chooser + "Show all" (active)
 
-> **Status.** Planned, design-doc-first per the 3+-component convention — see [docs/design/configurable-column-visibility.md](design/configurable-column-visibility.md). UI-only; no backend / no `openapi.json` change. First of two tiers planned on `chore/plan-configurable-columns`.
+> **Status.** Active — kicked off on `sprint-62/column-visibility` (backend PR [#106](https://github.com/9owlsboston/TagPulse/pull/106) for roadmap/bookkeeping, UI PR [#88](https://github.com/9owlsboston/TagPulse-UI/pull/88) for the implementation). Design-doc-first per the 3+-component convention — see [docs/design/configurable-column-visibility.md](design/configurable-column-visibility.md). UI-only; no backend / no `openapi.json` change. First of two tiers (Tier 2 = Sprint 63). Also folds in the deferred label-skin **action-title** sweep (#5: `Unbind ${tagLabel}`, `Retire ${assetLabel}`, etc.).
 
 **Why now.** Sprint 60 shipped the [ADR-032](adr/032-configurable-ui.md) `columns` leaf and the UI *consumes* it, but operators can only *change* column visibility via the API or the demo seed — there is no in-app way to hide a column. The ask is the spreadsheet/Office pattern: hide a column from its header + one "show all" control. Tier 1 delivers that UX with zero backend risk.
 
