@@ -98,13 +98,14 @@ def test_get_ui_config_returns_system_default(monkeypatch: pytest.MonkeyPatch) -
     assert response.status_code == 200
     body = response.json()
     # No stored layers → system default (today's UI). ``labels`` carries the
-    # canonical term catalogue; every other leaf is empty.
+    # canonical term catalogue; the one curated default hides the raw EPC hex
+    # on Tag Reads (decoded URI stays canonical); every other leaf is empty.
     assert body["labels"]["device"] == "Device"
     assert body["labels"]["telemetry"] == "Telemetry"
     assert body["theme"] == {"variant": "default", "cardStyle": "default"}
     assert body["nav"] == {"hidden": [], "order": [], "placement": {}}
     assert body["cards"] == {}
-    assert body["columns"] == {}
+    assert body["columns"] == {"tag_reads": {"hidden": ["epc_hex"], "order": [], "advanced": []}}
     assert body["tables"] == {}
 
 
