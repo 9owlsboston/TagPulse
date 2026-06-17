@@ -1616,9 +1616,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 62 — In-app column visibility, Tier 1: per-device "Columns" chooser + "Show all" (active)
+## Sprint 62 — In-app column visibility, Tier 1: per-device "Columns" chooser + "Show all" (shipped)
 
-> **Status.** Active — kicked off on `sprint-62/column-visibility` (backend PR [#106](https://github.com/9owlsboston/TagPulse/pull/106) for roadmap/bookkeeping, UI PR [#88](https://github.com/9owlsboston/TagPulse-UI/pull/88) for the implementation). Design-doc-first per the 3+-component convention — see [docs/design/configurable-column-visibility.md](design/configurable-column-visibility.md). UI-only; no backend / no `openapi.json` change. First of two tiers (Tier 2 = Sprint 63). Also folds in the deferred label-skin **action-title** sweep (#5: `Unbind ${tagLabel}`, `Retire ${assetLabel}`, etc.).
+> **Status.** Shipped — backend PR [#106](https://github.com/9owlsboston/TagPulse/pull/106) (roadmap/bookkeeping) + UI PR [#88](https://github.com/9owlsboston/TagPulse-UI/pull/88) (implementation) merged; both deploys green. Reusable `ColumnChooser` + `useLocalColumnVisibility` (per-device `localStorage`, layered under the server `columns` floor) adopted on **Tag Reads** and **Assets**; the deferred label-skin **action-title** sweep (#5) folded in. UI-only; no backend / no `openapi.json` change. Design-doc-first per the 3+-component convention — see [docs/design/configurable-column-visibility.md](design/configurable-column-visibility.md). Tier 2 = Sprint 63.
 
 **Why now.** Sprint 60 shipped the [ADR-032](adr/032-configurable-ui.md) `columns` leaf and the UI *consumes* it, but operators can only *change* column visibility via the API or the demo seed — there is no in-app way to hide a column. The ask is the spreadsheet/Office pattern: hide a column from its header + one "show all" control. Tier 1 delivers that UX with zero backend risk.
 
@@ -1633,9 +1633,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 63 — In-app column visibility, Tier 2: cross-device persistence + clean reset (planned)
+## Sprint 63 — In-app column visibility, Tier 2: cross-device persistence + clean reset (active)
 
-> **Status.** Planned, design-doc-first — see [docs/design/configurable-column-visibility.md](design/configurable-column-visibility.md). Cross-repo (backend + UI); changes `PUT /ui-config/me` write semantics, so it carries an **ADR-032 amendment** (proposed `v1.3`) and an `openapi.json` regen (backend-first merge order). Second of the two tiers planned on `chore/plan-configurable-columns`.
+> **Status.** Active — kicked off on `sprint-63/column-visibility-tier2` (backend PR [#107](https://github.com/9owlsboston/TagPulse/pull/107), UI PR [#89](https://github.com/9owlsboston/TagPulse-UI/pull/89)). Design-doc-first — see [docs/design/configurable-column-visibility.md](design/configurable-column-visibility.md). Cross-repo (backend + UI); changes `PUT /ui-config/me` write semantics, so it carries an **ADR-032 amendment** (proposed `v1.3`) and an `openapi.json` regen (backend-first merge order). Second of the two tiers (Tier 1 = Sprint 62, shipped).
 
 **Why now.** Tier 1 persists per-device only. The Office-grade version persists per-login (cross-device) via `PUT /ui-config/me` — but that path replaces the user's prefs blob **wholesale** and there is no endpoint to read the user's own layer, so a naive column writer would clobber the existing `Preferences` (`cards`/`nav`) override and a clean "reset this table to team default" isn't expressible. Tier 2 fixes the write semantics.
 
