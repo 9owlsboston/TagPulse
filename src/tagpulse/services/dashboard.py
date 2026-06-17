@@ -32,6 +32,7 @@ from typing import Any, Literal
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.core.device_status import ONLINE_WINDOW
 from tagpulse.models.database import (
     AlertModel,
     AssetModel,
@@ -61,9 +62,10 @@ _RECON_LOOKBACK_DAYS = 7
 # a disconnect, so we require both fresh ``last_seen`` AND the column
 # saying ``online`` before we light up the tile. The canonical value
 # is ``online`` (not ``connected``) — matches the ingestion writer in
-# :mod:`tagpulse.ingestion.service` and the ``offline`` sentinel set
-# by the device-repo timeout sweep.
-_ONLINE_WINDOW = timedelta(minutes=5)
+# :mod:`tagpulse.ingestion.service`. The window is shared with the
+# per-device read path (``tagpulse.core.device_status``) so the
+# "Readers online" tile and the Readers page agree on freshness.
+_ONLINE_WINDOW = ONLINE_WINDOW
 
 _READS_WINDOW = timedelta(hours=1)
 _ALERTS_WINDOW = timedelta(hours=24)

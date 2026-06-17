@@ -7,6 +7,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.api.label_filter import apply_label_filter
+from tagpulse.core.device_status import effective_connection_state
 from tagpulse.models.database import DeviceModel
 from tagpulse.models.schemas import DeviceCreate, DeviceResponse, DeviceUpdate
 
@@ -149,7 +150,11 @@ def _to_response(row: DeviceModel) -> DeviceResponse:
         metadata=row.metadata_,
         configuration=row.configuration,
         firmware_version=row.firmware_version,
-        connection_state=row.connection_state,
+        # Resolve the *effective* online status from freshness: a stored
+        # ``online`` whose ``last_seen`` has gone stale reads as ``offline``
+        # (the column drifts when a disconnect is missed). Shared with the
+        # dashboard "Readers online" tile so the card and the Readers page agree.
+        connection_state=effective_connection_state(row.connection_state, row.last_seen),
         last_seen=row.last_seen,
         mobility=row.mobility,
         token_prefix=row.token_prefix,
