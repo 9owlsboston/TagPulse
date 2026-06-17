@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 61 — entity first nav · branch `sprint-61/entity-first-nav` (full scope lands in §sprint-61 during the sprint).
+**Current sprint:** 62 — column visibility · branch `sprint-62/column-visibility` (full scope lands in §sprint-62 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
