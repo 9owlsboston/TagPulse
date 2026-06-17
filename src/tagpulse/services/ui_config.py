@@ -154,7 +154,17 @@ WM_DEMO_PRESENTATION: dict[str, Any] = {
         }
     },
     "theme": {"cardStyle": "sparkline"},
-    "columns": {"tag_reads": {"advanced": ["tid", "user_memory_hex"]}},
+    # WM is an RFID-only fleet that thinks in raw EPC hex, so the Tag Reads
+    # page shows the `EPC (hex)` column and hides the decoded URI + scheme +
+    # the (redundant) `Tag ID`. The `hidden` list replaces the system default's
+    # `["epc_hex"]` (list-replace merge), so `epc_hex` is revealed here; TID +
+    # raw user-memory stay default-OFF behind the "Advanced columns" toggle.
+    "columns": {
+        "tag_reads": {
+            "hidden": ["tag_id", "epc", "epc_scheme"],
+            "advanced": ["tid", "user_memory_hex"],
+        }
+    },
     "tables": {"tag_reads": {"defaultSort": {"key": "timestamp", "dir": "desc"}}},
 }
 
@@ -333,8 +343,14 @@ class UiConfig(_Leaf):
         return value
 
 
-# The bottom merge layer. Empty = today's UI unchanged (ADR-032 §3, §7 step 1).
-SYSTEM_DEFAULT_UI_CONFIG = UiConfig()
+# The bottom merge layer. Hides the raw `epc_hex` column on Tag Reads by
+# default so the readable decoded `EPC` URI is the canonical column for most
+# tenants; hex-preferring tenants (RFID-only fleets) reveal `epc_hex` and hide
+# the URI via their `columns.tag_reads` preset or the column chooser (ADR-032
+# list-replace merge). Otherwise empty = today's UI unchanged (§3, §7 step 1).
+SYSTEM_DEFAULT_UI_CONFIG = UiConfig(
+    columns={"tag_reads": ColumnGroup(hidden=["epc_hex"])},
+)
 
 
 def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:

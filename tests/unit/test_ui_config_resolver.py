@@ -32,14 +32,18 @@ from tagpulse.services.ui_config import (
 
 
 def test_system_default_is_empty_today_ui() -> None:
-    """Configuring nothing reproduces today's UI: no skins beyond the canonical
-    label defaults, default theme, nothing hidden (ADR-032 §3, §7 step 1)."""
+    """Configuring nothing reproduces today's UI apart from one curated default:
+    the raw ``epc_hex`` column on Tag Reads is hidden so the decoded ``EPC`` URI
+    stays canonical (ADR-032 §3, §7 step 1). Everything else is unchanged."""
     cfg = SYSTEM_DEFAULT_UI_CONFIG
     # ``labels`` carries the canonical registry defaults — which *are* today's
     # UI terms ("Device", "Telemetry", …), so this is still the unchanged UI.
     assert cfg.labels == LABEL_KEYS
     assert cfg.nav.hidden == [] and cfg.nav.order == []
-    assert cfg.cards == {} and cfg.columns == {} and cfg.tables == {}
+    assert cfg.cards == {} and cfg.tables == {}
+    # The one system-default presentation choice: raw EPC hex is default-OFF on
+    # Tag Reads (the decoded EPC URI is the canonical column).
+    assert cfg.columns["tag_reads"].hidden == ["epc_hex"]
     assert cfg.theme.variant == "default"
     assert cfg.theme.card_style == "default"
 
@@ -352,6 +356,11 @@ def test_wm_demo_presentation_is_valid_and_resolves() -> None:
     assert "reads-per-hour" in resolved.cards["dashboard"].hidden
     assert "low-stock" in resolved.cards["dashboard"].hidden
     assert resolved.theme.card_style == "sparkline"
+    # WM is hex-first: the `EPC (hex)` column is revealed (the tenant `hidden`
+    # list replaces the system default's ["epc_hex"]) and the decoded URI +
+    # scheme + redundant Tag ID are hidden. TID/user-memory stay advanced.
+    assert resolved.columns["tag_reads"].hidden == ["tag_id", "epc", "epc_scheme"]
+    assert "epc_hex" not in resolved.columns["tag_reads"].hidden
     assert resolved.columns["tag_reads"].advanced == ["tid", "user_memory_hex"]
     assert resolved.tables["tag_reads"].default_sort is not None
     assert resolved.tables["tag_reads"].default_sort.key == "timestamp"
