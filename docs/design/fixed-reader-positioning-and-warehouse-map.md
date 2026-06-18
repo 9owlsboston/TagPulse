@@ -207,6 +207,16 @@ where the cell can deep-link (geographic map for `gps`, floor map for `fixed`).
 **Decision — one contextual "Location" column** that renders lat/lon for `gps`,
 zone name for `fixed`, else `—` (raw lat/lon stays in CSV / an advanced column).
 
+**Zone resolution is *current* (query-time join), not point-in-time (OQ4 = a).**
+The fixed-read zone is resolved live (`device_id → zone`) when the page loads, so
+a historical read shows the zone its reader belongs to **now** — simplest, no new
+column, and consistent with the rest of the system (zones are unversioned/live
+everywhere today). A **historical** variant (b) — denormalize `zone_id` onto the
+`tag_reads` row at ingest (the zone is *already* resolved there for zone-change
+events) — stays a **deferred, additive** upgrade if customers report confusion
+about moved readers; it doesn't require choosing it now (only *new* reads would
+carry the historical value). No hot-path/hypertable change in v1.
+
 **Contract implication.** Both the zone name and any map-link coordinate need
 data the `tag_reads` row doesn't carry. Recommended: a **backend location
 descriptor** in the `GET /tag-reads` projection, e.g.
@@ -250,12 +260,14 @@ server-side resolution.)
 
 ## Open questions
 
-- **Historical vs. current zone (Tag Reads display).** Zone membership is
-  mutable and unversioned. A *historical* read's "Location" column can show the
-  zone the reader belongs to **now** (query-time join, simple) or the zone as it
-  was **then** (denormalize `zone_id` onto the read at ingest, point-in-time
-  accurate). "Then" is arguably more correct for a reads log; "now" matches the
-  rest of the system. **Needs a decision before the Location column ships.**
+*All design-time open questions are resolved (see the Decisions table and the
+section notes).* Remaining decisions are **implementation-time** choices that do
+not block the design:
+
+- Exact `coord_system` validation bounds (extent limits, units enum).
+- Floorplan image cap tuning (1 MB vs 2 MB) and accepted formats (PNG/SVG/WebP).
+- Marker/precision affordance — whether the map visually distinguishes a
+  reader-grain (port-0-only) reader from a fully surveyed one.
 
 ## Out of scope
 
