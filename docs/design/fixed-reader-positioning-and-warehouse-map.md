@@ -45,6 +45,8 @@ the Sprint 59 schema rather than inventing a new one.
 | D2 | **Asset position** before the estimator exists | **Snap** the asset marker to the `(x, y)` of the reader/zone that last heard it — the indoor analogue of today's "Map snaps markers to reader positions." Trilateration is a later swap of the marker source from reader-centroid → `asset_positions`. |
 | D3 | **Map rendering model** | **Pure floorplan first** via Leaflet **`CRS.Simple`** (floor-local units, no projection). The `coord_system.geo_anchor` **seam is designed explicitly** (see §"Geo-anchor seam") so a future unified mobile+fixed map needs no data rework — but its *implementation* is deferred. |
 | D4 | **Floorplan image** | **Supported** — an uploaded floorplan image renders behind the grid as a `CRS.Simple` image layer scaled to `coord_system.extent_x × extent_y`. (Storage approach is an open question — see §Open questions.) |
+| D5 | **Zone resolution** for fixed reads | **Layered fallback.** `reader_bound` zones (configured `device_id` membership) remain the **zero-survey default**; surveyed sites graduate to **antenna-position → floor-polygon** zones resolved by the *same point-in-polygon engine* the geofence path already runs, just in `CRS.Simple` floor units instead of lat/lon. `reader_bound` is reframed as the *coarse fallback*, not the canonical model. See §"Zone resolution for fixed reads". |
+| D6 | **3D / z-axis** | **Deferred until a real need surfaces.** `antennas.z` stays an *optional, estimator-only* mount-height input (already nullable); genuine vertical requirements (high-bay racking, multi-storey) are modeled as **discrete level/floor attributes on zones/sites**, never a continuous `z` coordinate. **No 3D coordinate UI or 3D map** in scope. |
 
 ## Coordinate system (`sites.coord_system`)
 
@@ -99,6 +101,72 @@ genuinely different *architectures*, not just UX flavors:
   though no map consumes it yet, and keep the placement UI writing coordinates
   that are already geo-projection-ready. That is the whole "seam."
 
+## Zone resolution for fixed reads (D5)
+
+Today a fixed read's zone is a **configured per-reader lookup** —
+[`get_zone_for_reader`](../../src/tagpulse/repositories/timescaledb/sites_zones.py)
+returns the `reader_bound` zone whose `fixed_reader_ids` JSONB array contains the
+read's `device_id` (oldest-`created_at` wins when a reader is in several zones,
+per [assets-and-zones.md §11 Q4](assets-and-zones.md)). No geometry, no antenna.
+
+**Why per-reader is too coarse.** A fixed reader fans **2–8 antennas across tens
+of metres**; those antennas routinely sit in *different* physical areas (dock
+door 3 vs. 4; two aisles). Per-reader membership **collapses all of them into one
+zone** — wrong attribution, and the *normal* layout, not a corner case. The read
+already carries `reader_antenna`, and `antennas` already carries per-port
+`(x, y)`, so the information to do better exists; only zone resolution discards
+it.
+
+**The layered model (D5):**
+
+1. **`reader_bound` (fallback, no survey).** Single-antenna or co-located
+   readers keep the simple "pick readers" config. Resolution unchanged.
+2. **Antenna-position → floor-polygon (accurate, surveyed).** Once antennas have
+   floor `(x, y)` and zones carry **floor-space polygons**, "what zone" becomes
+   **point-in-polygon of the antenna position** — the *same engine* as geofence
+   ([geofencing-and-map.md §4](geofencing-and-map.md)), in `CRS.Simple` units
+   instead of lat/lon. Fixed-reader zones and geofences **converge** into one
+   mechanism differing only by coordinate space.
+
+This makes a single read resolvable at **antenna grain** (per port), not just
+reader grain — the granularity ceiling that blocked "dock door 3 vs. 4 on one
+reader" disappears for surveyed sites. The cost is the survey burden, which is
+exactly the Phase 1 placement UI; un-surveyed sites lose nothing (they stay on
+the `reader_bound` fallback).
+
+## Displaying location in Tag Reads
+
+The Tag Reads page is where this design meets the sensor-columns design — the
+unifying theme of this chore. **"Location" is two regimes in one column**, and
+`location_source` (`gps` | `fixed` | `inferred`) is the discriminator (no need to
+guess from which fields are non-null):
+
+| Read (`location_source`) | Table shows | Map anchor (separate concern) |
+|---|---|---|
+| `gps` (mobile) | **Lat/Lon** (existing) + accuracy + source | the lat/lon, geographic map |
+| `fixed` | **Zone name** (Device/Antenna already shown); **no coordinate** | antenna/reader centroid `(x, y)`, floor map |
+| `inferred` / none | `—` | — |
+
+**Coordinates are a *map* concern, not a *table* concern.** A fixed read means
+"antenna 3 on reader R heard EPC E" — the asset is somewhere *within read range*
+(1–10 m), **not** on the antenna's surveyed point. Printing `(2,3)` per read
+overstates precision; true measured `(x, y)` only exists once the (deferred)
+estimator writes `asset_positions`. So the **truthful** fixed-read location in
+the table is the **zone** (resolved per D5) — the coordinate surfaces on the map,
+where the cell can deep-link (geographic map for `gps`, floor map for `fixed`).
+
+**Decision — one contextual "Location" column** that renders lat/lon for `gps`,
+zone name for `fixed`, else `—` (raw lat/lon stays in CSV / an advanced column).
+
+**Contract implication.** Both the zone name and any map-link coordinate need
+data the `tag_reads` row doesn't carry. Recommended: a **backend location
+descriptor** in the `GET /tag-reads` projection, e.g.
+`{ kind: "geo"|"floor"|"none", lat?, lon?, accuracy_m?, source?, zone_id?, zone_name?, x?, y?, units? }`
+— one server-side join, UI just renders. This is a contract change (+
+`openapi.json` regen) that folds into **Phase 0**. (A frontend-only join over
+separate zone/antenna fetches is rejected: fragile, chatty, duplicates
+server-side resolution.)
+
 ## Phased plan
 
 - **Phase 0 — backend contract**
@@ -107,6 +175,11 @@ genuinely different *architectures*, not just UX flavors:
   - Antenna CRUD schema/endpoints (`AntennaCreate/Response`, list-by-device);
     reader **centroid** derived read-side (no stored reader position).
   - `floorToGeo` util + `geo_anchor` validation (seam, unused by UI yet).
+  - **Tag Reads location descriptor** in the `GET /tag-reads` projection
+    (resolves the fixed-read zone server-side per D5) — feeds the contextual
+    "Location" column.
+  - Floor-space zone polygons + antenna-position → floor-polygon resolution
+    (D5 accurate path), reusing the geofence point-in-polygon engine.
 - **Phase 1 — placement UI**
   - Site coordinate-system editor (units, extent, origin, optional floorplan
     image upload).
@@ -137,6 +210,12 @@ genuinely different *architectures*, not just UX flavors:
 - **Zone XY for snapping (D2).** A `reader_bound` zone spans several readers —
   snap the asset to the *triggering reader's* centroid, or to a computed zone
   centroid? Leaning triggering-reader (more precise, already known per read).
+- **Historical vs. current zone (Tag Reads display).** Zone membership is
+  mutable and unversioned. A *historical* read's "Location" column can show the
+  zone the reader belongs to **now** (query-time join, simple) or the zone as it
+  was **then** (denormalize `zone_id` onto the read at ingest, point-in-time
+  accurate). "Then" is arguably more correct for a reads log; "now" matches the
+  rest of the system. **Needs a decision before the Location column ships.**
 
 ## Out of scope
 
@@ -144,3 +223,7 @@ genuinely different *architectures*, not just UX flavors:
 - Geo-anchored unified map *implementation* (seam designed, build deferred).
 - Re-adding `devices.position_*` (superseded by `antennas`).
 - Mobile-reader / lat-lon map changes (unchanged).
+- **3D coordinate UI / 3D map / continuous `z` positioning (D6)** — `z` stays an
+  optional estimator-only mount-height field; vertical needs are served by
+  **discrete level/floor attributes**, addressed if and when a real need
+  surfaces.
