@@ -1652,6 +1652,26 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 64 — Reader location & warehouse map (kickoff)
+
+> **Status (2026-06-17, kickoff).** Design-doc-first per the 3+-component convention — see [docs/design/fixed-reader-positioning-and-warehouse-map.md](design/fixed-reader-positioning-and-warehouse-map.md) and [docs/design/tag-reads-sensor-columns.md](design/tag-reads-sensor-columns.md), both landed by design chore PR [#110](https://github.com/9owlsboston/TagPulse/pull/110). Cross-repo (`sprint-64/reader-location-warehouse-map` in both repos; backend PR [#111](https://github.com/9owlsboston/TagPulse/pull/111), UI PR [#92](https://github.com/9owlsboston/TagPulse-UI/pull/92)). Builds on the headless Sprint 59 spatial schema (`antennas`, `sites.coord_system`, `asset_positions`).
+
+**Why now.** Two related gaps in what the Tag Reads page (and the platform) shows about **location**: (1) Tag Reads renders neither **Antenna** nor the **Temperature/Humidity** already in `sensor_data`; (2) **fixed** readers have no floor-coordinate or warehouse-map story at all — movable readers report **lat/lon**, but fixed readers live on a floor where the natural coordinate is a local **`(x, y)`**, and the Sprint 59 schema for that has been headless (no API, no UI). The design chore resolved every design-time decision; this sprint implements them.
+
+**Governing invariant.** Mobile = lat/lon (geographic map, already exists); fixed = floor `(x, y)` (new `CRS.Simple` map). The Map page switches mode by site `coord_system`. Trilateration ([ADR-024](adr/024-position-estimation.md)) stays deferred — markers snap to the triggering reader, not computed positions.
+
+**Scope seed (locked at kickoff).**
+- **Tag Reads sensor columns (`[ui]`, independent — ships first).** Antenna / Temp (°C) / Humidity (%) columns with fallback-chain `sensor_data` resolution (`temperature ?? temperature_c`), sortable, default-visible, ColumnChooser + CSV parity. No backend change.
+- **Phase 0 — backend contract (OpenAPI change).** Expose `coord_system` on the Site API + write path; antenna CRUD (**port-0 = reader nominal location**, availability-fallback resolution); tag-reads **location descriptor** in `GET /tag-reads` (resolves fixed-read zone server-side, current/query-time); floor-polygon zone resolution reusing the geofence point-in-polygon engine; `floorToGeo` seam util. Regenerate `openapi.json`. **Merges first.**
+- **Phase 1 — placement UI (`[ui]`).** Site coordinate-system editor (units/extent/origin + optional inline floorplan image ≤~2 MB, plain-grid fallback); floor placement view to drop fixed readers on the grid (writes the port-0 row; per-radiator survey is the opt-in advanced expansion).
+- **Phase 2 — read-only warehouse map (`[ui]`).** `CRS.Simple` floor map: floorplan/grid + fixed readers/zones + asset markers snapped to the triggering reader `(x, y)`; mode switch by `coord_system`; Tag Reads "Location" column deep-links to the right map.
+
+**Decisions settled (design chore).** Port-0 reader model + availability fallback (reader-grain default, antenna-grain opt-in, simplified "reader = one location" = the default tier); snap to triggering reader (zone-centroid reachable later, no lock-in); pure floorplan `CRS.Simple` with the geo-anchor seam designed but build-deferred behind a narrow multi-building/yard-plus-indoor trigger; optional inline floorplan image + grid fallback; `reader_bound` coarse fallback → antenna-position → floor-polygon zones; current/query-time zone for the Location column; 3D/continuous `z` deferred (vertical = discrete levels).
+
+**Out of scope.** Trilateration / RSSI estimator (Phase 3, ADR-024-deferred); geo-anchored unified map *build* (seam only); 3D coordinate UI / continuous `z`; re-adding `devices.position_*`; mobile-reader / lat-lon map changes.
+
+---
+
 ## Backlog (not scheduled)
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock.
