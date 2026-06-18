@@ -31,7 +31,10 @@ async def register_device(
     service: DeviceService = Depends(get_device_service),
 ) -> DeviceResponse:
     """Register a new device (reader)."""
-    return await service.register(user.tenant_id, body)
+    try:
+        return await service.register(user.tenant_id, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 @router.get("", response_model=list[DeviceResponse])
@@ -84,6 +87,8 @@ async def update_device(
         return await service.update(user.tenant_id, device_id, body)
     except DeviceNotFoundError:
         raise HTTPException(status_code=404, detail="Device not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 @router.post("/{device_id}/decommission", response_model=DeviceResponse)

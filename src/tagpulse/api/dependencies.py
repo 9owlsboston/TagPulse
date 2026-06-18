@@ -80,12 +80,24 @@ async def get_query_service(
     session: AsyncSession = Depends(get_session),
 ) -> AsyncGenerator[QueryService, None]:
     """Provide a QueryService wired with repos."""
-    from tagpulse.repositories.timescaledb.sites_zones import TimescaleZoneRepository
+    from tagpulse.api.services.floor_zone_resolver import FloorZoneResolver
+    from tagpulse.repositories.timescaledb.sites_zones import (
+        TimescaleSiteRepository,
+        TimescaleZoneRepository,
+    )
 
+    zone_repo = TimescaleZoneRepository(session)
+    floor_resolver = FloorZoneResolver(
+        device_repo=device_repo,
+        site_repo=TimescaleSiteRepository(session),
+        antenna_repo=TimescaleAntennaRepository(session),
+        zone_repo=zone_repo,
+    )
     yield QueryService(
         tag_read_repo=tag_read_repo,
         device_repo=device_repo,
-        zone_repo=TimescaleZoneRepository(session),
+        zone_repo=zone_repo,
+        floor_resolver=floor_resolver,
     )
 
 

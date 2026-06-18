@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.api.label_filter import apply_label_filter
 from tagpulse.core.device_status import effective_connection_state
-from tagpulse.models.database import DeviceModel
+from tagpulse.models.database import DeviceModel, SiteModel
 from tagpulse.models.schemas import DeviceCreate, DeviceResponse, DeviceUpdate
 
 
@@ -19,6 +19,8 @@ class TimescaleDeviceRepository:
         self._session = session
 
     async def create(self, tenant_id: uuid.UUID, device: DeviceCreate) -> DeviceResponse:
+        if device.site_id is not None:
+            await self._assert_site_in_tenant(tenant_id, device.site_id)
         row = DeviceModel(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
@@ -27,10 +29,18 @@ class TimescaleDeviceRepository:
             metadata_=device.metadata,
             configuration=device.configuration,
             firmware_version=device.firmware_version,
+            site_id=device.site_id,
         )
         self._session.add(row)
         await self._session.flush()
         return _to_response(row)
+
+    async def _assert_site_in_tenant(self, tenant_id: uuid.UUID, site_id: uuid.UUID) -> None:
+        """Guard tenant isolation: a device's ``site_id`` must be the caller's."""
+        stmt = select(SiteModel.id).where(SiteModel.id == site_id, SiteModel.tenant_id == tenant_id)
+        result = await self._session.execute(stmt)
+        if result.scalar_one_or_none() is None:
+            raise ValueError(f"Site {site_id} not found for this tenant")
 
     async def get(self, tenant_id: uuid.UUID, device_id: uuid.UUID) -> DeviceResponse | None:
         stmt = select(DeviceModel).where(
@@ -79,6 +89,8 @@ class TimescaleDeviceRepository:
         patch_data = patch.model_dump(exclude_unset=True)
         if "metadata" in patch_data:
             patch_data["metadata_"] = patch_data.pop("metadata")
+        if patch_data.get("site_id") is not None:
+            await self._assert_site_in_tenant(tenant_id, patch_data["site_id"])
         for key, value in patch_data.items():
             setattr(row, key, value)
         await self._session.flush()
@@ -157,6 +169,7 @@ def _to_response(row: DeviceModel) -> DeviceResponse:
         connection_state=effective_connection_state(row.connection_state, row.last_seen),
         last_seen=row.last_seen,
         mobility=row.mobility,
+        site_id=row.site_id,
         token_prefix=row.token_prefix,
         token_rotated_at=row.token_rotated_at,
         cert_thumbprint=row.cert_thumbprint,

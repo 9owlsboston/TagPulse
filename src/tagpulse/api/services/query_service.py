@@ -3,7 +3,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 from tagpulse.models.schemas import (
@@ -15,6 +15,9 @@ from tagpulse.models.schemas import (
     ZoneResponse,
 )
 from tagpulse.repositories.protocols import DeviceRepository, TagReadRepository
+
+if TYPE_CHECKING:
+    from tagpulse.api.services.floor_zone_resolver import FloorRef, FloorZoneResolver
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,7 @@ class QueryService:
         tag_read_repo: TagReadRepository,
         device_repo: DeviceRepository,
         zone_repo: "ZoneReaderResolver | None" = None,
+        floor_resolver: "FloorZoneResolver | None" = None,
     ) -> None:
         self._tag_read_repo = tag_read_repo
         self._device_repo = device_repo
@@ -50,6 +54,9 @@ class QueryService:
         # the UI "Location" column. When absent (e.g. some unit tests), floor
         # reads simply get a ``kind="none"`` descriptor.
         self._zone_repo = zone_repo
+        # Optional: the accurate D5 path — resolve a fixed read to a *floor* zone
+        # by antenna-position point-in-polygon, preferred over reader_bound.
+        self._floor_resolver = floor_resolver
 
     async def query_tag_reads(
         self,
@@ -100,6 +107,16 @@ class QueryService:
                     source=read.location_source,
                 )
                 continue
+            # Accurate path first: antenna-position → floor polygon (D5).
+            floor = await self._resolve_floor_zone(tenant_id, read)
+            if floor is not None:
+                read.location = LocationDescriptor(
+                    kind="floor",
+                    source=read.location_source,
+                    zone_id=floor.id,
+                    zone_name=floor.name,
+                )
+                continue
             zone = await self._resolve_zone(tenant_id, read.device_id, zone_cache)
             if zone is not None:
                 read.location = LocationDescriptor(
@@ -110,6 +127,13 @@ class QueryService:
                 )
             else:
                 read.location = LocationDescriptor(kind="none", source=read.location_source)
+
+    async def _resolve_floor_zone(
+        self, tenant_id: UUID, read: TagReadResponse
+    ) -> "FloorRef | None":
+        if self._floor_resolver is None:
+            return None
+        return await self._floor_resolver.resolve(tenant_id, read.device_id, read.reader_antenna)
 
     async def _resolve_zone(
         self,

@@ -1629,6 +1629,18 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "site_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Id"
           }
         },
         "required": [
@@ -1789,6 +1801,18 @@
             "title": "Name",
             "type": "string"
           },
+          "site_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Id"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -1932,6 +1956,18 @@
               }
             ],
             "title": "Name"
+          },
+          "site_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Id"
           },
           "status": {
             "anyOf": [

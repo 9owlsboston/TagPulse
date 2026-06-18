@@ -360,6 +360,41 @@ class TestLocationDescriptor:
         assert all(r.location is not None and r.location.kind == "floor" for r in results)
         assert zone_repo.calls == 1
 
+    async def test_floor_resolver_preferred_over_reader_bound(
+        self, tag_repo: FakeTagReadRepo
+    ) -> None:
+        from dataclasses import dataclass
+
+        did, reader_bound_zone, floor_zone = uuid4(), uuid4(), uuid4()
+
+        @dataclass
+        class _FloorRef:
+            id: UUID
+            name: str
+
+        class _FloorResolver:
+            async def resolve(
+                self, tenant_id: UUID, device_id: UUID, reader_antenna: int | None
+            ) -> _FloorRef:
+                return _FloorRef(id=floor_zone, name="Bay A (floor)")
+
+        zone_repo = FakeZoneRepo({did: (reader_bound_zone, "Dock A")})
+        service = QueryService(
+            tag_read_repo=tag_repo,
+            device_repo=FakeDeviceRepo(),
+            zone_repo=zone_repo,
+            floor_resolver=_FloorResolver(),  # type: ignore[arg-type]
+        )
+        tag_repo.reads.append(_floor_read(did))
+        results = await service.query_tag_reads(TENANT_ID)
+        loc = results[0].location
+        assert loc is not None
+        assert loc.kind == "floor"
+        # Floor resolver wins; reader_bound was never consulted.
+        assert loc.zone_id == floor_zone
+        assert loc.zone_name == "Bay A (floor)"
+        assert zone_repo.calls == 0
+
 
 class TestAggregations:
     async def test_reads_per_hour(self, service: QueryService, tag_repo: FakeTagReadRepo) -> None:
