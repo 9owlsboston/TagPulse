@@ -41,9 +41,7 @@ class _StubAntennaRepo:
         self.calls.append(("upsert", (device_id, port, payload)))
         return self.upsert_result
 
-    async def delete(
-        self, tenant_id: UUID, device_id: UUID, port: int
-    ) -> bool | None:
+    async def delete(self, tenant_id: UUID, device_id: UUID, port: int) -> bool | None:
         self.calls.append(("delete", (device_id, port)))
         return self.delete_result
 
@@ -61,9 +59,7 @@ def _antenna(device_id: UUID, port: int) -> AntennaResponse:
     )
 
 
-def _make_client(
-    stub: _StubAntennaRepo, role: Literal["admin", "editor", "viewer"]
-) -> TestClient:
+def _make_client(stub: _StubAntennaRepo, role: Literal["admin", "editor", "viewer"]) -> TestClient:
     app = FastAPI()
     app.include_router(router, prefix="/v1")
 
