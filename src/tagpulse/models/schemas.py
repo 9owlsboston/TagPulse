@@ -54,6 +54,27 @@ class Identity(BaseModel):
 # -- Tag Reads --
 
 
+class LocationDescriptor(BaseModel):
+    """Resolved, render-ready location for a tag read (Sprint 64).
+
+    Query-time enrichment so the UI's single "Location" column needs no
+    client-side joins. ``kind`` discriminates the two regimes:
+
+    - ``geo``  — mobile read with lat/lon (geographic map).
+    - ``floor`` — fixed read; the truthful location is the resolved
+      ``reader_bound`` zone (coordinates are a *map* concern, not a per-row one).
+    - ``none`` — neither a fix nor a resolvable zone.
+    """
+
+    kind: Literal["geo", "floor", "none"]
+    lat: float | None = None
+    lon: float | None = None
+    accuracy_m: float | None = None
+    source: str | None = None
+    zone_id: UUID | None = None
+    zone_name: str | None = None
+
+
 class TagReadCreate(BaseModel):
     """Incoming tag read event — used by both HTTP and MQTT ingestion paths."""
 
@@ -91,6 +112,9 @@ class TagReadResponse(BaseModel):
     tag_data: dict[str, Any] | None = None
     reader_antenna: int | None = None
     created_at: datetime
+    # Sprint 64: query-time resolved location for the UI "Location" column.
+    # Populated by the query service; absent (None) on the ingest response.
+    location: LocationDescriptor | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

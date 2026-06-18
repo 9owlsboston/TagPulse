@@ -77,9 +77,16 @@ async def get_device_service(
 async def get_query_service(
     tag_read_repo: TagReadRepository = Depends(get_tag_read_repo),
     device_repo: DeviceRepository = Depends(get_device_repo),
+    session: AsyncSession = Depends(get_session),
 ) -> AsyncGenerator[QueryService, None]:
     """Provide a QueryService wired with repos."""
-    yield QueryService(tag_read_repo=tag_read_repo, device_repo=device_repo)
+    from tagpulse.repositories.timescaledb.sites_zones import TimescaleZoneRepository
+
+    yield QueryService(
+        tag_read_repo=tag_read_repo,
+        device_repo=device_repo,
+        zone_repo=TimescaleZoneRepository(session),
+    )
 
 
 async def get_telemetry_model_service(

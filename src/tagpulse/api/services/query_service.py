@@ -1,18 +1,38 @@
 """Query and telemetry service — tag read queries, aggregations, device health."""
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Protocol
 from uuid import UUID
 
 from tagpulse.models.schemas import (
     DeviceHealthSummary,
+    LocationDescriptor,
     ReadsPerHour,
     TagReadResponse,
     UniqueTagsPerWindow,
+    ZoneResponse,
 )
 from tagpulse.repositories.protocols import DeviceRepository, TagReadRepository
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ZoneRef:
+    """Minimal zone projection used for the tag-read location descriptor."""
+
+    id: UUID
+    name: str
+
+
+class ZoneReaderResolver(Protocol):
+    """The slice of the zone repo the query service needs."""
+
+    async def get_zone_for_reader(
+        self, tenant_id: UUID, device_id: UUID
+    ) -> ZoneResponse | None: ...
 
 
 class QueryService:
@@ -22,9 +42,14 @@ class QueryService:
         self,
         tag_read_repo: TagReadRepository,
         device_repo: DeviceRepository,
+        zone_repo: "ZoneReaderResolver | None" = None,
     ) -> None:
         self._tag_read_repo = tag_read_repo
         self._device_repo = device_repo
+        # Optional: when present, fixed reads resolve their reader_bound zone for
+        # the UI "Location" column. When absent (e.g. some unit tests), floor
+        # reads simply get a ``kind="none"`` descriptor.
+        self._zone_repo = zone_repo
 
     async def query_tag_reads(
         self,
@@ -39,8 +64,9 @@ class QueryService:
         limit: int = 100,
         offset: int = 0,
     ) -> list[TagReadResponse]:
-        """Query tag reads with filters and pagination."""
-        return await self._tag_read_repo.query(
+        """Query tag reads with filters and pagination, enriched with a
+        resolved ``location`` descriptor for the UI."""
+        reads = await self._tag_read_repo.query(
             tenant_id,
             device_id=device_id,
             tag_id=tag_id,
@@ -51,6 +77,52 @@ class QueryService:
             limit=limit,
             offset=offset,
         )
+        await self._attach_location_descriptors(tenant_id, reads)
+        return reads
+
+    async def _attach_location_descriptors(
+        self, tenant_id: UUID, reads: list[TagReadResponse]
+    ) -> None:
+        """Resolve a ``location`` descriptor per read (in place).
+
+        Geo reads (lat/lon present) are self-describing. Fixed reads resolve
+        their reader-bound zone once per distinct device (cached for the page),
+        so a 1000-row page does at most one zone lookup per device.
+        """
+        zone_cache: dict[UUID, ZoneRef | None] = {}
+        for read in reads:
+            if read.latitude is not None and read.longitude is not None:
+                read.location = LocationDescriptor(
+                    kind="geo",
+                    lat=read.latitude,
+                    lon=read.longitude,
+                    accuracy_m=read.location_accuracy_m,
+                    source=read.location_source,
+                )
+                continue
+            zone = await self._resolve_zone(tenant_id, read.device_id, zone_cache)
+            if zone is not None:
+                read.location = LocationDescriptor(
+                    kind="floor",
+                    source=read.location_source,
+                    zone_id=zone.id,
+                    zone_name=zone.name,
+                )
+            else:
+                read.location = LocationDescriptor(kind="none", source=read.location_source)
+
+    async def _resolve_zone(
+        self,
+        tenant_id: UUID,
+        device_id: UUID,
+        cache: "dict[UUID, ZoneRef | None]",
+    ) -> "ZoneRef | None":
+        if self._zone_repo is None:
+            return None
+        if device_id not in cache:
+            zone = await self._zone_repo.get_zone_for_reader(tenant_id, device_id)
+            cache[device_id] = ZoneRef(id=zone.id, name=zone.name) if zone else None
+        return cache[device_id]
 
     async def reads_per_hour(
         self,
