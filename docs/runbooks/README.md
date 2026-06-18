@@ -34,6 +34,7 @@ referenced from the incident template.
 | [db-failover-and-restore.md](db-failover-and-restore.md) | **Sprint 28 E2** | Postgres server unhealthy, PG-side data corruption, or connection-pool exhaustion. |
 | [dead-letter-triage.md](dead-letter-triage.md) | **Sprint 28 E3** | Dead-letter burst alert fires or the workbook's "dead-letters by source" panel trends up. |
 | [mqtt-outage.md](mqtt-outage.md) | **Sprint 28 C4** | MQTT subscriber stalled alert, broker unreachable, or worker can't auth. Pairs with `scripts/mqtt_canary.py` (C2) and `scripts/azd-mqtt-restart.sh` (C5). |
+| [tag-reads-missing.md](tag-reads-missing.md) | Chore (post Sprint 64) | Per-device or per-tenant ingestion gaps when the broker is up and the SLO is green. The `mqtt_tap.py` → worker logs → `tag_reads_near.py` decision tree. |
 
 ## Migrations & cutovers
 
