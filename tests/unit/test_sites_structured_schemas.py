@@ -240,3 +240,37 @@ class TestCoordSystem:
         body = SiteCreate(name="DC-1", coord_system=CoordSystem(extent_x=120, extent_y=80))
         assert body.coord_system is not None
         assert body.coord_system.extent_x == 120
+
+
+class TestCoordSystemFloorplanImage:
+    _PNG = (
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
+        "AAAAC0lEQVR42mNk+M8AAAMBAQAY3Y2wAAAAAElFTkSuQmCC"
+    )
+
+    def test_accepts_data_url(self) -> None:
+        cs = CoordSystem(extent_x=600, extent_y=400, floorplan_image=self._PNG)
+        assert cs.floorplan_image == self._PNG
+
+    def test_accepts_https_url(self) -> None:
+        cs = CoordSystem(
+            extent_x=600, extent_y=400, floorplan_image="https://example.com/floor.png"
+        )
+        assert cs.floorplan_image is not None
+
+    def test_none_and_empty_clear(self) -> None:
+        assert CoordSystem(extent_x=1, extent_y=1, floorplan_image=None).floorplan_image is None
+        assert CoordSystem(extent_x=1, extent_y=1, floorplan_image="").floorplan_image is None
+
+    def test_rejects_non_image_data_url(self) -> None:
+        with pytest.raises(ValidationError):
+            CoordSystem(extent_x=1, extent_y=1, floorplan_image="data:text/plain;base64,aGk=")
+
+    def test_rejects_bare_string(self) -> None:
+        with pytest.raises(ValidationError):
+            CoordSystem(extent_x=1, extent_y=1, floorplan_image="floor.png")
+
+    def test_rejects_oversized_data_url(self) -> None:
+        big = "data:image/png;base64," + ("A" * (2 * 1024 * 1024 + 10))
+        with pytest.raises(ValidationError):
+            CoordSystem(extent_x=1, extent_y=1, floorplan_image=big)
