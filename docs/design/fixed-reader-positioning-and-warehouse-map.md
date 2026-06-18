@@ -41,7 +41,7 @@ the Sprint 59 schema rather than inventing a new one.
 
 | # | Question | Decision |
 |---|----------|----------|
-| D1 | **Grain** the placement UI edits | **Layered.** Per-**antenna** `(x, y)` rows stay the source of truth (what trilateration needs); a **reader's** display coordinate = **centroid of its antennas** (a simple single-antenna reader is one port-0 antenna at the reader's spot). The UI starts at reader-grain ("(2,3)") and exposes antenna-grain as an advanced expansion. **No `devices.position_*` columns** are re-added — ADR-024 v1's per-device position stays superseded by the per-antenna `antennas` table. |
+| D1 | **Grain** the placement UI edits | **Port-0 model (layered, reader-grain default).** Per-**antenna** `(x, y)` rows stay the source of truth; **port 0 is the reader's nominal location** (consistent with the wire format's `an: 0 = unknown/muxed`), ports 1..N are individual radiators. Position resolves by **availability fallback** — a read with `an=N` uses port-N's `(x,y)` if surveyed, else falls back to the reader's port-0 location. **Reader-grain is the default** (survey only port 0); antenna-grain is an **opt-in upgrade** (survey ports 1..N) on the *same* data, no mode flag. **No `devices.position_*` columns** are re-added — the reader pin *is* the port-0 `antennas` row. See §"Reader & antenna positions". |
 | D2 | **Asset position** before the estimator exists | **Snap** the asset marker to the `(x, y)` of the reader/zone that last heard it — the indoor analogue of today's "Map snaps markers to reader positions." Trilateration is a later swap of the marker source from reader-centroid → `asset_positions`. |
 | D3 | **Map rendering model** | **Pure floorplan first** via Leaflet **`CRS.Simple`** (floor-local units, no projection). Both render modes are **immediate and first-class** — the *geographic* map (lat/lon, already exists) serves mobile/truck-fleet customers; the *floor* map serves warehouse customers; the Map page switches by site `coord_system` (NULL ⇒ geographic, set ⇒ floor). The `coord_system.geo_anchor` **seam is designed** (see §"Geo-anchor seam") but its build is **deferred** — see the trigger there. |
 | D4 | **Floorplan image** | **Optional, inline.** When provided, an uploaded floorplan image renders behind the grid as a `CRS.Simple` image layer scaled to `coord_system.extent_x × extent_y`, stored **inline as a base64 `data:` URL capped at ~1–2 MB** (option (a) — no blob infra, consistent with the branding-logo precedent; column stays a string so a future move to blob is non-breaking). When **absent**, the map renders a **plain grid** from `coord_system.extent` (e.g. 600×400) — no image required. |
@@ -111,6 +111,44 @@ narrow and specific: a **single facility that has mobile *and* fixed readers and
 wants both on one combined canvas** (e.g. yard trucks + indoor forklifts at the
 same DC). Distinct mobile-only and fixed-only customers/sites do **not** trip it.
 Until that customer appears, the floor map stands alone.
+
+## Reader & antenna positions — the port-0 model (D1)
+
+**Port 0 is the reader's nominal location; ports 1..N are radiators.** This
+reuses the wire contract, which already reserves
+[`an: 0 .. 255 (0 = unknown/muxed)`](edge-wire-format-v2.md) — a read the reader
+couldn't attribute to a specific port. Real radiators are 1-based. So the
+port-0 `antennas` row (one per reader, guaranteed by the existing
+`UNIQUE(device_id, port)`) holds the reader's own spot, and an unknown-port
+(`an=0`) read snaps there naturally.
+
+**Position resolves by availability fallback**, per read:
+
+> `an=N` → use `antennas(device_id, port=N).(x, y)` **if surveyed**, else fall
+> back to the **port-0** row (the reader's nominal location).
+
+This gives two tiers on **one** model — no parallel "simplified mode", no flag:
+
+| | **Reader-grain (default, low precision)** | **Antenna-grain (opt-in, surveyed)** |
+|---|---|---|
+| Operator surveys | only port 0 (drops the reader) | ports 1..N as well |
+| Every read resolves to | the one reader location | its specific radiator `(x, y)` |
+| Zones (D5) | `reader_bound` (per-device) | antenna-position → floor-polygon |
+| Map marker | one per reader | per-radiator |
+
+**The simplified customer** ("reader + all its antennas = one location") is just
+the **default tier**: they survey only port 0 and every read — regardless of its
+`an` — falls back to the reader location. The `an` value is **retained** on the
+read (still shown in the Tag Reads *Antenna* column, still used for dedup /
+signal analytics) — positioning simply ignores it when the port has no
+coordinate. The read stays **upgrade-ready**: survey the ports later and the
+same data gains precision with no migration.
+
+**No `position_grain` flag (D-OQ2 = option a).** Reader-grain is purely "port 0
+surveyed, ports 1..N empty"; precision is opt-in by surveying more. The placement
+UI must therefore **not** treat empty ports 1..N as *incomplete* (no nag). An
+explicit per-reader/per-site grain hint is **deferred** unless the UX proves
+naggy — it would be advisory only and changes none of the fallback math.
 
 ## Zone resolution for fixed reads (D5)
 
@@ -184,7 +222,9 @@ server-side resolution.)
   - Expose `coord_system` on `SiteResponse` + a `SiteUpdate` write path (with
     shape validation). `openapi.json` regen.
   - Antenna CRUD schema/endpoints (`AntennaCreate/Response`, list-by-device);
-    reader **centroid** derived read-side (no stored reader position).
+    **port 0 = reader nominal location**; position resolves read-side by
+    **availability fallback** (port-N if surveyed, else port-0). No stored
+    `devices.position_*`.
   - `floorToGeo` util + `geo_anchor` validation (seam, unused by UI yet).
   - **Tag Reads location descriptor** in the `GET /tag-reads` projection
     (resolves the fixed-read zone server-side per D5) — feeds the contextual
@@ -194,8 +234,10 @@ server-side resolution.)
 - **Phase 1 — placement UI**
   - Site coordinate-system editor (units, extent, origin, optional floorplan
     image upload).
-  - Floor placement view: drop **fixed** readers onto the grid (reader-grain),
-    antenna-grain as an advanced expansion. Writes `antennas.(x,y)`.
+  - Floor placement view: drop **fixed** readers onto the grid (writes the
+    **port-0** `antennas` row = reader nominal location); per-radiator survey
+    (ports 1..N) is an **opt-in advanced expansion**. Empty ports 1..N are *not*
+    flagged incomplete (reader-grain is a valid end state).
 - **Phase 2 — warehouse map (read-only)**
   - `CRS.Simple` floor map: floorplan image + grid + fixed readers/zones +
     **asset markers snapped to last-reader/zone `(x, y)`** (D2).
@@ -208,9 +250,6 @@ server-side resolution.)
 
 ## Open questions
 
-- **Reader-centroid vs. explicit reader pin.** For readers whose antennas are
-  *not* yet surveyed, is the reader placed directly (a transient port-0 antenna)
-  or hidden until it has at least one antenna coordinate?
 - **Zone XY for snapping (D2).** A `reader_bound` zone spans several readers —
   snap the asset to the *triggering reader's* centroid, or to a computed zone
   centroid? Leaning triggering-reader (more precise, already known per read).
