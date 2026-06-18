@@ -15,6 +15,7 @@ from tagpulse.analytics.read_frequency import ReadFrequencyModule
 from tagpulse.api.routes.admin import router as admin_router
 from tagpulse.api.routes.admin_ops import router as admin_ops_router
 from tagpulse.api.routes.analytics import router as analytics_router
+from tagpulse.api.routes.antennas import router as antennas_router
 from tagpulse.api.routes.assets import router as assets_router
 from tagpulse.api.routes.auth import router as auth_router
 from tagpulse.api.routes.bulk_operations import router as bulk_operations_router
@@ -407,6 +408,7 @@ app.include_router(security_router)
 app.include_router(auth_router)
 app.include_router(ingestion_router)
 app.include_router(devices_router)
+app.include_router(antennas_router)
 app.include_router(query_router)
 app.include_router(rules_router)
 app.include_router(analytics_router)

@@ -492,6 +492,42 @@ class CoordSystem(BaseModel):
         return self
 
 
+# -- Antennas (Sprint 64 / ADR-024) --
+
+
+class AntennaUpsert(BaseModel):
+    """Set an antenna's position within its device's site coordinate frame.
+
+    **Port 0 is the reader's nominal location**; ports 1..N are the individual
+    radiators. Coordinates are all optional — an antenna row may exist with
+    just a label before it is surveyed; positioning falls back to port 0 when a
+    radiator has no coordinate.
+    """
+
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    label: str | None = Field(default=None, max_length=64)
+    gain_dbi: float | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AntennaResponse(BaseModel):
+    """Persisted antenna row."""
+
+    id: UUID
+    device_id: UUID
+    port: int = Field(ge=0, le=255)
+    x: float | None
+    y: float | None
+    z: float | None
+    label: str | None
+    gain_dbi: float | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class SiteCreate(BaseModel):
     """Create a site."""
 

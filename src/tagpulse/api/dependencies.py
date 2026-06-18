@@ -20,6 +20,7 @@ from tagpulse.repositories.protocols import (
     DeviceRepository,
     TagReadRepository,
 )
+from tagpulse.repositories.timescaledb.antennas import TimescaleAntennaRepository
 from tagpulse.repositories.timescaledb.devices import TimescaleDeviceRepository
 from tagpulse.repositories.timescaledb.session import get_session
 from tagpulse.repositories.timescaledb.tag_reads import TimescaleTagReadRepository
@@ -40,6 +41,13 @@ async def get_device_repo(
 ) -> DeviceRepository:
     """Provide a DeviceRepository bound to the current session."""
     return TimescaleDeviceRepository(session)
+
+
+async def get_antenna_repo(
+    session: AsyncSession = Depends(get_session),
+) -> TimescaleAntennaRepository:
+    """Provide a TimescaleAntennaRepository bound to the current session."""
+    return TimescaleAntennaRepository(session)
 
 
 def get_event_bus(request: Request) -> EventBus:
