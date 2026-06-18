@@ -12,6 +12,7 @@ from tagpulse.models.schemas import (
     TagReadCreate,
     TagReadResponse,
     UniqueTagsPerWindow,
+    ZoneResponse,
 )
 
 TENANT_ID = uuid4()
@@ -241,6 +242,123 @@ class TestQueryTagReads:
         assert len(page1) == 3
         assert len(page2) == 3
         assert page1[0].tag_id != page2[0].tag_id
+
+
+class FakeZoneRepo:
+    """Resolves a reader_bound zone per device, counting lookups."""
+
+    def __init__(self, mapping: dict[UUID, tuple[UUID, str]]) -> None:
+        self._map = mapping
+        self.calls = 0
+
+    async def get_zone_for_reader(self, tenant_id: UUID, device_id: UUID) -> ZoneResponse | None:
+        self.calls += 1
+        entry = self._map.get(device_id)
+        if entry is None:
+            return None
+        zid, zname = entry
+        now = datetime.now(UTC)
+        return ZoneResponse(
+            id=zid,
+            tenant_id=tenant_id,
+            site_id=uuid4(),
+            name=zname,
+            kind="reader_bound",
+            fixed_reader_ids=[device_id],
+            polygon_geojson=None,
+            metadata=None,
+            created_at=now,
+            updated_at=now,
+        )
+
+
+def _floor_read(device_id: UUID) -> TagReadResponse:
+    now = datetime.now(UTC)
+    return TagReadResponse(
+        id=uuid4(),
+        device_id=device_id,
+        tag_id="A",
+        timestamp=now,
+        signal_strength=None,
+        sensor_data=None,
+        created_at=now,
+    )
+
+
+class TestLocationDescriptor:
+    async def test_geo_read_gets_geo_descriptor(self, tag_repo: FakeTagReadRepo) -> None:
+        service = QueryService(tag_read_repo=tag_repo, device_repo=FakeDeviceRepo())
+        now = datetime.now(UTC)
+        tag_repo.reads.append(
+            TagReadResponse(
+                id=uuid4(),
+                device_id=uuid4(),
+                tag_id="A",
+                timestamp=now,
+                signal_strength=None,
+                sensor_data=None,
+                latitude=47.6,
+                longitude=-122.3,
+                location_accuracy_m=5.0,
+                location_source="gps",
+                created_at=now,
+            )
+        )
+        results = await service.query_tag_reads(TENANT_ID)
+        loc = results[0].location
+        assert loc is not None
+        assert loc.kind == "geo"
+        assert loc.lat == 47.6
+        assert loc.lon == -122.3
+        assert loc.accuracy_m == 5.0
+        assert loc.source == "gps"
+
+    async def test_fixed_read_resolves_zone(self, tag_repo: FakeTagReadRepo) -> None:
+        did, zid = uuid4(), uuid4()
+        zone_repo = FakeZoneRepo({did: (zid, "Dock A")})
+        service = QueryService(
+            tag_read_repo=tag_repo, device_repo=FakeDeviceRepo(), zone_repo=zone_repo
+        )
+        tag_repo.reads.append(_floor_read(did))
+        results = await service.query_tag_reads(TENANT_ID)
+        loc = results[0].location
+        assert loc is not None
+        assert loc.kind == "floor"
+        assert loc.zone_id == zid
+        assert loc.zone_name == "Dock A"
+
+    async def test_fixed_read_without_zone_is_none(self, tag_repo: FakeTagReadRepo) -> None:
+        did = uuid4()
+        zone_repo = FakeZoneRepo({})
+        service = QueryService(
+            tag_read_repo=tag_repo, device_repo=FakeDeviceRepo(), zone_repo=zone_repo
+        )
+        tag_repo.reads.append(_floor_read(did))
+        results = await service.query_tag_reads(TENANT_ID)
+        assert results[0].location is not None
+        assert results[0].location.kind == "none"
+
+    async def test_no_zone_repo_yields_none_kind(self, tag_repo: FakeTagReadRepo) -> None:
+        # No zone repo wired → floor reads can't resolve a zone.
+        service = QueryService(tag_read_repo=tag_repo, device_repo=FakeDeviceRepo())
+        tag_repo.reads.append(_floor_read(uuid4()))
+        results = await service.query_tag_reads(TENANT_ID)
+        assert results[0].location is not None
+        assert results[0].location.kind == "none"
+
+    async def test_zone_lookup_cached_per_device(self, tag_repo: FakeTagReadRepo) -> None:
+        did, zid = uuid4(), uuid4()
+        zone_repo = FakeZoneRepo({did: (zid, "Dock A")})
+        service = QueryService(
+            tag_read_repo=tag_repo, device_repo=FakeDeviceRepo(), zone_repo=zone_repo
+        )
+        # Three reads from the same device → one zone lookup.
+        for _ in range(3):
+            tag_repo.reads.append(_floor_read(did))
+        results = await service.query_tag_reads(TENANT_ID)
+        assert len(results) == 3
+        assert all(r.location is not None and r.location.kind == "floor" for r in results)
+        assert zone_repo.calls == 1
 
 
 class TestAggregations:

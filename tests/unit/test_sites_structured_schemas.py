@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from tagpulse.models.schemas import SiteCreate, SiteUpdate
+from tagpulse.models.schemas import CoordSystem, SiteCreate, SiteUpdate
 
 # ---------------------------------------------------------------------------
 # SiteCreate
@@ -182,3 +182,61 @@ class TestSiteUpdateRejectsExplicitNullForNotNullFields:
         assert patch.address is None
         assert patch.city is None
         assert patch.country is None
+
+
+# ---------------------------------------------------------------------------
+# CoordSystem (Sprint 64 / ADR-024)
+# ---------------------------------------------------------------------------
+
+
+class TestCoordSystem:
+    def test_minimal_valid(self) -> None:
+        cs = CoordSystem(extent_x=400, extent_y=600)
+        assert cs.units == "meters"
+        assert cs.origin_anchor == "nw_corner"
+        assert cs.rotation_deg == 0.0
+        assert cs.geo_anchor is None
+
+    def test_extent_must_be_positive(self) -> None:
+        with pytest.raises(ValidationError):
+            CoordSystem(extent_x=0, extent_y=600)
+        with pytest.raises(ValidationError):
+            CoordSystem(extent_x=400, extent_y=-1)
+
+    def test_unknown_key_rejected(self) -> None:
+        # extra="forbid" → a typo'd key is a 422, not silently dropped.
+        with pytest.raises(ValidationError):
+            CoordSystem(extent_x=400, extent_y=600, extentZ=1)  # type: ignore[call-arg]
+
+    def test_device_origin_requires_device_id(self) -> None:
+        with pytest.raises(ValidationError):
+            CoordSystem(extent_x=400, extent_y=600, origin_anchor="device_id")
+
+    def test_device_id_only_valid_for_device_origin(self) -> None:
+        from uuid import uuid4
+
+        with pytest.raises(ValidationError):
+            CoordSystem(
+                extent_x=400, extent_y=600, origin_anchor="nw_corner", origin_device_id=uuid4()
+            )
+
+    def test_geo_anchor_round_trips(self) -> None:
+        cs = CoordSystem(
+            extent_x=400,
+            extent_y=600,
+            units="feet",
+            geo_anchor={"lat": 47.6, "lng": -122.3, "x": 0, "y": 0},
+        )
+        assert cs.geo_anchor is not None
+        assert cs.geo_anchor.lat == 47.6
+
+    def test_geo_anchor_lat_range(self) -> None:
+        with pytest.raises(ValidationError):
+            CoordSystem(
+                extent_x=400, extent_y=600, geo_anchor={"lat": 200, "lng": 0, "x": 0, "y": 0}
+            )
+
+    def test_on_site_create(self) -> None:
+        body = SiteCreate(name="DC-1", coord_system=CoordSystem(extent_x=120, extent_y=80))
+        assert body.coord_system is not None
+        assert body.coord_system.extent_x == 120

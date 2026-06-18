@@ -54,6 +54,27 @@ class Identity(BaseModel):
 # -- Tag Reads --
 
 
+class LocationDescriptor(BaseModel):
+    """Resolved, render-ready location for a tag read (Sprint 64).
+
+    Query-time enrichment so the UI's single "Location" column needs no
+    client-side joins. ``kind`` discriminates the two regimes:
+
+    - ``geo``  — mobile read with lat/lon (geographic map).
+    - ``floor`` — fixed read; the truthful location is the resolved
+      ``reader_bound`` zone (coordinates are a *map* concern, not a per-row one).
+    - ``none`` — neither a fix nor a resolvable zone.
+    """
+
+    kind: Literal["geo", "floor", "none"]
+    lat: float | None = None
+    lon: float | None = None
+    accuracy_m: float | None = None
+    source: str | None = None
+    zone_id: UUID | None = None
+    zone_name: str | None = None
+
+
 class TagReadCreate(BaseModel):
     """Incoming tag read event — used by both HTTP and MQTT ingestion paths."""
 
@@ -91,6 +112,9 @@ class TagReadResponse(BaseModel):
     tag_data: dict[str, Any] | None = None
     reader_antenna: int | None = None
     created_at: datetime
+    # Sprint 64: query-time resolved location for the UI "Location" column.
+    # Populated by the query service; absent (None) on the ingest response.
+    location: LocationDescriptor | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -444,6 +468,90 @@ def _normalise_country(value: str | None) -> str | None:
     return candidate
 
 
+# -- Site coordinate system (Sprint 64 / ADR-024) --
+
+CoordUnits = Literal["meters", "feet"]
+CoordOriginAnchor = Literal["nw_corner", "sw_corner", "device_id"]
+
+
+class GeoAnchor(BaseModel):
+    """Pin one floor-local point ``(x, y)`` to a real-world lat/lon.
+
+    Reserved seam for a future geo-anchored overlay (mobile + fixed readers on
+    one geographic map). Validated and stored now; no map consumes it yet.
+    """
+
+    lat: float = Field(ge=-90.0, le=90.0)
+    lng: float = Field(ge=-180.0, le=180.0)
+    x: float
+    y: float
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CoordSystem(BaseModel):
+    """Per-site floor coordinate frame (ADR-024).
+
+    ``NULL`` on a site ⇒ geographic-only (lat/lon) rendering; when set, the
+    site renders as a floor plan in these local units. ``geo_anchor`` is the
+    optional seam to a future unified geographic overlay.
+    """
+
+    units: CoordUnits = "meters"
+    extent_x: float = Field(gt=0)
+    extent_y: float = Field(gt=0)
+    origin_anchor: CoordOriginAnchor = "nw_corner"
+    origin_device_id: UUID | None = None
+    rotation_deg: float = Field(default=0.0, ge=-360.0, le=360.0)
+    geo_anchor: GeoAnchor | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _origin_device_consistency(self) -> "CoordSystem":
+        if self.origin_anchor == "device_id" and self.origin_device_id is None:
+            raise ValueError("origin_device_id is required when origin_anchor is 'device_id'")
+        if self.origin_anchor != "device_id" and self.origin_device_id is not None:
+            raise ValueError("origin_device_id is only valid when origin_anchor is 'device_id'")
+        return self
+
+
+# -- Antennas (Sprint 64 / ADR-024) --
+
+
+class AntennaUpsert(BaseModel):
+    """Set an antenna's position within its device's site coordinate frame.
+
+    **Port 0 is the reader's nominal location**; ports 1..N are the individual
+    radiators. Coordinates are all optional — an antenna row may exist with
+    just a label before it is surveyed; positioning falls back to port 0 when a
+    radiator has no coordinate.
+    """
+
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    label: str | None = Field(default=None, max_length=64)
+    gain_dbi: float | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AntennaResponse(BaseModel):
+    """Persisted antenna row."""
+
+    id: UUID
+    device_id: UUID
+    port: int = Field(ge=0, le=255)
+    x: float | None
+    y: float | None
+    z: float | None
+    label: str | None
+    gain_dbi: float | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class SiteCreate(BaseModel):
     """Create a site."""
 
@@ -463,6 +571,8 @@ class SiteCreate(BaseModel):
     longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
     default_timezone: str = Field(default="UTC", max_length=64)
     metadata: dict[str, Any] | None = None
+    # Sprint 64 (ADR-024): optional floor coordinate frame. NULL ⇒ geographic.
+    coord_system: CoordSystem | None = None
 
     _normalise_country = field_validator("country", mode="before")(
         lambda cls, v: _normalise_country(v)
@@ -504,6 +614,9 @@ class SiteUpdate(BaseModel):
     longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
     default_timezone: str | None = Field(default=None, max_length=64)
     metadata: dict[str, Any] | None = None
+    # Sprint 64: set to reframe a site as a floor plan, or null to clear it
+    # back to geographic-only.
+    coord_system: CoordSystem | None = None
 
     _normalise_country = field_validator("country", mode="before")(
         lambda cls, v: _normalise_country(v)
@@ -549,6 +662,7 @@ class SiteResponse(BaseModel):
     longitude: float | None
     default_timezone: str
     metadata: dict[str, Any] | None = None
+    coord_system: CoordSystem | None = None
     created_at: datetime
     updated_at: datetime
 

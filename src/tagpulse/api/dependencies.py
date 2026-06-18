@@ -20,6 +20,7 @@ from tagpulse.repositories.protocols import (
     DeviceRepository,
     TagReadRepository,
 )
+from tagpulse.repositories.timescaledb.antennas import TimescaleAntennaRepository
 from tagpulse.repositories.timescaledb.devices import TimescaleDeviceRepository
 from tagpulse.repositories.timescaledb.session import get_session
 from tagpulse.repositories.timescaledb.tag_reads import TimescaleTagReadRepository
@@ -40,6 +41,13 @@ async def get_device_repo(
 ) -> DeviceRepository:
     """Provide a DeviceRepository bound to the current session."""
     return TimescaleDeviceRepository(session)
+
+
+async def get_antenna_repo(
+    session: AsyncSession = Depends(get_session),
+) -> TimescaleAntennaRepository:
+    """Provide a TimescaleAntennaRepository bound to the current session."""
+    return TimescaleAntennaRepository(session)
 
 
 def get_event_bus(request: Request) -> EventBus:
@@ -69,9 +77,16 @@ async def get_device_service(
 async def get_query_service(
     tag_read_repo: TagReadRepository = Depends(get_tag_read_repo),
     device_repo: DeviceRepository = Depends(get_device_repo),
+    session: AsyncSession = Depends(get_session),
 ) -> AsyncGenerator[QueryService, None]:
     """Provide a QueryService wired with repos."""
-    yield QueryService(tag_read_repo=tag_read_repo, device_repo=device_repo)
+    from tagpulse.repositories.timescaledb.sites_zones import TimescaleZoneRepository
+
+    yield QueryService(
+        tag_read_repo=tag_read_repo,
+        device_repo=device_repo,
+        zone_repo=TimescaleZoneRepository(session),
+    )
 
 
 async def get_telemetry_model_service(

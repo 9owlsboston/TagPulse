@@ -20,6 +20,7 @@ from tagpulse.geo import (
 )
 from tagpulse.models.database import SiteModel, ZoneModel
 from tagpulse.models.schemas import (
+    CoordSystem,
     SiteCreate,
     SiteKind,
     SiteResponse,
@@ -84,6 +85,7 @@ def _site_to_response(row: SiteModel) -> SiteResponse:
         longitude=row.longitude,
         default_timezone=row.default_timezone,
         metadata=row.metadata_,
+        coord_system=(CoordSystem.model_validate(row.coord_system) if row.coord_system else None),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -133,6 +135,7 @@ class TimescaleSiteRepository:
             longitude=site.longitude,
             default_timezone=site.default_timezone,
             metadata_=site.metadata,
+            coord_system=(site.coord_system.model_dump(mode="json") if site.coord_system else None),
         )
         self._session.add(row)
         try:
@@ -181,6 +184,12 @@ class TimescaleSiteRepository:
         patch_data = patch.model_dump(exclude_unset=True)
         if "metadata" in patch_data:
             patch_data["metadata_"] = patch_data.pop("metadata")
+        if "coord_system" in patch_data:
+            # JSONB column needs a JSON-safe dict (UUID origin_device_id → str);
+            # explicit null clears the frame back to geographic-only.
+            patch_data["coord_system"] = (
+                patch.coord_system.model_dump(mode="json") if patch.coord_system else None
+            )
         for key, value in patch_data.items():
             setattr(row, key, value)
         await self._session.flush()

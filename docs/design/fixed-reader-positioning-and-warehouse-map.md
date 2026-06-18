@@ -183,6 +183,17 @@ reader" disappears for surveyed sites. The cost is the survey burden, which is
 exactly the Phase 1 placement UI; un-surveyed sites lose nothing (they stay on
 the `reader_bound` fallback).
 
+> **⚠ Implementation blocker (found in Sprint 64 Phase 0).** The accurate path
+> (2) needs to know **which floor/site an antenna is on** to choose the candidate
+> floor polygons — but `devices` has **no `site_id`**; the only device→site link
+> today is *circular* (through the very `reader_bound` zone the floor path is
+> meant to replace). So the accurate path is blocked on a **device→site
+> assignment** design (e.g. a `devices.site_id` column + assignment UI, or
+> deriving it from antenna coordinates). This is a separate design decision, not
+> a quick follow-up. **The `reader_bound` fallback (path 1) ships in Phase 0 and
+> powers the Tag Reads location descriptor; the accurate path is parked until
+> device→site assignment is designed.**
+
 ## Displaying location in Tag Reads
 
 The Tag Reads page is where this design meets the sensor-columns design — the
@@ -268,6 +279,12 @@ not block the design:
 - Floorplan image cap tuning (1 MB vs 2 MB) and accepted formats (PNG/SVG/WebP).
 - Marker/precision affordance — whether the map visually distinguishes a
   reader-grain (port-0-only) reader from a fully surveyed one.
+- **Device→site assignment (blocks the accurate floor-polygon zone path).**
+  `devices` has no `site_id`; the antenna-position → floor-polygon resolver can't
+  pick candidate floor zones without knowing the device's floor. Needs its own
+  design (a `devices.site_id` column + assignment UI is the likely shape). Until
+  then the `reader_bound` fallback is the only fixed-read zone path. See the
+  blocker note under "Zone resolution for fixed reads".
 
 ## Out of scope
 
