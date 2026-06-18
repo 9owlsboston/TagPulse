@@ -364,8 +364,6 @@ The `metadata` field is freeform JSON, but TagPulse recommends the following com
   "protocols": ["EPC-Gen2v2", "ISO-18000-63"],
   "tx_power_dbm": 30,
 
-  "indoor_position": { "floor": 1, "x_m": 12.4, "y_m": 8.1 },
-
   "network": {
     "mac": "00:1A:2B:3C:4D:5E",
     "ip": "10.4.12.45",
