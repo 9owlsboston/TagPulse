@@ -160,6 +160,8 @@ Registered readers and IoT devices.
 | `firmware_version` | VARCHAR(50) | NULLABLE | |
 | `connection_state` | VARCHAR(50) | NOT NULL, default `'unknown'` | `online`, `offline`, `unknown` |
 | `last_seen` | TIMESTAMPTZ | NULLABLE | Updated on each ingestion |
+| `mobility` | VARCHAR(16) | NOT NULL, default `'fixed'` | `fixed` \| `mobile`. Drives zone resolution: fixed → reader_bound / floor-polygon; mobile → geofence via the read's lat/lon. |
+| `site_id` | UUID | FK → sites.id, ON DELETE SET NULL, NULLABLE, indexed | Sprint 64: the site/floor a fixed reader physically lives on. NULL for mobile/un-assigned readers. Enables floor-polygon zone resolution. |
 | `token_hash` | VARCHAR(255) | NULLABLE | SHA-256 hash of per-device token |
 | `token_prefix` | VARCHAR(10) | NULLABLE | First chars for O(1) lookup |
 | `token_rotated_at` | TIMESTAMPTZ | NULLABLE | Last rotation timestamp |
@@ -168,7 +170,7 @@ Registered readers and IoT devices.
 | `updated_at` | TIMESTAMPTZ | NOT NULL, auto-updated | |
 
 **RLS:** Yes (migration 007)
-**Migration:** 001, 002, 003, 005, 017 (mobility), 025 (tokens), 026 (cert_thumbprint)
+**Migration:** 001, 002, 003, 005, 017 (mobility), 025 (tokens), 026 (cert_thumbprint), 055 (site_id)
 
 ---
 
@@ -647,13 +649,14 @@ Physical locations or mobile carriers (Sprint 15; Sprint 34 added kind + geoloca
 | `latitude` | DOUBLE PRECISION | NULLABLE, CHECK `-90..90` | Both-or-neither with `longitude` (DB CHECK `ck_sites_latlon_paired`). |
 | `longitude` | DOUBLE PRECISION | NULLABLE, CHECK `-180..180` | |
 | `default_timezone` | VARCHAR(64) | NOT NULL, default `'UTC'` | IANA tz |
+| `coord_system` | JSONB | NULLABLE | Sprint 64 ([ADR-024](adr/024-position-estimation.md)): floor coordinate frame — `units` (`meters`\|`feet`), `extent_x`/`extent_y`, `origin_anchor`, `rotation_deg`, optional `geo_anchor` (the unified-overlay seam) and optional `floorplan_image` (inline `data:` URL or `https://`, ≤~2 MB). **NULL ⇒ geographic-only** (lat/lon); set ⇒ the site renders as a floor plan. |
 | `metadata` | JSONB | NULLABLE | |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
 | `updated_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
 
 **Unique constraint:** `(tenant_id, name)`
 **RLS:** Yes
-**Migrations:** 017 (base), 038 (kind + geolocation + structured address — Sprint 34 gap 2.7)
+**Migrations:** 017 (base), 038 (kind + geolocation + structured address — Sprint 34 gap 2.7), 051 (coord_system)
 
 ---
 
@@ -707,6 +710,35 @@ Reader-bound or geofence zones inside a site.
 **Check constraint:** `(kind='reader_bound' AND fixed_reader_ids IS NOT NULL) OR (kind='geofence' AND polygon_geojson IS NOT NULL)`
 **RLS:** Yes
 **Migration:** 017, 026 (polygon + bbox columns)
+
+> **Floor-polygon zones (Sprint 64).** On a site whose `coord_system` is set, a
+> zone's `polygon_geojson` is interpreted as **floor `(x, y)`** coordinates (not
+> lat/lon). The coordinate-agnostic `point_in_polygon` engine resolves a fixed
+> read to its floor zone by testing the read's antenna position — the *accurate*
+> path, preferred over the coarse `reader_bound` membership. No new column or
+> `kind`; a zone on a floor-site simply *is* a floor polygon.
+
+---
+
+### antennas
+
+Per-antenna position within a device's site coordinate frame (Sprint 59 schema; Sprint 64 API). **Port 0 is the reader's nominal location**; ports 1..N are individual radiators. No `tenant_id` — isolation flows through the `device_id` FK (devices are tenant-scoped).
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | UUID | PK | |
+| `device_id` | UUID | FK → devices.id, ON DELETE CASCADE, NOT NULL | |
+| `port` | SMALLINT | NOT NULL | Antenna port (matches `tag_reads.reader_antenna`, 0–255). Port 0 = reader nominal location. |
+| `x` | NUMERIC | NULLABLE | Floor-frame X (in the site `coord_system` units). |
+| `y` | NUMERIC | NULLABLE | Floor-frame Y. |
+| `z` | NUMERIC | NULLABLE | Mount height (optional; estimator-only). |
+| `label` | VARCHAR(64) | NULLABLE | |
+| `gain_dbi` | NUMERIC | NULLABLE | |
+
+**Unique constraint:** `(device_id, port)`
+**RLS:** None (via `device_id` FK)
+**API:** `GET/PUT/DELETE /devices/{device_id}/antennas[/{port}]` (viewer read / admin write)
+**Migration:** 051
 
 ---
 
@@ -908,17 +940,27 @@ All schemas are defined in `src/tagpulse/models/` and enforce validation at the 
 
 | Schema | Purpose | Key Fields |
 |--------|---------|------------|
-| `TagReadCreate` | Ingest request (HTTP + MQTT) | `device_id` (UUID), `tag_id` (str, 1-256), `timestamp`, `signal_strength?`, `sensor_data?` |
-| `TagReadResponse` | API response | All DB fields |
+| `TagReadCreate` | Ingest request (HTTP + MQTT) | `device_id` (UUID), `tag_id` (str, 1-256), `timestamp`, `signal_strength?`, `sensor_data?`, `reader_antenna?` (0–255), `location?`, `identity?` |
+| `TagReadResponse` | API response | All DB fields **+ `location`** (Sprint 64 query-time descriptor) |
+| `LocationDescriptor` | Resolved location on `TagReadResponse.location` | `kind` (`geo`\|`floor`\|`none`), `lat?`, `lon?`, `accuracy_m?`, `source?`, `zone_id?`, `zone_name?`. `geo` = mobile read lat/lon; `floor` = resolved zone (floor-polygon, else `reader_bound`); `none` = unresolved. |
 
 ### Devices — `schemas.py`
 
 | Schema | Purpose | Key Fields |
 |--------|---------|------------|
-| `DeviceCreate` | Register device | `name` (1-255), `device_type?`, `metadata?`, `configuration?`, `firmware_version?` |
-| `DeviceUpdate` | Partial update | All fields optional |
-| `DeviceResponse` | API response | All DB fields |
+| `DeviceCreate` | Register device | `name` (1-255), `device_type?`, `metadata?`, `configuration?`, `firmware_version?`, `site_id?` |
+| `DeviceUpdate` | Partial update | All fields optional (incl. `site_id` — set to assign, null to clear) |
+| `DeviceResponse` | API response | All DB fields (incl. `mobility`, `site_id`) |
 | `DeviceStatusUpdate` | MQTT status message | `connection_state`, `firmware_version?` |
+
+### Spatial — `schemas.py` (Sprint 64)
+
+| Schema | Purpose | Key Fields |
+|--------|---------|------------|
+| `CoordSystem` | A site's floor frame (`SiteCreate/Update/Response.coord_system`) | `units` (`meters`\|`feet`), `extent_x>0`, `extent_y>0`, `origin_anchor` (`nw_corner`\|`sw_corner`\|`device_id`), `origin_device_id?`, `rotation_deg` (-360..360), `geo_anchor?`, `floorplan_image?`. `extra="forbid"`. |
+| `GeoAnchor` | Pin a floor point to lat/lon (seam) | `lat` (-90..90), `lng` (-180..180), `x`, `y` |
+| `AntennaUpsert` | `PUT /devices/{id}/antennas/{port}` body | `x?`, `y?`, `z?`, `label?`, `gain_dbi?`. `extra="forbid"` |
+| `AntennaResponse` | Antenna API response | `id`, `device_id`, `port` (0–255), `x?`, `y?`, `z?`, `label?`, `gain_dbi?` |
 
 ### Telemetry Models — `schemas.py`
 

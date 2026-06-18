@@ -390,9 +390,9 @@ The `metadata` field is freeform JSON, but TagPulse recommends the following com
 }
 ```
 
-> **What does NOT belong in `device.metadata`** — anything describing **where** the reader sits in your facility hierarchy. Site name, site code, GLN of the read point, zone name, lat/lon, address, etc. all belong on the **Site** or **Zone** entity (see [Sites & Zones](#sites--zones) below for their own `metadata` templates). The reader's location is **derived** from the `reader_bound` zones it belongs to — keeping it out of `device.metadata` avoids two sources of truth that drift apart.
+> **What does NOT belong in `device.metadata`** — anything describing **where** the reader sits in your facility hierarchy. Site name, site code, GLN of the read point, zone name, lat/lon, address, etc. all belong on the **Site** or **Zone** entity (see [Sites & Zones](#sites--zones) below for their own `metadata` templates). A fixed reader's **site** is the first-class `device.site_id` (assign it on the device's edit form, or implicitly by placing the reader on the site's floor plan); its zone is **derived** from `reader_bound` membership or from floor-polygon resolution. Keeping all of this off `device.metadata` avoids two sources of truth that drift apart.
 >
-> The one exception is `indoor_position` (floor + local x/y inside the building) — that's a property of the physical mount point, not the zone, so it stays on the device.
+> **Indoor position** (floor `(x, y)`) is likewise **first-class, not metadata** (Sprint 64): it lives on the reader's **antenna** rows (`antennas.(x, y)`, port 0 = the reader's nominal spot), recorded by dropping the reader on the Site's floor plan. Don't duplicate it in `device.metadata`.
 
 **Vertical-specific alignment** — if your customer already standardises on one of these frameworks, mirror its field names so exports/integrations are zero-friction:
 
@@ -440,7 +440,7 @@ Click **Explore** (from the Telemetry page) for detailed data access.
 - **Limit** — number of results (1–1000, default 100).
 
 **Views:**
-- **Table** — columns: Tag ID, EPC, Scheme, Device, Timestamp, Signal Strength, Latitude, Longitude. The **TID** and **User Memory** columns are plumbing the typical operator doesn't need, so they're hidden by default behind the **Advanced columns** toggle in the toolbar — tick it to reveal them. (They're always included in the CSV export regardless of the toggle.) Sortable and paginated (100 per page). Which columns are advanced/hidden/ordered and the default sort are configurable per-tenant — see [Configurable UI & Preferences](#configurable-ui--preferences).
+- **Table** — columns: Tag ID, EPC, Scheme, Device, Timestamp, Signal Strength, **Antenna**, **Temp (°C)**, **Humidity (%)**, Latitude, Longitude. The **Antenna** column is the reading antenna port; **Temp/Humidity** are read from the read's `sensor_data` (resolving either the real-device `temperature_c`/`humidity_pct` keys or the simulator `temperature`/`humidity` keys), showing `—` when absent. The **TID** and **User Memory** columns are plumbing the typical operator doesn't need, so they're hidden by default behind the **Advanced columns** toggle in the toolbar — tick it to reveal them. (All columns, including Antenna/Temp/Humidity, are in the CSV export regardless of the toggle.) Sortable and paginated (100 per page). Which columns are advanced/hidden/ordered and the default sort are configurable per-tenant — see [Configurable UI & Preferences](#configurable-ui--preferences).
 - **Chart** — line chart of signal strength over time.
 
 Toggle between views using the button in the toolbar.
@@ -850,7 +850,12 @@ Use `Site.metadata` for facility-wide attributes that apply to **everything in t
 | **`geofence`** | A polygon drawn on the map (GeoJSON `Polygon`). | Outdoor yards, loading lots, anywhere with GPS-equipped tags or external locators. |
 | **`virtual`** | Admin-defined logical grouping (no readers, no polygon). | Cross-cutting categories like "Cold storage" or "Hazmat". |
 
-> **What about local `(x, y)` coordinates inside a warehouse?** A common question: "Our warehouse uses a 400×600 m XY grid, not lat/lon. How do I model that?" Today, model each aisle or sub-area as a **`reader_bound`** zone — pick the fixed readers that cover it and let TagPulse infer zone membership from `tag_reads.reader_id`. No coordinates are needed at all, and the upcoming OverlappingZones processor (Sprint 41 Phase D) is designed for exactly this: a tag heard by readers belonging to multiple overlapping zones is confidently attributed to each. **True indoor `(x, y)` position estimation** — sub-meter trilateration writing `(asset, x, y, confidence)` rows — is a separate roadmap item ([ADR 024](adr/024-position-estimation.md)). Sprint 59 landed the *schema* for it (the `asset_positions` hypertable, per-antenna coordinates, and the per-site `coord_system` definition of units, extent, origin, and rotation), but the estimator that populates those positions stays deferred — nothing writes `asset_positions` yet. Until the estimator ships, the answer for warehouse customers is: reader-bound zones at the granularity you want to see in alerts and dashboards.
+> **What about local `(x, y)` coordinates inside a warehouse?** A common question: "Our warehouse uses a 400×600 m XY grid, not lat/lon. How do I model that?" **Two tiers (Sprint 64):**
+>
+> - **No-survey (default):** model each aisle or sub-area as a **`reader_bound`** zone — pick the fixed readers that cover it and let TagPulse infer zone membership. No coordinates needed. This is the coarse fallback and stays the right answer for simple deployments.
+> - **Surveyed floor plan:** give the **Site** a coordinate system (**Floor plan** button in Sites & Zones → units, extent, origin, optional floorplan image), then **drop each fixed reader onto the floor** to record its position (this writes the reader's port-0 antenna *and* assigns it to the site). Zones drawn on that floor are interpreted as **floor `(x, y)` polygons**, and a fixed read resolves to its zone by point-in-polygon of the reading antenna's position — the *accurate* path, preferred over `reader_bound`. The read-only **floor map** (Map page → pick the floor site) shows readers and asset markers snapped to the reader that last saw them.
+>
+> **True sub-meter `(x, y)` position estimation** — trilateration writing `(asset, x, y, confidence)` rows — remains a separate, deferred roadmap item ([ADR 024](adr/024-position-estimation.md)): the `asset_positions` schema exists but no estimator writes it yet, so asset markers snap to the triggering reader rather than a computed point.
 
 ### Creating a zone
 
