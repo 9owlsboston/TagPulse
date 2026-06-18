@@ -110,6 +110,158 @@
         "title": "AnalyticsResultResponse",
         "type": "object"
       },
+      "AntennaResponse": {
+        "description": "Persisted antenna row.",
+        "properties": {
+          "device_id": {
+            "format": "uuid",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "gain_dbi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gain Dbi"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "port": {
+            "maximum": 255.0,
+            "minimum": 0.0,
+            "title": "Port",
+            "type": "integer"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          },
+          "z": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Z"
+          }
+        },
+        "required": [
+          "id",
+          "device_id",
+          "port",
+          "x",
+          "y",
+          "z",
+          "label",
+          "gain_dbi"
+        ],
+        "title": "AntennaResponse",
+        "type": "object"
+      },
+      "AntennaUpsert": {
+        "additionalProperties": false,
+        "description": "Set an antenna's position within its device's site coordinate frame.\n\n**Port 0 is the reader's nominal location**; ports 1..N are the individual\nradiators. Coordinates are all optional \u2014 an antenna row may exist with\njust a label before it is surveyed; positioning falls back to port 0 when a\nradiator has no coordinate.",
+        "properties": {
+          "gain_dbi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gain Dbi"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          },
+          "z": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Z"
+          }
+        },
+        "title": "AntennaUpsert",
+        "type": "object"
+      },
       "ApiKeyResponse": {
         "description": "Returned once when an API key is generated.",
         "properties": {
@@ -1064,6 +1216,76 @@
         "title": "ColumnGroup",
         "type": "object"
       },
+      "CoordSystem": {
+        "additionalProperties": false,
+        "description": "Per-site floor coordinate frame (ADR-024).\n\n``NULL`` on a site \u21d2 geographic-only (lat/lon) rendering; when set, the\nsite renders as a floor plan in these local units. ``geo_anchor`` is the\noptional seam to a future unified geographic overlay.",
+        "properties": {
+          "extent_x": {
+            "exclusiveMinimum": 0.0,
+            "title": "Extent X",
+            "type": "number"
+          },
+          "extent_y": {
+            "exclusiveMinimum": 0.0,
+            "title": "Extent Y",
+            "type": "number"
+          },
+          "geo_anchor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeoAnchor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "origin_anchor": {
+            "default": "nw_corner",
+            "enum": [
+              "nw_corner",
+              "sw_corner",
+              "device_id"
+            ],
+            "title": "Origin Anchor",
+            "type": "string"
+          },
+          "origin_device_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Device Id"
+          },
+          "rotation_deg": {
+            "default": 0.0,
+            "maximum": 360.0,
+            "minimum": -360.0,
+            "title": "Rotation Deg",
+            "type": "number"
+          },
+          "units": {
+            "default": "meters",
+            "enum": [
+              "meters",
+              "feet"
+            ],
+            "title": "Units",
+            "type": "string"
+          }
+        },
+        "required": [
+          "extent_x",
+          "extent_y"
+        ],
+        "title": "CoordSystem",
+        "type": "object"
+      },
       "DashboardSparklines": {
         "description": "Bundle of sparkline series for the Dashboard's 9 KPI tiles.\n\nReturned by ``GET /dashboard/sparklines``. One round-trip per\nDashboard load. ``tiles`` is keyed by the tile ``id`` field\nused in ``src/pages/Dashboard.tsx`` so client wire-up is a\ndirect lookup. New tiles in the UI without a corresponding\nseries here render the tile without a sparkline (graceful\ndegradation).",
         "properties": {
@@ -1897,6 +2119,40 @@
         "title": "ExternalLocationResponse",
         "type": "object"
       },
+      "GeoAnchor": {
+        "additionalProperties": false,
+        "description": "Pin one floor-local point ``(x, y)`` to a real-world lat/lon.\n\nReserved seam for a future geo-anchored overlay (mobile + fixed readers on\none geographic map). Validated and stored now; no map consumes it yet.",
+        "properties": {
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lng": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lng",
+            "type": "number"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lng",
+          "x",
+          "y"
+        ],
+        "title": "GeoAnchor",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2647,6 +2903,92 @@
           "longitude"
         ],
         "title": "Location",
+        "type": "object"
+      },
+      "LocationDescriptor": {
+        "description": "Resolved, render-ready location for a tag read (Sprint 64).\n\nQuery-time enrichment so the UI's single \"Location\" column needs no\nclient-side joins. ``kind`` discriminates the two regimes:\n\n- ``geo``  \u2014 mobile read with lat/lon (geographic map).\n- ``floor`` \u2014 fixed read; the truthful location is the resolved\n  ``reader_bound`` zone (coordinates are a *map* concern, not a per-row one).\n- ``none`` \u2014 neither a fix nor a resolvable zone.",
+        "properties": {
+          "accuracy_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accuracy M"
+          },
+          "kind": {
+            "enum": [
+              "geo",
+              "floor",
+              "none"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lat"
+          },
+          "lon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lon"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "zone_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone Id"
+          },
+          "zone_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone Name"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "LocationDescriptor",
         "type": "object"
       },
       "LoginRequest": {
@@ -4303,6 +4645,16 @@
             ],
             "title": "City"
           },
+          "coord_system": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoordSystem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "country": {
             "anyOf": [
               {
@@ -4453,6 +4805,16 @@
               }
             ],
             "title": "City"
+          },
+          "coord_system": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoordSystem"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "country": {
             "anyOf": [
@@ -4626,6 +4988,16 @@
               }
             ],
             "title": "City"
+          },
+          "coord_system": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoordSystem"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "country": {
             "anyOf": [
@@ -6024,6 +6396,16 @@
               }
             ],
             "title": "Latitude"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocationDescriptor"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "location_accuracy_m": {
             "anyOf": [
@@ -11145,6 +11527,178 @@
         "summary": "Check Provision Status",
         "tags": [
           "provisioning"
+        ]
+      }
+    },
+    "/devices/{device_id}/antennas": {
+      "get": {
+        "operationId": "list_antennas_devices__device_id__antennas_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Device Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AntennaResponse"
+                  },
+                  "title": "Response List Antennas Devices  Device Id  Antennas Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List Antennas",
+        "tags": [
+          "antennas"
+        ]
+      }
+    },
+    "/devices/{device_id}/antennas/{port}": {
+      "delete": {
+        "operationId": "delete_antenna_devices__device_id__antennas__port__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port",
+            "required": true,
+            "schema": {
+              "maximum": 255,
+              "minimum": 0,
+              "title": "Port",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Delete Antenna",
+        "tags": [
+          "antennas"
+        ]
+      },
+      "put": {
+        "description": "Create or update the antenna at ``port`` (port 0 = the reader's spot).",
+        "operationId": "upsert_antenna_devices__device_id__antennas__port__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "port",
+            "required": true,
+            "schema": {
+              "maximum": 255,
+              "minimum": 0,
+              "title": "Port",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntennaUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntennaResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Upsert Antenna",
+        "tags": [
+          "antennas"
         ]
       }
     },
