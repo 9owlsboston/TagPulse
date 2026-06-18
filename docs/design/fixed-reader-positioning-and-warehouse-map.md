@@ -43,8 +43,8 @@ the Sprint 59 schema rather than inventing a new one.
 |---|----------|----------|
 | D1 | **Grain** the placement UI edits | **Layered.** Per-**antenna** `(x, y)` rows stay the source of truth (what trilateration needs); a **reader's** display coordinate = **centroid of its antennas** (a simple single-antenna reader is one port-0 antenna at the reader's spot). The UI starts at reader-grain ("(2,3)") and exposes antenna-grain as an advanced expansion. **No `devices.position_*` columns** are re-added — ADR-024 v1's per-device position stays superseded by the per-antenna `antennas` table. |
 | D2 | **Asset position** before the estimator exists | **Snap** the asset marker to the `(x, y)` of the reader/zone that last heard it — the indoor analogue of today's "Map snaps markers to reader positions." Trilateration is a later swap of the marker source from reader-centroid → `asset_positions`. |
-| D3 | **Map rendering model** | **Pure floorplan first** via Leaflet **`CRS.Simple`** (floor-local units, no projection). The `coord_system.geo_anchor` **seam is designed explicitly** (see §"Geo-anchor seam") so a future unified mobile+fixed map needs no data rework — but its *implementation* is deferred. |
-| D4 | **Floorplan image** | **Supported** — an uploaded floorplan image renders behind the grid as a `CRS.Simple` image layer scaled to `coord_system.extent_x × extent_y`. (Storage approach is an open question — see §Open questions.) |
+| D3 | **Map rendering model** | **Pure floorplan first** via Leaflet **`CRS.Simple`** (floor-local units, no projection). Both render modes are **immediate and first-class** — the *geographic* map (lat/lon, already exists) serves mobile/truck-fleet customers; the *floor* map serves warehouse customers; the Map page switches by site `coord_system` (NULL ⇒ geographic, set ⇒ floor). The `coord_system.geo_anchor` **seam is designed** (see §"Geo-anchor seam") but its build is **deferred** — see the trigger there. |
+| D4 | **Floorplan image** | **Optional, inline.** When provided, an uploaded floorplan image renders behind the grid as a `CRS.Simple` image layer scaled to `coord_system.extent_x × extent_y`, stored **inline as a base64 `data:` URL capped at ~1–2 MB** (option (a) — no blob infra, consistent with the branding-logo precedent; column stays a string so a future move to blob is non-breaking). When **absent**, the map renders a **plain grid** from `coord_system.extent` (e.g. 600×400) — no image required. |
 | D5 | **Zone resolution** for fixed reads | **Layered fallback.** `reader_bound` zones (configured `device_id` membership) remain the **zero-survey default**; surveyed sites graduate to **antenna-position → floor-polygon** zones resolved by the *same point-in-polygon engine* the geofence path already runs, just in `CRS.Simple` floor units instead of lat/lon. `reader_bound` is reframed as the *coarse fallback*, not the canonical model. See §"Zone resolution for fixed reads". |
 | D6 | **3D / z-axis** | **Deferred until a real need surfaces.** `antennas.z` stays an *optional, estimator-only* mount-height input (already nullable); genuine vertical requirements (high-bay racking, multi-storey) are modeled as **discrete level/floor attributes on zones/sites**, never a continuous `z` coordinate. **No 3D coordinate UI or 3D map** in scope. |
 
@@ -100,6 +100,17 @@ genuinely different *architectures*, not just UX flavors:
 - **v1 obligation:** ship `floorToGeo` (and validate `geo_anchor` shape) even
   though no map consumes it yet, and keep the placement UI writing coordinates
   that are already geo-projection-ready. That is the whole "seam."
+
+**Confirmed: no geo-anchor build for now.** Both immediate customer types are
+served *without* it — truck-fleet (mobile/GPS) on the geographic map, warehouse
+(fixed/XY) on the floor map, as two render modes of one page. Geo-anchoring is a
+**real, proven pattern** (campus/indoor wayfinding — Azure Maps Creator, Google/
+Apple Indoor, Esri ArcGIS Indoors; the floor-selector UX there also corroborates
+D6's discrete-levels choice), so the seam is worth preserving. Its **trigger** is
+narrow and specific: a **single facility that has mobile *and* fixed readers and
+wants both on one combined canvas** (e.g. yard trucks + indoor forklifts at the
+same DC). Distinct mobile-only and fixed-only customers/sites do **not** trip it.
+Until that customer appears, the floor map stands alone.
 
 ## Zone resolution for fixed reads (D5)
 
@@ -197,13 +208,6 @@ server-side resolution.)
 
 ## Open questions
 
-- **Floorplan image storage.** The branding-logo precedent stores images inline
-  as base64 `data:` URLs capped at ~96 KB to avoid blob storage. A floorplan is
-  typically **much larger** (hundreds of KB–MB). Options: (a) a larger inline
-  cap (simple, bloats the `sites` row / API payloads), (b) real object storage
-  (Azure Blob + SAS — new infra, contradicts the "no blob" stance so far),
-  (c) operator-hosted URL only (no upload, but D4 said support upload). **Needs
-  a decision before Phase 1.**
 - **Reader-centroid vs. explicit reader pin.** For readers whose antennas are
   *not* yet surveyed, is the reader placed directly (a transient port-0 antenna)
   or hidden until it has at least one antenna coordinate?
