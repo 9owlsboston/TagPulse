@@ -183,16 +183,15 @@ reader" disappears for surveyed sites. The cost is the survey burden, which is
 exactly the Phase 1 placement UI; un-surveyed sites lose nothing (they stay on
 the `reader_bound` fallback).
 
-> **⚠ Implementation blocker (found in Sprint 64 Phase 0).** The accurate path
-> (2) needs to know **which floor/site an antenna is on** to choose the candidate
-> floor polygons — but `devices` has **no `site_id`**; the only device→site link
-> today is *circular* (through the very `reader_bound` zone the floor path is
-> meant to replace). So the accurate path is blocked on a **device→site
-> assignment** design (e.g. a `devices.site_id` column + assignment UI, or
-> deriving it from antenna coordinates). This is a separate design decision, not
-> a quick follow-up. **The `reader_bound` fallback (path 1) ships in Phase 0 and
-> powers the Tag Reads location descriptor; the accurate path is parked until
-> device→site assignment is designed.**
+> **✅ Resolved (Sprint 64 follow-up).** The accurate path (2) needed to know
+> **which floor/site an antenna is on** to choose candidate floor polygons — but
+> `devices` had **no `site_id`** (the only device→site link was *circular*,
+> through the very `reader_bound` zone the floor path replaces). This was
+> designed and shipped in [device-site-assignment-and-floor-zones.md](device-site-assignment-and-floor-zones.md):
+> a nullable `devices.site_id` FK + a `FloorZoneResolver` (device→site→`coord_system`
+> →antenna(port→port-0)→`point_in_polygon`) that the tag-reads location descriptor
+> now **prefers** over the coarse `reader_bound` fallback. Un-surveyed/un-sited
+> readers still use `reader_bound`.
 
 ## Displaying location in Tag Reads
 
@@ -280,11 +279,9 @@ not block the design:
 - Marker/precision affordance — whether the map visually distinguishes a
   reader-grain (port-0-only) reader from a fully surveyed one.
 - **Device→site assignment (blocks the accurate floor-polygon zone path).**
-  `devices` has no `site_id`; the antenna-position → floor-polygon resolver can't
-  pick candidate floor zones without knowing the device's floor. Needs its own
-  design (a `devices.site_id` column + assignment UI is the likely shape). Until
-  then the `reader_bound` fallback is the only fixed-read zone path. See the
-  blocker note under "Zone resolution for fixed reads".
+  *(Resolved — Sprint 64 follow-up.)* `devices.site_id` shipped + the
+  `FloorZoneResolver` consumes it; see
+  [device-site-assignment-and-floor-zones.md](device-site-assignment-and-floor-zones.md).
 
 ## Out of scope
 
