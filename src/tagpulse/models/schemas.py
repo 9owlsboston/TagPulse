@@ -473,6 +473,38 @@ def _normalise_country(value: str | None) -> str | None:
 CoordUnits = Literal["meters", "feet"]
 CoordOriginAnchor = Literal["nw_corner", "sw_corner", "device_id"]
 
+# Floorplan image (Sprint 64 follow-up): stored inline as a base64 ``data:`` URL
+# on the coord_system (no blob storage), or an operator-hosted ``https://`` URL.
+# Cap the encoded length so a floorplan can't bloat the site row. ~2 MB encoded
+# ≈ 1.5 MB image — generous for an optimised PNG/WebP or an SVG floor plan.
+_MAX_FLOORPLAN_DATA_URL_LEN = 2 * 1024 * 1024
+_MAX_FLOORPLAN_URL_LEN = 2048
+_FLOORPLAN_DATA_URL_RE = re.compile(
+    r"^data:image/(png|jpeg|svg\+xml|webp|gif);base64,[A-Za-z0-9+/=\s]+$"
+)
+
+
+def _validate_floorplan_image(v: str | None) -> str | None:
+    """A floorplan image may be an ``https://`` URL or a base64 ``data:image/...``
+    URL (capped). Empty/``None`` clears it."""
+    if v is None or v == "":
+        return None
+    if v.startswith("data:"):
+        if len(v) > _MAX_FLOORPLAN_DATA_URL_LEN:
+            raise ValueError(
+                f"floorplan image too large (max {_MAX_FLOORPLAN_DATA_URL_LEN // 1024} KB encoded)"
+            )
+        if not _FLOORPLAN_DATA_URL_RE.match(v):
+            raise ValueError(
+                "floorplan image data URL must be base64 data:image/(png|jpeg|svg+xml|webp|gif)"
+            )
+        return v
+    if v.startswith("https://"):
+        if len(v) > _MAX_FLOORPLAN_URL_LEN:
+            raise ValueError(f"floorplan image URL too long (max {_MAX_FLOORPLAN_URL_LEN} chars)")
+        return v
+    raise ValueError("floorplan image must be an https:// URL or a base64 data:image/... URL")
+
 
 class GeoAnchor(BaseModel):
     """Pin one floor-local point ``(x, y)`` to a real-world lat/lon.
@@ -504,8 +536,14 @@ class CoordSystem(BaseModel):
     origin_device_id: UUID | None = None
     rotation_deg: float = Field(default=0.0, ge=-360.0, le=360.0)
     geo_anchor: GeoAnchor | None = None
+    # Optional floorplan backdrop (inline data URL or https URL); None ⇒ plain grid.
+    floorplan_image: str | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    _check_floorplan = field_validator("floorplan_image")(
+        lambda cls, v: _validate_floorplan_image(v)
+    )
 
     @model_validator(mode="after")
     def _origin_device_consistency(self) -> "CoordSystem":

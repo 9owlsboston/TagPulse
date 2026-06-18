@@ -1230,6 +1230,17 @@
             "title": "Extent Y",
             "type": "number"
           },
+          "floorplan_image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floorplan Image"
+          },
           "geo_anchor": {
             "anyOf": [
               {
