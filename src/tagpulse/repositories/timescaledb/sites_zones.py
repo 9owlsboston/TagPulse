@@ -16,6 +16,7 @@ from tagpulse.geo import (
     PolygonValidationError,
     bbox_contains,
     compute_bbox,
+    point_in_polygon,
     validate_polygon,
 )
 from tagpulse.models.database import SiteModel, ZoneModel
@@ -110,6 +111,19 @@ def _zone_to_response(row: ZoneModel) -> ZoneResponse:
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+def _polygon_ring(polygon: dict[str, Any] | None) -> builtins.list[tuple[float, float]] | None:
+    """Extract a GeoJSON polygon's outer ring as ``(x, y)`` tuples (or None)."""
+    if not polygon:
+        return None
+    coords = polygon.get("coordinates")
+    if not coords:
+        return None
+    ring = coords[0]
+    if not ring or len(ring) < 4:  # need ≥3 distinct vertices + closing point
+        return None
+    return [(float(p[0]), float(p[1])) for p in ring]
 
 
 class TimescaleSiteRepository:
@@ -388,3 +402,33 @@ class TimescaleZoneRepository:
                 bbox_max_lon=z.bbox_max_lon,
             )
         ]
+
+    async def get_floor_zone_for_point(
+        self, tenant_id: uuid.UUID, site_id: uuid.UUID, x: float, y: float
+    ) -> ZoneResponse | None:
+        """Resolve the floor zone containing a floor-local point ``(x, y)``.
+
+        The accurate D5 path: on a site with a ``coord_system``, a zone's
+        ``polygon_geojson`` is interpreted as **floor coordinates**, and the
+        coordinate-agnostic ray-casting :func:`point_in_polygon` engine finds the
+        containing zone. Lowest ``created_at`` wins (mirrors
+        :meth:`get_zone_for_reader` determinism). No bbox prefilter (floor sites
+        have few zones; a full scan is cheap — see the design doc).
+        """
+        stmt = (
+            select(ZoneModel)
+            .where(
+                ZoneModel.tenant_id == tenant_id,
+                ZoneModel.site_id == site_id,
+                ZoneModel.polygon_geojson.is_not(None),
+            )
+            .order_by(ZoneModel.created_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        for row in result.scalars():
+            ring = _polygon_ring(row.polygon_geojson)
+            # point_in_polygon treats ring as (x, y) pairs and args as (y, x);
+            # in floor space x≡lon, y≡lat, so this is a direct floor test.
+            if ring and point_in_polygon(y, x, ring):
+                return _zone_to_response(row)
+        return None

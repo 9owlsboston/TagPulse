@@ -130,6 +130,8 @@ class DeviceCreate(BaseModel):
     metadata: dict[str, Any] | None = None
     configuration: dict[str, Any] | None = None
     firmware_version: str | None = Field(default=None, max_length=50)
+    # Sprint 64 follow-up: site/floor the reader lives on (fixed readers).
+    site_id: UUID | None = None
 
 
 class DeviceUpdate(BaseModel):
@@ -141,6 +143,8 @@ class DeviceUpdate(BaseModel):
     metadata: dict[str, Any] | None = None
     configuration: dict[str, Any] | None = None
     firmware_version: str | None = Field(default=None, max_length=50)
+    # Sprint 64 follow-up: set to assign the reader to a site, null to clear.
+    site_id: UUID | None = None
 
 
 class DeviceResponse(BaseModel):
@@ -156,6 +160,7 @@ class DeviceResponse(BaseModel):
     connection_state: str
     last_seen: datetime | None
     mobility: str = "fixed"
+    site_id: UUID | None = None
     token_prefix: str | None = None
     token_rotated_at: datetime | None = None
     cert_thumbprint: str | None = None

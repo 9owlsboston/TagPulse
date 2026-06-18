@@ -126,6 +126,11 @@ class DeviceModel(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
     )
+    # Sprint 64 follow-up: the site/floor a (fixed) reader physically lives on.
+    # NULL for mobile/un-assigned readers. Enables floor-polygon zone resolution.
+    site_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sites.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
     configuration: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     firmware_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
