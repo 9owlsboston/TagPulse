@@ -444,6 +444,54 @@ def _normalise_country(value: str | None) -> str | None:
     return candidate
 
 
+# -- Site coordinate system (Sprint 64 / ADR-024) --
+
+CoordUnits = Literal["meters", "feet"]
+CoordOriginAnchor = Literal["nw_corner", "sw_corner", "device_id"]
+
+
+class GeoAnchor(BaseModel):
+    """Pin one floor-local point ``(x, y)`` to a real-world lat/lon.
+
+    Reserved seam for a future geo-anchored overlay (mobile + fixed readers on
+    one geographic map). Validated and stored now; no map consumes it yet.
+    """
+
+    lat: float = Field(ge=-90.0, le=90.0)
+    lng: float = Field(ge=-180.0, le=180.0)
+    x: float
+    y: float
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CoordSystem(BaseModel):
+    """Per-site floor coordinate frame (ADR-024).
+
+    ``NULL`` on a site ⇒ geographic-only (lat/lon) rendering; when set, the
+    site renders as a floor plan in these local units. ``geo_anchor`` is the
+    optional seam to a future unified geographic overlay.
+    """
+
+    units: CoordUnits = "meters"
+    extent_x: float = Field(gt=0)
+    extent_y: float = Field(gt=0)
+    origin_anchor: CoordOriginAnchor = "nw_corner"
+    origin_device_id: UUID | None = None
+    rotation_deg: float = Field(default=0.0, ge=-360.0, le=360.0)
+    geo_anchor: GeoAnchor | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _origin_device_consistency(self) -> "CoordSystem":
+        if self.origin_anchor == "device_id" and self.origin_device_id is None:
+            raise ValueError("origin_device_id is required when origin_anchor is 'device_id'")
+        if self.origin_anchor != "device_id" and self.origin_device_id is not None:
+            raise ValueError("origin_device_id is only valid when origin_anchor is 'device_id'")
+        return self
+
+
 class SiteCreate(BaseModel):
     """Create a site."""
 
@@ -463,6 +511,8 @@ class SiteCreate(BaseModel):
     longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
     default_timezone: str = Field(default="UTC", max_length=64)
     metadata: dict[str, Any] | None = None
+    # Sprint 64 (ADR-024): optional floor coordinate frame. NULL ⇒ geographic.
+    coord_system: CoordSystem | None = None
 
     _normalise_country = field_validator("country", mode="before")(
         lambda cls, v: _normalise_country(v)
@@ -504,6 +554,9 @@ class SiteUpdate(BaseModel):
     longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
     default_timezone: str | None = Field(default=None, max_length=64)
     metadata: dict[str, Any] | None = None
+    # Sprint 64: set to reframe a site as a floor plan, or null to clear it
+    # back to geographic-only.
+    coord_system: CoordSystem | None = None
 
     _normalise_country = field_validator("country", mode="before")(
         lambda cls, v: _normalise_country(v)
@@ -549,6 +602,7 @@ class SiteResponse(BaseModel):
     longitude: float | None
     default_timezone: str
     metadata: dict[str, Any] | None = None
+    coord_system: CoordSystem | None = None
     created_at: datetime
     updated_at: datetime
 
