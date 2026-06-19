@@ -1674,6 +1674,26 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 65 — BYO precomputed floor positions + asset floor-path (active)
+
+> **Status (2026-06-19, kickoff).** Phase 1 of [floor-position-estimation.md](design/floor-position-estimation.md) — the first writer into the headless Sprint 59 `asset_positions` hypertable. Branch `sprint-65/floor-position-byo`, backend PR [#120](https://github.com/9owlsboston/TagPulse/pull/120). Backend-first; the `CRS.Simple` trail-layer `[ui]` follows in `TagPulse-UI`. Phase 2 (the `rssi_weighted_centroid` estimator) stays deferred per the design doc.
+
+**Why now.** Sprint 64 shipped the floor map but asset markers snap to the triggering reader — no true per-asset `(x, y)`, no movement trail, and `asset_positions` has no writer. Phase 1 closes that for customers who already own a location engine (vendor middleware / UWB / BLE-AoA) and builds the **table-write + read endpoint + UI trail seam that Phase 2 reuses**.
+
+**Governing invariant.** Presentation/ingest of an externally-computed fix only — TagPulse does no positioning math in Phase 1 (`source='precomputed'`). The floor `(x, y)` frame is the site `coord_system`; the geographic lat/lon sibling is the existing `POST /assets/{id}/external-position`.
+
+**Scope (locked at kickoff).**
+- **`POST /assets/{id}/position` (backend; OpenAPI change).** `FloorPositionCreate` (`site_id`, `x`, `y`, `z?`, `confidence` 0..1, `recorded_at?`, `metadata?`) → one `asset_positions` row, `source='precomputed'`. Guards: asset in tenant (404), `site_id` in tenant (422), finite coords, `tenant_id` always server-stamped (RLS).
+- **`GET /assets/{id}/floor-path` (backend; OpenAPI change).** Returns `FloorPositionResponse[]` ascending by time, with `since` / `until` / `source` / `limit` filters — the floor-frame counterpart to the lat/lon `GET /assets/{id}/path`.
+- **Audit.** `asset.floor_position_recorded` on every write.
+- **`[ui]`** Floor-map trail layer (`TagPulse-UI`): latest fix as a dot, prior fixes as a fading polyline, confidence → opacity. Reuses the Sprint 64 `CRS.Simple` map.
+
+**Decisions settled (design doc).** Sibling endpoint over extending `external-position` (different table + coordinate frame); `source` enum lets `precomputed` coexist with the future `computed`; resolution policy `precomputed > computed > zone` deferred to when Phase 2 lands.
+
+**Out of scope.** The `rssi_weighted_centroid` estimator + recency-decay + server tick (Phase 2); any v2 wire-format change / v2 snap simulator (`[NEEDS WM]`); the `source='zone'` retrieval fallback; 3D `z` positioning.
+
+---
+
 ## Backlog (not scheduled)
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock. **Design now captured** ([floor-position-estimation.md](design/floor-position-estimation.md), 2026-06-19) — a two-phase plan that fills the headless `asset_positions` table so an asset shows a true floor `(x, y)` + movement trail:

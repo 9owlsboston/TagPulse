@@ -767,27 +767,30 @@ Latest `tag_read` per active binding. Defined in [design/assets-and-zones.md](de
 
 Per-asset indoor `(x, y)` position fixes in a site's floor `coord_system`. Landed
 headless in Sprint 59 ([migration 051](../migrations/versions/051_spatial_foundation.py),
-[ADR-024](adr/024-position-estimation.md)): the table is **created but not
-written by any estimator** — the homegrown `rssi_weighted_centroid` math and the
-BYO-precomputed ingest endpoint are deferred. Zone-level "where is X" is answered
-today from `tag_presence` + `subject_current_zone`, not this table.
+[ADR-024](adr/024-position-estimation.md)). **Sprint 65 (Phase 1) added the first
+writer**: `source='precomputed'` rows via `POST /assets/{id}/position` (BYO — an
+external location engine pushes a resolved floor fix). The `computed` source (the
+homegrown `rssi_weighted_centroid` estimator) and the `zone` retrieval fallback
+remain deferred (Phase 2 — [floor-position-estimation.md](design/floor-position-estimation.md)).
+Zone-level "where is X" is still answered from `tag_presence` + `subject_current_zone`.
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
 | `id` | UUID | PK (with `time`), default `gen_random_uuid()` | |
-| `time` | TIMESTAMPTZ | NOT NULL, hypertable partition key | Fix timestamp. |
-| `tenant_id` | UUID | FK → tenants.id, NOT NULL | RLS-scoped (`tenant_isolation_asset_positions`). |
+| `time` | TIMESTAMPTZ | NOT NULL, hypertable partition key | Fix timestamp (`recorded_at`; server `now()` if the writer omits it). |
+| `tenant_id` | UUID | FK → tenants.id, NOT NULL | RLS-scoped (`tenant_isolation_asset_positions`); always server-stamped. |
 | `asset_id` | UUID | NOT NULL, **no FK** | Hypertable — matches the ADR-013/014 no-FK convention (cf. `external_locations`). |
-| `site_id` | UUID | NOT NULL | The site whose `coord_system` frames `(x, y)`. |
+| `site_id` | UUID | NOT NULL | The site whose `coord_system` frames `(x, y)`; validated to belong to the tenant on write (422 otherwise). |
 | `x` | NUMERIC | NOT NULL | Floor-frame X (site `coord_system` units). |
 | `y` | NUMERIC | NOT NULL | Floor-frame Y. |
 | `z` | NUMERIC | NULLABLE | Height (optional). |
-| `confidence` | NUMERIC(3,2) | NOT NULL, `BETWEEN 0 AND 1` | Estimator confidence. |
-| `source` | VARCHAR(16) | NOT NULL, `IN ('precomputed','zone','computed')` | Origin of the fix. Sprint 59 writes nothing to `computed`. |
+| `confidence` | NUMERIC(3,2) | NOT NULL, `BETWEEN 0 AND 1` | Fix confidence (vendor-supplied for `precomputed`; estimator-scored for `computed`). |
+| `source` | VARCHAR(16) | NOT NULL, `IN ('precomputed','zone','computed')` | Origin of the fix. Sprint 65 writes `precomputed`; `computed`/`zone` deferred. |
 | `metadata` | JSONB | NULLABLE | Free-form per-fix detail. |
 
 **Indexes:** `ix_asset_positions_by_asset` (`tenant_id, asset_id, time DESC`), `ix_asset_positions_by_site` (`tenant_id, site_id, time DESC`).
 **RLS:** enabled — `tenant_id = current_setting('app.current_tenant_id')`.
+**API:** `POST /assets/{id}/position` (admin/editor write, `source='precomputed'`), `GET /assets/{id}/floor-path` (viewer read, ascending time, `since`/`until`/`source`/`limit` filters) — Sprint 65.
 **Migration:** 051 (spatial foundation).
 
 ---

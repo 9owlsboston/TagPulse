@@ -12,7 +12,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from tagpulse.api.dependencies import get_asset_service
 from tagpulse.api.label_filter import LabelFilterError, parse_label_filter
-from tagpulse.api.services.asset_service import AssetNotFoundError, AssetService
+from tagpulse.api.services.asset_service import (
+    AssetNotFoundError,
+    AssetPositionSiteError,
+    AssetService,
+)
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.schemas import (
     AssetCreate,
@@ -26,6 +30,8 @@ from tagpulse.models.schemas import (
     AssetUpdate,
     ExternalLocationCreate,
     ExternalLocationResponse,
+    FloorPositionCreate,
+    FloorPositionResponse,
     ManifestResponse,
 )
 
@@ -290,6 +296,56 @@ async def list_external_positions(
         raise HTTPException(status_code=404, detail="Asset not found")
     return await service.list_external_positions(
         user.tenant_id, asset_id, limit=limit, offset=offset
+    )
+
+
+# -- Floor positions (Sprint 65 — BYO precomputed (x, y)) --
+
+
+@router.post(
+    "/{asset_id}/position",
+    response_model=FloorPositionResponse,
+    status_code=201,
+)
+async def record_floor_position(
+    asset_id: UUID,
+    body: FloorPositionCreate,
+    user: AuthenticatedUser = require_role("admin", "editor"),
+    service: AssetService = Depends(get_asset_service),
+) -> FloorPositionResponse:
+    """Record a precomputed floor ``(x, y)`` fix (BYO — vendor / RTLS push)."""
+    try:
+        return await service.record_floor_position(user.tenant_id, user.user_id, asset_id, body)
+    except AssetNotFoundError:
+        raise HTTPException(status_code=404, detail="Asset not found") from None
+    except AssetPositionSiteError:
+        raise HTTPException(status_code=422, detail="Site not found in tenant") from None
+
+
+@router.get(
+    "/{asset_id}/floor-path",
+    response_model=list[FloorPositionResponse],
+)
+async def list_floor_path(
+    asset_id: UUID,
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    source: str | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=5000),
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    service: AssetService = Depends(get_asset_service),
+) -> list[FloorPositionResponse]:
+    """Return an asset's floor-frame ``(x, y)`` path (ascending time)."""
+    asset = await service.get_asset(user.tenant_id, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return await service.list_floor_path(
+        user.tenant_id,
+        asset_id,
+        since=since,
+        until=until,
+        source=source,
+        limit=limit,
     )
 
 
