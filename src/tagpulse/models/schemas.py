@@ -937,6 +937,48 @@ class ExternalLocationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# -------- Floor positions (Sprint 65 — BYO precomputed (x, y)) --------
+
+
+class FloorPositionCreate(BaseModel):
+    """Inbound precomputed floor-frame ``(x, y)`` fix for an asset (BYO).
+
+    Phase 1 of [floor-position-estimation.md](../design/floor-position-estimation.md):
+    an external location engine (vendor middleware, UWB, BLE-AoA) pushes a
+    resolved floor fix; stored in ``asset_positions`` with ``source='precomputed'``.
+    Coordinates are in the site ``coord_system`` units (the floor frame), not
+    lat/lon — the geographic sibling is ``POST /assets/{id}/external-position``.
+    """
+
+    site_id: UUID
+    x: float = Field(..., allow_inf_nan=False)
+    y: float = Field(..., allow_inf_nan=False)
+    z: float | None = Field(default=None, allow_inf_nan=False)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    recorded_at: datetime | None = None  # server now() if omitted
+    metadata: dict[str, Any] | None = None
+
+
+class FloorPositionResponse(BaseModel):
+    """A persisted ``asset_positions`` row (floor-frame ``(x, y)`` fix).
+
+    Shared by ``POST /assets/{id}/position`` (the created row) and
+    ``GET /assets/{id}/floor-path`` (one point on the trail, ascending time).
+    """
+
+    id: UUID
+    tenant_id: UUID
+    asset_id: UUID
+    site_id: UUID
+    recorded_at: datetime
+    x: float
+    y: float
+    z: float | None
+    confidence: float
+    source: str
+    metadata: dict[str, Any] | None = None
+
+
 # -------- Carrier semantics (Sprint 15 Phase C) --------
 
 

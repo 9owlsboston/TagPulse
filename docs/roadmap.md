@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 64 — reader location warehouse map · branch `sprint-64/reader-location-warehouse-map` (full scope lands in §sprint-64 during the sprint).
+**Current sprint:** 65 — floor position byo · branch `sprint-65/floor-position-byo` (full scope lands in §sprint-65 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1671,6 +1671,26 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 **Decisions settled (design chore).** Port-0 reader model + availability fallback (reader-grain default, antenna-grain opt-in, simplified "reader = one location" = the default tier); snap to triggering reader (zone-centroid reachable later, no lock-in); pure floorplan `CRS.Simple` with the geo-anchor seam designed but build-deferred behind a narrow multi-building/yard-plus-indoor trigger; optional inline floorplan image + grid fallback; `reader_bound` coarse fallback → antenna-position → floor-polygon zones; current/query-time zone for the Location column; 3D/continuous `z` deferred (vertical = discrete levels).
 
 **Out of scope.** Trilateration / RSSI estimator (Phase 3, ADR-024-deferred); geo-anchored unified map *build* (seam only); 3D coordinate UI / continuous `z`; re-adding `devices.position_*`; mobile-reader / lat-lon map changes.
+
+---
+
+## Sprint 65 — BYO precomputed floor positions + asset floor-path (active)
+
+> **Status (2026-06-19, kickoff).** Phase 1 of [floor-position-estimation.md](design/floor-position-estimation.md) — the first writer into the headless Sprint 59 `asset_positions` hypertable. Branch `sprint-65/floor-position-byo`, backend PR [#120](https://github.com/9owlsboston/TagPulse/pull/120). Backend-first; the `CRS.Simple` trail-layer `[ui]` follows in `TagPulse-UI`. Phase 2 (the `rssi_weighted_centroid` estimator) stays deferred per the design doc.
+
+**Why now.** Sprint 64 shipped the floor map but asset markers snap to the triggering reader — no true per-asset `(x, y)`, no movement trail, and `asset_positions` has no writer. Phase 1 closes that for customers who already own a location engine (vendor middleware / UWB / BLE-AoA) and builds the **table-write + read endpoint + UI trail seam that Phase 2 reuses**.
+
+**Governing invariant.** Presentation/ingest of an externally-computed fix only — TagPulse does no positioning math in Phase 1 (`source='precomputed'`). The floor `(x, y)` frame is the site `coord_system`; the geographic lat/lon sibling is the existing `POST /assets/{id}/external-position`.
+
+**Scope (locked at kickoff).**
+- **`POST /assets/{id}/position` (backend; OpenAPI change).** `FloorPositionCreate` (`site_id`, `x`, `y`, `z?`, `confidence` 0..1, `recorded_at?`, `metadata?`) → one `asset_positions` row, `source='precomputed'`. Guards: asset in tenant (404), `site_id` in tenant (422), finite coords, `tenant_id` always server-stamped (RLS).
+- **`GET /assets/{id}/floor-path` (backend; OpenAPI change).** Returns `FloorPositionResponse[]` ascending by time, with `since` / `until` / `source` / `limit` filters — the floor-frame counterpart to the lat/lon `GET /assets/{id}/path`.
+- **Audit.** `asset.floor_position_recorded` on every write.
+- **`[ui]`** Floor-map trail layer (`TagPulse-UI`): latest fix as a dot, prior fixes as a fading polyline, confidence → opacity. Reuses the Sprint 64 `CRS.Simple` map.
+
+**Decisions settled (design doc).** Sibling endpoint over extending `external-position` (different table + coordinate frame); `source` enum lets `precomputed` coexist with the future `computed`; resolution policy `precomputed > computed > zone` deferred to when Phase 2 lands.
+
+**Out of scope.** The `rssi_weighted_centroid` estimator + recency-decay + server tick (Phase 2); any v2 wire-format change / v2 snap simulator (`[NEEDS WM]`); the `source='zone'` retrieval fallback; 3D `z` positioning.
 
 ---
 

@@ -29,11 +29,16 @@ from tagpulse.models.schemas import (
     AssetUpdate,
     ExternalLocationCreate,
     ExternalLocationResponse,
+    FloorPositionCreate,
+    FloorPositionResponse,
     ManifestEntry,
     ManifestResponse,
 )
 from tagpulse.repositories.timescaledb.asset_location import (
     TimescaleAssetLocationRepository,
+)
+from tagpulse.repositories.timescaledb.asset_positions import (
+    TimescaleAssetPositionRepository,
 )
 from tagpulse.repositories.timescaledb.assets import (
     TimescaleAssetRepository,
@@ -41,6 +46,9 @@ from tagpulse.repositories.timescaledb.assets import (
 )
 from tagpulse.repositories.timescaledb.external_locations import (
     TimescaleExternalLocationRepository,
+)
+from tagpulse.repositories.timescaledb.sites_zones import (
+    TimescaleSiteRepository,
 )
 from tagpulse.repositories.timescaledb.telemetry import (
     TimescaleTelemetryReadingsRepository,
@@ -52,6 +60,14 @@ logger = logging.getLogger(__name__)
 
 class AssetNotFoundError(Exception):
     """Raised when the asset is not present in the caller's tenant."""
+
+
+class AssetPositionSiteError(Exception):
+    """Raised when a floor position references a site not in the caller's tenant."""
+
+    def __init__(self, site_id: UUID) -> None:
+        self.site_id = site_id
+        super().__init__(f"Site {site_id} not found in tenant")
 
 
 class AssetService:
@@ -67,6 +83,8 @@ class AssetService:
         asset_location_repo: TimescaleAssetLocationRepository | None = None,
         telemetry_readings_repo: (TimescaleTelemetryReadingsRepository | None) = None,
         tenant_repo: TimescaleTenantRepository | None = None,
+        position_repo: TimescaleAssetPositionRepository | None = None,
+        site_repo: TimescaleSiteRepository | None = None,
     ) -> None:
         self._assets = asset_repo
         self._bindings = binding_repo
@@ -76,6 +94,8 @@ class AssetService:
         self._asset_location = asset_location_repo
         self._telemetry_readings = telemetry_readings_repo
         self._tenant_repo = tenant_repo
+        self._positions = position_repo
+        self._sites = site_repo
 
     # -- Assets --
 
@@ -452,6 +472,63 @@ class AssetService:
         if self._external is None:
             raise RuntimeError("external_location_repo not configured")
         return await self._external.list_for_asset(tenant_id, asset_id, limit=limit, offset=offset)
+
+    # -- Floor positions (Sprint 65 — BYO precomputed (x, y)) --
+
+    async def record_floor_position(
+        self,
+        tenant_id: UUID,
+        user_id: UUID | None,
+        asset_id: UUID,
+        payload: FloorPositionCreate,
+    ) -> FloorPositionResponse:
+        """Persist a precomputed floor ``(x, y)`` fix (``source='precomputed'``).
+
+        Guards: the asset must exist in the tenant (``AssetNotFoundError`` → 404)
+        and the ``site_id`` must belong to the tenant (``AssetPositionSiteError``
+        → 422). ``tenant_id`` is always stamped server-side, never from the body.
+        """
+        if self._positions is None or self._sites is None:
+            raise RuntimeError("position_repo/site_repo not configured")
+        asset = await self._assets.get(tenant_id, asset_id)
+        if asset is None:
+            raise AssetNotFoundError(asset_id)
+        site = await self._sites.get(tenant_id, payload.site_id)
+        if site is None:
+            raise AssetPositionSiteError(payload.site_id)
+        recorded_at = payload.recorded_at or datetime.now(UTC)
+        position = await self._positions.insert(
+            tenant_id,
+            asset_id,
+            recorded_at=recorded_at,
+            position=payload,
+            source="precomputed",
+        )
+        await self._audit.log(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            action="asset.floor_position_recorded",
+            resource_type="asset",
+            resource_id=asset_id,
+            changes={"source": "precomputed", "site_id": str(payload.site_id)},
+        )
+        return position
+
+    async def list_floor_path(
+        self,
+        tenant_id: UUID,
+        asset_id: UUID,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        source: str | None = None,
+        limit: int = 500,
+    ) -> list[FloorPositionResponse]:
+        if self._positions is None:
+            raise RuntimeError("position_repo not configured")
+        return await self._positions.list_floor_path(
+            tenant_id, asset_id, since=since, until=until, source=source, limit=limit
+        )
 
     # -- Location & path (Sprint 15 — view + path API) --
 

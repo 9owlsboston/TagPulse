@@ -2166,6 +2166,156 @@
         "title": "ExternalLocationResponse",
         "type": "object"
       },
+      "FloorPositionCreate": {
+        "description": "Inbound precomputed floor-frame ``(x, y)`` fix for an asset (BYO).\n\nPhase 1 of [floor-position-estimation.md](../design/floor-position-estimation.md):\nan external location engine (vendor middleware, UWB, BLE-AoA) pushes a\nresolved floor fix; stored in ``asset_positions`` with ``source='precomputed'``.\nCoordinates are in the site ``coord_system`` units (the floor frame), not\nlat/lon \u2014 the geographic sibling is ``POST /assets/{id}/external-position``.",
+        "properties": {
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "recorded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded At"
+          },
+          "site_id": {
+            "format": "uuid",
+            "title": "Site Id",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          },
+          "z": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Z"
+          }
+        },
+        "required": [
+          "site_id",
+          "x",
+          "y",
+          "confidence"
+        ],
+        "title": "FloorPositionCreate",
+        "type": "object"
+      },
+      "FloorPositionResponse": {
+        "description": "A persisted ``asset_positions`` row (floor-frame ``(x, y)`` fix).\n\nShared by ``POST /assets/{id}/position`` (the created row) and\n``GET /assets/{id}/floor-path`` (one point on the trail, ascending time).",
+        "properties": {
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "site_id": {
+            "format": "uuid",
+            "title": "Site Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          },
+          "z": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Z"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "asset_id",
+          "site_id",
+          "recorded_at",
+          "x",
+          "y",
+          "z",
+          "confidence",
+          "source"
+        ],
+        "title": "FloorPositionResponse",
+        "type": "object"
+      },
       "GeoAnchor": {
         "additionalProperties": false,
         "description": "Pin one floor-local point ``(x, y)`` to a real-world lat/lon.\n\nReserved seam for a future geo-anchored overlay (mobile + fixed readers on\none geographic map). Validated and stored now; no map consumes it yet.",
@@ -9927,6 +10077,121 @@
         ]
       }
     },
+    "/assets/{asset_id}/floor-path": {
+      "get": {
+        "description": "Return an asset's floor-frame ``(x, y)`` path (ascending time).",
+        "operationId": "list_floor_path_assets__asset_id__floor_path_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Asset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "maximum": 5000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FloorPositionResponse"
+                  },
+                  "title": "Response List Floor Path Assets  Asset Id  Floor Path Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List Floor Path",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
     "/assets/{asset_id}/load": {
       "post": {
         "description": "Attach `asset_id` to `body.parent_asset_id` (carrier). Idempotent.",
@@ -10115,6 +10380,65 @@
           }
         ],
         "summary": "Get Asset Path",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/assets/{asset_id}/position": {
+      "post": {
+        "description": "Record a precomputed floor ``(x, y)`` fix (BYO \u2014 vendor / RTLS push).",
+        "operationId": "record_floor_position_assets__asset_id__position_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Asset Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FloorPositionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FloorPositionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Record Floor Position",
         "tags": [
           "assets"
         ]

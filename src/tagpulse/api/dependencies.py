@@ -213,12 +213,18 @@ async def get_asset_service(
     from tagpulse.repositories.timescaledb.asset_location import (
         TimescaleAssetLocationRepository,
     )
+    from tagpulse.repositories.timescaledb.asset_positions import (
+        TimescaleAssetPositionRepository,
+    )
     from tagpulse.repositories.timescaledb.assets import (
         TimescaleAssetRepository,
         TimescaleAssetTagBindingRepository,
     )
     from tagpulse.repositories.timescaledb.external_locations import (
         TimescaleExternalLocationRepository,
+    )
+    from tagpulse.repositories.timescaledb.sites_zones import (
+        TimescaleSiteRepository,
     )
     from tagpulse.repositories.timescaledb.tenants import (
         TimescaleTenantRepository,
@@ -233,6 +239,8 @@ async def get_asset_service(
         asset_location_repo=TimescaleAssetLocationRepository(session),
         telemetry_readings_repo=TimescaleTelemetryReadingsRepository(session),
         tenant_repo=TimescaleTenantRepository(session),
+        position_repo=TimescaleAssetPositionRepository(session),
+        site_repo=TimescaleSiteRepository(session),
     )
 
 

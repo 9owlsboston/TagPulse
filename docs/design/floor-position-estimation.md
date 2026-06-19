@@ -1,10 +1,13 @@
 # Floor position estimation & asset path — BYO ingest + homegrown estimator
 
-> Status: **Planning** — design-doc-first per the 3+-component convention; **no
-> code on this branch** (`chore/floor-position-estimation-design`). Operationalizes
-> the deferred estimator half of [ADR-024](../adr/024-position-estimation.md) and
-> the deferred BYO-precomputed ingest from the Sprint 60 out-of-scope list. Sibling
-> to [fixed-reader-positioning-and-warehouse-map.md](fixed-reader-positioning-and-warehouse-map.md)
+> Status: **Phase 1 shipped (Sprint 65)** — `POST /assets/{id}/position` + `GET
+> /assets/{id}/floor-path` + the floor-map trail layer landed in backend PR #120
+> + UI PR #95. **Phase 2 (the `rssi_weighted_centroid` estimator) remains
+> deferred**, gated on the WM wire-format conversation. Originally authored
+> design-doc-first (3+-component convention). Operationalizes the deferred
+> estimator half of [ADR-024](../adr/024-position-estimation.md) and the deferred
+> BYO-precomputed ingest from the Sprint 60 out-of-scope list. Sibling to
+> [fixed-reader-positioning-and-warehouse-map.md](fixed-reader-positioning-and-warehouse-map.md)
 > (which shipped the *reader placement* + *floor map render*); this doc designs the
 > two ways to put an **asset** on that floor with a real `(x, y)` and a movement
 > **path**.
@@ -28,12 +31,12 @@ UI trail layer**.
 |---|---|---|
 | `antennas(device_id, port, x, y, z, label, gain_dbi)` | ✅ | migration 051; port-0 = reader nominal spot |
 | `sites.coord_system` (floor frame, floorplan image) | ✅ | migration 051 + Sprint 64 follow-up |
-| `asset_positions` hypertable (`source ∈ precomputed\|zone\|computed`) | ✅ **empty** | migration 051 — no writer |
-| `tenants.position_strategy` JSONB | ✅ **unused** | migration 051 — created-not-used; this doc fills it |
+| `asset_positions` hypertable (`source ∈ precomputed\|zone\|computed`) | ✅ **`precomputed` written (Sprint 65)** | migration 051; `computed`/`zone` deferred |
+| `tenants.position_strategy` JSONB | ✅ **unused** | migration 051 — created-not-used; Phase 2 fills it |
 | EPC→asset fusion (`AssetFusionService`) | ✅ | `src/tagpulse/services/asset_fusion.py` |
 | Floor-zone resolution (point-in-polygon, `CRS.Simple`) | ✅ | `src/tagpulse/api/services/floor_zone_resolver.py` |
 | Floor map render (reader pins, zones, floorplan) | ✅ | `TagPulse-UI`, Sprint 64 |
-| BYO position ingest endpoint | ❌ deferred | Sprint 60 OOS — Phase 1 here |
+| BYO position ingest endpoint | ✅ **shipped (Sprint 65)** | Phase 1 — `POST /assets/{id}/position` |
 | RSSI estimator (`rssi_weighted_centroid`) | ❌ deferred | [ADR-024](../adr/024-position-estimation.md) amendment — Phase 2 here |
 
 **Key takeaway:** the schema, fusion lookup, and map render already exist. Both
@@ -108,10 +111,12 @@ Validation: cross-tenant guard on `asset_id`/`site_id` (foreign tenant → 422),
 `src/tagpulse/api/routes/assets.py`) and ingests **lat/lon** fixes into
 `external_locations` — the geographic sibling of this floor-frame `(x, y)`
 endpoint. They write **different tables in different coordinate frames**, so a
-separate endpoint is the default. `[NEEDS DECISION]` whether to instead extend
-`external-position` with a coordinate-frame discriminator (`geo` vs `floor`) and
-route floor fixes to `asset_positions` from there — fewer endpoints, but mixes
-two storage targets behind one verb. Resolve at Phase 1 kickoff.
+separate endpoint is the default. **Decided (Sprint 65 kickoff): keep a separate
+`POST /assets/{id}/position`.** Extending `external-position` with a coordinate-
+frame discriminator (`geo` vs `floor`) was rejected — it would route two storage
+targets (`external_locations` vs `asset_positions`) behind one verb. The floor
+endpoint writes `asset_positions`; the lat/lon `external-position` endpoint is
+unchanged.
 
 ### New endpoint — read (shared with Phase 2)
 
