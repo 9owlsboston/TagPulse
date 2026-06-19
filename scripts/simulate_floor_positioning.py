@@ -343,11 +343,13 @@ def _ensure_readers(client, api, headers, site_id, readers):  # type: ignore[no-
             )
         device_ids[reader.id] = device["id"]
         # Survey port-0 = the reader's nominal floor spot.
-        client.put(
-            f"{api}/device-registry/{device['id']}/antennas/0",
+        # NB: the antenna router is mounted at /devices/... (not /device-registry).
+        ant = client.put(
+            f"{api}/devices/{device['id']}/antennas/0",
             headers=headers,
             json={"x": reader.x, "y": reader.y, "label": reader.name},
         )
+        ant.raise_for_status()
     return device_ids
 
 
