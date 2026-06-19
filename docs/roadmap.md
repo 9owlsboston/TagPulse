@@ -1708,7 +1708,7 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 - **Tests** validated against the design's worked example (τ=3 → (14.5, 16.8); time-agnostic → (16.4, 18.3)) plus last-wins, floor/lookback filters, min-antennas gate, per-antenna dedup.
 - **Pipeline orchestration** ([floor_position_estimator.py](../src/tagpulse/services/floor_position_estimator.py)) — `FloorPositionEstimatorService.run_once(now)` over injected ports (`ObservationSource` / `PositionWriter` / `StrategySource`): groups recent observations by `(site, asset)`, runs the estimator per group, writes `asset_positions(source='computed')`; the [`FloorPositionWorker`](../src/tagpulse/workers/floor_position_worker.py) drives it on the Option-C cadence. Fully unit-tested with fakes.
 
-**Out of scope (remaining next slice).** The **concrete TimescaleDB adapters** for the three ports (recent-reads × `devices.site_id` × `antennas` × EPC→asset fusion; the `computed` writer reuses `TimescaleAssetPositionRepository`; the `position_strategy` reader) + **worker activation** in `api/main.py` (gated off until integration-tested). Also deferred: the `[NEEDS WM]` `rpk` wire field + v2 snap simulator; per-tenant `D` cadence; per-category τ; stationary-jitter hysteresis.
+**Out of scope (remaining next slice).** **Integration validation** of the Timescale adapters against a real DB + flipping `position_estimator_enabled` **on** in an environment (the worker is wired in `api/main.py` but gated **off** by default). Also deferred: the `[NEEDS WM]` `rpk` wire field + v2 snap simulator; per-tenant `D` cadence (the worker ticks at one base interval); per-category τ; stationary-jitter hysteresis; batching writes per tenant (the writer opens a tenant-scoped session per fix).
 
 ---
 

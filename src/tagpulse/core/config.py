@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     geofence_evaluation_enabled: bool = False
     # Per §5.2 dwell-worker scan interval (seconds).
     dwell_worker_interval_s: int = 60
+    # Sprint 66 (Phase 2): floor-position estimator worker. Off by default —
+    # the DB adapters need integration validation before the recompute loop
+    # writes asset_positions(source='computed') in production.
+    position_estimator_enabled: bool = False
+    position_estimator_interval_s: int = 3
 
     # -- Sprint 50 Phase D: tag registrar worker (ADR 028). --
     # The worker drains ``tag_reads WHERE tag_known IS NULL``,

@@ -60,6 +60,7 @@ from tagpulse.rules.delivery import AlertDeliveryService
 from tagpulse.rules.evaluator import RuleEvaluator
 from tagpulse.signaling.periodic_dispatcher import PeriodicSignalingDispatcher
 from tagpulse.workers.dwell_worker import DwellTracker, DwellWorker
+from tagpulse.workers.floor_position_worker import FloorPositionWorker
 from tagpulse.workers.inventory_rule_worker import InventoryRuleWorker
 from tagpulse.workers.tag_registrar_worker import TagRegistrarWorker
 
@@ -117,6 +118,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     dwell_tracker: DwellTracker | None = None
     tag_registrar_worker: TagRegistrarWorker | None = None
     periodic_signaling_dispatcher: PeriodicSignalingDispatcher | None = None
+    floor_position_worker: FloorPositionWorker | None = None
     alert_delivery: AlertDeliveryService | None = None
     analytics_modules: list[AnalyticsModule] = []
     webhook_dispatcher: WebhookDispatcher | None = None
@@ -191,6 +193,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await periodic_signaling_dispatcher.start()
         app.state.periodic_signaling_dispatcher = periodic_signaling_dispatcher
 
+        # Sprint 66 (Phase 2): floor-position estimator worker (Option-C tick).
+        # Gated off by default — flip ``position_estimator_enabled`` only after
+        # the DB adapters are integration-validated. Writes
+        # ``asset_positions(source='computed')`` from reader RSSI.
+        app.state.floor_position_worker = None
+        if settings.position_estimator_enabled:
+            from tagpulse.repositories.timescaledb.floor_position_source import (
+                TimescaleObservationSource,
+                TimescalePositionWriter,
+                TimescaleStrategySource,
+            )
+            from tagpulse.services.floor_position_estimator import (
+                FloorPositionEstimatorService,
+            )
+
+            floor_position_worker = FloorPositionWorker(
+                FloorPositionEstimatorService(
+                    observations=TimescaleObservationSource(),
+                    writer=TimescalePositionWriter(),
+                    strategies=TimescaleStrategySource(async_session_factory),
+                ),
+                interval_s=float(settings.position_estimator_interval_s),
+            )
+            await floor_position_worker.start()
+            app.state.floor_position_worker = floor_position_worker
+
         # Alert delivery — subscribes to alert triggered events
         alert_delivery = AlertDeliveryService()
         await alert_delivery.start()
@@ -245,6 +273,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await tag_registrar_worker.stop()
     if periodic_signaling_dispatcher is not None:
         await periodic_signaling_dispatcher.stop()
+    if floor_position_worker is not None:
+        await floor_position_worker.stop()
     await usage_meter.stop()
     for module in analytics_modules:
         await module.stop()
