@@ -988,6 +988,13 @@ All schemas are defined in `src/tagpulse/models/` and enforce validation at the 
 | `DeviceResponse` | API response | All DB fields (incl. `mobility`, `site_id`) |
 | `DeviceStatusUpdate` | MQTT status message | `connection_state`, `firmware_version?` |
 
+### Floor positions — `schemas.py`
+
+| Schema | Purpose | Key Fields |
+|--------|---------|------------|
+| `FloorPositionCreate` | `POST /assets/{id}/position` body — BYO precomputed `(x, y)` (Sprint 65) | `site_id` (UUID, tenant-validated → 422 if foreign), `x`, `y` (float, finite — `allow_inf_nan=False`), `z?`, `confidence` (0–1), `recorded_at?` (server `now()` when omitted), `metadata?`. Persisted with `source='precomputed'`. |
+| `FloorPositionResponse` | `POST /assets/{id}/position` result **and** each `GET /assets/{id}/floor-path` point | `id`, `tenant_id`, `asset_id`, `site_id`, `recorded_at`, `x`, `y`, `z?`, `confidence`, `source`, `metadata?` |
+
 ### Spatial — `schemas.py` (Sprint 64)
 
 | Schema | Purpose | Key Fields |
