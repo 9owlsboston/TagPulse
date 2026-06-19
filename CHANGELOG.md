@@ -4,6 +4,10 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- **Operator runbook — floor-estimator enable targets the worker container (docs).** The Sprint 66 "Indoor positioning estimator" enable steps in [docs/operator-quickstart.md](docs/operator-quickstart.md) said "api/worker container" — corrected to the **`tp${env}-worker`** container with the exact `az containerapp update` command. The api runs `WORKERS_INLINE=false` (HTTP only); the inline workers (incl. `FloorPositionWorker`) run in the dedicated worker container, so setting the flag on the api is a silent no-op (verified live in dev). Also adds the `--set-strategy` step + the `floor-path?source=computed` check. Docs only.
+
 ### Added
 
 - **Sprint 66 — `--emit` antenna-path fix + dev validation result (tooling).** Fixes a second [simulate_floor_positioning.py](scripts/simulate_floor_positioning.py) `--emit` bug: the port-0 antenna survey PUT used `/device-registry/{id}/antennas/0` (the antenna router is mounted at `/devices/...`) **and didn't `raise_for_status`**, so it silently 404'd → no surveyed antennas → the estimator found zero observations. Now PUTs `/devices/{id}/antennas/0` and raises on failure. **Validated end-to-end in dev**: seeded demo-wm-dc, ran the production pipeline via `azd-job validate_floor_positioning.py --tenant-slug demo-wm-dc` → **8/8 computed fixes written** to `asset_positions(source='computed')`, RMSE 32.9 m (matches the offline ground-truth). Tooling only.
