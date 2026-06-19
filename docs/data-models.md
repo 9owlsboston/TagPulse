@@ -138,7 +138,7 @@ Organization accounts on the platform.
 | `db_pool_key` | VARCHAR(64) | NOT NULL, default `'shared_default'` | Routing key into the startup-built `PoolRegistry`. Most tenants share `'shared_default'` (RLS-isolated); sovereign tenants get a dedicated key pointing at a region-specific cluster. See [adr/008-multi-tenancy-strategy.md](adr/008-multi-tenancy-strategy.md) and [design/storage-strategy.md §6 Q2](design/storage-strategy.md). |
 | `tile_provider` | JSONB | NULLABLE | Per-tenant map tile provider override. Shape: `{"kind": "osm" \| "mapbox" \| "maptiler" \| "self_hosted", "config": {...}}`. NULL = system default (OSM public for POC). Resolved by `MapConfigResolver`; switching providers is a settings change, not a code change. See [design/geofencing-and-map.md §11](design/geofencing-and-map.md) Q4. |
 | `ui_config` | JSONB | NULLABLE | Per-tenant Configurable-UI **presentation** defaults (the tenant + role layers). NULL = pure system default. Tenant-default leaves (`labels` / `theme` / `nav` / `cards` / `columns` / `tables`) live at the top level; the per-role layer is keyed under a reserved `roles` sub-object, e.g. `{"theme": {...}, "roles": {"viewer": {"columns": {...}}}}`. Split into resolve layers and folded `System → Tenant → Role → User` by `tagpulse.services.ui_config` (never queried directly). Reuses the tenant-JSONB precedent above. See [adr/032-configurable-ui.md](adr/032-configurable-ui.md). |
-| `position_strategy` | JSONB | NULLABLE | Sprint 59 ([ADR-024](adr/024-position-estimation.md)): per-tenant indoor-position estimator config placeholder — the RSSI-weight formula varies company-to-company, so it is config, never hardcoded. **Created-not-used** (no estimator reads it yet; the homegrown `rssi_weighted_centroid` math is deferred). NULL = system default. |
+| `position_strategy` | JSONB | NULLABLE | Sprint 59 ([ADR-024](adr/024-position-estimation.md)): per-tenant indoor-position estimator config — the RSSI-weight formula varies company-to-company, so it is config, never hardcoded. **Read by the Sprint 66 `rssi_weighted_centroid` estimator** (`half_life_s` τ, `recompute_interval_s`, `lookback_s`, `min_antennas`, `rssi_floor_dbm`). NULL = tenant not opted in. The estimator worker is **off by default** (`position_estimator_enabled`). |
 | `logo_url` | TEXT | NULLABLE | Tenant branding logo for the 240px expanded sidebar header. Either an `https://` URL or a size-capped inline base64 `data:` URL (cap enforced at the API layer, not the DB — Sprint 60 widened this from `VARCHAR(2048)` to `TEXT` to hold a data URL). NULL = system default. |
 | `logo_collapsed_url` | TEXT | NULLABLE | Sprint 60: second branding logo — a square mark for the 64px collapsed sidebar rail. Same `https://`-or-`data:` rule as `logo_url`. NULL = no second logo (fall back to `logo_url` / system default). |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
@@ -769,9 +769,10 @@ Per-asset indoor `(x, y)` position fixes in a site's floor `coord_system`. Lande
 headless in Sprint 59 ([migration 051](../migrations/versions/051_spatial_foundation.py),
 [ADR-024](adr/024-position-estimation.md)). **Sprint 65 (Phase 1) added the first
 writer**: `source='precomputed'` rows via `POST /assets/{id}/position` (BYO — an
-external location engine pushes a resolved floor fix). The `computed` source (the
-homegrown `rssi_weighted_centroid` estimator) and the `zone` retrieval fallback
-remain deferred (Phase 2 — [floor-position-estimation.md](design/floor-position-estimation.md)).
+external location engine pushes a resolved floor fix). **Sprint 66 (Phase 2)
+added the `computed` writer** — the homegrown `rssi_weighted_centroid` estimator
+worker, **off by default** (`position_estimator_enabled`). The `zone` retrieval
+fallback remains deferred ([floor-position-estimation.md](design/floor-position-estimation.md)).
 Zone-level "where is X" is still answered from `tag_presence` + `subject_current_zone`.
 
 | Column | Type | Constraints | Notes |
@@ -785,7 +786,7 @@ Zone-level "where is X" is still answered from `tag_presence` + `subject_current
 | `y` | NUMERIC | NOT NULL | Floor-frame Y. |
 | `z` | NUMERIC | NULLABLE | Height (optional). |
 | `confidence` | NUMERIC(3,2) | NOT NULL, `BETWEEN 0 AND 1` | Fix confidence (vendor-supplied for `precomputed`; estimator-scored for `computed`). |
-| `source` | VARCHAR(16) | NOT NULL, `IN ('precomputed','zone','computed')` | Origin of the fix. Sprint 65 writes `precomputed`; `computed`/`zone` deferred. |
+| `source` | VARCHAR(16) | NOT NULL, `IN ('precomputed','zone','computed')` | Origin of the fix. `precomputed` (Sprint 65 BYO) + `computed` (Sprint 66 estimator, off by default); `zone` deferred. |
 | `metadata` | JSONB | NULLABLE | Free-form per-fix detail. |
 
 **Indexes:** `ix_asset_positions_by_asset` (`tenant_id, asset_id, time DESC`), `ix_asset_positions_by_site` (`tenant_id, site_id, time DESC`).
