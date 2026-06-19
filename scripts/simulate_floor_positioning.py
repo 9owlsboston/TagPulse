@@ -184,7 +184,7 @@ def estimate_for_asset(
 
 
 def run_validate(args: argparse.Namespace) -> int:
-    rng = random.Random(args.seed)
+    rng = random.Random(args.seed)  # noqa: S311 — deterministic sim, not crypto
     readers = grid_readers(args.extent_x, args.extent_y, args.readers)
     assets = place_assets(args.assets, args.extent_x, args.extent_y, rng)
     now = datetime.now(UTC)
@@ -247,7 +247,7 @@ def run_emit(args: argparse.Namespace) -> int:
         sys.exit("emit mode needs --tenant-id and $TAGPULSE_API_KEY")
     headers = {"X-Tenant-ID": tenant, "Authorization": f"Bearer {key}"}
 
-    rng = random.Random(args.seed)
+    rng = random.Random(args.seed)  # noqa: S311 — deterministic sim, not crypto
     readers = grid_readers(args.extent_x, args.extent_y, args.readers)
     assets = place_assets(args.assets, args.extent_x, args.extent_y, rng)
 
@@ -351,7 +351,22 @@ def _ensure_readers(client, api, headers, site_id, readers):  # type: ignore[no-
     return device_ids
 
 
+def _ensure_category(client, api, headers) -> str:  # type: ignore[no-untyped-def]
+    """Find or create the ``Floor-Positioning`` category (required on assets)."""
+    for cat in client.get(f"{api}/categories", headers=headers, params={"limit": 500}).json():
+        if cat["name"] == "Floor-Positioning":
+            return str(cat["id"])
+    r = client.post(
+        f"{api}/categories",
+        headers=headers,
+        json={"name": "Floor-Positioning", "category_type": "rti_container", "required_tags": 1},
+    )
+    r.raise_for_status()
+    return str(r.json()["id"])
+
+
 def _ensure_assets(client, api, headers, assets):  # type: ignore[no-untyped-def]
+    category_id = _ensure_category(client, api, headers)
     existing = {
         a["name"]: a
         for a in client.get(f"{api}/assets", headers=headers, params={"limit": 1000}).json()
@@ -364,6 +379,7 @@ def _ensure_assets(client, api, headers, assets):  # type: ignore[no-untyped-def
                 headers=headers,
                 json={
                     "name": asset.name,
+                    "category_id": category_id,
                     "metadata": {"simulated": True, "placed_x": asset.x, "placed_y": asset.y},
                 },
             )
