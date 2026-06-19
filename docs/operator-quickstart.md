@@ -141,15 +141,25 @@ ground-truth check.
 TAGPULSE_API_KEY=<key> python scripts/simulate_floor_positioning.py --emit \
   --api-url <dev-api-url> --tenant-id <uuid>
 
-# turn the worker on (api/worker container env), then redeploy
-POSITION_ESTIMATOR_ENABLED=true
-POSITION_ESTIMATOR_INTERVAL_S=3   # recompute cadence in seconds
+# per-tenant config (writes tenants.position_strategy via the tools-job) —
+# use a SHORT lookback so the worker acts on fresh reads, not stale data:
+scripts/azd-job.sh dev validate_floor_positioning.py -- \
+  --tenant-slug demo-wm-dc --set-strategy --lookback-s 20 --half-life-s 8
+
+# turn the worker on — MUST be the WORKER container (tp${env}-worker), NOT the
+# api: the api runs WORKERS_INLINE=false (HTTP only); the inline workers
+# (incl. FloorPositionWorker) run in tp${env}-worker. Setting it on the api is a
+# silent no-op. This rolls a new revision (no redeploy needed):
+az containerapp update -n tp${env}-worker -g tagpulse-${env}-rg \
+  --set-env-vars POSITION_ESTIMATOR_ENABLED=true POSITION_ESTIMATOR_INTERVAL_S=5
+# confirm: worker logs show "FloorPositionWorker started (interval=5.0s)"
 ```
 
 Confirm it's working: `asset_positions` gains `source='computed'` rows for the
-tenant, and the asset's **Location** trail renders on the floor map. Per-tenant
-tuning lives in `tenants.position_strategy` (JSONB) — `half_life_s` (τ recency;
-`0` = last-reader-wins), `lookback_s`, `min_antennas`, `rssi_floor_dbm`. See
+tenant (`GET /assets/{id}/floor-path?source=computed`), and the asset's
+**Location** trail renders on the floor map. Per-tenant tuning lives in
+`tenants.position_strategy` (JSONB) — `half_life_s` (τ recency; `0` =
+last-reader-wins), `lookback_s`, `min_antennas`, `rssi_floor_dbm`. See
 [design/floor-position-estimation.md](design/floor-position-estimation.md).
 
 ## SSH / shell into things
