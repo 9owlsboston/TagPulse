@@ -1694,6 +1694,23 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 66 — Floor-position estimator core (`rssi_weighted_centroid`) (active)
+
+> **Status (2026-06-19, kickoff).** Phase 2 (part 1) of [floor-position-estimation.md](design/floor-position-estimation.md) — the **pure, I/O-free estimator** + the `position_strategy` config model. Branch `sprint-66/floor-position-estimator`, backend PR [#122](https://github.com/9owlsboston/TagPulse/pull/122). The worker/pipeline that feeds it from `tag_reads` and writes `asset_positions(source='computed')` is the **next slice**; the WM-gated wire-format change (`rpk` peak-RSSI) + v2 snap simulator stay deferred (`[NEEDS WM]`).
+
+**Why now.** Sprint 65 shipped BYO precomputed positions (`source='precomputed'`). Phase 2 lets TagPulse **compute** an asset's floor `(x, y)` from the RSSI of the readers already placed on the floor — no extra hardware — for customers who have only RFID. This sprint lands the algorithmic core in isolation so it is fully unit-tested before any worker wiring.
+
+**Governing invariant.** Relative, recency-decayed, hull-bounded centroid (ADR-024 v2): no absolute RSSI calibration; the weight formula is per-tenant `position_strategy` config, never hardcoded.
+
+**Scope (locked at kickoff).**
+- **`PositionStrategy` config** ([positioning.py](../src/tagpulse/services/positioning.py)) — the `tenants.position_strategy` JSONB shape: `half_life_s` (τ — recency dial, `0` = last-wins), `recompute_interval_s` (D — worker cadence), `lookback_s`, `min_antennas`, `rssi_floor_dbm`, with defaults.
+- **`rssi_weighted_centroid` estimator** — pure function over per-`(asset, antenna)` observations → `PositionFix(x, y, confidence)`. Strongest-tag-per-antenna, `(rssi − min + 1)·0.5^(Δt/τ)` weighting, centroid (hull-bounded by construction), honest confidence (geometry × freshness), graceful 1/2/3-antenna degradation.
+- **Tests** validated against the design's worked example (τ=3 → (14.5, 16.8); time-agnostic → (16.4, 18.3)) plus last-wins, floor/lookback filters, min-antennas gate, per-antenna dedup.
+
+**Out of scope (next slices).** The recompute-tick worker + rolling buffer + `asset_positions(source='computed')` writes; reading the estimator output through `GET /assets/{id}/floor-path` (already source-filterable); the `[NEEDS WM]` `rpk` wire field + v2 snap simulator; per-category τ; stationary-jitter hysteresis.
+
+---
+
 ## Backlog (not scheduled)
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock. **Design now captured** ([floor-position-estimation.md](design/floor-position-estimation.md), 2026-06-19) — a two-phase plan that fills the headless `asset_positions` table so an asset shows a true floor `(x, y)` + movement trail:
