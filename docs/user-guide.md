@@ -438,7 +438,7 @@ Click **Explore** (from the Telemetry page) for detailed data access.
 - **Limit** — number of results (1–1000, default 100).
 
 **Views:**
-- **Table** — columns: Tag ID, EPC, Scheme, Device, Timestamp, Signal Strength, **Antenna**, **Temp (°C)**, **Humidity (%)**, Latitude, Longitude. The **Antenna** column is the reading antenna port; **Temp/Humidity** are read from the read's `sensor_data` (resolving either the real-device `temperature_c`/`humidity_pct` keys or the simulator `temperature`/`humidity` keys), showing `—` when absent. The **TID** and **User Memory** columns are plumbing the typical operator doesn't need, so they're hidden by default behind the **Advanced columns** toggle in the toolbar — tick it to reveal them. (All columns, including Antenna/Temp/Humidity, are in the CSV export regardless of the toggle.) Sortable and paginated (100 per page). Which columns are advanced/hidden/ordered and the default sort are configurable per-tenant — see [Configurable UI & Preferences](#configurable-ui--preferences).
+- **Table** — columns: Tag ID, EPC, Scheme, Device, Timestamp, Signal Strength, **Antenna**, **Temp (°C)**, **Humidity (%)**, Latitude, Longitude. The **Antenna** column is the reading antenna port; **Temp/Humidity** are read from the read's `sensor_data` (resolving either the real-device `temperature_c`/`humidity_pct` keys or the simulator `temperature`/`humidity` keys), showing `—` when absent. The **TID**, **User Memory**, and **EPC (hex)** columns are plumbing the typical operator doesn't need, so they're hidden by default behind the **Advanced columns** toggle in the toolbar — tick it to reveal them. (The **EPC (hex)** column, added Sprint 63, shows the raw hex EPC for hex-preferring tenants — distinct from the decoded **EPC** URN column; a tenant default can promote it ahead of **EPC**.) (All columns, including Antenna/Temp/Humidity, are in the CSV export regardless of the toggle.) Sortable and paginated (100 per page). Which columns are advanced/hidden/ordered and the default sort are configurable per-tenant — see [Configurable UI & Preferences](#configurable-ui--preferences).
 - **Chart** — line chart of signal strength over time.
 
 Toggle between views using the button in the toolbar.
@@ -1136,7 +1136,7 @@ config is served by `GET /ui-config` (four-layer merge: **System → Tenant → 
 | Leaf | Effect | Where it shows |
 |------|--------|----------------|
 | `labels` | Rename entity/nav terms (e.g. **Device → Reader**) without a code change | Sidebar + page headers |
-| `nav` | Hide / reorder sidebar sections + items | Left sidebar |
+| `nav` | Hide / reorder sidebar sections + items, and **relocate a movable item to a different parent section** (`nav.placement`, Sprint 61 — e.g. *Tag Reads* under *Tags*, *Locations/Map* under *Assets*). Each movable item renders in exactly one parent; an unknown item/parent is rejected (422). | Left sidebar |
 | `cards` | Hide / reorder dashboard cards | Dashboard |
 | `columns` | Hide / reorder list columns; mark columns **advanced** (default-OFF) | Tag Reads, Assets (more over time) |
 | `tables` | Default sort per list page | Tag Reads, Assets |
@@ -1153,6 +1153,9 @@ across devices** (persisted server-side via `PUT /ui-config/me`):
 - **Dashboard cards** — uncheck a card to hide it from your dashboard. (The
   Dashboard's own *Customize* button does the same thing but only on the current
   browser/device; Preferences is the cross-device version.)
+- **Menu** (Sprint 61) — hide/show sidebar entries (`nav.hidden`) and, for the
+  movable items, a "where should this live" picker that relocates them to a
+  different parent section (`nav.placement`).
 - **Reset to team default** — clears all your personal overrides and reverts to
   whatever your tenant/role default is.
 
