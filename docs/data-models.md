@@ -138,9 +138,12 @@ Organization accounts on the platform.
 | `db_pool_key` | VARCHAR(64) | NOT NULL, default `'shared_default'` | Routing key into the startup-built `PoolRegistry`. Most tenants share `'shared_default'` (RLS-isolated); sovereign tenants get a dedicated key pointing at a region-specific cluster. See [adr/008-multi-tenancy-strategy.md](adr/008-multi-tenancy-strategy.md) and [design/storage-strategy.md §6 Q2](design/storage-strategy.md). |
 | `tile_provider` | JSONB | NULLABLE | Per-tenant map tile provider override. Shape: `{"kind": "osm" \| "mapbox" \| "maptiler" \| "self_hosted", "config": {...}}`. NULL = system default (OSM public for POC). Resolved by `MapConfigResolver`; switching providers is a settings change, not a code change. See [design/geofencing-and-map.md §11](design/geofencing-and-map.md) Q4. |
 | `ui_config` | JSONB | NULLABLE | Per-tenant Configurable-UI **presentation** defaults (the tenant + role layers). NULL = pure system default. Tenant-default leaves (`labels` / `theme` / `nav` / `cards` / `columns` / `tables`) live at the top level; the per-role layer is keyed under a reserved `roles` sub-object, e.g. `{"theme": {...}, "roles": {"viewer": {"columns": {...}}}}`. Split into resolve layers and folded `System → Tenant → Role → User` by `tagpulse.services.ui_config` (never queried directly). Reuses the tenant-JSONB precedent above. See [adr/032-configurable-ui.md](adr/032-configurable-ui.md). |
+| `position_strategy` | JSONB | NULLABLE | Sprint 59 ([ADR-024](adr/024-position-estimation.md)): per-tenant indoor-position estimator config placeholder — the RSSI-weight formula varies company-to-company, so it is config, never hardcoded. **Created-not-used** (no estimator reads it yet; the homegrown `rssi_weighted_centroid` math is deferred). NULL = system default. |
+| `logo_url` | TEXT | NULLABLE | Tenant branding logo for the 240px expanded sidebar header. Either an `https://` URL or a size-capped inline base64 `data:` URL (cap enforced at the API layer, not the DB — Sprint 60 widened this from `VARCHAR(2048)` to `TEXT` to hold a data URL). NULL = system default. |
+| `logo_collapsed_url` | TEXT | NULLABLE | Sprint 60: second branding logo — a square mark for the 64px collapsed sidebar rail. Same `https://`-or-`data:` rule as `logo_url`. NULL = no second logo (fall back to `logo_url` / system default). |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
 
-**Migration:** 005, 014, 017 (tracking_modes), 023 (db_pool_key), 026 (tile_provider), 053 (ui_config)
+**Migration:** 005, 014, 017 (tracking_modes), 023 (db_pool_key), 026 (tile_provider), 036 (logo_url — tenant branding), 051 (position_strategy), 053 (ui_config), 054 (logo_url → TEXT + logo_collapsed_url)
 
 ---
 
@@ -757,6 +760,35 @@ Latest `tag_read` per active binding. Defined in [design/assets-and-zones.md](de
 | `signal_strength` | FLOAT | |
 
 **Inherits RLS** from underlying tables.
+
+---
+
+### asset_positions (hypertable)
+
+Per-asset indoor `(x, y)` position fixes in a site's floor `coord_system`. Landed
+headless in Sprint 59 ([migration 051](../migrations/versions/051_spatial_foundation.py),
+[ADR-024](adr/024-position-estimation.md)): the table is **created but not
+written by any estimator** — the homegrown `rssi_weighted_centroid` math and the
+BYO-precomputed ingest endpoint are deferred. Zone-level "where is X" is answered
+today from `tag_presence` + `subject_current_zone`, not this table.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | UUID | PK (with `time`), default `gen_random_uuid()` | |
+| `time` | TIMESTAMPTZ | NOT NULL, hypertable partition key | Fix timestamp. |
+| `tenant_id` | UUID | FK → tenants.id, NOT NULL | RLS-scoped (`tenant_isolation_asset_positions`). |
+| `asset_id` | UUID | NOT NULL, **no FK** | Hypertable — matches the ADR-013/014 no-FK convention (cf. `external_locations`). |
+| `site_id` | UUID | NOT NULL | The site whose `coord_system` frames `(x, y)`. |
+| `x` | NUMERIC | NOT NULL | Floor-frame X (site `coord_system` units). |
+| `y` | NUMERIC | NOT NULL | Floor-frame Y. |
+| `z` | NUMERIC | NULLABLE | Height (optional). |
+| `confidence` | NUMERIC(3,2) | NOT NULL, `BETWEEN 0 AND 1` | Estimator confidence. |
+| `source` | VARCHAR(16) | NOT NULL, `IN ('precomputed','zone','computed')` | Origin of the fix. Sprint 59 writes nothing to `computed`. |
+| `metadata` | JSONB | NULLABLE | Free-form per-fix detail. |
+
+**Indexes:** `ix_asset_positions_by_asset` (`tenant_id, asset_id, time DESC`), `ix_asset_positions_by_site` (`tenant_id, site_id, time DESC`).
+**RLS:** enabled — `tenant_id = current_setting('app.current_tenant_id')`.
+**Migration:** 051 (spatial foundation).
 
 ---
 
