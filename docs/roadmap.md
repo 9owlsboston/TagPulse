@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 65 — floor position byo · branch `sprint-65/floor-position-byo` (full scope lands in §sprint-65 during the sprint).
+**Current sprint:** 66 — floor position estimator · branch `sprint-66/floor-position-estimator` (full scope lands in §sprint-66 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1691,6 +1691,26 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 **Decisions settled (design doc).** Sibling endpoint over extending `external-position` (different table + coordinate frame); `source` enum lets `precomputed` coexist with the future `computed`; resolution policy `precomputed > computed > zone` deferred to when Phase 2 lands.
 
 **Out of scope.** The `rssi_weighted_centroid` estimator + recency-decay + server tick (Phase 2); any v2 wire-format change / v2 snap simulator (`[NEEDS WM]`); the `source='zone'` retrieval fallback; 3D `z` positioning.
+
+---
+
+## Sprint 66 — Floor-position estimator core (`rssi_weighted_centroid`) (shipped — gated off)
+
+> **Status (2026-06-19, shipped — gated).** Phase 2 of [floor-position-estimation.md](design/floor-position-estimation.md) landed on backend PR [#122](https://github.com/9owlsboston/TagPulse/pull/122) across four slices: the pure estimator + `position_strategy` config, the recompute orchestration service + `FloorPositionWorker`, the TimescaleDB adapters, and the [ground-truth simulator](../scripts/simulate_floor_positioning.py). The worker is **wired in `api/main.py` but gated off** (`position_estimator_enabled`, default `False`) until the adapters are integration-validated in dev (`simulate_floor_positioning.py --emit` seeds the survey + reads; flip the flag to watch `asset_positions(source='computed')` + the UI trail). `make check` green (1680). The `[NEEDS WM]` `rpk` wire field + v2 *snap* simulator stay deferred.
+
+**Why now.** Sprint 65 shipped BYO precomputed positions (`source='precomputed'`). Phase 2 lets TagPulse **compute** an asset's floor `(x, y)` from the RSSI of the readers already placed on the floor — no extra hardware — for customers who have only RFID. This sprint lands the algorithmic core in isolation so it is fully unit-tested before any worker wiring.
+
+**Governing invariant.** Relative, recency-decayed, hull-bounded centroid (ADR-024 v2): no absolute RSSI calibration; the weight formula is per-tenant `position_strategy` config, never hardcoded.
+
+**Scope (locked at kickoff).**
+- **`PositionStrategy` config** ([positioning.py](../src/tagpulse/services/positioning.py)) — the `tenants.position_strategy` JSONB shape: `half_life_s` (τ — recency dial, `0` = last-wins), `recompute_interval_s` (D — worker cadence), `lookback_s`, `min_antennas`, `rssi_floor_dbm`, with defaults.
+- **`rssi_weighted_centroid` estimator** — pure function over per-`(asset, antenna)` observations → `PositionFix(x, y, confidence)`. Strongest-tag-per-antenna, `(rssi − min + 1)·0.5^(Δt/τ)` weighting, centroid (hull-bounded by construction), honest confidence (geometry × freshness), graceful 1/2/3-antenna degradation.
+- **Tests** validated against the design's worked example (τ=3 → (14.5, 16.8); time-agnostic → (16.4, 18.3)) plus last-wins, floor/lookback filters, min-antennas gate, per-antenna dedup.
+- **Pipeline orchestration** ([floor_position_estimator.py](../src/tagpulse/services/floor_position_estimator.py)) — `FloorPositionEstimatorService.run_once(now)` over injected ports (`ObservationSource` / `PositionWriter` / `StrategySource`): groups recent observations by `(site, asset)`, runs the estimator per group, writes `asset_positions(source='computed')`; the [`FloorPositionWorker`](../src/tagpulse/workers/floor_position_worker.py) drives it on the Option-C cadence. Fully unit-tested with fakes.
+
+**Out of scope (remaining next slice).** **Integration validation** of the Timescale adapters against a real DB + flipping `position_estimator_enabled` **on** in an environment (the worker is wired in `api/main.py` but gated **off** by default). Also deferred: the `[NEEDS WM]` `rpk` wire field + v2 snap simulator; per-tenant `D` cadence (the worker ticks at one base interval); per-category τ; stationary-jitter hysteresis; batching writes per tenant (the writer opens a tenant-scoped session per fix).
+
+> **Validation tooling (added).** [scripts/simulate_floor_positioning.py](../scripts/simulate_floor_positioning.py) places assets at known `(x, y)` and emits distance-based multi-reader RSSI (the current `simulate_assets.py` can't — single-reader, random RSSI). `--validate` (no API/DB) prints estimated-vs-placed error + RMSE — the ADR-024 ground-truth check; `--emit` back-fills the floor survey and streams reads so dev can flip the flag and watch the worker + UI trail. This is **v1-read-based, not WM-gated** (distinct from the v2 *snap* simulator).
 
 ---
 

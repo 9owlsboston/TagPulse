@@ -1,12 +1,16 @@
 # Floor position estimation & asset path — BYO ingest + homegrown estimator
 
-> Status: **Phase 1 shipped (Sprint 65)** — `POST /assets/{id}/position` + `GET
-> /assets/{id}/floor-path` + the floor-map trail layer landed in backend PR #120
-> + UI PR #95. **Phase 2 (the `rssi_weighted_centroid` estimator) remains
-> deferred**, gated on the WM wire-format conversation. Originally authored
-> design-doc-first (3+-component convention). Operationalizes the deferred
-> estimator half of [ADR-024](../adr/024-position-estimation.md) and the deferred
-> BYO-precomputed ingest from the Sprint 60 out-of-scope list. Sibling to
+> Status: **Phase 1 shipped (Sprint 65); Phase 2 built & gated (Sprint 66).**
+> Phase 1 — `POST /assets/{id}/position` + `GET /assets/{id}/floor-path` + the
+> floor-map trail layer (backend PR #120 + UI PR #95). Phase 2 — the
+> `rssi_weighted_centroid` estimator + recompute pipeline + DB adapters +
+> ground-truth simulator landed in PR #122, **wired but gated off**
+> (`position_estimator_enabled`, default `False`) pending dev integration
+> validation. The `[NEEDS WM]` `rpk` peak-RSSI wire field + the v2 *snap*
+> simulator remain deferred (the *positioning* simulator is v1-read-based and
+> shipped). Operationalizes the estimator half of
+> [ADR-024](../adr/024-position-estimation.md) and the BYO-precomputed ingest
+> from the Sprint 60 out-of-scope list. Sibling to
 > [fixed-reader-positioning-and-warehouse-map.md](fixed-reader-positioning-and-warehouse-map.md)
 > (which shipped the *reader placement* + *floor map render*); this doc designs the
 > two ways to put an **asset** on that floor with a real `(x, y)` and a movement
