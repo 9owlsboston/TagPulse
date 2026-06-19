@@ -1710,6 +1710,8 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 **Out of scope (remaining next slice).** **Integration validation** of the Timescale adapters against a real DB + flipping `position_estimator_enabled` **on** in an environment (the worker is wired in `api/main.py` but gated **off** by default). Also deferred: the `[NEEDS WM]` `rpk` wire field + v2 snap simulator; per-tenant `D` cadence (the worker ticks at one base interval); per-category τ; stationary-jitter hysteresis; batching writes per tenant (the writer opens a tenant-scoped session per fix).
 
+> **Validation tooling (added).** [scripts/simulate_floor_positioning.py](../scripts/simulate_floor_positioning.py) places assets at known `(x, y)` and emits distance-based multi-reader RSSI (the current `simulate_assets.py` can't — single-reader, random RSSI). `--validate` (no API/DB) prints estimated-vs-placed error + RMSE — the ADR-024 ground-truth check; `--emit` back-fills the floor survey and streams reads so dev can flip the flag and watch the worker + UI trail. This is **v1-read-based, not WM-gated** (distinct from the v2 *snap* simulator).
+
 ---
 
 ## Backlog (not scheduled)

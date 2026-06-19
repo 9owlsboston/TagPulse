@@ -78,6 +78,7 @@ to the WM-facing `demo-wm-dc` tenant; the neutral domain tenants skip them.
 | `seed_register_tags` | [`seed_register_tags.py`](seed_register_tags.py) | Registers inventory SGTIN EPCs in the tags registry so the **Tags** KPI reflects the fleet. Deterministic (same serial scheme `simulate_inventory` streams); runs before the read stream. Inventory-seeding profiles only. |
 | `simulate_inventory` | [`simulate_inventory.py`](simulate_inventory.py) | Products, lots, inventory read stream (per `--scenario`). |
 | `simulate_assets` | [`simulate_assets.py`](simulate_assets.py) | Assets + tag bindings + seed reads. |
+| `simulate_floor_positioning` | [`simulate_floor_positioning.py`](simulate_floor_positioning.py) | **Floor-positioning** sim (Sprint 66): places assets at known `(x, y)` and emits distance-based multi-reader RSSI. `--validate` (default) prints estimated-vs-placed error + RMSE (no API/DB — ground-truth check for `rssi_weighted_centroid`); `--emit` back-fills the survey (`coord_system` + reader antennas + `site_id`) and streams reads to a live API. |
 | `backfill_history` | [`backfill_history.py`](backfill_history.py) | Historical read density for charts. |
 | `seed_alerts` | [`seed_alerts.py`](seed_alerts.py) | Open + resolved alert mix. |
 | `seed_transfer` | [`seed_transfer.py`](seed_transfer.py) | One in-flight cross-tenant transfer. |
