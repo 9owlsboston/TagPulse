@@ -386,8 +386,12 @@ def _ensure_assets(client, api, headers, assets):  # type: ignore[no-untyped-def
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument(
-        "--emit", action="store_true", help="Stream reads to a live API (default: validate)."
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--emit", action="store_true", help="Stream reads to a live API.")
+    mode.add_argument(
+        "--validate",
+        action="store_true",
+        help="Offline ground-truth check (no API/DB). This is the default.",
     )
     p.add_argument("--api-url", default=os.environ.get("API_URL", "http://localhost:8000"))
     p.add_argument("--tenant-id", default=os.environ.get("DEMO_TENANT_ID"))

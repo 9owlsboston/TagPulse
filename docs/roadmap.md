@@ -1694,9 +1694,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 66 — Floor-position estimator core (`rssi_weighted_centroid`) (active)
+## Sprint 66 — Floor-position estimator core (`rssi_weighted_centroid`) (shipped — gated off)
 
-> **Status (2026-06-19, kickoff).** Phase 2 (part 1) of [floor-position-estimation.md](design/floor-position-estimation.md) — the **pure, I/O-free estimator** + the `position_strategy` config model. Branch `sprint-66/floor-position-estimator`, backend PR [#122](https://github.com/9owlsboston/TagPulse/pull/122). The worker/pipeline that feeds it from `tag_reads` and writes `asset_positions(source='computed')` is the **next slice**; the WM-gated wire-format change (`rpk` peak-RSSI) + v2 snap simulator stay deferred (`[NEEDS WM]`).
+> **Status (2026-06-19, shipped — gated).** Phase 2 of [floor-position-estimation.md](design/floor-position-estimation.md) landed on backend PR [#122](https://github.com/9owlsboston/TagPulse/pull/122) across four slices: the pure estimator + `position_strategy` config, the recompute orchestration service + `FloorPositionWorker`, the TimescaleDB adapters, and the [ground-truth simulator](../scripts/simulate_floor_positioning.py). The worker is **wired in `api/main.py` but gated off** (`position_estimator_enabled`, default `False`) until the adapters are integration-validated in dev (`simulate_floor_positioning.py --emit` seeds the survey + reads; flip the flag to watch `asset_positions(source='computed')` + the UI trail). `make check` green (1680). The `[NEEDS WM]` `rpk` wire field + v2 *snap* simulator stay deferred.
 
 **Why now.** Sprint 65 shipped BYO precomputed positions (`source='precomputed'`). Phase 2 lets TagPulse **compute** an asset's floor `(x, y)` from the RSSI of the readers already placed on the floor — no extra hardware — for customers who have only RFID. This sprint lands the algorithmic core in isolation so it is fully unit-tested before any worker wiring.
 
