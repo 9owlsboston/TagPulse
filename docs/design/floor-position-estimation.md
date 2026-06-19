@@ -103,6 +103,16 @@ Validation: cross-tenant guard on `asset_id`/`site_id` (foreign tenant → 422),
 `0 ≤ confidence ≤ 1`, `(x, y)` finite, optional bounds-check against
 `coord_system.extent_*` (warn, not reject — vendors may use a different origin).
 
+**Relationship to the existing `external-position` endpoint.** `POST
+/assets/{id}/external-position` already exists (Sprint 15,
+`src/tagpulse/api/routes/assets.py`) and ingests **lat/lon** fixes into
+`external_locations` — the geographic sibling of this floor-frame `(x, y)`
+endpoint. They write **different tables in different coordinate frames**, so a
+separate endpoint is the default. `[NEEDS DECISION]` whether to instead extend
+`external-position` with a coordinate-frame discriminator (`geo` vs `floor`) and
+route floor fixes to `asset_positions` from there — fewer endpoints, but mixes
+two storage targets behind one verb. Resolve at Phase 1 kickoff.
+
 ### New endpoint — read (shared with Phase 2)
 
 ```

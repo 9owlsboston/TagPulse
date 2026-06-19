@@ -40,4 +40,10 @@ below remain open and feed Sprint 59 §59.3.
 - [2026-05-25] Normalize `reads-per-hour` sparkline `v` to reads/hr (currently bucket-volume, ~6× headline number with default `bucket_hours=6`); or rename the tile-id semantics. PR #79 follow-up. [backend]
 - [2026-05-25] Eliminate double `get_summary()` per Dashboard load — `/sparklines` re-runs the 13-query summary that the UI already fetched via `/summary`. Either accept current values from client or drop flat tiles from `/sparklines`. PR #79 follow-up. [backend]
 
+### Spatial / positioning (design captured — [floor-position-estimation.md](design/floor-position-estimation.md))
+
+- [2026-06-19] **Phase 1 — BYO precomputed floor positions.** `POST /assets/{id}/position` (`source='precomputed'`, floor-frame sibling of the existing lat/lon `external-position`) + shared `GET /assets/{id}/floor-path` read endpoint + `CRS.Simple` trail layer. Fills the headless `asset_positions` table; ~1 sprint, low risk; unblocks customers with their own location engine. Builds the seam Phase 2 reuses. Promote to a sprint when scheduling the floor-trail UX. [backend][ui]
+- [2026-06-19] **Phase 2 — homegrown RSSI estimator.** `rssi_weighted_centroid` + recency-decay (`τ` half-life, `τ→0` = last-wins), hull-bounded, Option C server-side recompute tick (server time, rolling buffer), `τ`/`D` knobs in `tenants.position_strategy`. Multi-sprint, R&D; amends [ADR-024](adr/024-position-estimation.md). Gated on first sub-meter-positioning customer. [backend]
+- [2026-06-19] **`[NEEDS WM]` v2 wire-format + snap simulator.** Estimator may want an additive `rpk` (peak-RSSI) wire field; needs WM protocol sign-off. A v2 snap simulator (wrap `WmV2Producer`, short `snap_period_s`, MQTT publish) is dev tooling that follows the WM conversation — current simulators are v1-HTTP (no snaps). [backend]
+
 <!-- Add new items above this line. Oldest at bottom; remove when drained. -->
