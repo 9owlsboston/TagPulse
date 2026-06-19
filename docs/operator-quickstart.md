@@ -116,6 +116,42 @@ Alerts (with the runbook each one points at):
 See [observability/slos.md](observability/slos.md) for the burn-rate math
 and error-budget freeze policy.
 
+## Indoor positioning estimator (default-off)
+
+Sprint 66 ships the homegrown floor-position estimator — a worker that
+computes each asset's floor `(x, y)` from fixed-reader RSSI and writes
+`asset_positions(source='computed')` (the UI floor map then draws the trail).
+It is **gated off** (`POSITION_ESTIMATOR_ENABLED=false`) until validated on the
+env's data: accuracy depends on the floor survey (reader antenna `(x, y)`,
+`device.site_id`) and on each asset being heard by ≥ 2 readers.
+
+**1. Validate accuracy offline (no API/DB):**
+
+```bash
+python scripts/simulate_floor_positioning.py --validate
+```
+
+Prints estimated-vs-placed error + RMSE for synthetic placements — the ADR-024
+ground-truth check.
+
+**2. Seed a real floor + reads in dev, then enable:**
+
+```bash
+# back-fill the survey (coord_system + reader antennas + site_id) + stream reads
+TAGPULSE_API_KEY=<key> python scripts/simulate_floor_positioning.py --emit \
+  --api-url <dev-api-url> --tenant-id <uuid>
+
+# turn the worker on (api/worker container env), then redeploy
+POSITION_ESTIMATOR_ENABLED=true
+POSITION_ESTIMATOR_INTERVAL_S=3   # recompute cadence in seconds
+```
+
+Confirm it's working: `asset_positions` gains `source='computed'` rows for the
+tenant, and the asset's **Location** trail renders on the floor map. Per-tenant
+tuning lives in `tenants.position_strategy` (JSONB) — `half_life_s` (τ recency;
+`0` = last-reader-wins), `lookback_s`, `min_antennas`, `rssi_floor_dbm`. See
+[design/floor-position-estimation.md](design/floor-position-estimation.md).
+
 ## SSH / shell into things
 
 Container Apps don't give you a shell. Use the `tools` job for one-shot
