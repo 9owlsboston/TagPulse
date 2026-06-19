@@ -1674,9 +1674,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 65 — BYO precomputed floor positions + asset floor-path (active)
+## Sprint 65 — BYO precomputed floor positions + asset floor-path (shipped)
 
-> **Status (2026-06-19, kickoff).** Phase 1 of [floor-position-estimation.md](design/floor-position-estimation.md) — the first writer into the headless Sprint 59 `asset_positions` hypertable. Branch `sprint-65/floor-position-byo`, backend PR [#120](https://github.com/9owlsboston/TagPulse/pull/120). Backend-first; the `CRS.Simple` trail-layer `[ui]` follows in `TagPulse-UI`. Phase 2 (the `rssi_weighted_centroid` estimator) stays deferred per the design doc.
+> **Status (2026-06-19, shipped).** Phase 1 of [floor-position-estimation.md](design/floor-position-estimation.md) merged across both repos — backend PR [#120](https://github.com/9owlsboston/TagPulse/pull/120) (`POST /assets/{id}/position` writing `source='precomputed'` into the headless Sprint 59 `asset_positions` hypertable + `GET /assets/{id}/floor-path`, with RLS + asset-404 / foreign-site-422 guards; `make check` green at 1650) and UI PR [#95](https://github.com/9owlsboston/TagPulse-UI/pull/95) (floor-map asset marker draws the real precomputed `(x, y)` + a confidence-shaded movement trail, reader-snap fallback). Phase 2 (the `rssi_weighted_centroid` estimator) stays deferred per the design doc, gated on the WM wire-format conversation.
 
 **Why now.** Sprint 64 shipped the floor map but asset markers snap to the triggering reader — no true per-asset `(x, y)`, no movement trail, and `asset_positions` has no writer. Phase 1 closes that for customers who already own a location engine (vendor middleware / UWB / BLE-AoA) and builds the **table-write + read endpoint + UI trail seam that Phase 2 reuses**.
 
