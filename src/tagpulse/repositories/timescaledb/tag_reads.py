@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.api.filters import LIKE_ESCAPE, wildcard_to_ilike
 from tagpulse.models.database import (
     AlertModel,
     DeadLetterEventModel,
@@ -119,6 +120,7 @@ class TimescaleTagReadRepository:
         *,
         device_id: uuid.UUID | None = None,
         tag_id: str | None = None,
+        tag_q: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
         has_location: bool | None = None,
@@ -135,6 +137,11 @@ class TimescaleTagReadRepository:
             stmt = stmt.where(TagReadModel.device_id == device_id)
         if tag_id is not None:
             stmt = stmt.where(TagReadModel.tag_id == tag_id)
+        tag_like = wildcard_to_ilike(tag_q)
+        if tag_like is not None:
+            # Sprint 70: wildcard search over ``tag_id`` (the EPC), bare term =
+            # substring, anchored when a ``*``/``?`` is present, case-insensitive.
+            stmt = stmt.where(TagReadModel.tag_id.ilike(tag_like, escape=LIKE_ESCAPE))
         if start is not None:
             stmt = stmt.where(TagReadModel.timestamp >= start)
         if end is not None:

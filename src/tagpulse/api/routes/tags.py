@@ -144,6 +144,14 @@ async def list_tags(
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     epc_prefix: str | None = Query(default=None, max_length=128),
     bound: bool | None = Query(default=None),
+    q: str | None = Query(
+        default=None,
+        description=(
+            "Sprint 70 — wildcard search over ``epc_hex``. ``*`` / ``?`` glob "
+            "(bare term = substring, anchored when a wildcard is present), "
+            "case-insensitive. Combines with the other filters via AND."
+        ),
+    ),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     tenant: Tenant = Depends(get_current_tenant),
@@ -156,6 +164,7 @@ async def list_tags(
         status=status_filter,
         epc_prefix=normalised_prefix,
         bound=bound,
+        q=q,
         label_filters=_extract_label_filters(request) or None,
         limit=limit,
         offset=offset,

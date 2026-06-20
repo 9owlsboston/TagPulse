@@ -9189,6 +9189,24 @@
             }
           },
           {
+            "description": "Sprint 70 \u2014 wildcard search over the alert ``message``. ``*`` / ``?`` glob (bare term = substring, anchored when a wildcard is present), case-insensitive. Combines with the other filters via AND.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 70 \u2014 wildcard search over the alert ``message``. ``*`` / ``?`` glob (bare term = substring, anchored when a wildcard is present), case-insensitive. Combines with the other filters via AND.",
+              "title": "Q"
+            }
+          },
+          {
             "in": "query",
             "name": "limit",
             "required": false,
@@ -15226,6 +15244,24 @@
             }
           },
           {
+            "description": "Sprint 70 \u2014 wildcard search over ``tag_id`` (EPC). ``*`` / ``?`` glob (bare term = substring, anchored when a wildcard is present), case-insensitive. Combines with the other filters via AND. Use ``tag_id`` for an exact match.",
+            "in": "query",
+            "name": "tag_q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 70 \u2014 wildcard search over ``tag_id`` (EPC). ``*`` / ``?`` glob (bare term = substring, anchored when a wildcard is present), case-insensitive. Combines with the other filters via AND. Use ``tag_id`` for an exact match.",
+              "title": "Tag Q"
+            }
+          },
+          {
             "in": "query",
             "name": "start",
             "required": false,
@@ -15943,6 +15979,24 @@
                 }
               ],
               "title": "Bound"
+            }
+          },
+          {
+            "description": "Sprint 70 \u2014 wildcard search over ``epc_hex``. ``*`` / ``?`` glob (bare term = substring, anchored when a wildcard is present), case-insensitive. Combines with the other filters via AND.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 70 \u2014 wildcard search over ``epc_hex``. ``*`` / ``?`` glob (bare term = substring, anchored when a wildcard is present), case-insensitive. Combines with the other filters via AND.",
+              "title": "Q"
             }
           },
           {

@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 69 — page fixes · **shipped** (PRs #134/#97); between sprints.
+**Current sprint:** 70 — table filter · branch `sprint-70/table-filter` (full scope lands in §sprint-70 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1774,19 +1774,19 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 70 — Uniform table filter & search (wildcard column box) `[queued]`
+## Sprint 70 — Uniform table filter & search (wildcard column box) `[in progress]`
 
-> **Status (2026-06-19, queued).** Planned to kick off when Sprint 69 ships (the data fixes settle the list pages first). Decisions locked with the user: **wildcard-only** for v1 (no regex mode), and **server-side filtering is in scope** for paginated tables.
+> **Status (2026-06-20, in progress).** Kicked off cross-repo (backend [#137](https://github.com/9owlsboston/TagPulse/pull/137) + UI [#106](https://github.com/9owlsboston/TagPulse-UI/pull/106)). Decisions locked with the user: **wildcard-only** for v1 (no regex mode); **server-side filtering is in scope** for paginated tables; v1 paginated endpoints are **Tag Reads, Alert History, Tags, Assets**. Full contract + grammar in the [Sprint 70 design doc](design/sprint-70-table-filter.md).
 
 **Why.** Filtering is ad-hoc per page today (AntD column filters on ~5 pages + shared `FilterPanel`/`LabelFilterStrip`), with no consistent text/wildcard search. Operators want to type `reader-*` at a column header and filter — uniformly, on every list/table.
 
 **Scope (planned).**
-- **Reusable `ColumnSearchFilter`** — an AntD `filterDropdown` text box + a `matchWildcard(value, pattern)` util (glob `*`/`?` → anchored, case-insensitive regex internally; **no raw regex** in v1 to avoid ReDoS/footguns). Sort stays on AntD `sorter` (already uniform).
-- **Client-side** for fully-loaded tables (Devices, Categories, Sites/Zones).
-- **Server-side** for paginated tables (Tag Reads, Alert History) — add a wildcard/`q` query param per endpoint (contract change) so the filter is correct across pages, **never** silently filtering only the loaded page.
-- Retrofit pages incrementally; document the pattern alongside `ColumnChooser`.
+- **Reusable `ColumnSearchFilter`** — an AntD `filterDropdown` text box + a `matchWildcard(value, pattern)` util (glob `*`/`?`; **substring** for bare terms, **anchored** when a wildcard is present; case-insensitive; **no raw regex** in v1 to avoid ReDoS/footguns). Sort stays on AntD `sorter` (already uniform).
+- **Client-side** for fully-loaded tables (Devices, Categories, Sites/Zones) via `matchWildcard`.
+- **Server-side** for the four paginated tables (**Tag Reads, Alert History, Tags, Assets**) — an optional wildcard query param per endpoint compiled to an escaped `ILIKE` via a shared `wildcard_to_ilike()` helper (contract change), so the filter is correct across pages, **never** silently filtering only the loaded page. Extends (not breaks) the existing `/assets?q=` substring search.
+- Retrofit pages incrementally; document the pattern alongside `ColumnChooser` and [ADR-030](adr/030-list-page-column-filters.md).
 
-**Decisions locked.** (a) wildcard-only v1; (b) server-side in scope. **Open:** which paginated endpoints get search params, and the exact glob→regex grammar (`*`, `?`, escaping).
+**Decisions locked.** (a) wildcard-only v1; (b) server-side in scope; (c) v1 endpoints = Tag Reads, Alert History, Tags, Assets; (d) grammar = substring-by-default / anchored-on-wildcard, case-insensitive, multi-column AND (see design doc §2); (e) **O1** Tag Reads searches `tag_id` only (`tag_q`); (f) **O2** Alert History searches the `message` column (`q`). **Open:** O3 `pg_trgm` index (deferred until a paginated table trips the p95 SLO).
 
 ---
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.

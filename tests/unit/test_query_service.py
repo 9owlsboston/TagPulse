@@ -49,6 +49,7 @@ class FakeTagReadRepo:
         *,
         device_id: UUID | None = None,
         tag_id: str | None = None,
+        tag_q: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
         has_location: bool | None = None,
@@ -61,6 +62,8 @@ class FakeTagReadRepo:
             results = [r for r in results if r.device_id == device_id]
         if tag_id is not None:
             results = [r for r in results if r.tag_id == tag_id]
+        if tag_q is not None:
+            results = [r for r in results if tag_q.strip("*?").lower() in r.tag_id.lower()]
         if start is not None:
             results = [r for r in results if r.timestamp >= start]
         if end is not None:

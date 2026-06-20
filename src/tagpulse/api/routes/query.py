@@ -22,6 +22,15 @@ router = APIRouter(tags=["query"])
 async def query_tag_reads(
     device_id: UUID | None = Query(default=None),
     tag_id: str | None = Query(default=None),
+    tag_q: str | None = Query(
+        default=None,
+        description=(
+            "Sprint 70 — wildcard search over ``tag_id`` (EPC). ``*`` / ``?`` "
+            "glob (bare term = substring, anchored when a wildcard is present), "
+            "case-insensitive. Combines with the other filters via AND. Use "
+            "``tag_id`` for an exact match."
+        ),
+    ),
     start: datetime | None = Query(default=None),
     end: datetime | None = Query(default=None),
     has_location: bool | None = Query(
@@ -42,6 +51,7 @@ async def query_tag_reads(
         tenant.id,
         device_id=device_id,
         tag_id=tag_id,
+        tag_q=tag_q,
         start=start,
         end=end,
         has_location=has_location,

@@ -9,6 +9,7 @@ from typing import Any, Literal
 from sqlalchemy import any_, delete, func, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.api.filters import LIKE_ESCAPE, wildcard_to_ilike
 from tagpulse.models.database import AlertModel, RuleModel
 from tagpulse.models.rule_schemas import (
     SIGNALING_DEFAULT_CAP_PER_SCOPE,
@@ -369,6 +370,7 @@ class RulesService:
         rule_id: uuid.UUID | None = None,
         device_id: uuid.UUID | None = None,
         status: str | None = None,
+        q: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[AlertResponse]:
@@ -383,6 +385,10 @@ class RulesService:
             stmt = stmt.where(AlertModel.device_id == device_id)
         if status is not None:
             stmt = stmt.where(AlertModel.status == status)
+        like = wildcard_to_ilike(q)
+        if like is not None:
+            # Sprint 70: wildcard search over the human-readable alert message.
+            stmt = stmt.where(AlertModel.message.ilike(like, escape=LIKE_ESCAPE))
         stmt = stmt.limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_alert_to_response(row) for row in result.scalars()]

@@ -43,6 +43,7 @@ class TagReadRepository(Protocol):
         *,
         device_id: UUID | None = None,
         tag_id: str | None = None,
+        tag_q: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
         has_location: bool | None = None,
