@@ -73,11 +73,18 @@ _OWNING_STATUSES: frozenset[str] = frozenset({"registered", "active"})
 
 @dataclass(frozen=True)
 class _ReadRow:
-    """Snapshot of the columns the worker needs from ``tag_reads``."""
+    """Snapshot of the columns the worker needs from ``tag_reads``.
+
+    ``epc_hex`` is the registry join key (matches ``tags.epc_hex``). It is
+    deliberately **not** ``tag_reads.epc`` — that column holds the decoded
+    EPC **URI** for schemed tags (e.g. ``urn:epc:id:sgtin:…``), which never
+    equals the hex the registry is keyed on. Matching on ``epc`` silently
+    classified every decodable (SGTIN/SSCC/…) read as unknown.
+    """
 
     id: uuid.UUID
     tenant_id: uuid.UUID
-    epc: str | None
+    epc_hex: str | None
     timestamp: datetime
 
 
@@ -118,7 +125,7 @@ def classify_reads(
         caller is responsible for fetching exactly this set; missing
         rows are interpreted as "EPC not in registry → FALSE".
 
-    Reads with ``epc IS NULL`` short-circuit to FALSE without
+    Reads with ``epc_hex IS NULL`` short-circuit to FALSE without
     consulting the tag set — these are non-EPC telemetry reads
     (e.g. raw RSSI-only legacy readers) that conceptually can never
     be "known" because there is no identity to match against.
@@ -141,10 +148,10 @@ def classify_reads(
     # bypass the join entirely.
     grouped: dict[tuple[uuid.UUID, str], list[_ReadRow]] = defaultdict(list)
     for read in reads:
-        if read.epc is None:
+        if read.epc_hex is None:
             result.known_false_read_ids.append(read.id)
             continue
-        key = (read.tenant_id, normalize_epc_hex(read.epc))
+        key = (read.tenant_id, normalize_epc_hex(read.epc_hex))
         grouped[key].append(read)
 
     for key, reads_for_key in grouped.items():
@@ -270,7 +277,7 @@ class TagRegistrarWorker:
             select(
                 TagReadModel.id,
                 TagReadModel.tenant_id,
-                TagReadModel.epc,
+                TagReadModel.epc_hex,
                 TagReadModel.timestamp,
             )
             .where(TagReadModel.tag_known.is_(None))
@@ -281,7 +288,7 @@ class TagRegistrarWorker:
             _ReadRow(
                 id=row.id,
                 tenant_id=row.tenant_id,
-                epc=row.epc,
+                epc_hex=row.epc_hex,
                 timestamp=row.timestamp,
             )
             for row in rows
@@ -292,9 +299,9 @@ class TagRegistrarWorker:
     ) -> list[TagModel]:
         per_tenant: dict[uuid.UUID, set[str]] = defaultdict(set)
         for r in reads:
-            if r.epc is None:
+            if r.epc_hex is None:
                 continue
-            per_tenant[r.tenant_id].add(normalize_epc_hex(r.epc))
+            per_tenant[r.tenant_id].add(normalize_epc_hex(r.epc_hex))
         if not per_tenant:
             return []
         conds = [
