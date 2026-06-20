@@ -353,6 +353,41 @@ def _v2_fw(value: Any) -> str | float | None:
     raise WmV2ParseError("invalid_snap_entry", f"fw must be a string or number: {value!r}")
 
 
+def _v2_sn(value: Any) -> str:
+    """Decode the envelope ``sn`` reader id (spec §12.2).
+
+    Accepts a non-empty **string** (recommended — WM emits a provisioning
+    UUID) or a **number** (a numeric reader serial, coerced to its string
+    form). ``device_id`` is derived from the MQTT topic, so ``sn`` is
+    informational; it is stored as a string regardless. ``float`` / ``bool``
+    / empty / missing are rejected.
+    """
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, bool):
+        raise WmV2ParseError("missing_required_field", f"sn={value!r}")
+    if isinstance(value, int):
+        return str(value)
+    raise WmV2ParseError("missing_required_field", f"sn={value!r}")
+
+
+def _v2_coord(value: Any, lo: float, hi: float, name: str) -> float | None:
+    """Decode and **range-check** an envelope ``lat`` / ``lon`` (spec §12.2).
+
+    ``None`` / omitted passes through (no GNSS fix). A present value must be
+    a number within ``[lo, hi]``; anything else rejects the whole message
+    with DLQ ``reason="invalid_location"``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise WmV2ParseError("invalid_location", f"{name} not a number: {value!r}")
+    f = float(value)
+    if not (lo <= f <= hi):
+        raise WmV2ParseError("invalid_location", f"{name} out of range: {f}")
+    return f
+
+
 def _parse_v2_ts(value: Any) -> datetime:
     """Parse an ISO-8601 ``ts`` string to a tz-aware UTC datetime (spec §12.2)."""
     if not isinstance(value, str) or not value:
@@ -413,9 +448,7 @@ def parse_wm_v2(raw: dict[str, Any]) -> WmV2Message:
         raise WmV2ParseError("missing_type")
     if t not in (0, 1, 2):
         raise WmV2ParseError("unknown_type", f"t={t!r}")
-    sn = raw.get("sn")
-    if not isinstance(sn, str) or not sn:
-        raise WmV2ParseError("missing_required_field", f"sn={sn!r}")
+    sn = _v2_sn(raw.get("sn"))
     ts = _parse_v2_ts(raw.get("ts"))
     epcs = raw.get("epcs")
     if not isinstance(epcs, list):
@@ -428,8 +461,8 @@ def parse_wm_v2(raw: dict[str, Any]) -> WmV2Message:
         t=t,
         sn=sn,
         ts=ts,
-        lat=_v2_num(raw.get("lat")),
-        lon=_v2_num(raw.get("lon")),
+        lat=_v2_coord(raw.get("lat"), LAT_MIN, LAT_MAX, "lat"),
+        lon=_v2_coord(raw.get("lon"), LON_MIN, LON_MAX, "lon"),
         fw=_v2_fw(raw.get("fw")),
         ant=ant,
         entries=entries,

@@ -292,6 +292,102 @@ class TestForwardCompat:
 
 
 # ---------------------------------------------------------------------------
+# sn (string or number) + lat/lon range checks
+# ---------------------------------------------------------------------------
+
+
+class TestSnAndCoords:
+    def test_sn_string_accepted(self) -> None:
+        raw = {"v": 2, "t": 2, "sn": SN, "ts": TS_ISO, "epcs": [[EPC_A, 0, 0, 0, 0]]}
+        assert parse_wm_v2(raw).sn == SN
+
+    def test_sn_integer_coerced_to_string(self) -> None:
+        raw = {"v": 2, "t": 2, "sn": 4242, "ts": TS_ISO, "epcs": [[EPC_A, 0, 0, 0, 0]]}
+        assert parse_wm_v2(raw).sn == "4242"
+
+    def test_sn_float_rejected(self) -> None:
+        raw = {"v": 2, "t": 2, "sn": 42.5, "ts": TS_ISO, "epcs": [[EPC_A, 0, 0, 0, 0]]}
+        with pytest.raises(WmV2ParseError) as exc:
+            parse_wm_v2(raw)
+        assert exc.value.reason == "missing_required_field"
+
+    def test_sn_empty_rejected(self) -> None:
+        raw = {"v": 2, "t": 2, "sn": "", "ts": TS_ISO, "epcs": [[EPC_A, 0, 0, 0, 0]]}
+        with pytest.raises(WmV2ParseError) as exc:
+            parse_wm_v2(raw)
+        assert exc.value.reason == "missing_required_field"
+
+    def test_valid_latlon_accepted(self) -> None:
+        raw = {
+            "v": 2,
+            "t": 0,
+            "sn": SN,
+            "ts": TS_ISO,
+            "lat": 50.1,
+            "lon": 30.3,
+            "epcs": [[EPC_A, -50, 1, 0, 0]],
+        }
+        msg = parse_wm_v2(raw)
+        assert msg.lat == pytest.approx(50.1)
+        assert msg.lon == pytest.approx(30.3)
+
+    def test_null_latlon_passes_through(self) -> None:
+        raw = {
+            "v": 2,
+            "t": 0,
+            "sn": SN,
+            "ts": TS_ISO,
+            "lat": None,
+            "lon": None,
+            "epcs": [[EPC_A, -50, 1, 0, 0]],
+        }
+        msg = parse_wm_v2(raw)
+        assert msg.lat is None and msg.lon is None
+
+    def test_lat_out_of_range_rejected(self) -> None:
+        raw = {
+            "v": 2,
+            "t": 0,
+            "sn": SN,
+            "ts": TS_ISO,
+            "lat": 91.0,
+            "lon": 30.3,
+            "epcs": [[EPC_A, -50, 1, 0, 0]],
+        }
+        with pytest.raises(WmV2ParseError) as exc:
+            parse_wm_v2(raw)
+        assert exc.value.reason == "invalid_location"
+
+    def test_lon_out_of_range_rejected(self) -> None:
+        raw = {
+            "v": 2,
+            "t": 0,
+            "sn": SN,
+            "ts": TS_ISO,
+            "lat": 50.1,
+            "lon": -181.0,
+            "epcs": [[EPC_A, -50, 1, 0, 0]],
+        }
+        with pytest.raises(WmV2ParseError) as exc:
+            parse_wm_v2(raw)
+        assert exc.value.reason == "invalid_location"
+
+    def test_non_number_lat_rejected(self) -> None:
+        raw = {
+            "v": 2,
+            "t": 0,
+            "sn": SN,
+            "ts": TS_ISO,
+            "lat": "50.1",
+            "lon": 30.3,
+            "epcs": [[EPC_A, -50, 1, 0, 0]],
+        }
+        with pytest.raises(WmV2ParseError) as exc:
+            parse_wm_v2(raw)
+        assert exc.value.reason == "invalid_location"
+
+
+# ---------------------------------------------------------------------------
 # Subscriber dispatch — snap (t=0)
 # ---------------------------------------------------------------------------
 
