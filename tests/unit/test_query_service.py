@@ -81,6 +81,7 @@ class FakeTagReadRepo:
         device_id: UUID | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        bucket_minutes: int = 60,
     ) -> list[ReadsPerHour]:
         filtered = list(self.reads)
         if device_id is not None:
@@ -90,8 +91,13 @@ class FakeTagReadRepo:
         if end is not None:
             filtered = [r for r in filtered if r.timestamp <= end]
         buckets: dict[tuple[datetime, UUID], int] = {}
+        width = bucket_minutes * 60
         for r in filtered:
-            bucket = r.timestamp.replace(minute=0, second=0, microsecond=0)
+            if bucket_minutes == 60:
+                bucket = r.timestamp.replace(minute=0, second=0, microsecond=0)
+            else:
+                floored = (r.timestamp.timestamp() // width) * width
+                bucket = datetime.fromtimestamp(floored, tz=r.timestamp.tzinfo or UTC)
             key = (bucket, r.device_id)
             buckets[key] = buckets.get(key, 0) + 1
         return [ReadsPerHour(bucket=k[0], device_id=k[1], read_count=v) for k, v in buckets.items()]
@@ -407,6 +413,23 @@ class TestAggregations:
         result = await service.reads_per_hour(TENANT_ID, device_id=did)
         assert len(result) == 1
         assert result[0].read_count == 5
+
+    async def test_reads_per_hour_custom_bucket_splits_sub_hour(
+        self, service: QueryService, tag_repo: FakeTagReadRepo
+    ) -> None:
+        did = uuid4()
+        base = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+        # Two reads 20 minutes apart fall in the same hour but different 15-min buckets.
+        await tag_repo.insert(TENANT_ID, TagReadCreate(device_id=did, tag_id="A", timestamp=base))
+        await tag_repo.insert(
+            TENANT_ID,
+            TagReadCreate(device_id=did, tag_id="B", timestamp=base + timedelta(minutes=20)),
+        )
+        hourly = await service.reads_per_hour(TENANT_ID, device_id=did)
+        assert len(hourly) == 1
+        fine = await service.reads_per_hour(TENANT_ID, device_id=did, bucket_minutes=15)
+        assert len(fine) == 2
+        assert {r.read_count for r in fine} == {1}
 
     async def test_unique_tags(self, service: QueryService, tag_repo: FakeTagReadRepo) -> None:
         did = uuid4()

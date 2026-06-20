@@ -1027,7 +1027,7 @@ All schemas are defined in `src/tagpulse/models/` and enforce validation at the 
 
 | Schema | Purpose | Key Fields |
 |--------|---------|------------|
-| `ReadsPerHour` | Hourly read count | `bucket`, `device_id`, `read_count` |
+| `ReadsPerHour` | Read count per time bucket (default hourly; bucket width set by the endpoint's `bucket_minutes`) | `bucket`, `device_id`, `read_count` |
 | `UniqueTagsPerWindow` | Unique tags per window | `bucket`, `device_id`, `unique_tags` |
 | `DeviceHealthSummary` | Health snapshot | `device_id`, `name`, `status`, `connection_state`, `last_seen`, `reads_last_hour`, `error_rate` |
 

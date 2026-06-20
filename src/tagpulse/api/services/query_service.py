@@ -155,10 +155,15 @@ class QueryService:
         device_id: UUID | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        bucket_minutes: int = 60,
     ) -> list[ReadsPerHour]:
-        """Get read counts per device per hour."""
+        """Get read counts per device per time bucket (default hourly)."""
         return await self._tag_read_repo.reads_per_hour(
-            tenant_id, device_id=device_id, start=start, end=end
+            tenant_id,
+            device_id=device_id,
+            start=start,
+            end=end,
+            bucket_minutes=bucket_minutes,
         )
 
     async def unique_tags_per_window(

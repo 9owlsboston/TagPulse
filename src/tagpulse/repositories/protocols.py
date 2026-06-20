@@ -58,6 +58,7 @@ class TagReadRepository(Protocol):
         device_id: UUID | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        bucket_minutes: int = 60,
     ) -> list[ReadsPerHour]: ...
 
     async def unique_tags_per_window(
