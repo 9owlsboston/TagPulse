@@ -4,6 +4,10 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **`scripts/clear_quarantine.py` — scoped, dry-run-by-default ops tool to clear `telemetry_quarantine` rows.** Quarantine has no clear/delete API (it's an operator triage surface), so stale rows produced by *old* behavior (e.g. the pre-fix `read_count` fan-out) linger as historical noise. This utility deletes them **tenant-scoped** (`--tenant-id` required), optionally narrowed by `--reason` / `--metric` (AND-combined), and **dry-runs by default** (prints the matching count; `--apply` to delete). Run in-VNet via the tools-job: `scripts/azd-job.sh dev clear_quarantine.py -- --tenant-id <uuid> --reason unknown_metric --metric read_count --apply`. Connection mirrors `reset_demo_tenant.py` (admin role; the tenant filter is the script's WHERE clause). No app/contract change.
+
 ### Fixed
 
 - **`read_count` no longer fans out to telemetry (stops the continuous `unknown_metric` quarantine).** WM v2 packs the per-snapshot read count (wire `cnt`) into `tag_reads.sensor_data` as `read_count` alongside `temperature_c` / `humidity_pct`. The tag-borne sensor mirror ([`_mirror_tag_borne_sensors`](src/tagpulse/ingestion/service.py)) copied **every** numeric `sensor_data` key into `telemetry_readings`, so `read_count` — which is **read metadata, not a device-sensor metric** and therefore not in any telemetry model — was quarantined as `unknown_metric` on **every read**, for every WM-v2 reader fleet (observed live on `demo-wm-dc`/Sim-Reader-03 accumulating ~6 rows/s). `read_count` is now excluded from the telemetry mirror via `_NON_TELEMETRY_SENSOR_KEYS`; **it stays on `tag_reads.sensor_data`** (the source of truth the weighted asset fusion reads from), it just no longer pollutes telemetry/quarantine. Genuine sensor readings (`temperature_c`, `humidity_pct`, …) mirror unchanged.
