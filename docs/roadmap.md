@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 70 — table filter · branch `sprint-70/table-filter` (full scope lands in §sprint-70 during the sprint).
+**Current sprint:** none active — Sprint 70 (uniform wildcard table filter) shipped 2026-06-20 (backend #137 + UI #106). See §sprint-70.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1774,7 +1774,7 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 70 — Uniform table filter & search (wildcard column box) `[in progress]`
+## Sprint 70 — Uniform table filter & search (wildcard column box) (shipped)
 
 > **Status (2026-06-20, in progress).** Kicked off cross-repo (backend [#137](https://github.com/9owlsboston/TagPulse/pull/137) + UI [#106](https://github.com/9owlsboston/TagPulse-UI/pull/106)). Decisions locked with the user: **wildcard-only** for v1 (no regex mode); **server-side filtering is in scope** for paginated tables; v1 paginated endpoints are **Tag Reads, Alert History, Tags, Assets**. Full contract + grammar in the [Sprint 70 design doc](design/sprint-70-table-filter.md).
 
