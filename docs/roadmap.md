@@ -1754,7 +1754,41 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Backlog (not scheduled)
+## Sprint 69 — Page fixes: frame-aware asset list + Tag Reads polish + tag/reader telemetry
+
+> **Status (2026-06-19, in progress).** A cluster of user-reported issues across the Assets list, Tags, Tag Reads, and Devices/Readers pages, surfaced while demoing the floor-positioning + WM ingest work. Backend PR [#134](https://github.com/9owlsboston/TagPulse/pull/134), UI PR [#97](https://github.com/9owlsboston/TagPulse-UI/pull/97). One backend contract change (A1); the rest are UI polish + demo-data completeness.
+
+**Why now.** The floor + WM work exposed several places where the UI is **geo-frame-blind** or shows raw/unfriendly data: the Assets list reads "never" for floor assets, Tag Reads shows UUIDs and over-precise coordinates, and tag/reader sensor telemetry doesn't surface. These are small individually but collectively make the product look broken in a floor deployment.
+
+**Scope (issue board).**
+- **A1 — Assets list frame-aware location + true last-seen (backend+UI, contract change).** The `asset_current_location` view ([migration 024](../migrations/versions/024_asset_current_location.py)) is geo-only (`WHERE latitude IS NOT NULL`, no `asset_positions`, no read-without-GPS), so floor assets show `Location —` / `Last seen never` despite active reads + computed `(x, y)`. Extend it to be frame-aware: a `floor_latest` CTE from `asset_positions` + a `last_seen_at` from the newest read regardless of frame; add a `kind` (`geo`/`floor`/`none`) discriminator + floor fields to `AssetCurrentLocation`. Regenerate `openapi.json` (**merges first**). UI renders Location per frame + always-populated Last-seen.
+- **R1 — Tag Reads lat/lon precision (UI).** `toFixed(5)` → **`toFixed(2)`** on Latitude/Longitude ([TagReads.tsx](../../TagPulse-UI/src/pages/telemetry/TagReads.tsx)).
+- **R2 — Reader column shows name, not UUID (UI).** New shared **`<DeviceRef id name>`** cell: name-as-**link** to `/devices/{id}` + **`device_id` tooltip**, short-id fallback for unknown devices. Names are **not** forced unique — the label is the name, identity stays `device_id`. Replaces the raw `device_id` column on Tag Reads; reusable wherever a reader is shown.
+- **R3 — Tag Reads chart: add Temperature + Humidity series (UI).** The chart plots only Signal (RSSI); add temp (°C) + humidity (%) series (resolvers `readTemperature`/`readHumidity` already exist for the table) on a secondary axis (different units from dBm).
+- **T1 — Tags First/Last seen "Never" (data).** The `TagRegistrarWorker` stamps `first_seen_at`/`last_seen_at` only on an `epc_hex` match vs a **registered** tag; the floor sim registers no tags (`simulate_floor_positioning.py` posts assets/bindings/reads but no `POST /tags`). Register the sim's tags (and/or document the WM tag-import step) so the registrar stamps them. **Confirm live first** (no code bug suspected).
+- **D1 — Devices/Readers telemetry shows no temp/humidity (investigate → data/config).** Tag sensors fan out device-scoped (metric names **as-sent** — WM v2 → `temperature_c`/`humidity_pct`) + subject-scoped (opt-in via `telemetry_subject_kinds`); the Devices Telemetry tab is gated by a **telemetry model** for the reader `device_type`. Likely cause: no model for the WM reader type, or a metric-name mismatch (`temperature_c` vs model's `temperature`). **Confirm live**, then fix (seed model + reconcile metric naming, or normalize).
+
+**Sequencing.** UI quick wins (R1/R2/R3) land first (no backend). A1 is backend-first (contract). T1/D1 gated on a one-pass live diagnostic on `demo-wm-dc` to classify data-vs-code before fixing.
+
+**Out of scope → Sprint 70.** The uniform table filter/search (wildcard column box). R2's `<DeviceRef>` is the only filter-adjacent piece that ships here.
+
+---
+
+## Sprint 70 — Uniform table filter & search (wildcard column box) `[queued]`
+
+> **Status (2026-06-19, queued).** Planned to kick off when Sprint 69 ships (the data fixes settle the list pages first). Decisions locked with the user: **wildcard-only** for v1 (no regex mode), and **server-side filtering is in scope** for paginated tables.
+
+**Why.** Filtering is ad-hoc per page today (AntD column filters on ~5 pages + shared `FilterPanel`/`LabelFilterStrip`), with no consistent text/wildcard search. Operators want to type `reader-*` at a column header and filter — uniformly, on every list/table.
+
+**Scope (planned).**
+- **Reusable `ColumnSearchFilter`** — an AntD `filterDropdown` text box + a `matchWildcard(value, pattern)` util (glob `*`/`?` → anchored, case-insensitive regex internally; **no raw regex** in v1 to avoid ReDoS/footguns). Sort stays on AntD `sorter` (already uniform).
+- **Client-side** for fully-loaded tables (Devices, Categories, Sites/Zones).
+- **Server-side** for paginated tables (Tag Reads, Alert History) — add a wildcard/`q` query param per endpoint (contract change) so the filter is correct across pages, **never** silently filtering only the loaded page.
+- Retrofit pages incrementally; document the pattern alongside `ColumnChooser`.
+
+**Decisions locked.** (a) wildcard-only v1; (b) server-side in scope. **Open:** which paginated endpoints get search params, and the exact glob→regex grammar (`*`, `?`, escaping).
+
+---
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock. **Design now captured** ([floor-position-estimation.md](design/floor-position-estimation.md), 2026-06-19) — a two-phase plan that fills the headless `asset_positions` table so an asset shows a true floor `(x, y)` + movement trail:
   - **Phase 1 — BYO precomputed** (`source='precomputed'`, ~1 sprint, low risk): `POST /assets/{id}/position` (floor-frame counterpart to the existing lat/lon `external-position`) + the shared `GET /assets/{id}/floor-path` read endpoint + a `CRS.Simple` trail layer `[ui]`. Unblocks any customer who already owns a location engine (vendor middleware / UWB / BLE-AoA). Builds the table-write + read + UI seam Phase 2 reuses.
