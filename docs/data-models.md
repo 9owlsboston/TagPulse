@@ -747,19 +747,29 @@ Per-antenna position within a device's site coordinate frame (Sprint 59 schema; 
 
 ### asset_current_location (view)
 
-Latest `tag_read` per active binding. Defined in [design/assets-and-zones.md](design/assets-and-zones.md) §3.4.
+Latest known position per active binding, **frame-aware** (Sprint 69 A1 —
+[migration 056](../migrations/versions/056_frame_aware_current_location.py); the
+Sprint 15 view was geographic-only). Picks the newer of the latest geo fix vs the
+latest floor `(x, y)` fix, and reports a **true `last_seen_at`** from the newest
+read of any kind (so a fixed-reader/floor asset isn't "never seen").
 
 | Column | Type | Notes |
 |--------|------|-------|
-| `asset_id` | UUID | |
 | `tenant_id` | UUID | |
-| `last_reader_id` | UUID | Source `tag_reads.device_id` |
-| `last_seen_at` | TIMESTAMPTZ | |
-| `latitude` | DOUBLE PRECISION | NULL when binding has no GPS reads |
-| `longitude` | DOUBLE PRECISION | |
-| `signal_strength` | FLOAT | |
+| `asset_id` | UUID | |
+| `last_seen_at` | TIMESTAMPTZ | Newest `tag_read` for any active binding, **regardless of lat/lon** (NULL only if never read) |
+| `kind` | TEXT | `geo` \| `floor` \| `none` — which frame the current position is in |
+| `recorded_at` | TIMESTAMPTZ | The chosen position's time (NULL when `kind='none'`) |
+| `latitude` / `longitude` | DOUBLE PRECISION | Geo frame only (`kind='geo'`) |
+| `accuracy_meters` | FLOAT | Geo frame only |
+| `x` / `y` | NUMERIC | Floor frame only (`kind='floor'`), from `asset_positions` |
+| `site_id` | UUID | Floor frame only |
+| `device_id` | UUID | Geo fix's reader, else the last-seen reader |
+| `latest_position_source` | TEXT | `rfid` \| `external`/vendor \| `computed` \| `precomputed` (NULL when `kind='none'`) |
 
-**Inherits RLS** from underlying tables.
+Base set = union of assets with any read, geo fix, or floor fix, so a
+read-but-unpositioned asset still appears (`kind='none'`, populated
+`last_seen_at`). **Inherits RLS** from the underlying tables.
 
 ---
 
