@@ -109,6 +109,14 @@ _TRACKING_MODES_CACHE_MAX = 1_024
 _GTIN_TO_PRODUCT_ID: dict[tuple[uuid.UUID, str], uuid.UUID | None] = {}
 _TRACKING_MODES: dict[uuid.UUID, tuple[str, ...]] = {}
 
+# Tag-borne numeric keys that are read **metadata**, not device-sensor metrics,
+# so they must NOT be mirrored into ``telemetry_readings`` (they have no model
+# entry → they would quarantine as ``unknown_metric`` on every read and pollute
+# charts). ``read_count`` is the per-snapshot read count (WM ``cnt``): it stays
+# on ``tag_reads.sensor_data`` — the source of truth the weighted asset fusion
+# (positioning + future temp/humidity) reads from — but it is not telemetry.
+_NON_TELEMETRY_SENSOR_KEYS = frozenset({"read_count"})
+
 # Sprint 19: cache for tenants.telemetry_subject_kinds. Sprint 21
 # replaced the unbounded process-local dict with the shared
 # ``SUBJECT_KINDS_CACHE`` (30 s TTL) so a ``PATCH /tenant/config``
@@ -445,7 +453,7 @@ class IngestionService:
             if not blob:
                 continue
             for k, v in blob.items():
-                if k.startswith("_"):
+                if k.startswith("_") or k in _NON_TELEMETRY_SENSOR_KEYS:
                     continue
                 if isinstance(v, bool) or not isinstance(v, int | float):
                     continue

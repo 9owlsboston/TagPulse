@@ -268,9 +268,37 @@ async def test_subject_fanout_mirrors_v2_sensor_data_blob() -> None:
     )
     await service._mirror_tag_borne_sensors(tenant_id, read, tag_read_id=uuid4())
     metrics = sorted(i["metric_name"] for i in readings_repo.inserts)
-    assert metrics == ["humidity_pct", "read_count", "temperature_c"]
+    # ``read_count`` (WM ``cnt``) is read metadata, not a sensor metric — it is
+    # NOT mirrored to telemetry (it stays on ``tag_reads.sensor_data`` for the
+    # weighted asset fusion). Only the genuine sensor readings fan out.
+    assert metrics == ["humidity_pct", "temperature_c"]
     assert all(i["subject_kind"] == "asset" for i in readings_repo.inserts)
     assert all(i["source"] == "tag" for i in readings_repo.inserts)
+
+
+async def test_subject_fanout_excludes_read_count() -> None:
+    """``read_count`` alone produces no telemetry rows (read metadata, not a metric)."""
+    asset_id = uuid4()
+    tenant_id = uuid4()
+    readings_repo = FakeTelemetryReadingsRepo()
+    service = IngestionService(
+        repo=FakeTagReadRepo(),
+        event_bus=AsyncEventBus(capacity=100),
+        binding_repo=FakeBindingRepo(asset_id=asset_id),  # type: ignore[arg-type]
+        stock_repo=FakeStockRepo(stock_id=None, lot_id=None),  # type: ignore[arg-type]
+        tenant_repo=FakeTenantRepo(kinds=["device", "asset"]),  # type: ignore[arg-type]
+        telemetry_readings_repo=readings_repo,  # type: ignore[arg-type]
+    )
+    read = TagReadCreate(
+        device_id=uuid4(),
+        tag_id="EPC-CNT-ONLY",
+        timestamp=datetime.now(UTC),
+        signal_strength=-50.0,
+        sensor_data={"read_count": 7},
+        identity=Identity(epc="urn:epc:id:sgtin:00000.1.3", epc_hex=None),
+    )
+    await service._mirror_tag_borne_sensors(tenant_id, read, tag_read_id=uuid4())
+    assert readings_repo.inserts == []
 
 
 @pytest.mark.asyncio
