@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.api.filters import LIKE_ESCAPE, wildcard_to_ilike
 from tagpulse.api.label_filter import apply_label_filter
 from tagpulse.models.database import AssetModel, AssetTagBindingModel
 from tagpulse.models.schemas import (
@@ -107,8 +108,14 @@ class TimescaleAssetRepository:
             # "no filter" (caller passes ``None`` for that intent).
             stmt = stmt.where(AssetModel.category_id.in_(category_ids))
         if q:
-            like = f"%{q}%"
-            stmt = stmt.where((AssetModel.name.ilike(like)) | (AssetModel.external_ref.ilike(like)))
+            # Sprint 70: wildcard search (``*``/``?``) compiled to an escaped
+            # ILIKE — bare terms stay substring (back-compat), ``*``/``?`` anchor.
+            like = wildcard_to_ilike(q)
+            if like is not None:
+                stmt = stmt.where(
+                    AssetModel.name.ilike(like, escape=LIKE_ESCAPE)
+                    | AssetModel.external_ref.ilike(like, escape=LIKE_ESCAPE)
+                )
         stmt = apply_label_filter(
             stmt,
             tenant_id=tenant_id,

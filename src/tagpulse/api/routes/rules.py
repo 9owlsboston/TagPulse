@@ -235,6 +235,14 @@ async def list_alerts(
     rule_id: UUID | None = Query(default=None),
     device_id: UUID | None = Query(default=None),
     status: str | None = Query(default=None),
+    q: str | None = Query(
+        default=None,
+        description=(
+            "Sprint 70 — wildcard search over the alert ``message``. ``*`` / "
+            "``?`` glob (bare term = substring, anchored when a wildcard is "
+            "present), case-insensitive. Combines with the other filters via AND."
+        ),
+    ),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
@@ -247,6 +255,7 @@ async def list_alerts(
         rule_id=rule_id,
         device_id=device_id,
         status=status,
+        q=q,
         limit=limit,
         offset=offset,
     )

@@ -33,6 +33,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tagpulse.api.filters import LIKE_ESCAPE, wildcard_to_ilike
 from tagpulse.models.database import (
     EntityLabelModel,
     LabelModel,
@@ -109,6 +110,7 @@ class TimescaleTagRepository:
         status: str | None = None,
         epc_prefix: str | None = None,
         bound: bool | None = None,
+        q: str | None = None,
         label_filters: dict[str, str] | None = None,
         limit: int = 100,
         offset: int = 0,
@@ -135,6 +137,11 @@ class TimescaleTagRepository:
             stmt = stmt.where(TagModel.status == status)
         if epc_prefix:
             stmt = stmt.where(TagModel.epc_hex.like(f"{epc_prefix}%"))
+        like = wildcard_to_ilike(q)
+        if like is not None:
+            # Sprint 70: wildcard search over ``epc_hex`` (bare term = substring,
+            # anchored when a ``*``/``?`` is present), case-insensitive.
+            stmt = stmt.where(TagModel.epc_hex.ilike(like, escape=LIKE_ESCAPE))
 
         if bound is not None:
             binding_exists = exists().where(

@@ -85,7 +85,7 @@ When more than one column has an active wildcard filter, results must match
 | `reader-*` | anchored | `reader-03`, `reader-` | `my-reader-03` |
 | `*-dc` | anchored | `BOS-DC`, `-dc` | `dc-bos` |
 | `r?ader` | anchored | `reader`, `rxader` | `reaader`, `rader` |
-| `50\%` | substring | `discount 50% off` | `50 percent` |
+| `50%` | substring | `discount 50% off` | `50 percent` |
 | `a\*b` | substring | `a*b literal` | `axb` |
 
 ## 3. Backend contract
