@@ -99,15 +99,14 @@ client-side and get **no** backend change.
 | Endpoint | Route | Search column(s) | Param |
 |---|---|---|---|
 | Tag Reads | `GET /tag-reads` | `tag_id` (EPC) | `tag_q` |
-| Alert History | `GET /alerts` | message/rule-name (TBD per schema) | `q` |
+| Alert History | `GET /alerts` | `message` | `q` |
 | Tags | `GET /tags` | `epc_hex` | `q` |
 | Assets | `GET /assets` | `name`, `external_ref` (existing `q`) | `q` (extended) |
 
 **Naming.** Single-column endpoints use a column-scoped name (`tag_q`) so the
 contract says *which* column it searches; multi-column endpoints keep the
 generic `q` (assets already does). All params are **optional, additive,
-default `None`** → every existing caller is unaffected. Open item O1 (§8) tracks
-whether Tag Reads also wants a `device` name search.
+default `None`** → every existing caller is unaffected. (O1/O2 resolved — see §8.)
 
 ### 3.2 `/assets?q=` — extend, don't break
 
