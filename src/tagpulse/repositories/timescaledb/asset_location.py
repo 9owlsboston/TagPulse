@@ -40,8 +40,8 @@ class TimescaleAssetLocationRepository:
 
     _CURRENT_BY_ASSET = text(
         """
-        SELECT asset_id, recorded_at, latitude, longitude,
-               accuracy_meters, device_id, latest_position_source
+        SELECT asset_id, last_seen_at, kind, recorded_at, latitude, longitude,
+               accuracy_meters, x, y, site_id, device_id, latest_position_source
         FROM asset_current_location
         WHERE tenant_id = :tenant_id AND asset_id = :asset_id
         """
@@ -59,21 +59,26 @@ class TimescaleAssetLocationRepository:
             return None
         return AssetCurrentLocation(
             asset_id=row.asset_id,
+            last_seen_at=row.last_seen_at,
+            kind=row.kind,
             recorded_at=row.recorded_at,
             latitude=row.latitude,
             longitude=row.longitude,
             accuracy_meters=row.accuracy_meters,
+            x=float(row.x) if row.x is not None else None,
+            y=float(row.y) if row.y is not None else None,
+            site_id=row.site_id,
             device_id=row.device_id,
             latest_position_source=row.latest_position_source,
         )
 
     _CURRENT_LIST = text(
         """
-        SELECT asset_id, recorded_at, latitude, longitude,
-               accuracy_meters, device_id, latest_position_source
+        SELECT asset_id, last_seen_at, kind, recorded_at, latitude, longitude,
+               accuracy_meters, x, y, site_id, device_id, latest_position_source
         FROM asset_current_location
         WHERE tenant_id = :tenant_id
-        ORDER BY recorded_at DESC
+        ORDER BY last_seen_at DESC NULLS LAST
         LIMIT :limit OFFSET :offset
         """
     )
@@ -88,10 +93,15 @@ class TimescaleAssetLocationRepository:
         return [
             AssetCurrentLocation(
                 asset_id=row.asset_id,
+                last_seen_at=row.last_seen_at,
+                kind=row.kind,
                 recorded_at=row.recorded_at,
                 latitude=row.latitude,
                 longitude=row.longitude,
                 accuracy_meters=row.accuracy_meters,
+                x=float(row.x) if row.x is not None else None,
+                y=float(row.y) if row.y is not None else None,
+                site_id=row.site_id,
                 device_id=row.device_id,
                 latest_position_source=row.latest_position_source,
             )

@@ -355,7 +355,7 @@
         "type": "object"
       },
       "AssetCurrentLocation": {
-        "description": "One row of the ``asset_current_location`` SQL view.\n\nThe latest known position for an active asset binding, badged by source\n(`rfid` for the latest tag-read or one of the ``external_locations.source``\nstrings \u2014 e.g. `samsara`, `geotab`, `manual` \u2014 for the latest external\nfix). Whichever side is newer wins.",
+        "description": "One row of the ``asset_current_location`` SQL view.\n\nThe latest known position for an active asset binding, **frame-aware**\n(Sprint 69): ``kind`` is ``geo`` (lat/lon from the newest RFID lat/lon read\nor external fix), ``floor`` (computed/precomputed ``(x, y)`` from\n``asset_positions``), or ``none`` (seen, but no resolved position).\nWhichever position frame is newer wins. ``last_seen_at`` is the newest read\nof **any** kind (incl. fixed-reader reads with no lat/lon), so a floor-only\nasset reports a real last-seen instead of \"never\".",
         "properties": {
           "accuracy_meters": {
             "anyOf": [
@@ -385,32 +385,105 @@
             ],
             "title": "Device Id"
           },
-          "latest_position_source": {
-            "title": "Latest Position Source",
+          "kind": {
+            "default": "none",
+            "title": "Kind",
             "type": "string"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "latest_position_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Position Source"
           },
           "latitude": {
-            "title": "Latitude",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
           },
           "longitude": {
-            "title": "Longitude",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
           },
           "recorded_at": {
-            "format": "date-time",
-            "title": "Recorded At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded At"
+          },
+          "site_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Id"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
           }
         },
         "required": [
-          "asset_id",
-          "recorded_at",
-          "latitude",
-          "longitude",
-          "accuracy_meters",
-          "device_id",
-          "latest_position_source"
+          "asset_id"
         ],
         "title": "AssetCurrentLocation",
         "type": "object"
