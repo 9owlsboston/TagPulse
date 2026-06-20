@@ -43,13 +43,13 @@ def _tag(
 
 def _read(
     tenant_id: uuid.UUID,
-    epc: str | None,
+    epc_hex: str | None,
     timestamp: datetime | None = None,
 ) -> _ReadRow:
     return _ReadRow(
         id=uuid.uuid4(),
         tenant_id=tenant_id,
-        epc=epc,
+        epc_hex=epc_hex,
         timestamp=timestamp or datetime(2026, 5, 18, 12, 0, tzinfo=UTC),
     )
 

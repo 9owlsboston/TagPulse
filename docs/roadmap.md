@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 68 — asset path map · **shipped** (PR #132); between sprints.
+**Current sprint:** 69 — page fixes · branch `sprint-69/page-fixes` (full scope lands in §sprint-69 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1754,7 +1754,41 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Backlog (not scheduled)
+## Sprint 69 — Page fixes: frame-aware asset list + Tag Reads polish + tag/reader telemetry
+
+> **Status (2026-06-19, in progress).** A cluster of user-reported issues across the Assets list, Tags, Tag Reads, and Devices/Readers pages, surfaced while demoing the floor-positioning + WM ingest work. Backend PR [#134](https://github.com/9owlsboston/TagPulse/pull/134), UI PR [#97](https://github.com/9owlsboston/TagPulse-UI/pull/97). One backend contract change (A1); the rest are UI polish + demo-data completeness.
+
+**Why now.** The floor + WM work exposed several places where the UI is **geo-frame-blind** or shows raw/unfriendly data: the Assets list reads "never" for floor assets, Tag Reads shows UUIDs and over-precise coordinates, and tag/reader sensor telemetry doesn't surface. These are small individually but collectively make the product look broken in a floor deployment.
+
+**Scope (issue board).**
+- **A1 — Assets list frame-aware location + true last-seen (backend+UI, contract change).** The `asset_current_location` view ([migration 024](../migrations/versions/024_asset_current_location.py)) is geo-only (`WHERE latitude IS NOT NULL`, no `asset_positions`, no read-without-GPS), so floor assets show `Location —` / `Last seen never` despite active reads + computed `(x, y)`. Extend it to be frame-aware: a `floor_latest` CTE from `asset_positions` + a `last_seen_at` from the newest read regardless of frame; add a `kind` (`geo`/`floor`/`none`) discriminator + floor fields to `AssetCurrentLocation`. Regenerate `openapi.json` (**merges first**). UI renders Location per frame + always-populated Last-seen.
+- **R1 — Tag Reads lat/lon precision (UI).** `toFixed(5)` → **`toFixed(2)`** on Latitude/Longitude ([TagReads.tsx](../../TagPulse-UI/src/pages/telemetry/TagReads.tsx)).
+- **R2 — Reader column shows name, not UUID (UI).** New shared **`<DeviceRef id name>`** cell: name-as-**link** to `/devices/{id}` + **`device_id` tooltip**, short-id fallback for unknown devices. Names are **not** forced unique — the label is the name, identity stays `device_id`. Replaces the raw `device_id` column on Tag Reads; reusable wherever a reader is shown.
+- **R3 — Tag Reads chart: add Temperature + Humidity series (UI).** The chart plots only Signal (RSSI); add temp (°C) + humidity (%) series (resolvers `readTemperature`/`readHumidity` already exist for the table) on a secondary axis (different units from dBm).
+- **T1 — Tags First/Last seen "Never" (CODE BUG, found via live diagnosis).** Initially suspected a data gap (tags not registered); the live check **flipped that**: 43 SGTIN tags *were* registered and reads *did* match, but the `TagRegistrarWorker` drained `tag_reads.epc` (the decoded **URI** `urn:epc:id:sgtin:…` for schemed tags) and matched it against the registry's `epc_hex` — never equal, so decodable tags never stamped. **Fix:** drain + match on `tag_reads.epc_hex`. (Open: dev reads were also stuck at `tag_known=NULL`/un-drained — re-verify after deploy restarts the worker.)
+- **D1 — Devices/Readers telemetry shows no temp/humidity (model gap + empty default, confirmed live).** Sensor data *did* flow (`temperature_c`/`humidity_pct` on reads). The global `rfid_reader` telemetry model lacked **`humidity_pct`**, so humidity readings were **quarantined** (100 rows confirmed in `/telemetry/quarantine`); and the model listed the perpetually-empty reader-env `temperature` first, so the tab defaulted to an empty chart. **Fix:** add `humidity_pct` + list tag-borne (populated) metrics first ([smoke_setup.py](../scripts/smoke_setup.py)). Verified live (fresh read `humidity_pct=57.2` landed).
+
+**Sequencing.** UI quick wins (R1/R2/R3) land first (no backend). A1 is backend-first (contract). T1/D1 gated on a one-pass live diagnostic on `demo-wm-dc` to classify data-vs-code before fixing.
+
+**Out of scope → Sprint 70.** The uniform table filter/search (wildcard column box). R2's `<DeviceRef>` is the only filter-adjacent piece that ships here.
+
+---
+
+## Sprint 70 — Uniform table filter & search (wildcard column box) `[queued]`
+
+> **Status (2026-06-19, queued).** Planned to kick off when Sprint 69 ships (the data fixes settle the list pages first). Decisions locked with the user: **wildcard-only** for v1 (no regex mode), and **server-side filtering is in scope** for paginated tables.
+
+**Why.** Filtering is ad-hoc per page today (AntD column filters on ~5 pages + shared `FilterPanel`/`LabelFilterStrip`), with no consistent text/wildcard search. Operators want to type `reader-*` at a column header and filter — uniformly, on every list/table.
+
+**Scope (planned).**
+- **Reusable `ColumnSearchFilter`** — an AntD `filterDropdown` text box + a `matchWildcard(value, pattern)` util (glob `*`/`?` → anchored, case-insensitive regex internally; **no raw regex** in v1 to avoid ReDoS/footguns). Sort stays on AntD `sorter` (already uniform).
+- **Client-side** for fully-loaded tables (Devices, Categories, Sites/Zones).
+- **Server-side** for paginated tables (Tag Reads, Alert History) — add a wildcard/`q` query param per endpoint (contract change) so the filter is correct across pages, **never** silently filtering only the loaded page.
+- Retrofit pages incrementally; document the pattern alongside `ColumnChooser`.
+
+**Decisions locked.** (a) wildcard-only v1; (b) server-side in scope. **Open:** which paginated endpoints get search params, and the exact glob→regex grammar (`*`, `?`, escaping).
+
+---
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock. **Design now captured** ([floor-position-estimation.md](design/floor-position-estimation.md), 2026-06-19) — a two-phase plan that fills the headless `asset_positions` table so an asset shows a true floor `(x, y)` + movement trail:
   - **Phase 1 — BYO precomputed** (`source='precomputed'`, ~1 sprint, low risk): `POST /assets/{id}/position` (floor-frame counterpart to the existing lat/lon `external-position`) + the shared `GET /assets/{id}/floor-path` read endpoint + a `CRS.Simple` trail layer `[ui]`. Unblocks any customer who already owns a location engine (vendor middleware / UWB / BLE-AoA). Builds the table-write + read + UI seam Phase 2 reuses.

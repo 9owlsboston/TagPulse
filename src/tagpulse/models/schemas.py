@@ -1019,19 +1019,29 @@ class ManifestResponse(BaseModel):
 class AssetCurrentLocation(BaseModel):
     """One row of the ``asset_current_location`` SQL view.
 
-    The latest known position for an active asset binding, badged by source
-    (`rfid` for the latest tag-read or one of the ``external_locations.source``
-    strings — e.g. `samsara`, `geotab`, `manual` — for the latest external
-    fix). Whichever side is newer wins.
+    The latest known position for an active asset binding, **frame-aware**
+    (Sprint 69): ``kind`` is ``geo`` (lat/lon from the newest RFID lat/lon read
+    or external fix), ``floor`` (computed/precomputed ``(x, y)`` from
+    ``asset_positions``), or ``none`` (seen, but no resolved position).
+    Whichever position frame is newer wins. ``last_seen_at`` is the newest read
+    of **any** kind (incl. fixed-reader reads with no lat/lon), so a floor-only
+    asset reports a real last-seen instead of "never".
     """
 
     asset_id: UUID
-    recorded_at: datetime
-    latitude: float
-    longitude: float
-    accuracy_meters: float | None
-    device_id: UUID | None
-    latest_position_source: str
+    last_seen_at: datetime | None = None
+    kind: str = "none"
+    recorded_at: datetime | None = None
+    # Geographic frame (kind == 'geo').
+    latitude: float | None = None
+    longitude: float | None = None
+    accuracy_meters: float | None = None
+    # Floor frame (kind == 'floor').
+    x: float | None = None
+    y: float | None = None
+    site_id: UUID | None = None
+    device_id: UUID | None = None
+    latest_position_source: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
