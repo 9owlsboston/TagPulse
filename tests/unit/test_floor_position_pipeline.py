@@ -171,7 +171,11 @@ async def test_worker_run_once_delegates_to_service() -> None:
     svc = FloorPositionEstimatorService(obs, writer, strategies)
     worker = FloorPositionWorker(svc, interval_s=0.01)
 
-    assert await worker.run_once() == 1
+    # Pass the fixed NOW so the observations (pinned to NOW) fall inside the
+    # estimator's lookback window deterministically — the bare run_once()
+    # uses real wall-clock time, which excludes the fixed-NOW observations
+    # whenever the suite runs more than `lookback_s` after NOW.
+    assert await worker.run_once(NOW) == 1
 
 
 @pytest.mark.asyncio

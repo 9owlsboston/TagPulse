@@ -6,6 +6,8 @@ All notable changes to TagPulse will be documented in this file.
 
 ### Fixed
 
+- **Sprint 66 closeout — floor-position worker test no longer wall-clock-flaky (tests).** `FloorPositionWorker.run_once` now accepts an optional `now` (defaults to `datetime.now(UTC)`, so production behaviour is unchanged) purely for deterministic testing. `test_worker_run_once_delegates_to_service` pinned its observations to a fixed `NOW` but called the bare `run_once()`, which used real wall-clock time — once the suite ran more than `lookback_s` after that fixed `NOW`, the observations fell outside the estimator's lookback window and the test asserted `0 == 1`. The delegation test now passes `NOW` explicitly. No behaviour change; `make check` green again.
+
 - **Operator runbook — floor-estimator enable targets the worker container (docs).** The Sprint 66 "Indoor positioning estimator" enable steps in [docs/operator-quickstart.md](docs/operator-quickstart.md) said "api/worker container" — corrected to the **`tp${env}-worker`** container with the exact `az containerapp update` command. The api runs `WORKERS_INLINE=false` (HTTP only); the inline workers (incl. `FloorPositionWorker`) run in the dedicated worker container, so setting the flag on the api is a silent no-op (verified live in dev). Also adds the `--set-strategy` step + the `floor-path?source=computed` check. Docs only.
 
 ### Added
