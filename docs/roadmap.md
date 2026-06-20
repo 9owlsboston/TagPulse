@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 66 — floor position estimator · branch `sprint-66/floor-position-estimator` (full scope lands in §sprint-66 during the sprint).
+**Current sprint:** 67 — wm v2 compact wire · branch `sprint-67/wm-v2-compact-wire` (full scope lands in §sprint-67 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
