@@ -780,7 +780,7 @@ One JSON object per publish, same as §2.1. Envelope fields:
 | `sn` | **string** | **all** | Reader id. **String** here (UUID-shaped accepted), vs. v2.0 integer. Resolves to `device_id` per §4.5 (uuid-shaped → direct `devices.id` match). |
 | `ts` | **string** | **all** | **ISO-8601 UTC** (`YYYY-MM-DDTHH:MM:SSZ`), vs. v2.0 epoch-ms integer. Same ±5 min drift reject (§6 `clock_skew`). |
 | `lat` / `lon` | number \| null | t=0, t=1 | Same as v2.0 (nullable; `null` = no GNSS fix). MAY be omitted on t=2. |
-| `fw` | number | optional | **New.** Producer firmware/SW version (e.g. `1.10`). Stored to `tag_reads.tag_data.fw`; not used for routing. Omitted when unknown. |
+| `fw` | number | optional | **New.** Producer firmware/SW version (e.g. `1.10`). Stored to `tag_reads.tag_data._fw` (underscore-prefixed → **excluded from the §4.6 telemetry mirror**, so it never becomes a metric); not used for routing. Omitted when unknown. |
 | `ant` | integer | t=0, t=1 | **New / relocated.** Envelope-level antenna port (0..255) applied to **every** entry in this message. Replaces the per-entry `an` of v2.0 — `v:2` readers are single-antenna-per-message. MAY be omitted on t=2. |
 | `epcs` | array | t=0, t=1, t=2 | Present on **all three** types in this dialect (v2.0 restricts `epcs` to t=0). Element shape is the **same uniform tuple for every `t`** — see §12.3. |
 
@@ -849,7 +849,7 @@ Identical to §4.4 except for the field sourcing below. Snap reconciliation (§4
 | tuple[0] `epc` | `tag_id`, `identity.epc_hex` | `epc` |
 | tuple[1] `rssi` (float) | `signal_strength` | `last_rssi` |
 | tuple[2..4] `cnt`/`tmp`/`hum` | `sensor_data{read_count,temperature_c,humidity_pct}` | — |
-| envelope `fw` | `tag_data.fw` | — |
+| envelope `fw` | `tag_data._fw` (underscore = not mirrored to telemetry) | — |
 | t=2 tuple (epc slot only) | (no `tag_reads` row — §4.3 `t==2`) | drives `gone` transition |
 
 **Identity note.** WM uses **EPC hex as the only tag identity** (no TID, no user memory). `tag_id` and `identity.epc_hex` both carry the raw uppercase EPC hex; `tid`/`user_memory_hex` stay null. This matches the existing v2.0 reconciler mapping — no downstream identity change.

@@ -31,11 +31,18 @@ from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.ingestion import presence_reconciler
 from tagpulse.ingestion.service import IngestionService
 from tagpulse.ingestion.wm_wire_format import (
+    RSSI_MAX,
+    RSSI_MIN,
     SNAP_SOFT_CAP_ENTRIES,
     WmAppearedMessage,
     WmDisappearedMessage,
     WmMessage,
+    WmSnapEntry,
     WmSnapMessage,
+    WmV2Entry,
+    WmV2Message,
+    WmV2ParseError,
+    parse_wm_v2,
 )
 from tagpulse.models.schemas import (
     DeviceEventPayload,
@@ -205,6 +212,92 @@ def _wm_appeared_to_tag_read(device_id: UUID, msg: WmAppearedMessage) -> TagRead
         identity=Identity(epc_hex=msg.epc),
         location=_wm_location(msg.lat, msg.lon),
         sensor_data=_wm_sensor_data(tmp=msg.tmp, hum=msg.hum),
+    )
+
+
+# ---------------------------------------------------------------------------
+# v2.1 WM compact dialect (Sprint 67, spec §12) — mapping helpers.
+#
+# The compact dialect is decoded by ``parse_wm_v2`` into a
+# :class:`WmV2Message`. For the presence side we reuse the *exact* v2.0
+# reconciler (``presence_reconciler``) untouched by lowering the v:2
+# message into throwaway v2.0 model instances — ``rssi`` is rounded to
+# the int16 the ``tag_presence.last_rssi`` SmallInteger column needs, and
+# ``ts`` is re-encoded to epoch-ms. For the ``tag_reads`` side we build
+# :class:`TagReadCreate` directly from the v:2 entry so the *float*
+# ``rssi`` and the actual ``cnt``/``tmp``/``hum`` (incl. 0 / absent) are
+# preserved. Placeholder ``sn=0`` / ``cnt=1`` only feed the reconciler,
+# which ignores both.
+# ---------------------------------------------------------------------------
+
+
+def _wm_v2_ts_ms(dt: datetime) -> int:
+    """Re-encode a parsed v:2 datetime as epoch milliseconds for the v2.0 models."""
+    return int(dt.timestamp() * 1000)
+
+
+def _wm_v2_rssi_to_smallint(rssi: float | None) -> int:
+    """Round + clamp a v:2 float ``rssi`` to the int16 dBm range (tag_presence)."""
+    if rssi is None:
+        return 0
+    return max(RSSI_MIN, min(RSSI_MAX, int(round(rssi))))
+
+
+def _wm_v2_to_snap_model(msg: WmV2Message) -> WmSnapMessage:
+    """Lower a v:2 t=0 message into a v2.0 :class:`WmSnapMessage` for the reconciler."""
+    an = msg.ant if msg.ant is not None else 0
+    return WmSnapMessage(
+        t=0,
+        sn=0,
+        ts=_wm_v2_ts_ms(msg.ts),
+        lat=msg.lat,
+        lon=msg.lon,
+        epcs=[
+            WmSnapEntry(an=an, epc=e.epc, rssi=_wm_v2_rssi_to_smallint(e.rssi), cnt=1)
+            for e in msg.entries
+        ],
+    )
+
+
+def _wm_v2_to_appeared_model(msg: WmV2Message, entry: WmV2Entry) -> WmAppearedMessage:
+    """Lower one v:2 t=1 entry into a v2.0 :class:`WmAppearedMessage`."""
+    an = msg.ant if msg.ant is not None else 0
+    return WmAppearedMessage(
+        t=1,
+        sn=0,
+        ts=_wm_v2_ts_ms(msg.ts),
+        lat=msg.lat,
+        lon=msg.lon,
+        an=an,
+        epc=entry.epc,
+        rssi=_wm_v2_rssi_to_smallint(entry.rssi),
+        cnt=1,
+    )
+
+
+def _wm_v2_to_disappeared_model(msg: WmV2Message, entry: WmV2Entry) -> WmDisappearedMessage:
+    """Lower one v:2 t=2 entry into a v2.0 :class:`WmDisappearedMessage`."""
+    return WmDisappearedMessage(t=2, sn=0, ts=_wm_v2_ts_ms(msg.ts), epc=entry.epc)
+
+
+def _wm_v2_entry_to_tag_read(device_id: UUID, msg: WmV2Message, entry: WmV2Entry) -> TagReadCreate:
+    """Map one v:2 t=0/t=1 entry to a :class:`TagReadCreate` (float rssi preserved).
+
+    ``fw`` is stashed under the ``_fw`` key (underscore-prefixed keys are
+    skipped by the telemetry mirror, spec §12.5) so the firmware version
+    rides on the ``tag_reads`` row without becoming a telemetry metric.
+    """
+    tag_data = {"_fw": msg.fw} if msg.fw is not None else None
+    return TagReadCreate(
+        device_id=device_id,
+        tag_id=entry.epc,
+        timestamp=msg.ts,
+        signal_strength=float(entry.rssi) if entry.rssi is not None else None,
+        reader_antenna=msg.ant,
+        identity=Identity(epc_hex=entry.epc),
+        location=_wm_location(msg.lat, msg.lon),
+        sensor_data=_wm_sensor_data(cnt=entry.cnt, tmp=entry.tmp, hum=entry.hum),
+        tag_data=tag_data,
     )
 
 
@@ -463,6 +556,14 @@ class MqttSubscriber:
             _record_rejection("tag_read", "invalid_json")
             return
 
+        # Sprint 67 / spec §12 — WM compact dialect (v2.1). The reserved
+        # envelope field ``v`` selects the dialect; ``v`` is forbidden on
+        # the v2.0 keyed format, so its presence unambiguously routes here
+        # (the dialect handler rejects ``v != 2`` with unknown_wire_version).
+        if isinstance(raw, dict) and "v" in raw:
+            await self._handle_wm_v2_compact_message(tenant_id, device_id, raw, message)
+            return
+
         # Sprint 46 / ADR-025 §4.3 — v2 wire format detection. An integer
         # ``t`` field at the envelope is the v2 discriminator; route to
         # the v2 handler. The v1 paths below are unchanged (spec §9.1 #4
@@ -639,6 +740,115 @@ class MqttSubscriber:
         except Exception:
             logger.exception(
                 "Failed to apply v2 wm message: device=%s t=%s sn=%s",
+                device_id,
+                msg.t,
+                msg.sn,
+            )
+
+    async def _handle_wm_v2_compact_message(
+        self,
+        tenant_id: UUID,
+        device_id: UUID,
+        raw: dict[str, Any],
+        message: aiomqtt.Message,
+    ) -> None:
+        """Sprint 67 / spec §12 — handle one WM compact-dialect (``v:2``) message.
+
+        Decodes the positional dialect via :func:`parse_wm_v2`, then drives
+        the *same* presence reconciler and ingestion path as the v2.0 keyed
+        handler. ``t=0`` snap reconciles + inserts one ``tag_reads`` row per
+        entry; ``t=1`` add applies appeared per entry + inserts; ``t=2``
+        delete applies disappeared per entry with no ``tag_reads`` rows. The
+        uniform 5-tuple means snap/add/delete share one element shape (spec
+        §12.3). Parse rejections route to the DLQ with the spec §6 reason.
+        """
+        try:
+            msg = parse_wm_v2(raw)
+        except WmV2ParseError as exc:
+            reason = exc.reason
+            logger.warning(
+                "Rejecting v:2 wm message on topic %s reason=%s detail=%s",
+                message.topic,
+                reason,
+                exc,
+            )
+            _record_rejection("wm_v2", reason)
+            try:
+                mqtt_wm_rejections_counter.add(1, {"reason": reason})
+            except Exception:  # noqa: BLE001
+                logger.exception("failed to bump wm rejections counter reason=%s", reason)
+            await self._persist_mqtt_drop(tenant_id, str(message.topic), raw, "wm_v2", reason)
+            return
+
+        # Spec §6 soft cap on snap size — log + bump, do NOT reject.
+        if msg.t == 0 and len(msg.entries) > SNAP_SOFT_CAP_ENTRIES:
+            logger.warning(
+                "v:2 snap above soft cap sn=%s entries=%d (cap=%d)",
+                msg.sn,
+                len(msg.entries),
+                SNAP_SOFT_CAP_ENTRIES,
+            )
+            try:
+                mqtt_wm_snap_large_counter.add(1, {"sn": msg.sn})
+            except Exception:  # noqa: BLE001
+                logger.exception("failed to bump wm snap-large counter sn=%s", msg.sn)
+
+        try:
+            async with self._session_factory() as session:
+                # RLS GUC so the policy on tag_presence (migration 042)
+                # admits the rows — mirrors the v2.0 handler.
+                await session.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tid, true)"),
+                    {"tid": str(tenant_id)},
+                )
+
+                t_label = {0: "snap", 1: "appeared", 2: "disappeared"}[msg.t]
+                started = time.perf_counter()
+                reads: list[TagReadCreate] = []
+                if msg.t == 0:
+                    await presence_reconciler.reconcile_snap(
+                        session,
+                        self._event_bus,
+                        tenant_id=tenant_id,
+                        device_id=device_id,
+                        msg=_wm_v2_to_snap_model(msg),
+                    )
+                    reads = [_wm_v2_entry_to_tag_read(device_id, msg, e) for e in msg.entries]
+                elif msg.t == 1:
+                    for entry in msg.entries:
+                        await presence_reconciler.apply_appeared(
+                            session,
+                            self._event_bus,
+                            tenant_id=tenant_id,
+                            device_id=device_id,
+                            msg=_wm_v2_to_appeared_model(msg, entry),
+                        )
+                    reads = [_wm_v2_entry_to_tag_read(device_id, msg, e) for e in msg.entries]
+                else:  # t == 2 — delete; no tag_reads rows (spec §4.3)
+                    for entry in msg.entries:
+                        await presence_reconciler.apply_disappeared(
+                            session,
+                            self._event_bus,
+                            tenant_id=tenant_id,
+                            device_id=device_id,
+                            msg=_wm_v2_to_disappeared_model(msg, entry),
+                        )
+                    reads = []
+                try:
+                    presence_reconcile_duration_seconds.record(
+                        time.perf_counter() - started, {"t": t_label}
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("failed to record presence reconcile histogram t=%s", t_label)
+                if reads:
+                    ingestion_service = self._build_ingestion_service(session)
+                    for read in reads:
+                        await ingestion_service.ingest(tenant_id, read)
+
+                await session.commit()
+        except Exception:
+            logger.exception(
+                "Failed to apply v:2 wm message: device=%s t=%s sn=%s",
                 device_id,
                 msg.t,
                 msg.sn,
