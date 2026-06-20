@@ -54,8 +54,8 @@ class FloorPositionWorker:
                 logger.exception("FloorPositionWorker pass failed")
             await asyncio.sleep(self._interval)
 
-    async def run_once(self) -> int:
-        written = await self._service.run_once(datetime.now(UTC))
+    async def run_once(self, now: datetime | None = None) -> int:
+        written = await self._service.run_once(now if now is not None else datetime.now(UTC))
         if written:
             logger.debug("FloorPositionWorker wrote %d computed fixes", written)
         return written
