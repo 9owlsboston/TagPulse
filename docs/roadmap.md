@@ -1714,6 +1714,26 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 67 — WM compact wire dialect (`v:2`) (active)
+
+> **Status (2026-06-19, active).** Amends the ratified Edge Wire Format v2 (ADR-025/026, [edge-wire-format-v2.md](design/edge-wire-format-v2.md)) to accept **WM's compact dialect** — the `[NEEDS WM]` v2 wire-format change that Sprints 46/66 deferred pending WM protocol sign-off. Gated on the reserved envelope field `v:2`, so the v2.0 keyed format and all its conformance fixtures stay untouched. Planning artifacts (spec §12, ADR-025 Amendment 1) land first on this branch per the cross-repo workflow.
+
+**Why now.** WM, the platform's **sole edge producer** in pilot, measured a **~35 % per-message reduction** by replacing keyed per-EPC objects with fixed-position tuples, and surfaced four firmware realities (UUID `sn`, ISO-8601 `ts`, an `fw` field, single-antenna-per-message) plus a request that add/delete carry an EPC **list** symmetric with snap. Decision (user, 2026-06-19): **sprint** (downstream simulator + demo rigs), and **accept WM's shape verbatim** since N=1 producer.
+
+**Governing decision.** Opt-in dialect selected by `v` (spec §12). `v` absent → v2.0 unchanged; `v==2` → WM compact; `v!=2` → reject. Semantics (§3 cycle/diff/snap, §4 presence/reconciliation/telemetry) are **identical** — only deserialization differs.
+
+**Scope (locked at kickoff).**
+- **Spec §12** — `v:2` envelope (`v`, string `sn`, ISO `ts`, `fw`, envelope `ant`) + **uniform 5-tuple** `[epc, rssi, cnt, tmp, hum]` for **all** of snap/add/delete (WM ships one serializer); delete's reading slots are `null`/`0` and ignored. **[done]**
+- **ADR-025 Amendment 1** — decision + the two recorded bandwidth concessions (string `sn`, ISO `ts`). **[done]**
+- **Backend** — `v:2` positional models in [wm_wire_format.py](../src/tagpulse/ingestion/wm_wire_format.py); subscriber routing + mapping in [mqtt_subscriber.py](../src/tagpulse/ingestion/mqtt_subscriber.py) (envelope `ant`, string-`sn` resolution, ISO `ts`, float `rssi`, batched t=1/t=2). **[active]**
+- **Conformance fixtures + unit tests** — `v:2` accept/reject matrix; v2.0 fixtures must still pass unchanged.
+- **Simulator** — `paho_smoke_publisher.py` (+ v2 snap simulator) emits `v:2`.
+- **Demo data rigs** — any v2-emitting demo/seed updated for the dialect.
+
+**Out of scope.** Numeric-`sn` / epoch-`ts` SKU optimisation (recorded in spec §12.7 for a future tighter SKU); multi-antenna `v:2` (single envelope `ant` only); UI changes (none — wire-only). One **`[CONFIRM WM]`** open: null-vs-zero for unused delete slots (parser accepts both).
+
+---
+
 ## Backlog (not scheduled)
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock. **Design now captured** ([floor-position-estimation.md](design/floor-position-estimation.md), 2026-06-19) — a two-phase plan that fills the headless `asset_positions` table so an asset shows a true floor `(x, y)` + movement trail:

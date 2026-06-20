@@ -26,7 +26,7 @@
 | 022 | [Soft Assets — auto-creation policy](022-soft-assets.md) | proposed | 2026-05-17 |
 | 023 | [Outbound Connections — add MQTT dispatcher (Kafka/Pub-Sub deferred)](023-outbound-connections-mqtt-kafka.md) | proposed | 2026-05-17 |
 | 024 | [Indoor position estimation — trilateration processor + `asset_positions` hypertable](024-position-estimation.md) | amended | 2026-05-17 |
-| 025 | [Edge wire format v2 — JSON-over-MQTT with snap-based presence](025-edge-wire-format-v2.md) | accepted | 2026-05-23 |
+| 025 | [Edge wire format v2 — JSON-over-MQTT with snap-based presence](025-edge-wire-format-v2.md) | amended | 2026-06-19 |
 | 026 | [Server-side presence model — `tag_presence` + synchronous reconciler](026-presence-model.md) | accepted | 2026-05-23 |
 | 027 | [Reader-to-Edge LAN-side contract — CSV-over-TCP, Pi owns wall clock](027-reader-to-edge-contract.md) | proposed | 2026-05-23 |
 | 028 | [Tags as a first-class entity](028-tags-as-first-class-entity.md) | implemented | 2026-05-23 |
