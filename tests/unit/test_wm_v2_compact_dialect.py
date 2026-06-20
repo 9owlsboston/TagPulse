@@ -234,6 +234,64 @@ class TestParser:
 
 
 # ---------------------------------------------------------------------------
+# Forward-compat hardening (fw opaque, append-tolerant tuple)
+# ---------------------------------------------------------------------------
+
+
+class TestForwardCompat:
+    def test_fw_string_accepted(self) -> None:
+        raw = {
+            "v": 2,
+            "t": 0,
+            "sn": SN,
+            "ts": TS_ISO,
+            "fw": "1.10.2",
+            "epcs": [[EPC_A, -50, 1, 0, 0]],
+        }
+        assert parse_wm_v2(raw).fw == "1.10.2"
+
+    def test_fw_number_still_accepted(self) -> None:
+        raw = {"v": 2, "t": 0, "sn": SN, "ts": TS_ISO, "fw": 1.10, "epcs": [[EPC_A, -50, 1, 0, 0]]}
+        assert parse_wm_v2(raw).fw == pytest.approx(1.10)
+
+    def test_fw_structured_rejected(self) -> None:
+        raw = {
+            "v": 2,
+            "t": 0,
+            "sn": SN,
+            "ts": TS_ISO,
+            "fw": {"x": 1},
+            "epcs": [[EPC_A, -50, 1, 0, 0]],
+        }
+        with pytest.raises(WmV2ParseError) as exc:
+            parse_wm_v2(raw)
+        assert exc.value.reason == "invalid_snap_entry"
+
+    def test_tuple_with_trailing_extra_accepted(self) -> None:
+        # 6-element tuple — a future trailing slot (e.g. rpk) is ignored, first 5 used.
+        raw = {
+            "v": 2,
+            "t": 0,
+            "sn": SN,
+            "ts": TS_ISO,
+            "ant": 3,
+            "epcs": [[EPC_A, -61.6, 3, -4.0, 57.4, -55.0]],
+        }
+        e = parse_wm_v2(raw).entries[0]
+        assert e.epc == EPC_A
+        assert e.rssi == pytest.approx(-61.6)
+        assert e.cnt == 3
+        assert e.tmp == pytest.approx(-4.0)
+        assert e.hum == pytest.approx(57.4)
+
+    def test_tuple_too_short_rejected(self) -> None:
+        raw = {"v": 2, "t": 0, "sn": SN, "ts": TS_ISO, "epcs": [[EPC_A, -50, 1, 0]]}
+        with pytest.raises(WmV2ParseError) as exc:
+            parse_wm_v2(raw)
+        assert exc.value.reason == "invalid_snap_entry"
+
+
+# ---------------------------------------------------------------------------
 # Subscriber dispatch — snap (t=0)
 # ---------------------------------------------------------------------------
 
@@ -300,6 +358,28 @@ class TestSnap:
         assert read.location is not None
         assert read.location.latitude == pytest.approx(50.1)
         assert read.location.source == "reader_gnss"
+
+    @pytest.mark.asyncio
+    async def test_snap_string_fw_rides_on_tag_data(self, tenant_id: UUID, device_id: UUID) -> None:
+        session = _FakeSession(select_results=[[]])
+        bus = _FakeBus()
+        sub, ingest = _build_subscriber(session, bus)
+
+        body = {
+            "v": 2,
+            "t": 0,
+            "sn": SN,
+            "ts": TS_ISO,
+            "lat": 50.1,
+            "lon": 30.3,
+            "fw": "1.10.2",  # semver string — stored verbatim, not mirrored to telemetry
+            "ant": 3,
+            "epcs": [[EPC_A, -61.6, 3, -4.0, 57.4]],
+        }
+        await sub._handle_tag_read(tenant_id, device_id, _mqtt("t", body))
+
+        read = ingest.await_args_list[0].args[1]
+        assert read.tag_data == {"_fw": "1.10.2"}
 
 
 # ---------------------------------------------------------------------------

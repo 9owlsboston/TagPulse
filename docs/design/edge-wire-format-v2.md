@@ -2,7 +2,7 @@
 
 > **Status: ACCEPTED v1.0 (2026-05-23).** Ratified by ADR 025 (wire contract, §3) and ADR 026 (server-side presence model, §4). Sprint 46 implements the backend (shipped); Sprint 47 implements the producer side (shipped — Pi-gateway producer + companion [reader-to-edge contract](reader-to-edge-contract.md) under [ADR-027](../adr/027-reader-to-edge-contract.md)). One `§11` checklist item intentionally remains unchecked: §9.2 #5 (event-bus volume mitigation) gates *production rollout of high-churn readers*, not Sprint 46/47 ship.
 >
-> **AMENDED v2.1 (2026-06-19) — §12 "WM compact dialect."** Sprint 67 adds an **opt-in** compact dialect gated on the reserved envelope field `v:2`: positional `epcs[]` tuples (no repeated keys), envelope-level antenna `ant`, an `fw` firmware field, string `sn`, ISO-8601 `ts`, and float `rssi`. It is **purely additive** — a message with no `v` key is the v2.0 keyed format documented in §2–§6 and is unchanged. See **§12** for the full dialect and [ADR-025 §"Amendment 1"](../adr/025-edge-wire-format-v2.md) for the decision record. The two `v:2` choices that trade away §2.3 bandwidth (string `sn`, ISO `ts`) are a **deliberate, recorded concession** to WM, the platform's sole edge producer today (ADR-025 Amendment 1).
+> **AMENDED v2.1 (2026-06-19) — §12 "WM compact dialect."** Sprint 67 adds an **opt-in** compact dialect gated on the reserved envelope field `v:2`: positional `epcs[]` tuples (no repeated keys), envelope-level antenna `ant`, an `fw` firmware token (opaque — string or number), string `sn`, ISO-8601 `ts`, and float `rssi`. It is **purely additive** — a message with no `v` key is the v2.0 keyed format documented in §2–§6 and is unchanged. The positional tuple is **append-tolerant** (≥5 slots; trailing extras reserved/ignored) so future fields land without a wire break. See **§12** for the full dialect and [ADR-025 §"Amendment 1"](../adr/025-edge-wire-format-v2.md) for the decision record. The two `v:2` choices that trade away §2.3 bandwidth (string `sn`, ISO `ts`) are a **deliberate, recorded concession** to WM, the platform's sole edge producer today (ADR-025 Amendment 1).
 
 | | |
 |---|---|
@@ -780,7 +780,7 @@ One JSON object per publish, same as §2.1. Envelope fields:
 | `sn` | **string** | **all** | Reader id. **String** here (UUID-shaped accepted), vs. v2.0 integer. Resolves to `device_id` per §4.5 (uuid-shaped → direct `devices.id` match). |
 | `ts` | **string** | **all** | **ISO-8601 UTC** (`YYYY-MM-DDTHH:MM:SSZ`), vs. v2.0 epoch-ms integer. Same ±5 min drift reject (§6 `clock_skew`). |
 | `lat` / `lon` | number \| null | t=0, t=1 | Same as v2.0 (nullable; `null` = no GNSS fix). MAY be omitted on t=2. |
-| `fw` | number | optional | **New.** Producer firmware/SW version (e.g. `1.10`). Stored to `tag_reads.tag_data._fw` (underscore-prefixed → **excluded from the §4.6 telemetry mirror**, so it never becomes a metric); not used for routing. Omitted when unknown. |
+| `fw` | string \| number | optional | **New.** Producer firmware/SW version, treated as an **opaque token** — a **string** (recommended; e.g. `"1.10.2"`) or a number (tolerated; the current WM firmware emits a float). Stored verbatim to `tag_reads.tag_data._fw` (underscore-prefixed → **excluded from the §4.6 telemetry mirror**, so it never becomes a metric); never parsed or compared, so it can migrate string ↔ number without a wire break. Omitted when unknown. **Note:** a *float* `fw` cannot order versions (`1.10` collapses to `1.1`, and as floats `1.10 < 1.9`) — senders SHOULD use a string. |
 | `ant` | integer | t=0, t=1 | **New / relocated.** Envelope-level antenna port (0..255) applied to **every** entry in this message. Replaces the per-entry `an` of v2.0 — `v:2` readers are single-antenna-per-message. MAY be omitted on t=2. |
 | `epcs` | array | t=0, t=1, t=2 | Present on **all three** types in this dialect (v2.0 restricts `epcs` to t=0). Element shape is the **same uniform tuple for every `t`** — see §12.3. |
 
@@ -809,7 +809,7 @@ WM emits **one serializer for all three message types** (confirmed direction, 20
 
 > **`[CONFIRM WM]`** — null-vs-zero for the unused delete slots. The parser accepts **either** so WM can ship whichever their firmware emits; confirm which they actually send so the simulator and conformance fixtures match the wire byte-for-byte.
 
-Element length is **always 5**; any other length → reject, DLQ `reason="invalid_snap_entry"`. Reading slots are **not range-checked** in `v:2` (WM-authoritative — "take whatever they send"); only `epc` is validated per §2.2.
+Element length is **5 or more** — the first five slots are `[epc, rssi, cnt, tmp, hum]`; any **trailing slots are reserved for future fields** (e.g. a peak-RSSI `rpk`) and are ignored by the current server, so WM can append fields without a wire break. Length **< 5** → reject, DLQ `reason="invalid_snap_entry"`. Reading slots are **not range-checked** in `v:2` (WM-authoritative — "take whatever they send"); only `epc` is validated per §2.2.
 
 ### 12.4 Examples
 
@@ -859,7 +859,7 @@ Identical to §4.4 except for the field sourcing below. Snap reconciliation (§4
 | Condition | Action | DLQ? | OTel counter |
 |---|---|---|---|
 | `v` present and `!= 2` | Reject | Yes | `tagpulse_mqtt_wm_rejections_total{reason="unknown_wire_version"}` |
-| `epcs[]` tuple length `!= 5` (any `t`) | Reject whole message | Yes | `...{reason="invalid_snap_entry"}` |
+| `epcs[]` tuple length `< 5` (any `t`) | Reject whole message | Yes | `...{reason="invalid_snap_entry"}` |
 | tuple `epc` (slot 0) not a valid EPC string | Reject whole message | Yes | `...{reason="invalid_epc"}` |
 | `sn` not uuid-shaped and not a registered serial | Reject | Yes | `...{reason="device_not_found"}` |
 | `ts` not ISO-8601 parseable | Reject | Yes | `...{reason="invalid_timestamp"}` |

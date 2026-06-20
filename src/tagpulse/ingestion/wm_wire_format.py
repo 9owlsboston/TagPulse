@@ -272,7 +272,9 @@ WmMessage = Annotated[
 # ---------------------------------------------------------------------------
 
 WM_V2_VERSION = 2
-WM_V2_TUPLE_LEN = 5
+WM_V2_TUPLE_LEN = (
+    5  # minimum epcs[] tuple length [epc, rssi, cnt, tmp, hum]; trailing extras ignored
+)
 
 
 class WmV2ParseError(ValueError):
@@ -296,14 +298,20 @@ class WmV2Entry:
 
 @dataclass(frozen=True)
 class WmV2Message:
-    """A decoded ``v:2`` message. ``ts`` is parsed to a tz-aware UTC datetime."""
+    """A decoded ``v:2`` message. ``ts`` is parsed to a tz-aware UTC datetime.
+
+    ``fw`` is an **opaque** firmware/SW version token — a string (recommended;
+    e.g. ``"1.10.2"``) or a number (tolerated for the current WM firmware,
+    which emits a float). It is stored verbatim and never compared or parsed,
+    so it can evolve to semver without a wire break (spec §12.2).
+    """
 
     t: int
     sn: str
     ts: datetime
     lat: float | None
     lon: float | None
-    fw: float | None
+    fw: str | float | None
     ant: int | None
     entries: list[WmV2Entry]
 
@@ -325,6 +333,26 @@ def _v2_int(value: Any) -> int | None:
     return int(round(n)) if n is not None else None
 
 
+def _v2_fw(value: Any) -> str | float | None:
+    """Decode the opaque ``fw`` version token (spec §12.2).
+
+    Accepts a **string** (recommended — semver-friendly, e.g. ``"1.10.2"``)
+    or a **number** (the current WM firmware emits a float). Stored verbatim
+    and never compared, so ``fw`` can migrate string ↔ number without a wire
+    break. ``None`` / omitted passes through. ``bool`` and structured values
+    are rejected (not a sensible version token).
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise WmV2ParseError("invalid_snap_entry", f"fw must be a string or number: {value!r}")
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int | float):
+        return float(value)
+    raise WmV2ParseError("invalid_snap_entry", f"fw must be a string or number: {value!r}")
+
+
 def _parse_v2_ts(value: Any) -> datetime:
     """Parse an ISO-8601 ``ts`` string to a tz-aware UTC datetime (spec §12.2)."""
     if not isinstance(value, str) or not value:
@@ -340,11 +368,18 @@ def _parse_v2_ts(value: Any) -> datetime:
 
 
 def _parse_v2_entry(t: int, raw: Any) -> WmV2Entry:
-    """Decode one positional ``epcs[]`` tuple (spec §12.3)."""
-    if not isinstance(raw, list) or len(raw) != WM_V2_TUPLE_LEN:
+    """Decode one positional ``epcs[]`` tuple (spec §12.3).
+
+    The first five slots are ``[epc, rssi, cnt, tmp, hum]``. Tuples with
+    **more** than five elements are accepted — any trailing slots are
+    **reserved for future fields** (e.g. a peak-RSSI ``rpk``) and ignored,
+    so WM can append fields without a wire break. Fewer than five is a
+    genuine malformation and is rejected.
+    """
+    if not isinstance(raw, list) or len(raw) < WM_V2_TUPLE_LEN:
         raise WmV2ParseError(
             "invalid_snap_entry",
-            f"tuple must have {WM_V2_TUPLE_LEN} elements: {raw!r}",
+            f"tuple must have at least {WM_V2_TUPLE_LEN} elements: {raw!r}",
         )
     try:
         epc = _validate_epc(raw[0])
@@ -395,7 +430,7 @@ def parse_wm_v2(raw: dict[str, Any]) -> WmV2Message:
         ts=ts,
         lat=_v2_num(raw.get("lat")),
         lon=_v2_num(raw.get("lon")),
-        fw=_v2_num(raw.get("fw")),
+        fw=_v2_fw(raw.get("fw")),
         ant=ant,
         entries=entries,
     )
