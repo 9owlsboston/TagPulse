@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 67 — wm v2 compact wire · **shipped** (PR [#127](https://github.com/9owlsboston/TagPulse/pull/127)); between sprints.
+**Current sprint:** 68 — asset path map · branch `sprint-68/asset-path-map` (full scope lands in §sprint-68 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1731,6 +1731,26 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 - **Demo data rigs** — [mqtt_canary.py](../scripts/mqtt_canary.py) `--compact` validates the dialect end-to-end against the DB. **[done]**
 
 **Out of scope.** Numeric-`sn` / epoch-`ts` SKU optimisation (recorded in spec §12.7 for a future tighter SKU); multi-antenna `v:2` (single envelope `ant` only); UI changes (none — wire-only). One **`[CONFIRM WM]`** open: null-vs-zero for unused delete slots (parser accepts both).
+
+---
+
+## Sprint 68 — Asset path map: "where is X / where was X" `[UI]`
+
+> **Status (2026-06-19, in progress).** UI-only sprint (backend PR [#132](https://github.com/9owlsboston/TagPulse/pull/132) carries planning only; UI PR [#96](https://github.com/9owlsboston/TagPulse-UI/pull/96)). **No `openapi.json` change** — the backend contract is already complete: `GET /assets/{id}/floor-path` (floor `(x,y)` trail, Sprint 65), `GET /assets/{id}/path` (geo lat/lon, Sprint 15), and `coord_system` on the Site (Sprint 64, with plain-grid fallback when `floorplan_image` is absent).
+
+**Why now.** The asset detail "Recent Path" tab is a reader-hop **table** (When / Source / `zone: —`). It answers "which antenna heard it," not the actual operator question — **where is asset X now, and where was it over a time range.** The floor-position estimator (Sprint 66, validated in dev) now writes computed `(x, y)` fixes, but nothing surfaces them on the asset page, and `FloorMap` hard-filters to `source='precomputed'` so the computed trail is invisible.
+
+**Governing decisions (locked at kickoff).**
+- **Frame is auto-selected per asset, single-frame v1.** Floor (`coord_system` site, `floor-path` has points) → floor map; else geo (`/path` has points) → geographic map; else honest empty state. Mixed geo+floor history (toggle) is a deferred seam — assets are effectively single-frame per site.
+- **Floor-frame location text = `Floor @ (x, y)` + reader name; no zone lookup in v1.** Zone-via-point-in-polygon on floor-path points stays the deferred backend follow-up (the resolver exists for `/tag-reads`; it is not wired onto the asset path endpoints, and the floor demo seeds no zones, so it would resolve to nothing today).
+
+**Scope.**
+- **`FloorMap` computed trail** — drop the hardcoded `source: 'precomputed'` so `computed` estimator fixes render (one-line-ish fix; makes the demo-wm-dc trail visible immediately).
+- **`AssetPathMap` component** — frame-aware (floor/geo auto), scoped to one asset, with a time-range picker (15 m / 1 h / 24 h / custom) driving `since`/`until`; trail polyline + latest-position marker; grid fallback when no floorplan image; empty state when no fixes.
+- **AssetDetail restructure** — new **"Path"** tab (map-first, leads the location story) + **"Reads"** tab (the existing reader-hop table, with frame-aware location text replacing `zone: —`).
+- **Tests** — component + page tests; `make check` green in TagPulse-UI.
+
+**Out of scope (deferred).** Backend follow-up to resolve zone on `floor-path` points (point-in-polygon) so the map + log can show real zone names; mixed-frame toggle; seeding floor-polygon zones in `simulate_floor_positioning.py` (separate enhancement when the demo wants semantic zones + rule firing).
 
 ---
 
