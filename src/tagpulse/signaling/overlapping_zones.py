@@ -538,7 +538,8 @@ class OverlappingZonesProcessor:
           ON b.tenant_id = tr.tenant_id
          AND b.unbound_at IS NULL
          AND (
-                (b.binding_kind = 'epc'    AND tr.epc    = b.binding_value) OR
+                (b.binding_kind = 'epc'
+                 AND (tr.epc = b.binding_value OR tr.epc_hex = b.binding_value)) OR
                 (b.binding_kind = 'tid'    AND tr.tid    = b.binding_value) OR
                 (b.binding_kind = 'device' AND tr.tag_id = b.binding_value)
              )

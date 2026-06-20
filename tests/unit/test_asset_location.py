@@ -195,6 +195,28 @@ def test_path_sql_references_existing_tag_reads_columns() -> None:
     assert "tr.device_id" in sql
 
 
+def test_epc_bindings_match_uri_or_hex() -> None:
+    """ADR-033: ``binding_kind='epc'`` must resolve against EITHER the decoded
+    URI (``tr.epc``) or the raw hex (``tr.epc_hex``), so a hex binding (what WM
+    gives operators) resolves location/path/zone surfaces.
+    """
+    from tagpulse.repositories.timescaledb.asset_location import (
+        TimescaleAssetLocationRepository,
+    )
+    from tagpulse.signaling.overlapping_zones import OverlappingZonesProcessor
+
+    for label, sql in (
+        ("_PATH_SQL", str(TimescaleAssetLocationRepository._PATH_SQL)),
+        (
+            "_ASSETS_IN_READER_BOUND_ZONE",
+            str(TimescaleAssetLocationRepository._ASSETS_IN_READER_BOUND_ZONE),
+        ),
+        ("overlapping _READS_SQL", str(OverlappingZonesProcessor._READS_SQL)),
+    ):
+        assert "tr.epc_hex = b.binding_value" in sql, f"{label} missing epc_hex match"
+        assert "tr.epc = b.binding_value" in sql, f"{label} missing epc URI match"
+
+
 @pytest.mark.asyncio
 async def test_get_asset_path_raises_without_repo() -> None:
     svc = AssetService(

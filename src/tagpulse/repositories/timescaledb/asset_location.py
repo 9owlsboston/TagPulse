@@ -130,7 +130,8 @@ class TimescaleAssetLocationRepository:
                 NULL::uuid               AS external_id
             FROM tag_reads tr
             JOIN active_bindings b
-              ON (b.binding_kind = 'epc'    AND tr.epc    = b.binding_value)
+              ON (b.binding_kind = 'epc'
+                  AND (tr.epc = b.binding_value OR tr.epc_hex = b.binding_value))
               OR (b.binding_kind = 'tid'    AND tr.tid    = b.binding_value)
               OR (b.binding_kind = 'device' AND tr.tag_id = b.binding_value)
             WHERE tr.tenant_id = :tenant_id
@@ -214,7 +215,8 @@ class TimescaleAssetLocationRepository:
             JOIN tag_reads tr
               ON tr.tenant_id = b.tenant_id
              AND (
-                    (b.binding_kind = 'epc'    AND tr.epc    = b.binding_value) OR
+                    (b.binding_kind = 'epc'
+                     AND (tr.epc = b.binding_value OR tr.epc_hex = b.binding_value)) OR
                     (b.binding_kind = 'tid'    AND tr.tid    = b.binding_value) OR
                     (b.binding_kind = 'device' AND tr.tag_id = b.binding_value)
                  )
