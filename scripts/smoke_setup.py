@@ -451,6 +451,7 @@ def ensure_telemetry_model(
         "temperature",
         "temperature_c",
         "humidity",
+        "humidity_pct",
         "battery_pct",
     }
     # Sprint 19 cutover: the legacy ``GET /telemetry-models/{device_type}``
@@ -478,6 +479,29 @@ def ensure_telemetry_model(
             "device_type": "rfid_reader",
             "metrics": [
                 {
+                    # Cold-chain reading emitted by sensor-tags (wire v2
+                    # ``temperature_c``; the simulator embeds it in
+                    # ``tag_data.temperature_c``). Listed FIRST so the
+                    # Telemetry tab's default metric (``metrics[0]``) has
+                    # data for tag-borne fleets like WM, instead of landing
+                    # on the perpetually-empty reader-env ``temperature``.
+                    "name": "temperature_c",
+                    "unit": "C",
+                    "min_value": -40.0,
+                    "max_value": 60.0,
+                    "description": "Cold-chain tag temperature (wire temperature_c)",
+                },
+                {
+                    # Cold-chain tag humidity (wire v2 ``humidity_pct``).
+                    # WM sends this; previously unmodelled, so the reading
+                    # had no chart (the model only declared bare ``humidity``).
+                    "name": "humidity_pct",
+                    "unit": "pct",
+                    "min_value": 0.0,
+                    "max_value": 100.0,
+                    "description": "Cold-chain tag humidity (wire humidity_pct)",
+                },
+                {
                     "name": "temperature",
                     "unit": "C",
                     "min_value": -20.0,
@@ -485,23 +509,11 @@ def ensure_telemetry_model(
                     "description": "Ambient temperature at reader",
                 },
                 {
-                    # Cold-chain reading emitted by sensor-tags (the
-                    # simulator embeds this in `tag_data.temperature_c`
-                    # 25% of reads). Different metric than the reader's
-                    # own `temperature` because it represents the tagged
-                    # asset's temperature, not the reader environment.
-                    "name": "temperature_c",
-                    "unit": "C",
-                    "min_value": -40.0,
-                    "max_value": 60.0,
-                    "description": "Cold-chain tag temperature",
-                },
-                {
                     "name": "humidity",
                     "unit": "pct",
                     "min_value": 0.0,
                     "max_value": 100.0,
-                    "description": "Relative humidity",
+                    "description": "Relative humidity at reader",
                 },
                 {
                     "name": "battery_pct",
