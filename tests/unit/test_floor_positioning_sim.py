@@ -45,7 +45,7 @@ def test_grid_readers_are_inside_the_floor() -> None:
 def test_estimator_recovers_a_centered_asset() -> None:
     # 4 corner readers, asset dead-centre → estimate near the middle.
     readers = sfp.grid_readers(100.0, 100.0, 4)
-    asset = sfp.PlacedAsset(name="a", epc="e", x=50.0, y=50.0)
+    asset = sfp.PlacedAsset(name="a", epc="e", epc_hex="E2800000000000000000000A", x=50.0, y=50.0)
     cfg = PositionStrategy(half_life_s=1.0e9, rssi_floor_dbm=-127.0)
     fix, err = sfp.estimate_for_asset(asset, readers, k=4, config=cfg, now=NOW)
     assert fix is not None
@@ -58,6 +58,8 @@ def test_ground_truth_rmse_is_reasonable_noiseless() -> None:
     rng = random.Random(7)  # noqa: S311 — deterministic test fixture, not crypto
     readers = sfp.grid_readers(600.0, 400.0, 9)
     assets = sfp.place_assets(20, 600.0, 400.0, rng)
+    # Each placed asset carries a display-only uppercase-hex EPC (24 chars, even).
+    assert all(len(a.epc_hex) == 24 and int(a.epc_hex, 16) >= 0 for a in assets)
     cfg = PositionStrategy(half_life_s=1.0e9, rssi_floor_dbm=-127.0)
     errors = []
     for asset in assets:
@@ -72,7 +74,7 @@ def test_ground_truth_rmse_is_reasonable_noiseless() -> None:
 
 def test_observations_count_matches_k() -> None:
     readers = sfp.grid_readers(100.0, 100.0, 6)
-    asset = sfp.PlacedAsset(name="a", epc="e", x=30.0, y=40.0)
+    asset = sfp.PlacedAsset(name="a", epc="e", epc_hex="E2800000000000000000000A", x=30.0, y=40.0)
     obs = sfp.observations_for_asset(asset, readers, 3, now=NOW)
     assert len(obs) == 3
     assert all(o.ts == NOW and o.cnt == 1 for o in obs)
