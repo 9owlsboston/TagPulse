@@ -318,7 +318,7 @@ _SPARKLINE_ASSETS_SEEN_SQL = text(
     JOIN asset_tag_bindings atb
       ON atb.tenant_id     = tr.tenant_id
      AND atb.binding_kind  = 'epc'
-     AND atb.binding_value = tr.epc_hex
+     AND (atb.binding_value = tr.epc_hex OR atb.binding_value = tr.epc)
      AND atb.bound_at     <= tr."timestamp"
      AND (atb.unbound_at IS NULL OR tr."timestamp" < atb.unbound_at)
     WHERE tr.tenant_id = :tenant_id
