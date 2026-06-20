@@ -777,9 +777,9 @@ One JSON object per publish, same as §2.1. Envelope fields:
 |---|---|---|---|
 | `v` | integer `2` | **all** | Dialect selector. New in v2.1. |
 | `t` | integer | **all** | `0`=snap, `1`=add, `2`=delete. Unchanged. |
-| `sn` | **string** | **all** | Reader id. **String** here (UUID-shaped accepted), vs. v2.0 integer. Resolves to `device_id` per §4.5 (uuid-shaped → direct `devices.id` match). |
+| `sn` | string \| number | **all** | Reader id. A **string** (UUID-shaped, recommended) or a **number** (numeric serial — coerced to its string form). Resolves to `device_id` per §4.5 (uuid-shaped → direct `devices.id` match); informational since `device_id` is derived from the topic. |
 | `ts` | **string** | **all** | **ISO-8601 UTC** (`YYYY-MM-DDTHH:MM:SSZ`), vs. v2.0 epoch-ms integer. Same ±5 min drift reject (§6 `clock_skew`). |
-| `lat` / `lon` | number \| null | t=0, t=1 | Same as v2.0 (nullable; `null` = no GNSS fix). MAY be omitted on t=2. |
+| `lat` / `lon` | number \| null | t=0, t=1 | Nullable (`null` = no GNSS fix). When present, **range-checked**: `lat` ∈ [-90, 90], `lon` ∈ [-180, 180] — out-of-range rejects the message (`reason="invalid_location"`). MAY be omitted on t=2. |
 | `fw` | string \| number | optional | **New.** Producer firmware/SW version, treated as an **opaque token** — a **string** (recommended; e.g. `"1.10.2"`) or a number (tolerated; the current WM firmware emits a float). Stored verbatim to `tag_reads.tag_data._fw` (underscore-prefixed → **excluded from the §4.6 telemetry mirror**, so it never becomes a metric); never parsed or compared, so it can migrate string ↔ number without a wire break. Omitted when unknown. **Note:** a *float* `fw` cannot order versions (`1.10` collapses to `1.1`, and as floats `1.10 < 1.9`) — senders SHOULD use a string. |
 | `ant` | integer | t=0, t=1 | **New / relocated.** Envelope-level antenna port (0..255) applied to **every** entry in this message. Replaces the per-entry `an` of v2.0 — `v:2` readers are single-antenna-per-message. MAY be omitted on t=2. |
 | `epcs` | array | t=0, t=1, t=2 | Present on **all three** types in this dialect (v2.0 restricts `epcs` to t=0). Element shape is the **same uniform tuple for every `t`** — see §12.3. |
@@ -861,7 +861,9 @@ Identical to §4.4 except for the field sourcing below. Snap reconciliation (§4
 | `v` present and `!= 2` | Reject | Yes | `tagpulse_mqtt_wm_rejections_total{reason="unknown_wire_version"}` |
 | `epcs[]` tuple length `< 5` (any `t`) | Reject whole message | Yes | `...{reason="invalid_snap_entry"}` |
 | tuple `epc` (slot 0) not a valid EPC string | Reject whole message | Yes | `...{reason="invalid_epc"}` |
+| `sn` missing / empty / non-(string\|integer) (e.g. a float) | Reject | Yes | `...{reason="missing_required_field"}` |
 | `sn` not uuid-shaped and not a registered serial | Reject | Yes | `...{reason="device_not_found"}` |
+| `lat` / `lon` present but non-number or out of range | Reject | Yes | `...{reason="invalid_location"}` |
 | `ts` not ISO-8601 parseable | Reject | Yes | `...{reason="invalid_timestamp"}` |
 
 Reading slots (`rssi`/`cnt`/`tmp`/`hum`) are **not** rejected on type or range in `v:2` — they are stored as given (`null` → `None`) and, on t=2, ignored entirely. All other §6 rows apply unchanged.
