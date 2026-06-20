@@ -125,9 +125,8 @@ existing behavior is preserved. Two refinements ship with it:
 
 ### 3.3 Shared helper — `wildcard_to_ilike(pattern) -> str | None`
 
-One pure function (`src/tagpulse/ingestion`… no; `src/tagpulse/api/filters.py`,
-new module) compiles a user pattern to a SQL `LIKE` pattern string and is used
-by every endpoint. Pseudocode:
+One pure function in `src/tagpulse/api/filters.py` (new module) compiles a user
+pattern to a SQL `LIKE` pattern string and is used by every endpoint. Pseudocode:
 
 ```
 def wildcard_to_ilike(pattern: str) -> str | None:
@@ -227,19 +226,19 @@ ADR-030's `makeEnumFilterColumn` (checkbox + search) and Sprint 70's
 
 ## 8. Open items
 
-- **O1.** Tag Reads: search `tag_id` only, or also a `device` name search?
-  (Leaning `tag_id` only for v1; device is already a dropdown filter.)
-- **O2.** Alert History search column — confirm against the `alerts` schema
-  (message text vs rule name); may need the rule join.
+- **O1 — RESOLVED.** Tag Reads searches **`tag_id` only** (device stays a
+  dropdown filter). Param: `tag_q`.
+- **O2 — RESOLVED.** Alert History searches the **`message`** column (no rule
+  join needed; `AlertModel.message` is the human-readable alert text). Param: `q`.
 - **O3.** `pg_trgm` index — deferred; revisit if a tenant's paginated table
   trips the p95 latency SLO on leading-`%` patterns.
 
 ## 9. Rollout
 
-1. Backend `api/filters.py` helper + tests (#137).
-2. Add params to the 4 endpoints + `openapi.json` regen + CHANGELOG (#137).
-3. Merge #137. UI regenerates client.
-4. UI `matchWildcard` + `ColumnSearchFilter` + tests (#106).
-5. Wire client-side (Devices/Categories/Sites-Zones) + server-side (the 4) +
+1. ✅ Backend `api/filters.py` helper + 20-row vector test (#137).
+2. ✅ Add params to the 4 endpoints + `openapi.json` regen + CHANGELOG (#137).
+3. ⏳ Merge #137. UI regenerates client.
+4. ✅ UI `matchWildcard` + `ColumnSearchFilter` + tests (#106).
+5. ✅ Wire client-side (Devices/Categories/Sites-Zones) + server-side (the 4) +
    CHANGELOG (#106).
-6. Flip roadmap Sprint 70 → shipped via `ship-sprint.sh --with-ui`.
+6. ⏳ Flip roadmap Sprint 70 → shipped via `ship-sprint.sh --with-ui`.
