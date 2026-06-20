@@ -1774,9 +1774,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 70 — Uniform table filter & search (wildcard column box) `[queued]`
+## Sprint 70 — Uniform table filter & search (wildcard column box) `[in progress]`
 
-> **Status (2026-06-19, queued).** Planned to kick off when Sprint 69 ships (the data fixes settle the list pages first). Decisions locked with the user: **wildcard-only** for v1 (no regex mode), and **server-side filtering is in scope** for paginated tables.
+> **Status (2026-06-20, in progress).** Kicked off cross-repo (backend [#137](https://github.com/9owlsboston/TagPulse/pull/137) + UI [#106](https://github.com/9owlsboston/TagPulse-UI/pull/106)). Decisions locked with the user: **wildcard-only** for v1 (no regex mode), and **server-side filtering is in scope** for paginated tables. v1 paginated endpoints: **Tag Reads** + **Alert History**.
 
 **Why.** Filtering is ad-hoc per page today (AntD column filters on ~5 pages + shared `FilterPanel`/`LabelFilterStrip`), with no consistent text/wildcard search. Operators want to type `reader-*` at a column header and filter — uniformly, on every list/table.
 
