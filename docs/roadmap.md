@@ -1,10 +1,10 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 68 — asset path map · branch `sprint-68/asset-path-map` (full scope lands in §sprint-68 during the sprint).
+**Current sprint:** 68 — asset path map · **shipped** (PR #132); between sprints.
 <!-- current-sprint:end -->
 
-> The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
+> The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
 
 ---
 
@@ -1734,9 +1734,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 68 — Asset path map: "where is X / where was X" `[UI]`
+## Sprint 68 — Asset path map: "where is X / where was X" `[UI]` (shipped)
 
-> **Status (2026-06-19, in progress).** UI-only sprint (backend PR [#132](https://github.com/9owlsboston/TagPulse/pull/132) carries planning only; UI PR [#96](https://github.com/9owlsboston/TagPulse-UI/pull/96)). **No `openapi.json` change** — the backend contract is already complete: `GET /assets/{id}/floor-path` (floor `(x,y)` trail, Sprint 65), `GET /assets/{id}/path` (geo lat/lon, Sprint 15), and `coord_system` on the Site (Sprint 64, with plain-grid fallback when `floorplan_image` is absent).
+> **Status (2026-06-19, shipped).** UI-only sprint (backend PR [#132](https://github.com/9owlsboston/TagPulse/pull/132) carries planning only; UI PR [#96](https://github.com/9owlsboston/TagPulse-UI/pull/96)). **No `openapi.json` change** — the backend contract is already complete: `GET /assets/{id}/floor-path` (floor `(x,y)` trail, Sprint 65), `GET /assets/{id}/path` (geo lat/lon, Sprint 15), and `coord_system` on the Site (Sprint 64, with plain-grid fallback when `floorplan_image` is absent).
 
 **Why now.** The asset detail "Recent Path" tab is a reader-hop **table** (When / Source / `zone: —`). It answers "which antenna heard it," not the actual operator question — **where is asset X now, and where was it over a time range.** The floor-position estimator (Sprint 66, validated in dev) now writes computed `(x, y)` fixes, but nothing surfaces them on the asset page, and `FloorMap` hard-filters to `source='precomputed'` so the computed trail is invisible.
 

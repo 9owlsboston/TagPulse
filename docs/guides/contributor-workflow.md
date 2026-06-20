@@ -90,6 +90,28 @@ git push -u origin HEAD
 gh pr create --fill
 ```
 
+### Shipping a sprint
+
+`scripts/ship-sprint.sh` is the merge-time bookend to `start-sprint.sh`. Run it
+from the backend repo while on the `sprint-NN/<topic>` branch **instead of**
+`gh pr merge`:
+
+```bash
+scripts/ship-sprint.sh            # backend-only / docs sprint
+scripts/ship-sprint.sh --with-ui  # also merge the matching UI PR
+```
+
+It flips the Sprint NN roadmap entry to **shipped** (the `> **Status (…)`
+line, the `## Sprint NN — …` header, and the current-sprint badge), commits
+that flip **onto the branch** so it rides into the squash merge, then
+squash-merges the PR(s) and deletes the branches. This is why marking a sprint
+"shipped" is **not a separate post-merge chore** — the flip lands atomically
+with the merge, at the moment you ship, through the PR (never a direct push to
+`main`). Nuanced statuses (e.g. `shipped — gated off`) are preserved; only the
+literal `in progress` token is rewritten. If "Allow auto-merge" is off, the
+flip is still committed into the PR — just complete the merge from the GitHub
+UI.
+
 ### CHANGELOG conflicts
 
 When multiple in-flight PRs all touch `## Unreleased`, the second-merging PR
