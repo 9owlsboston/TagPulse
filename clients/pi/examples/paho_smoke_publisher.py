@@ -216,6 +216,51 @@ def make_v2_tag_read_payload(args: argparse.Namespace) -> dict:
     return appeared
 
 
+def make_v2_compact_tag_read_payload(args: argparse.Namespace) -> dict:
+    """`tag-reads` topic in the **WM compact dialect** (`v:2`, Sprint 67 / spec §12).
+
+    Emits the positional-tuple dialect: string `sn` (UUID), ISO-8601
+    `ts`, envelope `ant` + `fw`, and a uniform 5-tuple
+    ``[epc, rssi, cnt, tmp, hum]`` for snap/add/delete. On delete the
+    reading slots are sent as `null` placeholders (the server ignores
+    them). Exercises the backend `_handle_wm_v2_compact_message` branch.
+
+    Schema reference: docs/design/edge-wire-format-v2.md §12.
+    """
+    if args.topic != "tag-reads":
+        sys.exit("--wire v2c only applies to --topic tag-reads")
+    epc = _normalize_v2_epc(args.epc_hex)
+    sn = args.sn_uuid or str(uuid.uuid4())
+    ts_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if args.v2_type == "disappeared":
+        # Uniform 5-tuple; reading slots are null on delete (spec §12.3).
+        return {"v": 2, "t": 2, "sn": sn, "ts": ts_iso, "epcs": [[epc, None, None, None, None]]}
+    rssi = float(args.rssi) if args.rssi is not None else -55.0
+    tmp = args.temp_c if args.temp_c is not None else 0.0
+    hum = args.humidity if args.humidity is not None else 0.0
+    tuple_entry = [epc, rssi, 1, tmp, hum]
+    return {
+        "v": 2,
+        "t": 0 if args.v2_type == "snap" else 1,
+        "sn": sn,
+        "ts": ts_iso,
+        "lat": args.lat,
+        "lon": args.lon,
+        "fw": args.fw,
+        "ant": args.antenna,
+        "epcs": [tuple_entry],
+    }
+
+
+def _select_tag_read_builder(wire: str) -> Callable[[argparse.Namespace], dict]:
+    """Pick the tag-reads payload builder for the requested wire format."""
+    if wire == "v2":
+        return make_v2_tag_read_payload
+    if wire == "v2c":
+        return make_v2_compact_tag_read_payload
+    return make_tag_read_payload
+
+
 def make_tag_read_payload(args: argparse.Namespace) -> dict:
     """`tag-reads` topic: single object, NO device_id (worker derives from topic).
 
@@ -497,20 +542,32 @@ def main() -> int:
     ap.add_argument(
         "--wire",
         default="v1",
-        choices=["v1", "v2"],
-        help="v1 = legacy TagReadCreate shape (default); v2 = WM presence wire format",
+        choices=["v1", "v2", "v2c"],
+        help="v1 = legacy TagReadCreate (default); v2 = WM keyed presence wire; "
+        "v2c = WM compact dialect (v:2 positional tuples, spec §12)",
     )
     ap.add_argument(
         "--v2-type",
         default="appeared",
         choices=["snap", "appeared", "disappeared"],
-        help="which v2 message to emit (t=0/1/2); only used when --wire v2",
+        help="which v2 message to emit (t=0/1/2); only used when --wire v2 / v2c",
     )
     ap.add_argument(
         "--sn",
         type=int,
         default=1,
         help="v2 wire envelope sn (device serial, int); --wire v2 only",
+    )
+    ap.add_argument(
+        "--sn-uuid",
+        default=None,
+        help="v:2 compact envelope sn (string/UUID); --wire v2c only (random uuid if omitted)",
+    )
+    ap.add_argument(
+        "--fw",
+        type=float,
+        default=1.10,
+        help="v:2 compact envelope fw (firmware version float); --wire v2c only",
     )
     # Loop
     ap.add_argument("--qos", type=int, default=1, choices=[0, 1, 2])
@@ -571,14 +628,14 @@ def main() -> int:
     client_id = f"tp-paho-edge-{uuid.uuid4().hex[:8]}"
 
     builders: dict[str, Callable[[argparse.Namespace], dict]] = {
-        "tag-reads": make_v2_tag_read_payload if args.wire == "v2" else make_tag_read_payload,
+        "tag-reads": _select_tag_read_builder(args.wire),
         "location": make_location_payload,
         "events": make_event_payload,
     }
     builder = builders[args.topic]
 
-    if args.wire == "v2" and args.topic != "tag-reads":
-        sys.exit("--wire v2 requires --topic tag-reads")
+    if args.wire in ("v2", "v2c") and args.topic != "tag-reads":
+        sys.exit(f"--wire {args.wire} requires --topic tag-reads")
 
     track: list[Waypoint] | None = None
     if args.track is not None:

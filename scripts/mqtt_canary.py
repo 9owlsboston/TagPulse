@@ -37,6 +37,7 @@ import os
 import sys
 import time
 import uuid
+from datetime import UTC, datetime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("mqtt-canary")
@@ -59,6 +60,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         type=int,
         default=30,
         help="How long to wait for the canary row to appear in tag_reads (default: 30).",
+    )
+    p.add_argument(
+        "--compact",
+        action="store_true",
+        help="Emit the WM compact dialect (v:2 positional tuple, spec §12) instead of "
+        "the v2.0 keyed shape — validates WM's actual wire end-to-end.",
     )
     return p.parse_args(argv)
 
@@ -129,19 +136,36 @@ async def _run_async(args: argparse.Namespace) -> int:
     # 8..124 chars).
     epc = ("CA" + uuid.uuid4().hex[:22]).upper()
     topic = f"tenants/{tenant_uuid}/devices/{device_uuid}/tag-reads"
-    body = json.dumps(
-        {
-            "t": 1,
-            "sn": 1,
-            "ts": int(time.time() * 1000),
-            "lat": None,
-            "lon": None,
-            "an": 0,
-            "epc": epc,
-            "rssi": -50,
-            "cnt": 1,
-        }
-    )
+    if args.compact:
+        # Sprint 67 / spec §12: WM compact dialect (v:2). String sn,
+        # ISO-8601 ts, envelope ant + fw, uniform positional 5-tuple.
+        body = json.dumps(
+            {
+                "v": 2,
+                "t": 1,
+                "sn": str(device_uuid),
+                "ts": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "lat": None,
+                "lon": None,
+                "fw": 1.10,
+                "ant": 0,
+                "epcs": [[epc, -50.0, 1, 0.0, 0.0]],
+            }
+        )
+    else:
+        body = json.dumps(
+            {
+                "t": 1,
+                "sn": 1,
+                "ts": int(time.time() * 1000),
+                "lat": None,
+                "lon": None,
+                "an": 0,
+                "epc": epc,
+                "rssi": -50,
+                "cnt": 1,
+            }
+        )
 
     try:
         await _publish(host, port, username, password, topic, body)

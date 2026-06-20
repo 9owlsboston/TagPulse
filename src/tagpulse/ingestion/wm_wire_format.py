@@ -25,6 +25,8 @@ for the design rationale.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -252,13 +254,166 @@ WmMessage = Annotated[
 """Top-level v2 message — Pydantic dispatches on the integer ``t`` field."""
 
 
+# ---------------------------------------------------------------------------
+# v2.1 — WM compact dialect (Sprint 67, spec §12, ADR-025 Amendment 1)
+#
+# Opt-in dialect selected by the reserved envelope field ``v == 2``.
+# Positional ``epcs[]`` tuples, envelope-level ``ant``, string ``sn``,
+# ISO-8601 ``ts``, float ``rssi``, and an ``fw`` firmware field. A single
+# uniform 5-tuple ``[epc, rssi, cnt, tmp, hum]`` serves snap (t=0), add
+# (t=1), and delete (t=2); on delete the reading slots are null/0 and
+# ignored (only ``epc`` is used).
+#
+# Parsing is hand-rolled (not Pydantic) because the wire element is a
+# positional array and the reading slots are deliberately NOT range-
+# checked (WM-authoritative — spec §12.3). Failures raise
+# :class:`WmV2ParseError` carrying the spec §6 ``reason`` label so the
+# subscriber's DLQ path can reuse the existing reason vocabulary.
+# ---------------------------------------------------------------------------
+
+WM_V2_VERSION = 2
+WM_V2_TUPLE_LEN = 5
+
+
+class WmV2ParseError(ValueError):
+    """A ``v:2`` compact-dialect parse failure carrying a spec §6 reason."""
+
+    def __init__(self, reason: str, detail: str = "") -> None:
+        super().__init__(detail or reason)
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class WmV2Entry:
+    """One decoded ``epcs[]`` tuple. Reading slots are ``None`` on t=2."""
+
+    epc: str
+    rssi: float | None
+    cnt: int | None
+    tmp: float | None
+    hum: float | None
+
+
+@dataclass(frozen=True)
+class WmV2Message:
+    """A decoded ``v:2`` message. ``ts`` is parsed to a tz-aware UTC datetime."""
+
+    t: int
+    sn: str
+    ts: datetime
+    lat: float | None
+    lon: float | None
+    fw: float | None
+    ant: int | None
+    entries: list[WmV2Entry]
+
+
+def _v2_num(value: Any) -> float | None:
+    """Coerce a wire number to float (``None`` passes through)."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise WmV2ParseError("invalid_snap_entry", f"bool is not a number: {value!r}")
+    if isinstance(value, int | float):
+        return float(value)
+    raise WmV2ParseError("invalid_snap_entry", f"not a number: {value!r}")
+
+
+def _v2_int(value: Any) -> int | None:
+    """Coerce a wire number to int by rounding (``None`` passes through)."""
+    n = _v2_num(value)
+    return int(round(n)) if n is not None else None
+
+
+def _parse_v2_ts(value: Any) -> datetime:
+    """Parse an ISO-8601 ``ts`` string to a tz-aware UTC datetime (spec §12.2)."""
+    if not isinstance(value, str) or not value:
+        raise WmV2ParseError("invalid_timestamp", repr(value))
+    raw = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise WmV2ParseError("invalid_timestamp", value) from exc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _parse_v2_entry(t: int, raw: Any) -> WmV2Entry:
+    """Decode one positional ``epcs[]`` tuple (spec §12.3)."""
+    if not isinstance(raw, list) or len(raw) != WM_V2_TUPLE_LEN:
+        raise WmV2ParseError(
+            "invalid_snap_entry",
+            f"tuple must have {WM_V2_TUPLE_LEN} elements: {raw!r}",
+        )
+    try:
+        epc = _validate_epc(raw[0])
+    except ValueError as exc:
+        raise WmV2ParseError("invalid_epc", str(exc)) from exc
+    if t == 2:
+        # Delete: reading slots are null/0 placeholders — ignore them.
+        return WmV2Entry(epc=epc, rssi=None, cnt=None, tmp=None, hum=None)
+    return WmV2Entry(
+        epc=epc,
+        rssi=_v2_num(raw[1]),
+        cnt=_v2_int(raw[2]),
+        tmp=_v2_num(raw[3]),
+        hum=_v2_num(raw[4]),
+    )
+
+
+def parse_wm_v2(raw: dict[str, Any]) -> WmV2Message:
+    """Decode a WM compact-dialect (``v:2``) message (spec §12).
+
+    The caller has already confirmed ``raw`` is a dict carrying a ``v``
+    key. Raises :class:`WmV2ParseError` (spec §6 ``reason``) on any
+    malformed field. Reading slots are stored as given (never range-
+    checked); only ``epc`` and the antenna range are validated.
+    """
+    v = raw.get("v")
+    if v != WM_V2_VERSION:
+        raise WmV2ParseError("unknown_wire_version", f"v={v!r}")
+    t = raw.get("t")
+    if t is None:
+        raise WmV2ParseError("missing_type")
+    if t not in (0, 1, 2):
+        raise WmV2ParseError("unknown_type", f"t={t!r}")
+    sn = raw.get("sn")
+    if not isinstance(sn, str) or not sn:
+        raise WmV2ParseError("missing_required_field", f"sn={sn!r}")
+    ts = _parse_v2_ts(raw.get("ts"))
+    epcs = raw.get("epcs")
+    if not isinstance(epcs, list):
+        raise WmV2ParseError("missing_required_field", "epcs must be an array")
+    ant = _v2_int(raw.get("ant"))
+    if ant is not None and not (ANTENNA_MIN <= ant <= ANTENNA_MAX):
+        raise WmV2ParseError("invalid_snap_entry", f"ant out of range: {ant}")
+    entries = [_parse_v2_entry(t, e) for e in epcs]
+    return WmV2Message(
+        t=t,
+        sn=sn,
+        ts=ts,
+        lat=_v2_num(raw.get("lat")),
+        lon=_v2_num(raw.get("lon")),
+        fw=_v2_num(raw.get("fw")),
+        ant=ant,
+        entries=entries,
+    )
+
+
 __all__ = [
     "EPC_MAX_HEX_CHARS",
     "EPC_MIN_HEX_CHARS",
     "SNAP_SOFT_CAP_ENTRIES",
+    "WM_V2_TUPLE_LEN",
+    "WM_V2_VERSION",
     "WmAppearedMessage",
     "WmDisappearedMessage",
     "WmMessage",
     "WmSnapEntry",
     "WmSnapMessage",
+    "WmV2Entry",
+    "WmV2Message",
+    "WmV2ParseError",
+    "parse_wm_v2",
 ]

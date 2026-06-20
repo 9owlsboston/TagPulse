@@ -1,6 +1,8 @@
 # TagPulse Edge Wire Format v2 — Specification
 
 > **Status: ACCEPTED v1.0 (2026-05-23).** Ratified by ADR 025 (wire contract, §3) and ADR 026 (server-side presence model, §4). Sprint 46 implements the backend (shipped); Sprint 47 implements the producer side (shipped — Pi-gateway producer + companion [reader-to-edge contract](reader-to-edge-contract.md) under [ADR-027](../adr/027-reader-to-edge-contract.md)). One `§11` checklist item intentionally remains unchecked: §9.2 #5 (event-bus volume mitigation) gates *production rollout of high-churn readers*, not Sprint 46/47 ship.
+>
+> **AMENDED v2.1 (2026-06-19) — §12 "WM compact dialect."** Sprint 67 adds an **opt-in** compact dialect gated on the reserved envelope field `v:2`: positional `epcs[]` tuples (no repeated keys), envelope-level antenna `ant`, an `fw` firmware field, string `sn`, ISO-8601 `ts`, and float `rssi`. It is **purely additive** — a message with no `v` key is the v2.0 keyed format documented in §2–§6 and is unchanged. See **§12** for the full dialect and [ADR-025 §"Amendment 1"](../adr/025-edge-wire-format-v2.md) for the decision record. The two `v:2` choices that trade away §2.3 bandwidth (string `sn`, ISO `ts`) are a **deliberate, recorded concession** to WM, the platform's sole edge producer today (ADR-025 Amendment 1).
 
 | | |
 |---|---|
@@ -748,3 +750,135 @@ Each entry below uses the same structure so a developer touching the relevant co
 - [x] `docs/design/reader-to-edge-contract.md` drafted (covers §8.4 Q-LAN-1..Q-LAN-7, WM-facing) — Sprint 47 companion (landed under [ADR-027](../adr/027-reader-to-edge-contract.md))
 - [x] ADR 025 (wire format) + ADR 026 (server-side presence model) drafted and reviewed
 - [x] Roadmap entry for Sprint 46 added to [docs/roadmap.md](../roadmap.md)
+
+---
+
+## 12. WM compact dialect (v2.1, `v:2`)
+
+> **Added:** Sprint 67 (2026-06-19). **Status:** accepted, opt-in. **Decision record:** [ADR-025 Amendment 1](../adr/025-edge-wire-format-v2.md).
+
+### 12.1 Why a dialect, not a replacement
+
+WM — the platform's sole edge producer today (§1.5) — measured a **~35 % per-message reduction** by dropping the repeated JSON keys inside `epcs[]` in favor of fixed-position tuples. Rather than weaken validation on the ratified §2–§6 format (and invalidate its conformance fixtures and the Pi-gateway reference producer), v2.1 introduces the compact shape as an **opt-in dialect** selected by the reserved envelope field `v` (§2.2 "Reserved field names").
+
+**Negotiation rule (single switch):**
+
+- `v` **absent** → v2.0 keyed format. Everything in §2–§6 applies unchanged.
+- `v == 2` → **WM compact dialect.** This section (§12) governs the wire shape; §3 semantics (cycle/diff/snap, reconciliation §4.2, presence §4.1) are **identical** — only the serialization differs.
+- `v` present but `!= 2` → reject, DLQ `reason="unknown_wire_version"`.
+
+The discriminator hierarchy is therefore **`v` first (dialect), then `t` (message type).**
+
+### 12.2 Envelope (v:2)
+
+One JSON object per publish, same as §2.1. Envelope fields:
+
+| Field | JSON type | Required on | Notes vs. v2.0 |
+|---|---|---|---|
+| `v` | integer `2` | **all** | Dialect selector. New in v2.1. |
+| `t` | integer | **all** | `0`=snap, `1`=add, `2`=delete. Unchanged. |
+| `sn` | **string** | **all** | Reader id. **String** here (UUID-shaped accepted), vs. v2.0 integer. Resolves to `device_id` per §4.5 (uuid-shaped → direct `devices.id` match). |
+| `ts` | **string** | **all** | **ISO-8601 UTC** (`YYYY-MM-DDTHH:MM:SSZ`), vs. v2.0 epoch-ms integer. Same ±5 min drift reject (§6 `clock_skew`). |
+| `lat` / `lon` | number \| null | t=0, t=1 | Same as v2.0 (nullable; `null` = no GNSS fix). MAY be omitted on t=2. |
+| `fw` | number | optional | **New.** Producer firmware/SW version (e.g. `1.10`). Stored to `tag_reads.tag_data._fw` (underscore-prefixed → **excluded from the §4.6 telemetry mirror**, so it never becomes a metric); not used for routing. Omitted when unknown. |
+| `ant` | integer | t=0, t=1 | **New / relocated.** Envelope-level antenna port (0..255) applied to **every** entry in this message. Replaces the per-entry `an` of v2.0 — `v:2` readers are single-antenna-per-message. MAY be omitted on t=2. |
+| `epcs` | array | t=0, t=1, t=2 | Present on **all three** types in this dialect (v2.0 restricts `epcs` to t=0). Element shape is the **same uniform tuple for every `t`** — see §12.3. |
+
+`an` does **not** appear inside entries in `v:2`. Multi-antenna observation (v2.0 §2.2 "same EPC on two antennas → two entries") is **not representable** in `v:2` by design; if WM ships multi-antenna readers later they revert to `v:2`-with-`ant`-per-message or back to v2.0 keyed entries.
+
+### 12.3 `epcs[]` element shape — uniform across snap / add / delete
+
+WM emits **one serializer for all three message types** (confirmed direction, 2026-06-19): every `epcs[]` element is the same fixed **5-position tuple**, so snap / add / delete differ only by the envelope `t`, never by element shape.
+
+```
+[ epc, rssi, cnt, tmp, hum ]
+   0    1    2    3    4
+```
+
+| Pos | Field | JSON type | Range (t=0/t=1) | Maps to |
+|---|---|---|---|---|
+| 0 | `epc` | string | uppercase hex, 8..124, even | `tag_id` + `identity.epc_hex` |
+| 1 | `rssi` | number \| null | -127.0 .. 0.0 dBm | `signal_strength` (kept as float — no integer truncation, vs. v2.0 int16) |
+| 2 | `cnt` | integer \| null | 0 .. 65535 | `sensor_data.read_count` |
+| 3 | `tmp` | number \| null | -40.0 .. 85.0 °C | `sensor_data.temperature_c` |
+| 4 | `hum` | number \| null | 0.0 .. 100.0 %RH | `sensor_data.humidity_pct` |
+
+**Delete (t=2):** the reading slots are not meaningful — WM sends `null` (or `0` as a placeholder) for `rssi`/`cnt`/`tmp`/`hum`. The server uses only `epc` (slot 0) and **ignores slots 1–4**; no `tag_reads` row is written (§4.3 `t==2`).
+
+**Snap / add (t=0/t=1):** the slots carry the live reading; `null`/`0` are tolerated (e.g. a sensorless cycle) and stored as-is (`null` → `None`).
+
+> **`[CONFIRM WM]`** — null-vs-zero for the unused delete slots. The parser accepts **either** so WM can ship whichever their firmware emits; confirm which they actually send so the simulator and conformance fixtures match the wire byte-for-byte.
+
+Element length is **always 5**; any other length → reject, DLQ `reason="invalid_snap_entry"`. Reading slots are **not range-checked** in `v:2` (WM-authoritative — "take whatever they send"); only `epc` is validated per §2.2.
+
+### 12.4 Examples
+
+```jsonc
+// t=0 snap — 3 observations, positional tuples, single envelope antenna:
+{"v":2,"t":0,"sn":"889bd6fc-2bd3-4936-b0e2-fddfbd9fe5dc","ts":"2026-06-19T20:24:16Z",
+ "lat":50.1,"lon":30.3,"fw":1.10,"ant":3,
+ "epcs":[["3034257BF461A84000030D40",-61.6,3,-4.0,57.4],
+         ["3034257BF461A84000030D41",-59.9,3,-3.7,52.9],
+         ["3034257BF461A84000030D42",-66.3,1,-4.2,52.4]]}
+
+// t=1 add — same tuple format as snap (batched):
+{"v":2,"t":1,"sn":"889bd6fc-2bd3-4936-b0e2-fddfbd9fe5dc","ts":"2026-06-19T20:24:17Z",
+ "lat":50.1,"lon":30.3,"fw":1.10,"ant":3,
+ "epcs":[["3034257BF461A84000030D43",-58.8,1,-4.2,55.7]]}
+
+// t=2 delete — same tuple shape, reading slots null (or 0); only epc is used:
+{"v":2,"t":2,"sn":"889bd6fc-2bd3-4936-b0e2-fddfbd9fe5dc","ts":"2026-06-19T20:24:18Z",
+ "epcs":[["3034257BF461A84000030D40",null,null,null,null]]}
+
+// sensorless snap entry — tmp/hum null (or 0); rssi/cnt still carry the read:
+{"v":2,"t":0,"sn":"889bd6fc-2bd3-4936-b0e2-fddfbd9fe5dc","ts":"2026-06-19T20:24:19Z",
+ "lat":null,"lon":null,"fw":1.10,"ant":3,
+ "epcs":[["3034257BF461A84000030D44",-65.7,2,null,null]]}
+```
+
+### 12.5 Mapping to existing models
+
+Identical to §4.4 except for the field sourcing below. Snap reconciliation (§4.2), presence (§4.1), and the `telemetry_readings` fan-out (§4.6) are unchanged — `v:2` produces the same `TagReadCreate` rows the keyed format does.
+
+| `v:2` source | `TagReadCreate` | `tag_presence` |
+|---|---|---|
+| `sn` (string/uuid) → §4.5 lookup | `device_id` | `device_id` |
+| `ts` (ISO-8601) | `timestamp` | `last_seen` / `first_seen` |
+| envelope `ant` | `reader_antenna` | `last_antenna` |
+| `lat`/`lon` | `location.*`, `source="reader_gnss"` | — |
+| tuple[0] `epc` | `tag_id`, `identity.epc_hex` | `epc` |
+| tuple[1] `rssi` (float) | `signal_strength` | `last_rssi` |
+| tuple[2..4] `cnt`/`tmp`/`hum` | `sensor_data{read_count,temperature_c,humidity_pct}` | — |
+| envelope `fw` | `tag_data._fw` (underscore = not mirrored to telemetry) | — |
+| t=2 tuple (epc slot only) | (no `tag_reads` row — §4.3 `t==2`) | drives `gone` transition |
+
+**Identity note.** WM uses **EPC hex as the only tag identity** (no TID, no user memory). `tag_id` and `identity.epc_hex` both carry the raw uppercase EPC hex; `tid`/`user_memory_hex` stay null. This matches the existing v2.0 reconciler mapping — no downstream identity change.
+
+### 12.6 Error handling additions (extends §6)
+
+| Condition | Action | DLQ? | OTel counter |
+|---|---|---|---|
+| `v` present and `!= 2` | Reject | Yes | `tagpulse_mqtt_wm_rejections_total{reason="unknown_wire_version"}` |
+| `epcs[]` tuple length `!= 5` (any `t`) | Reject whole message | Yes | `...{reason="invalid_snap_entry"}` |
+| tuple `epc` (slot 0) not a valid EPC string | Reject whole message | Yes | `...{reason="invalid_epc"}` |
+| `sn` not uuid-shaped and not a registered serial | Reject | Yes | `...{reason="device_not_found"}` |
+| `ts` not ISO-8601 parseable | Reject | Yes | `...{reason="invalid_timestamp"}` |
+
+Reading slots (`rssi`/`cnt`/`tmp`/`hum`) are **not** rejected on type or range in `v:2` — they are stored as given (`null` → `None`) and, on t=2, ignored entirely. All other §6 rows apply unchanged.
+
+### 12.7 Bandwidth trade record
+
+| Choice | Direction vs. §2.3 goal | Rationale |
+|---|---|---|
+| Positional `epcs[]` tuples | **Saves** (~35 %, WM-measured) | Drops 5 repeated keys × N entries — dominates payload at fleet scale. |
+| Envelope `ant` (one, not per-entry) | Saves | One antenna byte-run per message instead of per entry. |
+| Uniform tuple for t=2 delete (null slots) | Slightly costs vs. a bare-EPC list | WM ships **one serializer** for all `t` — the parser/firmware simplicity is worth the four `null` bytes per departing EPC. |
+| String `sn` (UUID, ~36 B) | **Costs** | WM's reader keys on its provisioning UUID; numeric-serial mapping not available on their SKU. Accepted concession (ADR-025 Amendment 1). |
+| ISO-8601 `ts` (~20 B vs ~8 B int) | **Costs** | WM's firmware emits wall-clock strings. Accepted concession. |
+| Float `rssi` | Neutral (slightly costs) | Preserves sub-dB precision WM already computes; avoids a truncation surprise. |
+
+Net effect is still a sizeable reduction versus v2.0 keyed; the two "costs" rows are explicitly acknowledged so a future numeric-`sn` / epoch-`ts` SKU can tighten them without re-litigating the design.
+
+### 12.8 Conformance
+
+A `v:2` producer is anything emitting bytes per §12.2–§12.3. The §3.8 reader profiles and all §3 semantics carry over. Conformance fixtures live alongside the v2.0 set; the v2.0 fixtures MUST continue to pass unchanged (the negotiation switch guarantees this).

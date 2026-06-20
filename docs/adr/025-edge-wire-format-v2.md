@@ -1,6 +1,6 @@
 # ADR-025: Edge wire format v2 — JSON-over-MQTT with snap-based presence
 
-- Status: **Accepted** (Sprint 46, May 2026) — ratified after Phases A–F shipped on the `sprint-46/edge-wire-format-v2-backend` branch (commits `3e0d124` Phase B, `2d63dd9` Phase C, `cc7d09b` Phase D, `a47c91d` Phase E + F). Originally **Proposed** in Sprint 46 (May 2026). Producer side ships in Sprint 47.
+- Status: **Amended** (Sprint 67, Jun 2026 — see [Amendment 1](#amendment-1--wm-compact-dialect-v2-sprint-67)). Previously **Accepted** (Sprint 46, May 2026) — ratified after Phases A–F shipped on the `sprint-46/edge-wire-format-v2-backend` branch (commits `3e0d124` Phase B, `2d63dd9` Phase C, `cc7d09b` Phase D, `a47c91d` Phase E + F). Originally **Proposed** in Sprint 46 (May 2026). Producer side ships in Sprint 47.
 - Implements: the JSON schema and behaviours defined in
   [docs/design/edge-wire-format-v2.md](../design/edge-wire-format-v2.md).
 - Related: ADR [002 MQTT for device connectivity](002-mqtt-device-connectivity.md)
@@ -155,3 +155,39 @@ block ratification of this ADR.
 
 - v1 (this version): adopt the no-`seq`, single-message-snap shape
   defined in spec §3 as of commit `155f1e5`.
+- v2 (Sprint 67): [Amendment 1](#amendment-1--wm-compact-dialect-v2-sprint-67) — add the opt-in WM compact dialect (`v:2`).
+
+---
+
+## Amendment 1 — WM compact dialect (`v:2`) (Sprint 67)
+
+**Status:** Accepted, Jun 2026. **Spec:** [docs/design/edge-wire-format-v2.md §12](../design/edge-wire-format-v2.md). **Supersedes:** Decision item 6 ("payload-level `v` ... not used in v2") — `v` is now load-bearing; and partially qualifies the "no per-SKU dialect" positive consequence.
+
+### Context
+
+WM, the platform's sole edge producer in pilot today, prototyped a more compact `epcs[]` encoding and measured a **~35 % per-message reduction** by replacing keyed per-EPC objects with fixed-position tuples. They also surfaced four firmware realities that diverge from the ratified v2.0 wire: (a) their reader keys on a **provisioning UUID**, not a numeric serial; (b) firmware emits **ISO-8601 wall-clock** timestamps; (c) they carry a **firmware/SW version** (`fw`) per message; (d) their reader is **single-antenna-per-message**, so a per-message `ant` is more natural than per-entry `an`. They additionally requested that **add (`t=1`) and delete (`t=2`) carry a list of EPCs** (reader envelope + EPC list), symmetric with the snap, rather than one-EPC-per-message.
+
+### Decision
+
+1. **Introduce a payload-level dialect selector, the reserved `v` field.** `v` absent → v2.0 keyed format (unchanged). `v==2` → WM compact dialect (spec §12). `v` present but `!=2` → reject (`unknown_wire_version`). This activates the `v` field that decision item 6 reserved-but-shelved. The discriminator order is **`v` (dialect) then `t` (message type)**.
+
+2. **The dialect is purely additive and opt-in.** All §2–§6 byte shapes, the v2.0 conformance fixtures, and the Pi-gateway reference producer are untouched. Only messages that explicitly set `v:2` take the new path.
+
+3. **Accept WM's proposed shape verbatim** (spec §12.2–§12.3): a **single uniform 5-tuple** `[epc, rssi, cnt, tmp, hum]` for **all three** message types — WM ships one serializer for snap/add/delete. On delete the reading slots are `null` or `0` and are ignored (only `epc` is used); the parser accepts either placeholder (one `[CONFIRM WM]` detail tracked in spec §12.3). Plus envelope `ant`, `fw`, string `sn`, ISO-8601 `ts`, and float `rssi`. Reading slots are not range-checked in `v:2` (WM-authoritative).
+
+4. **Knowingly accept the two choices that cost bandwidth** — string `sn` (~36 B UUID) and ISO-8601 `ts` (~20 B) — because WM's current SKU cannot emit a numeric serial or epoch-ms, and WM is the only edge producer today. Recorded as a deliberate concession (spec §12.7) so a future numeric-`sn`/epoch-`ts` SKU can tighten them without re-opening the design. Net payload is still well below v2.0 keyed.
+
+5. **Semantics are unchanged.** §3 cycle/diff/snap model, §4.1 presence, §4.2 reconciliation, and §4.6 telemetry fan-out apply identically — `v:2` lowers to the same `TagReadCreate` / `tag_presence` rows. Only deserialization differs.
+
+### Consequences
+
+**Positive:**
+- WM unblocked on their measured bandwidth win without weakening the ratified format.
+- The `v` switch makes future dialects (or a true v2.2) cheap and backward-safe; v2.0 fixtures pin the no-`v` path forever.
+- add/delete symmetry (batched EPC lists) matches how WM's firmware actually diffs cycles.
+
+**Negative / costs:**
+- **A per-SKU dialect now exists** — the original "one contract, no per-SKU dialect" positive is qualified. Justified while the producer population is N=1; the negotiation switch keeps the blast radius contained.
+- **Multi-antenna observation is unrepresentable in `v:2`** (single envelope `ant`). A future multi-antenna WM reader must use v2.0 keyed entries or a `v:2` revision.
+- **String `sn` / ISO `ts` partially walk back the §2.3 bandwidth goal** — accepted and quantified (spec §12.7).
+- Two parse paths to maintain in `wm_wire_format.py` + the subscriber; mitigated by sharing the §6 DLQ reason vocabulary and the downstream mapping.
