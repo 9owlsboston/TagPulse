@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 67 — wm v2 compact wire · branch `sprint-67/wm-v2-compact-wire` (full scope lands in §sprint-67 during the sprint).
+**Current sprint:** 67 — wm v2 compact wire · **shipped** (PR [#127](https://github.com/9owlsboston/TagPulse/pull/127)); between sprints.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff. Don't hand-edit between the markers — re-run the script or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1714,9 +1714,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 67 — WM compact wire dialect (`v:2`) (active)
+## Sprint 67 — WM compact wire dialect (`v:2`) (shipped)
 
-> **Status (2026-06-19, active).** Amends the ratified Edge Wire Format v2 (ADR-025/026, [edge-wire-format-v2.md](design/edge-wire-format-v2.md)) to accept **WM's compact dialect** — the `[NEEDS WM]` v2 wire-format change that Sprints 46/66 deferred pending WM protocol sign-off. Gated on the reserved envelope field `v:2`, so the v2.0 keyed format and all its conformance fixtures stay untouched. Planning artifacts (spec §12, ADR-025 Amendment 1) land first on this branch per the cross-repo workflow.
+> **Status (2026-06-19, shipped).** Merged in backend PR [#127](https://github.com/9owlsboston/TagPulse/pull/127). Amends the ratified Edge Wire Format v2 (ADR-025/026, [edge-wire-format-v2.md](design/edge-wire-format-v2.md)) to accept **WM's compact dialect** — the `[NEEDS WM]` v2 wire-format change that Sprints 46/66 deferred pending WM protocol sign-off. Gated on the reserved envelope field `v:2`, so the v2.0 keyed format and all its conformance fixtures stay untouched (verified: 59 existing v2 tests still pass). The one `[CONFIRM WM]` detail (null-vs-zero for unused delete slots) is **not a merge blocker** — the parser tolerates both.
 
 **Why now.** WM, the platform's **sole edge producer** in pilot, measured a **~35 % per-message reduction** by replacing keyed per-EPC objects with fixed-position tuples, and surfaced four firmware realities (UUID `sn`, ISO-8601 `ts`, an `fw` field, single-antenna-per-message) plus a request that add/delete carry an EPC **list** symmetric with snap. Decision (user, 2026-06-19): **sprint** (downstream simulator + demo rigs), and **accept WM's shape verbatim** since N=1 producer.
 
@@ -1725,10 +1725,10 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 **Scope (locked at kickoff).**
 - **Spec §12** — `v:2` envelope (`v`, string `sn`, ISO `ts`, `fw`, envelope `ant`) + **uniform 5-tuple** `[epc, rssi, cnt, tmp, hum]` for **all** of snap/add/delete (WM ships one serializer); delete's reading slots are `null`/`0` and ignored. **[done]**
 - **ADR-025 Amendment 1** — decision + the two recorded bandwidth concessions (string `sn`, ISO `ts`). **[done]**
-- **Backend** — `v:2` positional models in [wm_wire_format.py](../src/tagpulse/ingestion/wm_wire_format.py); subscriber routing + mapping in [mqtt_subscriber.py](../src/tagpulse/ingestion/mqtt_subscriber.py) (envelope `ant`, string-`sn` resolution, ISO `ts`, float `rssi`, batched t=1/t=2). **[active]**
-- **Conformance fixtures + unit tests** — `v:2` accept/reject matrix; v2.0 fixtures must still pass unchanged.
-- **Simulator** — `paho_smoke_publisher.py` (+ v2 snap simulator) emits `v:2`.
-- **Demo data rigs** — any v2-emitting demo/seed updated for the dialect.
+- **Backend** — `v:2` positional models in [wm_wire_format.py](../src/tagpulse/ingestion/wm_wire_format.py); subscriber routing + mapping in [mqtt_subscriber.py](../src/tagpulse/ingestion/mqtt_subscriber.py) (envelope `ant`, string-`sn` resolution, ISO `ts`, float `rssi`, batched t=1/t=2). **[done]**
+- **Conformance fixtures + unit tests** — `v:2` accept/reject matrix (19 tests in [test_wm_v2_compact_dialect.py](../tests/unit/test_wm_v2_compact_dialect.py)); v2.0 fixtures still pass unchanged. **[done]**
+- **Simulator** — [paho_smoke_publisher.py](../clients/pi/examples/paho_smoke_publisher.py) `--wire v2c` emits the compact dialect. **[done]**
+- **Demo data rigs** — [mqtt_canary.py](../scripts/mqtt_canary.py) `--compact` validates the dialect end-to-end against the DB. **[done]**
 
 **Out of scope.** Numeric-`sn` / epoch-`ts` SKU optimisation (recorded in spec §12.7 for a future tighter SKU); multi-antenna `v:2` (single envelope `ant` only); UI changes (none — wire-only). One **`[CONFIRM WM]`** open: null-vs-zero for unused delete slots (parser accepts both).
 
