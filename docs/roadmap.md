@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 69 — page fixes · branch `sprint-69/page-fixes` (full scope lands in §sprint-69 during the sprint).
+**Current sprint:** 69 — page fixes · **shipped** (PRs #134/#97); between sprints.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1754,9 +1754,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 69 — Page fixes: frame-aware asset list + Tag Reads polish + tag/reader telemetry
+## Sprint 69 — Page fixes: frame-aware asset list + Tag Reads polish + tag/reader telemetry (shipped)
 
-> **Status (2026-06-19, in progress).** A cluster of user-reported issues across the Assets list, Tags, Tag Reads, and Devices/Readers pages, surfaced while demoing the floor-positioning + WM ingest work. Backend PR [#134](https://github.com/9owlsboston/TagPulse/pull/134), UI PR [#97](https://github.com/9owlsboston/TagPulse-UI/pull/97). One backend contract change (A1); the rest are UI polish + demo-data completeness.
+> **Status (2026-06-20, shipped).** A cluster of user-reported issues across the Assets list, Tags, Tag Reads, and Devices/Readers pages, surfaced while demoing the floor-positioning + WM ingest work. Backend PR [#134](https://github.com/9owlsboston/TagPulse/pull/134), UI PR [#97](https://github.com/9owlsboston/TagPulse-UI/pull/97). One backend contract change (A1); the rest are UI polish + demo-data completeness. **Verified live on dev** after deploy: A1 `current-locations` returns `kind=floor` + real `x`/`y` + populated `last_seen_at` (no more `—`/`never`); T1 a fresh read flips the tag to `active` with `first_seen` set (registrar `epc_hex` fix); D1 `humidity_pct` reading lands in telemetry instead of quarantine.
 
 **Why now.** The floor + WM work exposed several places where the UI is **geo-frame-blind** or shows raw/unfriendly data: the Assets list reads "never" for floor assets, Tag Reads shows UUIDs and over-precise coordinates, and tag/reader sensor telemetry doesn't surface. These are small individually but collectively make the product look broken in a floor deployment.
 
