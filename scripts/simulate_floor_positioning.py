@@ -290,9 +290,7 @@ def run_emit(args: argparse.Namespace) -> int:
                         # Synthetic tag-borne sensors — also fan out to
                         # telemetry_readings (temperature_c / humidity_pct).
                         "sensor_data": {
-                            "temperature_c": round(
-                                args.temp_c + rng.uniform(-1.5, 1.5), 1
-                            ),
+                            "temperature_c": round(args.temp_c + rng.uniform(-1.5, 1.5), 1),
                             "humidity_pct": round(
                                 min(100.0, max(0.0, args.humidity + rng.uniform(-3.0, 3.0))), 1
                             ),
