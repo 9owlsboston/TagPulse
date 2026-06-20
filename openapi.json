@@ -15486,7 +15486,7 @@
     },
     "/tag-reads/reads-per-hour": {
       "get": {
-        "description": "Get read counts per device per hour.",
+        "description": "Get read counts per device per time bucket.\n\n``bucket_minutes`` sets the bucket width (default 60 = hourly). Callers\nshowing a narrow window can request a finer bucket so the series has real\nresolution instead of one or two hourly points.",
         "operationId": "reads_per_hour_tag_reads_reads_per_hour_get",
         "parameters": [
           {
@@ -15538,6 +15538,18 @@
                 }
               ],
               "title": "End"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bucket_minutes",
+            "required": false,
+            "schema": {
+              "default": 60,
+              "maximum": 1440,
+              "minimum": 1,
+              "title": "Bucket Minutes",
+              "type": "integer"
             }
           }
         ],

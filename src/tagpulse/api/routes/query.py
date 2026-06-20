@@ -56,11 +56,23 @@ async def reads_per_hour(
     device_id: UUID | None = Query(default=None),
     start: datetime | None = Query(default=None),
     end: datetime | None = Query(default=None),
+    bucket_minutes: int = Query(default=60, ge=1, le=1440),
     tenant: Tenant = Depends(get_current_tenant),
     service: QueryService = Depends(get_query_service),
 ) -> list[ReadsPerHour]:
-    """Get read counts per device per hour."""
-    return await service.reads_per_hour(tenant.id, device_id=device_id, start=start, end=end)
+    """Get read counts per device per time bucket.
+
+    ``bucket_minutes`` sets the bucket width (default 60 = hourly). Callers
+    showing a narrow window can request a finer bucket so the series has real
+    resolution instead of one or two hourly points.
+    """
+    return await service.reads_per_hour(
+        tenant.id,
+        device_id=device_id,
+        start=start,
+        end=end,
+        bucket_minutes=bucket_minutes,
+    )
 
 
 @router.get("/tag-reads/unique-tags", response_model=list[UniqueTagsPerWindow])

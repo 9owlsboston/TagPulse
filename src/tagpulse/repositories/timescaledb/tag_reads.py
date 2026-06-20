@@ -156,8 +156,14 @@ class TimescaleTagReadRepository:
         device_id: uuid.UUID | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        bucket_minutes: int = 60,
     ) -> list[ReadsPerHour]:
         bucket = func.date_trunc("hour", TagReadModel.timestamp).label("bucket")
+        if bucket_minutes != 60:
+            bucket = func.to_timestamp(
+                func.floor(func.extract("epoch", TagReadModel.timestamp) / (bucket_minutes * 60))
+                * (bucket_minutes * 60)
+            ).label("bucket")
         stmt = (
             select(
                 bucket,
