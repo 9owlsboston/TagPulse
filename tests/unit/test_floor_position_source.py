@@ -5,8 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
+
 from tagpulse.repositories.timescaledb.floor_position_source import (
     RawRead,
+    _read_count_of,
     build_floor_observations,
     resolve_antenna_xy,
 )
@@ -48,6 +51,39 @@ def test_build_observations_happy_path() -> None:
     assert (o.site_id, o.asset_id, o.antenna_id) == (site, asset, ant)
     assert (o.x, o.y, o.rssi, o.cnt) == (10.0, 20.0, -55.0, 1)
     assert o.ts == TS
+
+
+def test_build_observations_carries_real_read_count() -> None:
+    """``read_count`` (WM ``cnt``) flows from the raw read onto the observation
+    so the count-weight estimator extension has live data (it currently
+    defaults to 1 when absent)."""
+    dev, site, asset, ant = uuid4(), uuid4(), uuid4(), uuid4()
+    reads = [RawRead(device_id=dev, port=1, rssi=-55.0, epc="urn:epc:a", ts=TS, read_count=4)]
+    obs = build_floor_observations(
+        reads,
+        device_site={dev: site},
+        antenna_index={(dev, 1): (ant, 10.0, 20.0)},
+        epc_to_asset={"urn:epc:a": asset},
+    )
+    assert obs[0].cnt == 4
+
+
+@pytest.mark.parametrize(
+    ("sensor_data", "expected"),
+    [
+        (None, 1),
+        ({}, 1),
+        ({"read_count": 5}, 5),
+        ({"read_count": 3.0}, 3),  # float floored to int
+        ({"read_count": 0}, 1),  # non-positive clamped to 1
+        ({"read_count": -2}, 1),
+        ({"read_count": True}, 1),  # bool is not a count
+        ({"read_count": "7"}, 1),  # non-numeric ignored
+        ({"temperature_c": 4.2}, 1),  # absent key
+    ],
+)
+def test_read_count_of(sensor_data: dict[str, object] | None, expected: int) -> None:
+    assert _read_count_of(sensor_data) == expected
 
 
 def test_build_observations_uses_port_zero_fallback() -> None:

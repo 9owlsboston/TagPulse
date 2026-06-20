@@ -59,6 +59,21 @@ class RawRead:
     rssi: float
     epc: str
     ts: datetime
+    # Per-snapshot read count (WM ``cnt``, from ``tag_reads.sensor_data``).
+    # Defaults to 1 when absent. Carried for the count-weight extension on the
+    # estimator (ADR-024); the reference weight does not use it yet.
+    read_count: int = 1
+
+
+def _read_count_of(sensor_data: dict[str, object] | None) -> int:
+    """Extract a positive integer ``read_count`` from ``sensor_data`` (default 1)."""
+    if not sensor_data:
+        return 1
+    v = sensor_data.get("read_count")
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return 1
+    n = int(v)
+    return n if n >= 1 else 1
 
 
 # (device_id, port) → (antenna_id, x, y) for *surveyed* antennas only.
@@ -110,7 +125,7 @@ def build_floor_observations(
                 x=x,
                 y=y,
                 rssi=r.rssi,
-                cnt=1,
+                cnt=r.read_count,
                 ts=r.ts,
             )
         )
@@ -207,6 +222,7 @@ class TimescaleObservationSource:
                         TagReadModel.signal_strength,
                         TagReadModel.epc,
                         TagReadModel.timestamp,
+                        TagReadModel.sensor_data,
                     ).where(
                         TagReadModel.tenant_id == tenant_id,
                         TagReadModel.device_id.in_(device_ids),
@@ -227,8 +243,9 @@ class TimescaleObservationSource:
                     rssi=float(rssi),
                     epc=epc,
                     ts=ts,
+                    read_count=_read_count_of(sensor_data),
                 )
-                for dev_id, port, rssi, epc, ts in read_rows
+                for dev_id, port, rssi, epc, ts, sensor_data in read_rows
             ]
 
             fusion = AssetFusionService(TimescaleAssetTagBindingRepository(session))
