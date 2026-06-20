@@ -64,10 +64,19 @@ class Reader:
 
 @dataclass(frozen=True)
 class PlacedAsset:
-    """A virtual asset at a known ground-truth floor position."""
+    """A virtual asset at a known ground-truth floor position.
+
+    ``epc`` is a stable sim URN used as the **binding key** (and therefore
+    the value matched by the floor-position observation source against
+    ``tag_reads.epc = asset_tag_bindings.binding_value``). ``epc_hex`` is a
+    separate, display-only uppercase-hex EPC surfaced on the read so the
+    UI "EPC (hex)" column is populated — it does NOT drive binding or
+    positioning.
+    """
 
     name: str
     epc: str
+    epc_hex: str
     x: float
     y: float
 
@@ -124,6 +133,7 @@ def place_assets(n: int, extent_x: float, extent_y: float, rng: random.Random) -
             PlacedAsset(
                 name=f"asset-{i + 1:02d}",
                 epc=f"urn:epc:sim:floor:{i + 1:04d}",
+                epc_hex=f"E280{i + 1:020X}",
                 x=round(rng.uniform(margin_x, extent_x - margin_x), 2),
                 y=round(rng.uniform(margin_y, extent_y - margin_y), 2),
             )
@@ -274,7 +284,19 @@ def run_emit(args: argparse.Namespace) -> int:
                         "timestamp": now_iso,
                         "signal_strength": round(rssi, 1),
                         "reader_antenna": 0,
-                        "identity": {"epc": asset.epc},
+                        # ``epc`` (URN) is the binding/positioning key; ``epc_hex``
+                        # is display-only (populates the UI "EPC (hex)" column).
+                        "identity": {"epc": asset.epc, "epc_hex": asset.epc_hex},
+                        # Synthetic tag-borne sensors — also fan out to
+                        # telemetry_readings (temperature_c / humidity_pct).
+                        "sensor_data": {
+                            "temperature_c": round(
+                                args.temp_c + rng.uniform(-1.5, 1.5), 1
+                            ),
+                            "humidity_pct": round(
+                                min(100.0, max(0.0, args.humidity + rng.uniform(-3.0, 3.0))), 1
+                            ),
+                        },
                     }
                     r = client.post(f"{api}/tag-reads", headers=headers, json=body)
                     if r.status_code // 100 == 2:
@@ -420,6 +442,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--extent-y", type=float, default=400.0)
     p.add_argument("--k", type=int, default=3, help="Reads per asset per tick (nearest readers).")
     p.add_argument("--noise-db", type=float, default=2.0)
+    p.add_argument(
+        "--temp-c",
+        type=float,
+        default=20.0,
+        help="emit: base tag temperature °C (per-read jitter ±1.5); --emit only.",
+    )
+    p.add_argument(
+        "--humidity",
+        type=float,
+        default=55.0,
+        help="emit: base tag humidity %%RH (per-read jitter ±3, clamped 0..100); --emit only.",
+    )
     p.add_argument(
         "--half-life-s", type=float, default=1.0e9, help="tau; large = no decay (same-ts obs)."
     )
