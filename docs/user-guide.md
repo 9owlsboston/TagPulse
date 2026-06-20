@@ -799,11 +799,13 @@ Click **Create Asset** to add one. Required: Name. Optional: Asset Type (free te
 
 ### Asset detail
 
-Three-tab layout:
+Tabbed layout:
 
 - **Overview** — basic info plus the **Current Location** card (last known lat/lon, accuracy, recorded-at, source — `rfid` or `external`). The **Covers Zones** chip strip lists every zone the asset is currently inside (Sprint 15). When **Tenant Settings → Telemetry subjects** includes `asset`, an extra **Latest telemetry** card lists the most recent reading per metric (Sprint 19); `GET /assets/{id}` populates the `latest_telemetry` field with one entry per `metric_name` (Sprint 21 server-side cache: 30 s, so an F5-mash does not hammer the hypertable).
 - **Bindings** — table of all bindings (kind = `epc` / `tid` / `device`, value, bound-at, unbound-at). Active bindings have an empty `unbound_at`. Add a binding via **Bind Tag**. An asset may hold multiple active bindings simultaneously (e.g. EPC + TID, or redundant labels); uniqueness is enforced on `(tenant_id, binding_value) WHERE unbound_at IS NULL`, so the same `binding_value` cannot be active on two assets in the same tenant. Remove via **Unbind**; the historical row is preserved.
-- **Path** — the recent location trail. Each row shows time, source, and zone (if inside one). The **Map** page shows the same trail visually with a 24-hour time slider.
+- **Path** (Sprint 68) — a **map** answering *where is this asset now, and where was it over a time window*. The frame auto-selects: a **floor plan** (the `(x, y)` trail on the site grid — a plain grid when no floor plan is uploaded) for fixed-reader floor sites, or a **geographic map** for mobile/GPS sites; pick the window with the time-range picker. The latest fix is marked and prior fixes fade by confidence. The whole-site **Map** page shows every asset's trail together.
+- **Reads** (Sprint 68, was "Recent Path") — the per-read table behind the map: time, source (which reader, or external feed), and a **frame-aware location** — a **zone name** when the read's reader is assigned to a zone, otherwise the **reader it was near** (`near reader-06`), with `Floor @ (x, y)` or lat/lon shown for positioned reads. No more bare `zone: —`.
+
 
 ### Tag-binding lifecycle
 
