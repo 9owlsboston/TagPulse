@@ -16036,6 +16036,24 @@
             }
           },
           {
+            "description": "Sprint 75 \u2014 wildcard search across the EPC identifier family (``tag_id`` / ``epc`` / ``epc_hex`` / ``tid``) via OR; same glob grammar as ``tag_q``. A read matches if any identifier matches.",
+            "in": "query",
+            "name": "epc_q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 75 \u2014 wildcard search across the EPC identifier family (``tag_id`` / ``epc`` / ``epc_hex`` / ``tid``) via OR; same glob grammar as ``tag_q``. A read matches if any identifier matches.",
+              "title": "Epc Q"
+            }
+          },
+          {
             "in": "query",
             "name": "start",
             "required": false,

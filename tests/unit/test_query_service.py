@@ -51,6 +51,7 @@ class FakeTagReadRepo:
         device_id: UUID | None = None,
         tag_id: str | None = None,
         tag_q: str | None = None,
+        epc_q: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
         has_location: bool | None = None,
@@ -65,6 +66,16 @@ class FakeTagReadRepo:
             results = [r for r in results if r.tag_id == tag_id]
         if tag_q is not None:
             results = [r for r in results if tag_q.strip("*?").lower() in r.tag_id.lower()]
+        if epc_q is not None:
+            needle = epc_q.strip("*?").lower()
+            results = [
+                r
+                for r in results
+                if needle in (r.tag_id or "").lower()
+                or needle in (r.epc or "").lower()
+                or needle in (r.epc_hex or "").lower()
+                or needle in (r.tid or "").lower()
+            ]
         if start is not None:
             results = [r for r in results if r.timestamp >= start]
         if end is not None:
@@ -263,6 +274,19 @@ async def test_query_without_binding_repo_is_noop(tag_repo: FakeTagReadRepo) -> 
     svc = QueryService(tag_read_repo=tag_repo, device_repo=FakeDeviceRepo())
     out = await svc.query_tag_reads(TENANT_ID)
     assert out[0].asset is None
+
+
+@pytest.mark.asyncio
+async def test_query_epc_q_matches_any_identifier(tag_repo: FakeTagReadRepo) -> None:
+    tag_repo.reads.append(_read(tag_id="TAG-1", epc="urn:epc:a", epc_hex="DEAD", tid="E2801111"))
+    tag_repo.reads.append(_read(tag_id="TAG-2", epc="urn:epc:b", epc_hex="BEEF", tid="E2802222"))
+    svc = QueryService(tag_read_repo=tag_repo, device_repo=FakeDeviceRepo())
+    # Matches via the tid column of the second read only.
+    out = await svc.query_tag_reads(TENANT_ID, epc_q="2222")
+    assert [r.tid for r in out] == ["E2802222"]
+    # Matches via epc_hex of the first read only.
+    out = await svc.query_tag_reads(TENANT_ID, epc_q="dead")
+    assert [r.tag_id for r in out] == ["TAG-1"]
 
 
 class TestQueryTagReads:
