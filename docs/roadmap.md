@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** none active — Sprint 70 (uniform wildcard table filter) shipped 2026-06-20 (backend #137 + UI #106). See §sprint-70.
+**Current sprint:** 71 — asset state consolidation · branch `sprint-71/asset-state-consolidation` (full scope lands in §sprint-71 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
