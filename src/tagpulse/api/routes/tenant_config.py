@@ -22,6 +22,7 @@ from tagpulse.core.tenant_auth import Tenant, get_current_tenant
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.database import TenantModel
 from tagpulse.repositories.timescaledb.session import get_session
+from tagpulse.services.consolidation import FusionStrategy
 from tagpulse.services.map_config import (
     MapConfigError,
     MapConfigResponse,
@@ -51,6 +52,10 @@ class TenantConfig(BaseModel):
     low_stock_threshold: int = 3
     # Sprint 54 follow-up: powers ``tags_total`` on /dashboard/summary.
     dashboard_tags_count_mode: DashboardTagsCountMode = "live"
+    # Sprint 73 (ADR-034): per-tenant asset-state consolidation config (decay
+    # τ, cadence, lookback, RSSI floor, min reads, cold-chain SLA). ``None`` =
+    # tenant not opted into consolidation.
+    fusion_strategy: FusionStrategy | None = None
 
 
 class TenantConfigUpdate(BaseModel):
@@ -72,10 +77,19 @@ class TenantConfigUpdate(BaseModel):
     rate_limit_overrides: dict[str, int] | None = None
     low_stock_threshold: int | None = Field(default=None, ge=1, le=10_000)
     dashboard_tags_count_mode: DashboardTagsCountMode | None = None
+    # Sprint 73: set the consolidation config (omit to leave unchanged; send
+    # ``null`` explicitly to opt the tenant out). Validated by ``FusionStrategy``.
+    fusion_strategy: FusionStrategy | None = None
 
 
 def _to_response(row: TenantModel) -> TenantConfig:
     overrides = row.rate_limit_overrides if isinstance(row.rate_limit_overrides, dict) else None
+    fusion: FusionStrategy | None = None
+    if isinstance(row.fusion_strategy, dict):
+        try:
+            fusion = FusionStrategy.model_validate(row.fusion_strategy)
+        except ValueError:
+            fusion = None
     return TenantConfig(
         id=str(row.id),
         name=row.name,
@@ -86,6 +100,7 @@ def _to_response(row: TenantModel) -> TenantConfig:
         rate_limit_overrides=overrides,
         low_stock_threshold=row.low_stock_threshold,
         dashboard_tags_count_mode=row.dashboard_tags_count_mode,  # type: ignore[arg-type]
+        fusion_strategy=fusion,
     )
 
 
@@ -193,6 +208,16 @@ async def update_tenant_config(
                 "from": old_mode,
                 "to": new_mode,
             }
+
+    # Sprint 73: ``fusion_strategy`` uses presence (model_fields_set) rather than
+    # ``is not None`` so the admin UI can both **set** (object) and **clear**
+    # (explicit ``null`` → opt out) the consolidation config.
+    if "fusion_strategy" in body.model_fields_set:
+        new_fs = body.fusion_strategy.model_dump(mode="json") if body.fusion_strategy else None
+        old_fs = row.fusion_strategy if isinstance(row.fusion_strategy, dict) else None
+        if new_fs != old_fs:
+            row.fusion_strategy = new_fs
+            changes["fusion_strategy"] = {"from": old_fs, "to": new_fs}
 
     if changes:
         await session.flush()

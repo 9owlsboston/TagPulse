@@ -4,6 +4,10 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **Sprint 73 — `fusion_strategy` is now configurable from the App + a merge-safe ops script.** The per-tenant asset-state consolidation config (decay τ, cadence, look-back, RSSI floor, min-reads, cold-chain SLA) was reachable only via the `set_fusion_strategy.py` ops script; it's now on the **tenant-config contract**: `GET`/`PATCH /tenant/config` carry a typed `fusion_strategy` (the `FusionStrategy` model incl. `sla`). PATCH uses **presence (`model_fields_set`)** rather than `is not None`, so the admin UI can both **set** (object) and **clear** (explicit `null` → opt the tenant out) — `null` ≠ omitted. Admin-only. Also **hardened `set_fusion_strategy.py` to merge** (read-modify-write) instead of replace, so a partial `--set` no longer clobbers untouched knobs (the SLA footgun). 6 new contract tests; `openapi.json` regenerated. See [docs/design/sprint-73-configurable-fusion-strategy.md](docs/design/sprint-73-configurable-fusion-strategy.md). `make check` green (1788). UI: a "Consolidation" tab in Tenant Settings.
+
 ### Docs
 
 - **Sprint 72 kickoff — asset state consolidation Phase 2 (transit legs) design ([design doc](docs/design/sprint-72-asset-state-legs.md)).** Extends ADR-034: turn the Phase-1 custody timeline into explicit **transit legs** (the `geo`-frame interval between two facility frames) so the Assets page answers which leg a lot is on, how long it's been in transit, and whether the **cold chain held for the whole leg** (leg-level SLA). Key insight — legs are **derived** from the Phase-1 `ASSET_CUSTODY_CHANGED` events (open on `facility → geo`, close on `geo → facility`), so Phase 2 is a thin leg-tracker subscriber + an `asset_legs` table + a read API, with **no new ingest or fusion**. Open decisions captured (legs auto-derived; **ETA deferred** — v1 is actuals-only; SLA from a `fusion_strategy.sla` block). Design-only (no code/contract change this commit).

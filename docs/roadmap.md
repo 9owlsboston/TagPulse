@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** none active — Sprint 72 (asset state consolidation Phase 2: transit legs) shipped 2026-06-21 (backend #144 + UI #109). See §sprint-72.
+**Current sprint:** 73 — configurable fusion strategy · branch `sprint-73/configurable-fusion-strategy` (full scope lands in §sprint-73 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1823,6 +1823,21 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 - **SLA config** in `tenants.fusion_strategy.sla` (temp/humidity envelope; absent = envelope-only).
 
 **Decisions to lock (design doc §7).** **A** legs auto-derived from custody (recommend yes); **B** ETA **deferred** to a later phase — v1 is **actuals-only** (no in-flight ETA without a declared destination); **C** SLA from a `fusion_strategy.sla` block. **Out of scope:** in-flight ETA + destination prediction, multi-leg shipment grouping, route/geocoding — all gated on a destination-declaration mechanism.
+
+---
+
+## Sprint 73 — Configurable fusion strategy (Tenant Settings)
+
+> **Status (2026-06-21, in progress).** Kicked off cross-repo (backend [#147](https://github.com/9owlsboston/TagPulse/pull/147) + UI [#110](https://github.com/9owlsboston/TagPulse-UI/pull/110)). Full design in the [Sprint 73 design doc](design/sprint-73-configurable-fusion-strategy.md).
+
+**Why.** Sprints 71–72 added the per-tenant `fusion_strategy` (decay τ, cadence, look-back, RSSI floor, min-reads, cold-chain SLA) but left it **unreachable from the App** — set only via the `set_fusion_strategy.py` ops script. An operator looking for the decay control or the SLA band found nothing in Tenant Settings.
+
+**Scope.**
+- **Backend:** `fusion_strategy` on `GET`/`PATCH /tenant/config` (typed `FusionStrategy` incl. `sla`); PATCH uses `model_fields_set` so the UI can **set** or **clear** (explicit `null` = opt out). Admin-only. `openapi.json` regenerated.
+- **Script:** `set_fusion_strategy.py` now **merges** (read-modify-write) instead of replacing — a partial `--set` keeps untouched knobs (SLA footgun fixed).
+- **UI:** a **"Consolidation"** tab in Tenant Settings (enable toggle + decay/cadence/look-back/RSSI/min-reads + cold-chain SLA envelope).
+
+**Out of scope.** `position_strategy` (floor-positioning sibling) stays ops-script-only. No new tenant column (reuses the Sprint 71 `fusion_strategy` JSONB).
 
 ---
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.

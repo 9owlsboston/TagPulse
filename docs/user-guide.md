@@ -801,9 +801,9 @@ Click **Create Asset** to add one. Required: Name. Optional: Asset Type (free te
 
 Tabbed layout:
 
-- **Overview** — basic info plus the **Current Location** card. It is **frame-aware** (Sprint 69): for a fixed-reader floor site it shows the computed floor position `Floor @ (x, y)`; for a mobile/GPS asset it shows last known lat/lon + accuracy; the **source** badge reads `rfid` / `computed` / `precomputed` / external-vendor, and **Last seen** is the newest read of any kind (so a floor asset shows a real time, not "never"). The **Covers Zones** chip strip lists every zone the asset is currently inside (Sprint 15). When **Tenant Settings → Telemetry subjects** includes `asset`, an extra **Latest telemetry** card lists the most recent reading per metric (Sprint 19); `GET /assets/{id}` populates the `latest_telemetry` field with one entry per `metric_name` (Sprint 21 server-side cache: 30 s, so an F5-mash does not hammer the hypertable).
+- **Overview** — basic info plus the **Current Location** card. It is **frame-aware** (Sprint 69): for a fixed-reader floor site it shows the computed floor position `Floor @ (x, y)`; for a mobile/GPS asset it shows last known lat/lon + accuracy; the **source** badge reads `rfid` / `computed` / `precomputed` / external-vendor, and **Last seen** is the newest read of any kind (so a floor asset shows a real time, not "never"). The **Covers Zones** chip strip lists every zone the asset is currently inside (Sprint 15). When **Tenant Settings → Telemetry subjects** includes `asset`, an extra **Latest telemetry** card lists the most recent reading per metric (Sprint 19); `GET /assets/{id}` populates the `latest_telemetry` field with one entry per `metric_name` (Sprint 21 server-side cache: 30 s, so an F5-mash does not hammer the hypertable). When the tenant has **consolidation** enabled (**Tenant Settings → Consolidation**), a **Current (fused)** card (Sprint 71) shows the asset's *consolidated* answer across **all** its bound tags — a `read_count × recency`-weighted zone vote + weighted-mean temperature/humidity (with an in/out-of-SLA chip), contributing-tag count and confidence, a short **custody** timeline, and — while in transit — the open leg (`In transit: Origin DC → … · 2h 14m`).
 - **Bindings** — table of all bindings (kind = `epc` / `tid` / `device`, value, bound-at, unbound-at). Active bindings have an empty `unbound_at`. Add a binding via **Bind Tag**. An asset may hold multiple active bindings simultaneously (e.g. EPC + TID, or redundant labels); uniqueness is enforced on `(tenant_id, binding_value) WHERE unbound_at IS NULL`, so the same `binding_value` cannot be active on two assets in the same tenant. Remove via **Unbind**; the historical row is preserved.
-- **Path** (Sprint 68) — a **map** answering *where is this asset now, and where was it over a time window*. The frame auto-selects: a **floor plan** (the `(x, y)` trail on the site grid — a plain grid when no floor plan is uploaded) for fixed-reader floor sites, or a **geographic map** for mobile/GPS sites; pick the window with the time-range picker. The latest fix is marked and prior fixes fade by confidence. The whole-site **Map** page shows every asset's trail together.
+- **Journey** (Sprint 72, was "Path") — the *where it was + what the environment was* narrative in three linked panels: a **Legs** timeline (each transit leg = origin → destination, duration, and a cold-chain **SLA** badge with in-range %/excursion), an **Environment** chart (fused temperature/humidity over the journey, with the tenant **SLA band** and breached legs shaded red), and the **map** trail. Selecting a leg cross-filters the chart. Legs are derived from the consolidation custody timeline; the panel shows "No journey yet" until consolidation is enabled and the asset has moved.
 - **Reads** (Sprint 68, was "Recent Path") — the per-read table behind the map: time, source (which reader, or external feed), and a **frame-aware location** — a **zone name** when the read's reader is assigned to a zone, otherwise the **reader it was near** (`near reader-06`), with `Floor @ (x, y)` or lat/lon shown for positioned reads. No more bare `zone: —`.
 
 
@@ -1179,7 +1179,9 @@ seed.)
 
 > **Admin only.**
 
-Two-tab page: **General** (tracking modes) and **Map** (tile provider).
+Tabbed admin page: **General** (tracking modes + telemetry subjects),
+**Consolidation** (asset-state fusion), **Sensor metrics** (telemetry models),
+optionally **Tag-data fields** (inventory mode), and **Map** (tile provider).
 
 ### General tab — tracking modes
 
@@ -1197,6 +1199,17 @@ A multi-select alongside the tracking-mode switches. Controls which non-device s
 - **Why opt-in?** Fan-out doubles the ingestion write rate per subject and changes the rules-engine surface area; opt-in keeps the default tenant on Sprint 14's device-only behaviour.
 - **Convergence.** The writing worker invalidates its cache immediately; sibling API workers converge within ~30 s (Sprint 21 `SUBJECT_KINDS_CACHE` TTL). No restart required.
 - **Effect on rules.** A `telemetry.threshold` rule on a non-opted subject_kind is **accepted** by the rules editor but never matches — the readings are not produced. Always flip the opt-in **before** authoring the rule.
+
+### Consolidation tab (Sprint 73)
+
+Configures per-asset **state consolidation** — the worker that fuses an asset's bound-tag reads into one location + environment answer and derives transit legs (Sprints 71–72). Persists to `tenants.fusion_strategy`; recorded in the audit log as `tenant.config.update`.
+
+- **Enable consolidation** — master switch. Off **clears** the config (the tenant is not consolidated). On reveals the knobs.
+- **Decay half-life τ (s)** — the recency dial shared by the location vote **and** the sensor mean. Small τ = recent reads dominate (snappier, choppier); large τ = smoother; `0` = last-writer-wins.
+- **Recompute interval (s)** — how often the worker recomputes; **Look-back window (s)** — how far back each tick fuses; **RSSI floor (dBm)** — drops weak reads from the *location* vote (blank = no floor); **Min reads** — minimum reads to emit a snapshot.
+- **Cold-chain SLA** (card, when enabled) — the temperature/humidity envelope (`temp min/max`, `humidity max`) + **excursion tolerance** used to flag transit legs. Powers the green band on the **Journey** environment chart and the `SLA breach` badges on legs. Leave a bound blank to leave it unbounded.
+
+> **Also requires** the consolidation worker to be enabled for the environment (`CONSOLIDATION_ENABLED` — see [operator-quickstart.md](operator-quickstart.md)). Until then, configuring the strategy has no live effect.
 
 ### Map tab — tile provider
 

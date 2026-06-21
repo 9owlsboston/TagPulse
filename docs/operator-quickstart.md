@@ -162,6 +162,56 @@ tenant (`GET /assets/{id}/floor-path?source=computed`), and the asset's
 last-reader-wins), `lookback_s`, `min_antennas`, `rssi_floor_dbm`. See
 [design/floor-position-estimation.md](design/floor-position-estimation.md).
 
+## Asset state consolidation (default-off)
+
+Sprints 71–73 ship the per-asset **consolidation** worker — it fuses an asset's
+bound-tag reads (`a`, `b`, `c` …) over a look-back window into **one** answer for
+location (a `read_count × recency`-weighted zone vote) and environment (weighted
+mean temp/humidity), emits **custody events** on frame change, and derives
+**transit legs** (the `geo`-frame interval between two facilities) with a
+**cold-chain SLA** verdict. It powers the Asset **"Current (fused)"** card +
+**Journey** tab. Gated **off** (`CONSOLIDATION_ENABLED=false`) and per-tenant
+opt-in (`tenants.fusion_strategy` is NULL until configured).
+
+**1. Configure the per-tenant strategy** — two ways:
+
+- **From the App (preferred):** an admin opens **Tenant Settings → Consolidation**
+  (Sprint 73), flips **Enable consolidation**, and sets the decay half-life τ,
+  recompute cadence, look-back, RSSI floor, min-reads, and the optional
+  **Cold-chain SLA** envelope. Saving writes `fusion_strategy` via
+  `PATCH /tenant/config`; toggling Enable off clears it (opt out).
+- **From the ops script** (DB-direct tools-job; merges, never clobbers):
+
+```bash
+scripts/azd-job.sh dev set_fusion_strategy.py -- --tenant-slug demo-wm-dc --set \
+  --half-life-s 5 --recompute-interval-s 10 --lookback-s 60 \
+  --sla-temp-min-c 2 --sla-temp-max-c 8 --sla-humidity-max 85 --sla-excursion-tolerance-s 30
+# --clear opts the tenant out; --show prints the current value.
+```
+
+**2. Turn the worker on** — same rule as the estimator: it runs in the **worker**
+container (`tp${env}-worker`), not the api:
+
+```bash
+az containerapp update -n tp${env}-worker -g tagpulse-${env}-rg \
+  --set-env-vars CONSOLIDATION_ENABLED=true
+# confirm: worker logs show "AssetConsolidationWorker started (interval=10s)"
+```
+
+Confirm it's working: `GET /assets/{id}/state` returns a fused snapshot (frame +
+zone + weighted temp/humidity + `sla` envelope), `…/state/history` the timeline,
+and `…/legs` the transit legs once an asset moves facility → geo → facility. The
+knobs live in `tenants.fusion_strategy` (JSONB): `half_life_s` (τ; `0` =
+last-wins), `recompute_interval_s`, `lookback_s`, `rssi_floor_dbm`, `min_reads`,
+and `sla.{temp_min_c,temp_max_c,humidity_max,excursion_tolerance_s}`. See
+[ADR-034](adr/034-asset-state-consolidation.md) +
+[design/sprint-71-asset-state-consolidation.md](design/sprint-71-asset-state-consolidation.md).
+
+> The **Asset → Telemetry** tab (raw per-metric series) is a **separate** opt-in
+> — `asset` must be in `telemetry_subject_kinds` (**Tenant Settings →
+> Subject-scoped telemetry**). The fused "Current"/Journey surfaces above do
+> **not** require it.
+
 ## SSH / shell into things
 
 Container Apps don't give you a shell. Use the `tools` job for one-shot
