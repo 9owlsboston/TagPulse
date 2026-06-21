@@ -54,12 +54,20 @@ with reads in the last `lookback_s`:
 3. **Location:** resolve each read to `(frame, zone)` in its own frame; pick the
    `Σw`-max zone (generalizes `overlapping_zones.py` attribution to per-asset).
 4. **Environment:** `Σ(w · value) / Σw` for temperature and humidity.
-5. Write one snapshot row to `asset_state_history`; warm `subject_current_zone`
-   and `LATEST_TELEMETRY_CACHE`; if `frame` changed vs the prior snapshot, emit a
-   **custody event**.
+5. Write one snapshot row to `asset_state_history`; if `frame` changed vs the
+   prior snapshot, emit a **custody event**.
 
 The same `w` drives steps 3 and 4 → location and environment are mutually
 consistent (same reads, same weights).
+
+> **Phase-1 implementation note.** The tick writes `asset_state_history` and
+> emits `ASSET_CUSTODY_CHANGED` only. `GET /assets/{id}/state` reads the latest
+> row directly, so Phase 1 does **not** warm `subject_current_zone` /
+> `LATEST_TELEMETRY_CACHE` — those are written by the existing signaling /
+> telemetry paths, and having the consolidation tick also write them would
+> create a dual-writer race. Promoting the fused zone into `subject_current_zone`
+> (making consolidation authoritative) is a deliberate follow-up once the worker
+> is validated and flipped on.
 
 ## 4. Frames & custody
 

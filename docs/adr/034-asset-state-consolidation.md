@@ -49,8 +49,10 @@ models the asset's current **frame** or emits custody events on change.
 Introduce a per-asset **consolidation tick**: a periodic worker that, every
 `recompute_interval_s`, looks back `lookback_s` over an asset's bound-tag reads
 and writes **one fused snapshot per active asset** to a new
-`asset_state_history` hypertable, while keeping `subject_current_zone` and the
-latest-telemetry cache warm from the same computation.
+`asset_state_history` hypertable. The new `GET /assets/{id}/state` reads the
+latest row directly. (Promoting the fused zone into `subject_current_zone` /
+warming the latest-telemetry cache is a deliberate follow-up — see Consequences
+— to avoid a dual-writer race with the existing signaling/telemetry paths.)
 
 ### 1. Weighting — `read_count × recency`, shared
 
@@ -117,6 +119,11 @@ environment fusion, with `half_life_s` as the shared recency dial.
   `LATEST_TELEMETRY_CACHE`, subject-scoped `telemetry_readings`,
   `overlapping_zones` attribution, and the `asset_current_location` view (now
   dual-match per ADR-033). The new piece is the tick + `asset_state_history`.
+- **Phase-1 scope:** the worker writes `asset_state_history` + emits custody
+  events only; the new endpoint reads that table. Making consolidation
+  authoritative for `subject_current_zone` (write-through) and warming
+  `LATEST_TELEMETRY_CACHE` from the fused values are deferred follow-ups (avoid a
+  dual-writer race with the existing signaling/telemetry writers).
 - **Gated off by default**, mirroring the position estimator
   (`position_estimator_enabled`), until validated on `demo-wm-dc`.
 - **Cold-chain caveat:** we fuse to a **mean** (decision #3 above). A weighted
