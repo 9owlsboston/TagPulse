@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 from tagpulse.models.schemas import (
+    AssetRef,
     DeviceHealthSummary,
     LocationDescriptor,
     ReadsPerHour,
@@ -17,6 +18,8 @@ from tagpulse.models.schemas import (
 from tagpulse.repositories.protocols import DeviceRepository, TagReadRepository
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from tagpulse.api.services.floor_zone_resolver import FloorRef, FloorZoneResolver
 
 logger = logging.getLogger(__name__)
@@ -38,6 +41,14 @@ class ZoneReaderResolver(Protocol):
     ) -> ZoneResponse | None: ...
 
 
+class BindingAssetResolver(Protocol):
+    """The slice of the binding repo the query service needs (Sprint 74)."""
+
+    async def resolve_asset_refs_by_values(
+        self, tenant_id: UUID, values: "Sequence[str]"
+    ) -> "dict[str, AssetRef]": ...
+
+
 class QueryService:
     """Provides tag read queries, aggregations, and device health summaries."""
 
@@ -47,6 +58,7 @@ class QueryService:
         device_repo: DeviceRepository,
         zone_repo: "ZoneReaderResolver | None" = None,
         floor_resolver: "FloorZoneResolver | None" = None,
+        binding_repo: "BindingAssetResolver | None" = None,
     ) -> None:
         self._tag_read_repo = tag_read_repo
         self._device_repo = device_repo
@@ -57,6 +69,9 @@ class QueryService:
         # Optional: the accurate D5 path — resolve a fixed read to a *floor* zone
         # by antenna-position point-in-polygon, preferred over reader_bound.
         self._floor_resolver = floor_resolver
+        # Optional (Sprint 74): resolve each read's tag to its bound asset for
+        # the UI "Asset" column / reader-detail recent-reads table.
+        self._binding_repo = binding_repo
 
     async def query_tag_reads(
         self,
@@ -87,7 +102,34 @@ class QueryService:
             offset=offset,
         )
         await self._attach_location_descriptors(tenant_id, reads)
+        await self._attach_asset_refs(tenant_id, reads)
         return reads
+
+    async def _attach_asset_refs(self, tenant_id: UUID, reads: list[TagReadResponse]) -> None:
+        """Resolve each read's tag to its bound asset (in place), one query per page.
+
+        Collects every candidate identity form a read carries (EPC URI, EPC hex,
+        TID, tag_id) and matches against active ``asset_tag_bindings`` — whichever
+        form the binding stored wins (ADR-033). ``read.asset`` stays ``None`` when
+        no asset is bound.
+        """
+        if self._binding_repo is None or not reads:
+            return
+        values: set[str] = set()
+        for read in reads:
+            for v in (read.epc, read.epc_hex, read.tid, read.tag_id):
+                if v:
+                    values.add(v)
+        if not values:
+            return
+        refs = await self._binding_repo.resolve_asset_refs_by_values(tenant_id, list(values))
+        if not refs:
+            return
+        for read in reads:
+            for v in (read.epc, read.epc_hex, read.tid, read.tag_id):
+                if v and v in refs:
+                    read.asset = refs[v]
+                    break
 
     async def _attach_location_descriptors(
         self, tenant_id: UUID, reads: list[TagReadResponse]
@@ -194,7 +236,9 @@ class QueryService:
         limit: int = 50,
     ) -> list[TagReadResponse]:
         """Get the most recent reads for a specific device."""
-        return await self._tag_read_repo.query(tenant_id, device_id=device_id, limit=limit)
+        reads = await self._tag_read_repo.query(tenant_id, device_id=device_id, limit=limit)
+        await self._attach_asset_refs(tenant_id, reads)
+        return reads
 
     async def device_health(
         self,

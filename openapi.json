@@ -831,6 +831,26 @@
         "title": "AssetPathPoint",
         "type": "object"
       },
+      "AssetRef": {
+        "description": "Minimal asset reference (id + name) for linking from a read (Sprint 74).",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "AssetRef",
+        "type": "object"
+      },
       "AssetResponse": {
         "description": "Persisted asset row.",
         "properties": {
@@ -7098,6 +7118,16 @@
       "TagReadResponse": {
         "description": "Tag read event returned from the API.",
         "properties": {
+          "asset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssetRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",

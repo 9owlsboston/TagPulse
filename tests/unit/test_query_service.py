@@ -7,6 +7,7 @@ import pytest
 
 from tagpulse.api.services.query_service import QueryService
 from tagpulse.models.schemas import (
+    AssetRef,
     DeviceResponse,
     ReadsPerHour,
     TagReadCreate,
@@ -191,6 +192,77 @@ def device_repo() -> FakeDeviceRepo:
 @pytest.fixture
 def service(tag_repo: FakeTagReadRepo, device_repo: FakeDeviceRepo) -> QueryService:
     return QueryService(tag_read_repo=tag_repo, device_repo=device_repo)
+
+
+class FakeBindingRepo:
+    """Resolves a fixed value->AssetRef map (Sprint 74)."""
+
+    def __init__(self, mapping: dict[str, AssetRef]) -> None:
+        self._m = mapping
+
+    async def resolve_asset_refs_by_values(self, tenant_id, values):  # type: ignore[no-untyped-def]
+        return {v: self._m[v] for v in values if v in self._m}
+
+
+def _read(**kw) -> TagReadResponse:  # type: ignore[no-untyped-def]
+    base = dict(
+        id=uuid4(),
+        device_id=uuid4(),
+        tag_id="TAG-1",
+        timestamp=datetime.now(UTC),
+        signal_strength=-50.0,
+        sensor_data=None,
+        created_at=datetime.now(UTC),
+    )
+    base.update(kw)
+    return TagReadResponse(**base)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_query_attaches_bound_asset_by_epc_hex(tag_repo: FakeTagReadRepo) -> None:
+    asset_id = uuid4()
+    tag_repo.reads.append(_read(tag_id="TAG-1", epc_hex="E2801234"))
+    svc = QueryService(
+        tag_read_repo=tag_repo,
+        device_repo=FakeDeviceRepo(),
+        binding_repo=FakeBindingRepo({"E2801234": AssetRef(id=asset_id, name="Pallet-7")}),
+    )
+    out = await svc.query_tag_reads(TENANT_ID)
+    assert out[0].asset is not None
+    assert out[0].asset.id == asset_id
+    assert out[0].asset.name == "Pallet-7"
+
+
+@pytest.mark.asyncio
+async def test_query_no_binding_leaves_asset_none(tag_repo: FakeTagReadRepo) -> None:
+    tag_repo.reads.append(_read(tag_id="TAG-X", epc_hex="NO-MATCH"))
+    svc = QueryService(
+        tag_read_repo=tag_repo, device_repo=FakeDeviceRepo(), binding_repo=FakeBindingRepo({})
+    )
+    out = await svc.query_tag_reads(TENANT_ID)
+    assert out[0].asset is None
+
+
+@pytest.mark.asyncio
+async def test_recent_reads_attaches_asset_by_tid(tag_repo: FakeTagReadRepo) -> None:
+    dev, asset_id = uuid4(), uuid4()
+    tag_repo.reads.append(_read(device_id=dev, tag_id="TAG-2", tid="TID-9"))
+    svc = QueryService(
+        tag_read_repo=tag_repo,
+        device_repo=FakeDeviceRepo(),
+        binding_repo=FakeBindingRepo({"TID-9": AssetRef(id=asset_id, name="Crate-2")}),
+    )
+    out = await svc.recent_reads(TENANT_ID, dev)
+    assert out[0].asset is not None
+    assert out[0].asset.name == "Crate-2"
+
+
+@pytest.mark.asyncio
+async def test_query_without_binding_repo_is_noop(tag_repo: FakeTagReadRepo) -> None:
+    tag_repo.reads.append(_read(tag_id="TAG-1", epc_hex="E2801234"))
+    svc = QueryService(tag_read_repo=tag_repo, device_repo=FakeDeviceRepo())
+    out = await svc.query_tag_reads(TENANT_ID)
+    assert out[0].asset is None
 
 
 class TestQueryTagReads:
