@@ -4,6 +4,10 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Docs
+
+- **Sprint 71 kickoff — asset state consolidation design ([ADR-034](docs/adr/034-asset-state-consolidation.md) + [design doc](docs/design/sprint-71-asset-state-consolidation.md)).** Records the agreed design for fusing an asset's bound-tag reads (`a`, `b`, `c`) into **one** asset-level answer for location (zone/site, is/was) and environment (temp/humidity, is/was): `read_count × recency`-weighted **vote** for zone + weighted **mean** for environment (shared weight), computed by a periodic **recompute tick** (the ADR-024 "Option C" pattern, generalized) writing a new `asset_state_history` hypertable; **frame-tagged custody timeline** (reader ⇄ geo handoffs arbitrated by recency decay); config generalized `tenants.position_strategy` → tenant-level `fusion_strategy`. **Phase 1** = zone + environment + frame + custody events; **Phase 2** = explicit transit legs + ETA + leg-level cold-chain SLA. Design-only (no code/contract change this commit).
+
 ### Added
 
 - **`scripts/clear_quarantine.py` — scoped, dry-run-by-default ops tool to clear `telemetry_quarantine` rows.** Quarantine has no clear/delete API (it's an operator triage surface), so stale rows produced by *old* behavior (e.g. the pre-fix `read_count` fan-out) linger as historical noise. This utility deletes them **tenant-scoped** (`--tenant-id` required), optionally narrowed by `--reason` / `--metric` (AND-combined), and **dry-runs by default** (prints the matching count; `--apply` to delete). Run in-VNet via the tools-job: `scripts/azd-job.sh dev clear_quarantine.py -- --tenant-id <uuid> --reason unknown_metric --metric read_count --apply`. Connection mirrors `reset_demo_tenant.py` (admin role; the tenant filter is the script's WHERE clause). No app/contract change.
