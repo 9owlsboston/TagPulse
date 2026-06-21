@@ -81,10 +81,15 @@ class QueryService:
         tag_id: str | None = None,
         tag_q: str | None = None,
         epc_q: str | None = None,
+        asset_q: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
         has_location: bool | None = None,
         epc_scheme: str | None = None,
+        epc_schemes: list[str] | None = None,
+        reader_antennas: list[int] | None = None,
+        sort: str | None = None,
+        order: str = "desc",
         limit: int = 100,
         offset: int = 0,
     ) -> list[TagReadResponse]:
@@ -96,16 +101,26 @@ class QueryService:
             tag_id=tag_id,
             tag_q=tag_q,
             epc_q=epc_q,
+            asset_q=asset_q,
             start=start,
             end=end,
             has_location=has_location,
             epc_scheme=epc_scheme,
+            epc_schemes=epc_schemes,
+            reader_antennas=reader_antennas,
+            sort=sort,
+            order=order,
             limit=limit,
             offset=offset,
         )
         await self._attach_location_descriptors(tenant_id, reads)
         await self._attach_asset_refs(tenant_id, reads)
         return reads
+
+    async def tag_read_facets(self, tenant_id: UUID) -> dict[str, list[str]]:
+        """Sprint 76 — distinct low-cardinality values for Tag Reads checkbox
+        filters (delegates to the repo)."""
+        return await self._tag_read_repo.facets(tenant_id)
 
     async def _attach_asset_refs(self, tenant_id: UUID, reads: list[TagReadResponse]) -> None:
         """Resolve each read's tag to its bound asset (in place), one query per page.

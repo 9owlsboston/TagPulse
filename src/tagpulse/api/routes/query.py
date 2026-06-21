@@ -49,25 +49,71 @@ async def query_tag_reads(
         default=None,
         description="Filter by decoded EPC scheme (e.g. 'sgtin-96', 'sscc-96', 'raw').",
     ),
+    epc_schemes: list[str] | None = Query(
+        default=None,
+        description=(
+            "Sprint 76 — multi-select EPC scheme (column checkbox list, values "
+            "from ``GET /tag-reads/facets``). Repeated ``?epc_schemes=``."
+        ),
+    ),
+    reader_antennas: list[int] | None = Query(
+        default=None,
+        description="Sprint 76 — multi-select reader antenna. Repeated ``?reader_antennas=``.",
+    ),
+    asset_q: str | None = Query(
+        default=None,
+        description=(
+            "Sprint 76 — wildcard search over the *bound asset name*. Matches "
+            "reads whose tag is actively bound to an asset whose name matches "
+            "the glob; same grammar as ``tag_q``."
+        ),
+    ),
+    sort: str | None = Query(
+        default=None,
+        description=(
+            "Sprint 76 — server-side sort column. One of ``timestamp`` "
+            "(default), ``signal_strength``, ``reader_antenna``. Unknown "
+            "columns are rejected."
+        ),
+    ),
+    order: str = Query(default="desc", pattern="^(asc|desc)$"),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     tenant: Tenant = Depends(get_current_tenant),
     service: QueryService = Depends(get_query_service),
 ) -> list[TagReadResponse]:
     """Query tag reads with filters and pagination."""
-    return await service.query_tag_reads(
-        tenant.id,
-        device_id=device_id,
-        tag_id=tag_id,
-        tag_q=tag_q,
-        epc_q=epc_q,
-        start=start,
-        end=end,
-        has_location=has_location,
-        epc_scheme=epc_scheme,
-        limit=limit,
-        offset=offset,
-    )
+    try:
+        return await service.query_tag_reads(
+            tenant.id,
+            device_id=device_id,
+            tag_id=tag_id,
+            tag_q=tag_q,
+            epc_q=epc_q,
+            asset_q=asset_q,
+            start=start,
+            end=end,
+            has_location=has_location,
+            epc_scheme=epc_scheme,
+            epc_schemes=epc_schemes,
+            reader_antennas=reader_antennas,
+            sort=sort,
+            order=order,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/tag-reads/facets")
+async def tag_read_facets(
+    tenant: Tenant = Depends(get_current_tenant),
+    service: QueryService = Depends(get_query_service),
+) -> dict[str, list[str]]:
+    """Sprint 76 — distinct low-cardinality values (``epc_scheme``,
+    ``reader_antenna``) for the Tag Reads column checkbox filters."""
+    return await service.tag_read_facets(tenant.id)
 
 
 @router.get("/tag-reads/reads-per-hour", response_model=list[ReadsPerHour])

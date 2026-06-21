@@ -78,6 +78,21 @@ async def list_assets(
         ),
     ),
     q: str | None = Query(default=None),
+    statuses: list[str] | None = Query(
+        default=None,
+        description=(
+            "Sprint 76 \u2014 multi-select status filter (the column checkbox "
+            "list emits repeated ``?statuses=``). Combines with the rest via AND."
+        ),
+    ),
+    sort: str | None = Query(
+        default=None,
+        description=(
+            "Sprint 76 \u2014 server-side sort column: ``name``, ``created_at`` "
+            "(default), or ``status``. Unknown columns are rejected."
+        ),
+    ),
+    order: str = Query(default="desc", pattern="^(asc|desc)$"),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
@@ -93,16 +108,22 @@ async def list_assets(
         labels = parse_label_filter(request.query_params)
     except LabelFilterError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    return await service.list_assets(
-        user.tenant_id,
-        status=status,
-        category_id=category_id,
-        category_ids=category_ids,
-        q=q,
-        labels=labels,
-        limit=limit,
-        offset=offset,
-    )
+    try:
+        return await service.list_assets(
+            user.tenant_id,
+            status=status,
+            statuses=statuses,
+            category_id=category_id,
+            category_ids=category_ids,
+            q=q,
+            labels=labels,
+            sort=sort,
+            order=order,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get(

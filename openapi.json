@@ -10055,6 +10055,56 @@
             }
           },
           {
+            "description": "Sprint 76 \u2014 multi-select status filter (the column checkbox list emits repeated ``?statuses=``). Combines with the rest via AND.",
+            "in": "query",
+            "name": "statuses",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 76 \u2014 multi-select status filter (the column checkbox list emits repeated ``?statuses=``). Combines with the rest via AND.",
+              "title": "Statuses"
+            }
+          },
+          {
+            "description": "Sprint 76 \u2014 server-side sort column: ``name``, ``created_at`` (default), or ``status``. Unknown columns are rejected.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 76 \u2014 server-side sort column: ``name``, ``created_at`` (default), or ``status``. Unknown columns are rejected.",
+              "title": "Sort"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "pattern": "^(asc|desc)$",
+              "title": "Order",
+              "type": "string"
+            }
+          },
+          {
             "in": "query",
             "name": "limit",
             "required": false,
@@ -16124,6 +16174,95 @@
             }
           },
           {
+            "description": "Sprint 76 \u2014 multi-select EPC scheme (column checkbox list, values from ``GET /tag-reads/facets``). Repeated ``?epc_schemes=``.",
+            "in": "query",
+            "name": "epc_schemes",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 76 \u2014 multi-select EPC scheme (column checkbox list, values from ``GET /tag-reads/facets``). Repeated ``?epc_schemes=``.",
+              "title": "Epc Schemes"
+            }
+          },
+          {
+            "description": "Sprint 76 \u2014 multi-select reader antenna. Repeated ``?reader_antennas=``.",
+            "in": "query",
+            "name": "reader_antennas",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 76 \u2014 multi-select reader antenna. Repeated ``?reader_antennas=``.",
+              "title": "Reader Antennas"
+            }
+          },
+          {
+            "description": "Sprint 76 \u2014 wildcard search over the *bound asset name*. Matches reads whose tag is actively bound to an asset whose name matches the glob; same grammar as ``tag_q``.",
+            "in": "query",
+            "name": "asset_q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 76 \u2014 wildcard search over the *bound asset name*. Matches reads whose tag is actively bound to an asset whose name matches the glob; same grammar as ``tag_q``.",
+              "title": "Asset Q"
+            }
+          },
+          {
+            "description": "Sprint 76 \u2014 server-side sort column. One of ``timestamp`` (default), ``signal_strength``, ``reader_antenna``. Unknown columns are rejected.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 76 \u2014 server-side sort column. One of ``timestamp`` (default), ``signal_strength``, ``reader_antenna``. Unknown columns are rejected.",
+              "title": "Sort"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "pattern": "^(asc|desc)$",
+              "title": "Order",
+              "type": "string"
+            }
+          },
+          {
             "in": "query",
             "name": "limit",
             "required": false,
@@ -16309,6 +16448,40 @@
         "summary": "Create Tag Reads Batch",
         "tags": [
           "ingestion"
+        ]
+      }
+    },
+    "/tag-reads/facets": {
+      "get": {
+        "description": "Sprint 76 \u2014 distinct low-cardinality values (``epc_scheme``,\n``reader_antenna``) for the Tag Reads column checkbox filters.",
+        "operationId": "tag_read_facets_tag_reads_facets_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "title": "Response Tag Read Facets Tag Reads Facets Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Tag Read Facets",
+        "tags": [
+          "query"
         ]
       }
     },
