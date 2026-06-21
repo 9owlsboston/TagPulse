@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 73 — configurable fusion strategy · branch `sprint-73/configurable-fusion-strategy` (full scope lands in §sprint-73 during the sprint).
+**Current sprint:** none active — Sprint 73 (configurable fusion strategy — Tenant Settings) shipped 2026-06-21 (backend #147 + UI #110). See §sprint-73.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1826,9 +1826,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 73 — Configurable fusion strategy (Tenant Settings)
+## Sprint 73 — Configurable fusion strategy (Tenant Settings, shipped)
 
-> **Status (2026-06-21, in progress).** Kicked off cross-repo (backend [#147](https://github.com/9owlsboston/TagPulse/pull/147) + UI [#110](https://github.com/9owlsboston/TagPulse-UI/pull/110)). Full design in the [Sprint 73 design doc](design/sprint-73-configurable-fusion-strategy.md).
+> **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#147](https://github.com/9owlsboston/TagPulse/pull/147) + UI [#110](https://github.com/9owlsboston/TagPulse-UI/pull/110)). The per-tenant `fusion_strategy` (decay τ, cadence, look-back, RSSI floor, min-reads, cold-chain SLA) is now on `GET`/`PATCH /tenant/config` and editable from **Tenant Settings → Consolidation**; the `set_fusion_strategy.py` ops script now merges instead of replacing. User + operator guides updated. Full design in the [Sprint 73 design doc](design/sprint-73-configurable-fusion-strategy.md).
 
 **Why.** Sprints 71–72 added the per-tenant `fusion_strategy` (decay τ, cadence, look-back, RSSI floor, min-reads, cold-chain SLA) but left it **unreachable from the App** — set only via the `set_fusion_strategy.py` ops script. An operator looking for the decay control or the SLA band found nothing in Tenant Settings.
 
