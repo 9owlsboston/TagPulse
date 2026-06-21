@@ -3,12 +3,14 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.api.filters import LIKE_ESCAPE, wildcard_to_ilike
 from tagpulse.models.database import (
     AlertModel,
+    AssetModel,
+    AssetTagBindingModel,
     DeadLetterEventModel,
     TagReadModel,
 )
@@ -18,6 +20,14 @@ from tagpulse.models.schemas import (
     TagReadResponse,
     UniqueTagsPerWindow,
 )
+
+# Sprint 76: whitelist of server-sortable Tag Reads columns. Anything outside
+# this map is rejected (avoids arbitrary ORDER BY injection from the UI).
+TAG_READ_SORT_COLUMNS = {
+    "timestamp": TagReadModel.timestamp,
+    "signal_strength": TagReadModel.signal_strength,
+    "reader_antenna": TagReadModel.reader_antenna,
+}
 
 
 class TimescaleTagReadRepository:
@@ -122,18 +132,17 @@ class TimescaleTagReadRepository:
         tag_id: str | None = None,
         tag_q: str | None = None,
         epc_q: str | None = None,
+        asset_q: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
         has_location: bool | None = None,
         epc_scheme: str | None = None,
+        sort: str | None = None,
+        order: str = "desc",
         limit: int = 100,
         offset: int = 0,
     ) -> list[TagReadResponse]:
-        stmt = (
-            select(TagReadModel)
-            .where(TagReadModel.tenant_id == tenant_id)
-            .order_by(TagReadModel.timestamp.desc())
-        )
+        stmt = select(TagReadModel).where(TagReadModel.tenant_id == tenant_id)
         if device_id is not None:
             stmt = stmt.where(TagReadModel.device_id == device_id)
         if tag_id is not None:
@@ -156,6 +165,33 @@ class TimescaleTagReadRepository:
                     TagReadModel.tid.ilike(epc_like, escape=LIKE_ESCAPE),
                 )
             )
+        asset_like = wildcard_to_ilike(asset_q)
+        if asset_like is not None:
+            # Sprint 76: filter by the *bound asset name*. A read matches if
+            # there is an active binding (``unbound_at IS NULL``) whose
+            # ``binding_value`` equals any of the read's tag forms and whose
+            # asset name matches the wildcard. Correlated EXISTS — keeps the
+            # tag-reads hypertable scan single-pass.
+            stmt = stmt.where(
+                exists(
+                    select(1)
+                    .select_from(AssetTagBindingModel)
+                    .join(AssetModel, AssetModel.id == AssetTagBindingModel.asset_id)
+                    .where(
+                        AssetTagBindingModel.tenant_id == tenant_id,
+                        AssetTagBindingModel.unbound_at.is_(None),
+                        AssetModel.name.ilike(asset_like, escape=LIKE_ESCAPE),
+                        AssetTagBindingModel.binding_value.in_(
+                            [
+                                TagReadModel.tag_id,
+                                TagReadModel.epc,
+                                TagReadModel.epc_hex,
+                                TagReadModel.tid,
+                            ]
+                        ),
+                    )
+                )
+            )
         if start is not None:
             stmt = stmt.where(TagReadModel.timestamp >= start)
         if end is not None:
@@ -166,9 +202,42 @@ class TimescaleTagReadRepository:
             stmt = stmt.where(TagReadModel.latitude.is_(None))
         if epc_scheme is not None:
             stmt = stmt.where(TagReadModel.epc_scheme == epc_scheme)
+        # Sprint 76: server-side sort over a whitelist; default timestamp desc.
+        sort_col = TAG_READ_SORT_COLUMNS.get(sort or "timestamp")
+        if sort_col is None:
+            raise ValueError(f"unsortable column: {sort!r}")
+        stmt = stmt.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
         stmt = stmt.limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [TagReadResponse.model_validate(row) for row in result.scalars()]
+
+    async def facets(self, tenant_id: uuid.UUID) -> dict[str, list[str]]:
+        """Sprint 76 — distinct low-cardinality values for Tag Reads checkbox
+        filters (``epc_scheme``, ``reader_antenna``). Bounded by a LIMIT; these
+        columns are inherently small-set."""
+        scheme_stmt = (
+            select(TagReadModel.epc_scheme)
+            .where(
+                TagReadModel.tenant_id == tenant_id,
+                TagReadModel.epc_scheme.isnot(None),
+            )
+            .distinct()
+            .limit(100)
+        )
+        antenna_stmt = (
+            select(TagReadModel.reader_antenna)
+            .where(
+                TagReadModel.tenant_id == tenant_id,
+                TagReadModel.reader_antenna.isnot(None),
+            )
+            .distinct()
+            .limit(100)
+        )
+        schemes = sorted(str(v) for v in (await self._session.execute(scheme_stmt)).scalars())
+        antennas = sorted(
+            int(v) for v in (await self._session.execute(antenna_stmt)).scalars() if v is not None
+        )
+        return {"epc_scheme": schemes, "reader_antenna": [str(a) for a in antennas]}
 
     async def reads_per_hour(
         self,

@@ -54,6 +54,16 @@ def _binding_to_response(row: AssetTagBindingModel) -> AssetTagBindingResponse:
     )
 
 
+# Sprint 76: whitelist of server-sortable Asset columns (rejects arbitrary
+# ORDER BY from the UI). ``last_seen`` is derived from location data, not an
+# ``assets`` row column, so it is not server-sortable here.
+ASSET_SORT_COLUMNS = {
+    "name": AssetModel.name,
+    "created_at": AssetModel.created_at,
+    "status": AssetModel.status,
+}
+
+
 class TimescaleAssetRepository:
     """Persists assets to TimescaleDB."""
 
@@ -92,15 +102,22 @@ class TimescaleAssetRepository:
         tenant_id: uuid.UUID,
         *,
         status: str | None = None,
+        statuses: list[str] | None = None,
         category_ids: list[uuid.UUID] | None = None,
         q: str | None = None,
         labels: dict[str, list[str]] | None = None,
+        sort: str | None = None,
+        order: str = "desc",
         limit: int = 100,
         offset: int = 0,
     ) -> list[AssetResponse]:
         stmt = select(AssetModel).where(AssetModel.tenant_id == tenant_id)
         if status is not None:
             stmt = stmt.where(AssetModel.status == status)
+        if statuses:
+            # Sprint 76: multi-select status (the column checkbox list emits
+            # repeated ``?statuses=``). Combines with single ``status`` via AND.
+            stmt = stmt.where(AssetModel.status.in_(statuses))
         if category_ids:
             # Sprint 42: ``?category_ids=A&category_ids=B`` => OR across the
             # supplied categories (``IN`` predicate). The service layer
@@ -124,7 +141,12 @@ class TimescaleAssetRepository:
             entity_id_col=AssetModel.id,
             labels=labels,
         )
-        stmt = stmt.order_by(AssetModel.created_at.desc()).limit(limit).offset(offset)
+        # Sprint 76: server-side sort over a whitelist; default created_at desc.
+        sort_col = ASSET_SORT_COLUMNS.get(sort or "created_at")
+        if sort_col is None:
+            raise ValueError(f"unsortable column: {sort!r}")
+        stmt = stmt.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
+        stmt = stmt.limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_asset_to_response(r) for r in result.scalars()]
 

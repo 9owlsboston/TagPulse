@@ -218,10 +218,13 @@ class AssetService:
         tenant_id: UUID,
         *,
         status: str | None = None,
+        statuses: list[str] | None = None,
         category_id: UUID | None = None,
         category_ids: list[UUID] | None = None,
         q: str | None = None,
         labels: dict[str, list[str]] | None = None,
+        sort: str | None = None,
+        order: str = "desc",
         limit: int = 100,
         offset: int = 0,
     ) -> list[AssetResponse]:
@@ -243,9 +246,12 @@ class AssetService:
         return await self._assets.list(
             tenant_id,
             status=status,
+            statuses=statuses,
             category_ids=effective,
             q=q,
             labels=labels,
+            sort=sort,
+            order=order,
             limit=limit,
             offset=offset,
         )

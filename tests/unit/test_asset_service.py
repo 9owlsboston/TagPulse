@@ -68,18 +68,24 @@ class _FakeAssetRepo:
         tenant_id,
         *,
         status=None,
+        statuses=None,
         category_ids=None,
         q=None,
         labels=None,
+        sort=None,
+        order="desc",
         limit=100,
         offset=0,
     ):
         self.last_list_kwargs = {
             "tenant_id": tenant_id,
             "status": status,
+            "statuses": statuses,
             "category_ids": category_ids,
             "q": q,
             "labels": labels,
+            "sort": sort,
+            "order": order,
             "limit": limit,
             "offset": offset,
         }
@@ -262,6 +268,17 @@ async def test_list_assets_forwards_legacy_category_id_to_repo() -> None:
     await svc.list_assets(tenant, category_id=cid)
     assert asset_repo.last_list_kwargs is not None
     assert asset_repo.last_list_kwargs["category_ids"] == [cid]
+
+
+@pytest.mark.asyncio
+async def test_list_assets_forwards_statuses_and_sort() -> None:
+    """Sprint 76 — multi-status + server sort kwargs reach the repo."""
+    svc, asset_repo, _, _ = _service()
+    await svc.list_assets(uuid4(), statuses=["active", "in_transit"], sort="name", order="asc")
+    assert asset_repo.last_list_kwargs is not None
+    assert asset_repo.last_list_kwargs["statuses"] == ["active", "in_transit"]
+    assert asset_repo.last_list_kwargs["sort"] == "name"
+    assert asset_repo.last_list_kwargs["order"] == "asc"
     # Other filters left at their defaults — kwarg threading is additive.
     assert asset_repo.last_list_kwargs["status"] is None
 

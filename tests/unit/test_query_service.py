@@ -52,10 +52,13 @@ class FakeTagReadRepo:
         tag_id: str | None = None,
         tag_q: str | None = None,
         epc_q: str | None = None,
+        asset_q: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
         has_location: bool | None = None,
         epc_scheme: str | None = None,
+        sort: str | None = None,
+        order: str = "desc",
         limit: int = 100,
         offset: int = 0,
     ) -> list[TagReadResponse]:
@@ -86,8 +89,14 @@ class FakeTagReadRepo:
             results = [r for r in results if r.latitude is None]
         if epc_scheme is not None:
             results = [r for r in results if r.epc_scheme == epc_scheme]
-        results.sort(key=lambda r: r.timestamp, reverse=True)
+        key_attr = sort or "timestamp"
+        results.sort(key=lambda r: getattr(r, key_attr) or 0, reverse=(order != "asc"))
         return results[offset : offset + limit]
+
+    async def facets(self, tenant_id: UUID) -> dict[str, list[str]]:
+        schemes = sorted({r.epc_scheme for r in self.reads if r.epc_scheme})
+        antennas = sorted({r.reader_antenna for r in self.reads if r.reader_antenna is not None})
+        return {"epc_scheme": schemes, "reader_antenna": [str(a) for a in antennas]}
 
     async def reads_per_hour(
         self,
@@ -287,6 +296,27 @@ async def test_query_epc_q_matches_any_identifier(tag_repo: FakeTagReadRepo) -> 
     # Matches via epc_hex of the first read only.
     out = await svc.query_tag_reads(TENANT_ID, epc_q="dead")
     assert [r.tag_id for r in out] == ["TAG-1"]
+
+
+@pytest.mark.asyncio
+async def test_query_sort_by_signal_ascending(tag_repo: FakeTagReadRepo) -> None:
+    tag_repo.reads.append(_read(tag_id="A", signal_strength=-40.0))
+    tag_repo.reads.append(_read(tag_id="B", signal_strength=-80.0))
+    tag_repo.reads.append(_read(tag_id="C", signal_strength=-60.0))
+    svc = QueryService(tag_read_repo=tag_repo, device_repo=FakeDeviceRepo())
+    out = await svc.query_tag_reads(TENANT_ID, sort="signal_strength", order="asc")
+    assert [r.tag_id for r in out] == ["B", "C", "A"]
+
+
+@pytest.mark.asyncio
+async def test_tag_read_facets_returns_distinct_values(tag_repo: FakeTagReadRepo) -> None:
+    tag_repo.reads.append(_read(tag_id="A", epc_scheme="sgtin-96", reader_antenna=1))
+    tag_repo.reads.append(_read(tag_id="B", epc_scheme="sgtin-96", reader_antenna=0))
+    tag_repo.reads.append(_read(tag_id="C", epc_scheme="sscc-96", reader_antenna=1))
+    svc = QueryService(tag_read_repo=tag_repo, device_repo=FakeDeviceRepo())
+    facets = await svc.tag_read_facets(TENANT_ID)
+    assert facets["epc_scheme"] == ["sgtin-96", "sscc-96"]
+    assert facets["reader_antenna"] == ["0", "1"]
 
 
 class TestQueryTagReads:

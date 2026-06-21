@@ -45,13 +45,18 @@ class TagReadRepository(Protocol):
         tag_id: str | None = None,
         tag_q: str | None = None,
         epc_q: str | None = None,
+        asset_q: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
         has_location: bool | None = None,
         epc_scheme: str | None = None,
+        sort: str | None = None,
+        order: str = "desc",
         limit: int = 100,
         offset: int = 0,
     ) -> list[TagReadResponse]: ...
+
+    async def facets(self, tenant_id: UUID) -> dict[str, list[str]]: ...
 
     async def reads_per_hour(
         self,
