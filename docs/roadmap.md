@@ -1826,6 +1826,22 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 77 — Excel filters on the remaining server-paginated tables (shipped)
+
+> **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#156](https://github.com/9owlsboston/TagPulse/pull/156) + UI [#114](https://github.com/9owlsboston/TagPulse-UI/pull/114)). Closes the column-filter initiative (Sprints 70/75/76): **every** list table now has the uniform sort + per-column filter. Full design in the [Sprint 77 design doc](design/sprint-77-server-table-filters.md).
+
+**Why.** Sprints 75/76 brought the Excel-like filters to the client tables + Tag Reads, but four tables were still missing pieces: Assets had the backend (Sprint 76) but no UI wiring, and Transfers / Stock Levels / Reconciliation had no column filters at all.
+
+**Scope.**
+- **Assets (UI):** server-side sort (`name`/`status`/`created_at`) replacing the page-local client sort; filtering already covered by the toolbar + side panel.
+- **Stock Levels (UI, client-side pivot):** Product wildcard editbox + numeric sort on the zone/Total columns.
+- **Transfers (backend + UI):** `GET /tag-transfers` gains `epc_q` + multi `statuses` + server sort; UI gets an EPC editbox + sortable Status/Requested/Completed.
+- **Reconciliation (backend + UI):** a `q` identifier wildcard threaded to all three views + the CSV export; UI gets an editbox on each view's EPC/Tag ID column.
+
+**Out of scope.** New checkbox facet endpoints (Transfers/Reconciliation statuses are fixed enums); per-view server sort on Reconciliation (small admin views keep their fixed default order); `pg_trgm` indexes (Sprint 70 O3); the DB-backed repo test harness (still backlogged).
+
+---
+
 ## Sprint 76 — Server facets, sort & `asset_q` (shipped)
 
 > **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#153](https://github.com/9owlsboston/TagPulse/pull/153) + UI [#113](https://github.com/9owlsboston/TagPulse-UI/pull/113)). The server side of the Excel-like story: Tag Reads gets `asset_q`, server sort, multi-select scheme/antenna filters + a `/tag-reads/facets` endpoint (UI: asset editbox + Scheme/Antenna checkbox facets); Assets gets multi-`statuses` + server sort (backend only — UI consumption is a Sprint 77 follow-up). Full design in the [Sprint 76 design doc](design/sprint-76-server-facets.md).

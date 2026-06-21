@@ -1,6 +1,11 @@
 # Sprint 77 — Excel filters on the remaining server-paginated tables
 
-- Status: **In progress** (2026-06-21). Backend [#156](https://github.com/9owlsboston/TagPulse/pull/156) + UI [#114](https://github.com/9owlsboston/TagPulse-UI/pull/114).
+- Status: **Shipped** (2026-06-21). Backend [#156](https://github.com/9owlsboston/TagPulse/pull/156) + UI [#114](https://github.com/9owlsboston/TagPulse-UI/pull/114).
+  At ship, the Assets column-checkbox restyle was dropped in favour of leaving
+  filtering to the existing toolbar Status select + side-panel Category filter
+  (both already server-side); the Assets work this sprint is **server-side sort**.
+  Reconciliation got the `q` identifier filter (all 3 views + CSV) but **not**
+  per-view server sort (the views keep their fixed default order).
 - Closes the Excel-like column-filter initiative started in
   [Sprint 70](sprint-70-table-filter.md) and continued in
   [Sprint 75](sprint-75-excel-column-filters.md) /

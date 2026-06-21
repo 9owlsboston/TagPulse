@@ -123,7 +123,7 @@ Every list table shares the same **Excel-style** column controls (Sprints 70 / 7
   - **Small-set columns** (status, type, scheme, …) → a **searchable checkbox list** of the actual values.
   - **Number / date columns** → sort, plus a min/max range where offered.
 
-Filters on different columns combine with **AND**. On the large paginated tables (**Tag Reads**, **Assets**) filtering and sorting run **server-side**, so they match the whole dataset — not just the page you're viewing.
+Filters on different columns combine with **AND**. On the large paginated tables (**Tag Reads**, **Assets**, **Transfers**, **Reconciliation**) filtering and sorting run **server-side**, so they match the whole dataset — not just the page you're viewing.
 
 ### User Roles
 
