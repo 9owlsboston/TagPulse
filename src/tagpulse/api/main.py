@@ -59,6 +59,7 @@ from tagpulse.repositories.timescaledb.session import async_session_factory
 from tagpulse.rules.delivery import AlertDeliveryService
 from tagpulse.rules.evaluator import RuleEvaluator
 from tagpulse.signaling.periodic_dispatcher import PeriodicSignalingDispatcher
+from tagpulse.workers.consolidation_worker import AssetConsolidationWorker
 from tagpulse.workers.dwell_worker import DwellTracker, DwellWorker
 from tagpulse.workers.floor_position_worker import FloorPositionWorker
 from tagpulse.workers.inventory_rule_worker import InventoryRuleWorker
@@ -119,6 +120,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     tag_registrar_worker: TagRegistrarWorker | None = None
     periodic_signaling_dispatcher: PeriodicSignalingDispatcher | None = None
     floor_position_worker: FloorPositionWorker | None = None
+    asset_consolidation_worker: AssetConsolidationWorker | None = None
     alert_delivery: AlertDeliveryService | None = None
     analytics_modules: list[AnalyticsModule] = []
     webhook_dispatcher: WebhookDispatcher | None = None
@@ -219,6 +221,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await floor_position_worker.start()
             app.state.floor_position_worker = floor_position_worker
 
+        # Sprint 71 (ADR-034): asset-state consolidation worker. Gated off by
+        # default — flip ``consolidation_enabled`` only after the DB adapters
+        # are integration-validated. Fuses each asset's bound-tag reads into one
+        # ``asset_state_history`` snapshot (zone vote + environment mean) and
+        # emits ``ASSET_CUSTODY_CHANGED`` on frame transitions.
+        app.state.asset_consolidation_worker = None
+        if settings.consolidation_enabled:
+            asset_consolidation_worker = AssetConsolidationWorker(
+                async_session_factory,
+                event_bus=event_bus,
+                interval_s=float(settings.consolidation_interval_s),
+            )
+            await asset_consolidation_worker.start()
+            app.state.asset_consolidation_worker = asset_consolidation_worker
+
         # Alert delivery — subscribes to alert triggered events
         alert_delivery = AlertDeliveryService()
         await alert_delivery.start()
@@ -275,6 +292,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await periodic_signaling_dispatcher.stop()
     if floor_position_worker is not None:
         await floor_position_worker.stop()
+    if asset_consolidation_worker is not None:
+        await asset_consolidation_worker.stop()
     await usage_meter.stop()
     for module in analytics_modules:
         await module.stop()

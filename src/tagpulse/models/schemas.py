@@ -1046,6 +1046,35 @@ class AssetCurrentLocation(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AssetStateResponse(BaseModel):
+    """One fused asset-state snapshot (Sprint 71, ADR-034).
+
+    Produced by the consolidation worker as a ``read_count × recency``-weighted
+    fusion of the asset's bound-tag reads over the look-back window. ``frame`` is
+    ``reader`` / ``floor`` / ``geo`` / ``none``; ``zone_id`` is the voted zone
+    (``None`` for geo "in transit"). ``temperature_c``/``humidity_pct`` are the
+    weighted means. The same shape serves both the current snapshot
+    (``GET /assets/{id}/state``) and history rows (``…/state/history``).
+    """
+
+    asset_id: UUID
+    time: datetime
+    frame: str
+    zone_id: UUID | None = None
+    site_id: UUID | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    x: float | None = None
+    y: float | None = None
+    temperature_c: float | None = None
+    humidity_pct: float | None = None
+    sample_count: int = 0
+    tag_count: int = 0
+    confidence: float | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class AssetPathPoint(BaseModel):
     """One point on an asset's merged movement path.
 

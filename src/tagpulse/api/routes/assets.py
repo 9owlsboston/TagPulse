@@ -24,6 +24,7 @@ from tagpulse.models.schemas import (
     AssetLoadRequest,
     AssetPathPoint,
     AssetResponse,
+    AssetStateResponse,
     AssetTagBindingCreate,
     AssetTagBindingResponse,
     AssetUnloadRequest,
@@ -132,6 +133,39 @@ async def get_asset(
     if asset is None:
         raise HTTPException(status_code=404, detail="Asset not found")
     return asset
+
+
+@router.get("/{asset_id}/state", response_model=AssetStateResponse | None)
+async def get_asset_state(
+    asset_id: UUID,
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    service: AssetService = Depends(get_asset_service),
+) -> AssetStateResponse | None:
+    """Latest fused asset-state snapshot (Sprint 71, ADR-034) — the "is".
+
+    The ``read_count × recency`` fusion of the asset's bound-tag reads into one
+    zone + environment answer. ``null`` when no snapshot exists yet (consolidation
+    not enabled, or no recent reads). 404 only when the asset does not exist.
+    """
+    asset = await service.get_asset(user.tenant_id, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return await service.get_asset_state(user.tenant_id, asset_id)
+
+
+@router.get("/{asset_id}/state/history", response_model=list[AssetStateResponse])
+async def get_asset_state_history(
+    asset_id: UUID,
+    since: datetime | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    service: AssetService = Depends(get_asset_service),
+) -> list[AssetStateResponse]:
+    """Fused asset-state snapshots, newest-first (Sprint 71) — the "was" timeline."""
+    asset = await service.get_asset(user.tenant_id, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return await service.get_asset_state_history(user.tenant_id, asset_id, since=since, limit=limit)
 
 
 @router.patch("/{asset_id}", response_model=AssetResponse)
