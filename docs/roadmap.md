@@ -1825,6 +1825,21 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 **Decisions to lock (design doc §7).** **A** legs auto-derived from custody (recommend yes); **B** ETA **deferred** to a later phase — v1 is **actuals-only** (no in-flight ETA without a declared destination); **C** SLA from a `fusion_strategy.sla` block. **Out of scope:** in-flight ETA + destination prediction, multi-leg shipment grouping, route/geocoding — all gated on a destination-declaration mechanism.
 
 ---
+
+## Sprint 73 — Configurable fusion strategy (Tenant Settings)
+
+> **Status (2026-06-21, in progress).** Kicked off cross-repo (backend [#147](https://github.com/9owlsboston/TagPulse/pull/147) + UI [#110](https://github.com/9owlsboston/TagPulse-UI/pull/110)). Full design in the [Sprint 73 design doc](design/sprint-73-configurable-fusion-strategy.md).
+
+**Why.** Sprints 71–72 added the per-tenant `fusion_strategy` (decay τ, cadence, look-back, RSSI floor, min-reads, cold-chain SLA) but left it **unreachable from the App** — set only via the `set_fusion_strategy.py` ops script. An operator looking for the decay control or the SLA band found nothing in Tenant Settings.
+
+**Scope.**
+- **Backend:** `fusion_strategy` on `GET`/`PATCH /tenant/config` (typed `FusionStrategy` incl. `sla`); PATCH uses `model_fields_set` so the UI can **set** or **clear** (explicit `null` = opt out). Admin-only. `openapi.json` regenerated.
+- **Script:** `set_fusion_strategy.py` now **merges** (read-modify-write) instead of replacing — a partial `--set` keeps untouched knobs (SLA footgun fixed).
+- **UI:** a **"Consolidation"** tab in Tenant Settings (enable toggle + decay/cadence/look-back/RSSI/min-reads + cold-chain SLA envelope).
+
+**Out of scope.** `position_strategy` (floor-positioning sibling) stays ops-script-only. No new tenant column (reuses the Sprint 71 `fusion_strategy` JSONB).
+
+---
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.
 - **[ADR 024](adr/024-position-estimation.md) \u2014 Indoor position estimation (trilateration processor + `asset_positions` hypertable).** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first football-field-size customer asking for sub-meter `(x, y)` indoor positioning. The Sprint 41 `processor` enum is live, so the `trilateration` value can be added additively when scheduled \u2014 no schema rewrite required to unblock. **Design now captured** ([floor-position-estimation.md](design/floor-position-estimation.md), 2026-06-19) — a two-phase plan that fills the headless `asset_positions` table so an asset shows a true floor `(x, y)` + movement trail:
   - **Phase 1 — BYO precomputed** (`source='precomputed'`, ~1 sprint, low risk): `POST /assets/{id}/position` (floor-frame counterpart to the existing lat/lon `external-position`) + the shared `GET /assets/{id}/floor-path` read endpoint + a `CRS.Simple` trail layer `[ui]`. Unblocks any customer who already owns a location engine (vendor middleware / UWB / BLE-AoA). Builds the table-write + read + UI seam Phase 2 reuses.

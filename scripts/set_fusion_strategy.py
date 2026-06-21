@@ -149,9 +149,7 @@ def _parse_args() -> argparse.Namespace:
     # config (omitted knobs keep their current value; defaults apply only when no
     # config exists yet).
     p.add_argument("--half-life-s", type=float, default=None, dest="half_life_s")
-    p.add_argument(
-        "--recompute-interval-s", type=float, default=None, dest="recompute_interval_s"
-    )
+    p.add_argument("--recompute-interval-s", type=float, default=None, dest="recompute_interval_s")
     p.add_argument("--lookback-s", type=float, default=None, dest="lookback_s")
     p.add_argument("--rssi-floor-dbm", type=float, default=None, dest="rssi_floor_dbm")
     p.add_argument("--min-reads", type=int, default=None, dest="min_reads")
