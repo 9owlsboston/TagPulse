@@ -1,6 +1,9 @@
 # Sprint 75 — Excel-like uniform column sort & filter
 
-- Status: **In progress** (2026-06-21). Backend [#151](https://github.com/9owlsboston/TagPulse/pull/151) + UI [#112](https://github.com/9owlsboston/TagPulse-UI/pull/112).
+- Status: **Shipped** (2026-06-21). Backend [#151](https://github.com/9owlsboston/TagPulse/pull/151) + UI [#112](https://github.com/9owlsboston/TagPulse-UI/pull/112).
+  Scope-cut at ship: `asset_q` + server-side sort moved to Sprint 76 alongside
+  the server checkbox facets (kept Sprint 75 to the editbox/sort/range tier so
+  it ships standalone). `epc_q` on `GET /tag-reads` shipped as planned.
 - Owner: UI consumer + small backend contract additions, cross-repo.
 - Related: [ADR-030 (list-page column filters)](../adr/030-list-page-column-filters.md),
   [Sprint 70 design (wildcard column box)](sprint-70-table-filter.md),

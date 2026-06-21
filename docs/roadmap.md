@@ -1826,6 +1826,20 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 75 — Excel-like uniform column sort & filter (shipped)
+
+> **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#151](https://github.com/9owlsboston/TagPulse/pull/151) + UI [#112](https://github.com/9owlsboston/TagPulse-UI/pull/112)). Every client-side list table now carries the uniform Excel-like column dropdown (sort + type-correct filter); Tag Reads gains an EPC identifier editbox (`epc_q`) and Assets a Name-column editbox. Server checkbox facets + server sort + `asset_q` follow in Sprint 76. Full design in the [Sprint 75 design doc](design/sprint-75-excel-column-filters.md).
+
+**Why.** Sprint 70 built the wildcard column box but adoption stopped at 5 pages (often one column). WM operators asked for an **Excel-AutoFilter** experience: **every** column header with the same affordance — sort asc/desc plus a type-to-search editbox for free-text columns and a searchable checkbox list for small-set columns, *regardless of data type*.
+
+**Scope.**
+- **UI:** a reusable `excelColumn<T>()` helper that auto-selects the control by column nature — high-cardinality text → wildcard editbox; enum/small-set → searchable checkbox list (`filters` + `filterSearch`, values auto-derived from the dataset); numeric/date → sort + range — and always attaches a sorter. Rolled out across the **client-side** list tables (Rules, Users, Integrations, Delivery Log, Products, Stock Movements, Lots, Tag-data Mappings, Telemetry quarantine) + `filterSearch` on the hand-rolled enum filters (Categories, Labels).
+- **Backend:** `epc_q` on `GET /tag-reads` — wildcard `OR` across `tag_id`/`epc`/`epc_hex`/`tid`. UI puts the editbox on the EPC column; Assets reuses the existing `q` on the Name column header.
+
+**Out of scope → Sprint 76.** Server-side **checkbox facets** (distinct-value endpoint) for the low-cardinality columns of the two paginated tables (Scheme, Device, Antenna, Category, Status, Source); **server-side sort**; `asset_q` (bound-asset name search on Tag Reads); and the three other server-paginated tables (Transfers, Stock Levels, Reconciliation).
+
+---
+
 ## Sprint 74 — Bound-asset link on tag reads (shipped)
 
 > **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#149](https://github.com/9owlsboston/TagPulse/pull/149) + UI [#111](https://github.com/9owlsboston/TagPulse-UI/pull/111)). Tag-read responses now carry a resolved `asset` ref; the App shows an **Asset** link column on Tag Reads and a **Recent Reads** table (with bound-asset link) on the reader detail page.
