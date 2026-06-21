@@ -6,6 +6,12 @@
   (both already server-side); the Assets work this sprint is **server-side sort**.
   Reconciliation got the `q` identifier filter (all 3 views + CSV) but **not**
   per-view server sort (the views keep their fixed default order).
+  **Audit (2026-06-21):** Transfers ships the backend `statuses` (multi) param
+  but the UI keeps the existing single-select toolbar **Status** dropdown, so
+  `statuses` is plumbed-not-consumed (the toolbar `status` is the live control);
+  the multi-select column checkbox is a future nicety, not a gap. The new
+  wildcard SQL (Transfers `epc_q`, Reconciliation `q`) is fake/contract-covered
+  only — same no-DB-harness gap tracked in the backlog.
 - Closes the Excel-like column-filter initiative started in
   [Sprint 70](sprint-70-table-filter.md) and continued in
   [Sprint 75](sprint-75-excel-column-filters.md) /
