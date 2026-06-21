@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** none active — Sprint 72 (asset state consolidation Phase 2: transit legs) shipped 2026-06-21 (backend #144 + UI #109). See §sprint-72.
+**Current sprint:** 73 — configurable fusion strategy · branch `sprint-73/configurable-fusion-strategy` (full scope lands in §sprint-73 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
