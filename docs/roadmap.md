@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** none active — Sprint 73 (configurable fusion strategy — Tenant Settings) shipped 2026-06-21 (backend #147 + UI #110). See §sprint-73.
+**Current sprint:** 74 — read asset link · branch `sprint-74/read-asset-link` (full scope lands in §sprint-74 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
