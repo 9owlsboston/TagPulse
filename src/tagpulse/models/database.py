@@ -101,6 +101,13 @@ class TenantModel(Base):
     # Sprint 59 — the RSSI/count weight formula varies company-to-company, so
     # it must be config, never hardcoded; the Sprint 61 estimator reads it. --
     position_strategy: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # -- Sprint 71 (ADR-034): per-tenant asset-state consolidation config. NULL =
+    # tenant not opted in. Generalises ``position_strategy`` to govern the
+    # ``read_count × recency`` fusion of an asset's bound-tag reads into one zone
+    # + environment answer (FusionStrategy: half_life_s τ, recompute_interval_s,
+    # lookback_s, rssi_floor_dbm, min_reads). Read by the consolidation worker,
+    # gated off by default (``consolidation_enabled``). --
+    fusion_strategy: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     # -- Sprint 60 increment 3 (ADR-032 §3): per-tenant Configurable-UI
     # presentation defaults. NULL = pure system default. Tenant-default leaves
     # live at the top level; the role layer is keyed under a reserved ``roles``
@@ -972,6 +979,41 @@ class AssetPositionModel(Base):
     confidence: Mapped[Decimal] = mapped_column(Numeric(3, 2), nullable=False)
     source: Mapped[str] = mapped_column(String(16), nullable=False)
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
+
+
+class AssetStateHistoryModel(Base):
+    """Fused per-asset state snapshot hypertable (Sprint 71, ADR-034).
+
+    One row per active asset per consolidation tick: the ``read_count × recency``
+    fused location (``frame`` + zone/site + position) and environment
+    (``temperature_c``/``humidity_pct``) from the asset's bound-tag reads over the
+    look-back window. "Is" = latest row per asset; "was" = range query. ``asset_id``
+    carries no FK (hypertable, matches ADR-013/014 and ``asset_positions``); the
+    ``id + time`` composite PK follows the same precedent. RLS by ``tenant_id``.
+    """
+
+    __tablename__ = "asset_state_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True, nullable=False
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    frame: Mapped[str] = mapped_column(String(16), nullable=False)
+    zone_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    site_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    temperature_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    humidity_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    tag_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 # ============================================================================

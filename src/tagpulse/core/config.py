@@ -99,6 +99,13 @@ class Settings(BaseSettings):
     position_estimator_enabled: bool = False
     position_estimator_interval_s: int = 3
 
+    # Sprint 71 (ADR-034): asset-state consolidation worker. Off by default —
+    # fuses an asset's bound-tag reads into one zone + environment snapshot in
+    # ``asset_state_history``. Flip ``consolidation_enabled`` per env after
+    # validation on a real tenant (mirrors ``position_estimator_enabled``).
+    consolidation_enabled: bool = False
+    consolidation_interval_s: int = 10
+
     # -- Sprint 50 Phase D: tag registrar worker (ADR 028). --
     # The worker drains ``tag_reads WHERE tag_known IS NULL``,
     # classifies each row against the tenant ``tags`` registry, and

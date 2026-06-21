@@ -48,6 +48,14 @@ class Topic(StrEnum):
     SIGNALING_TAG_APPEARED = "signaling.tag_appeared"
     SIGNALING_TAG_DISAPPEARED = "signaling.tag_disappeared"
 
+    # Sprint 71 / ADR-034. Published by the asset-state consolidation worker
+    # when an asset's fused ``frame`` changes between consolidation ticks (e.g.
+    # reader → geo as a lot is loaded onto a truck). Models the cold-chain
+    # custody timeline (departed / in-transit / arrived / at-store). Payload:
+    # ``{tenant_id, asset_id, from_frame, to_frame, zone_id, site_id,
+    # confidence, timestamp}``. In-process per ADR-010; no external bus.
+    ASSET_CUSTODY_CHANGED = "asset.custody_changed"
+
 
 @dataclasses.dataclass(frozen=True)
 class Event:

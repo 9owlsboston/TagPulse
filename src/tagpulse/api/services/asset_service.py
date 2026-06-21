@@ -24,6 +24,7 @@ from tagpulse.models.schemas import (
     AssetInZoneSummary,
     AssetPathPoint,
     AssetResponse,
+    AssetStateResponse,
     AssetTagBindingCreate,
     AssetTagBindingResponse,
     AssetUpdate,
@@ -39,6 +40,9 @@ from tagpulse.repositories.timescaledb.asset_location import (
 )
 from tagpulse.repositories.timescaledb.asset_positions import (
     TimescaleAssetPositionRepository,
+)
+from tagpulse.repositories.timescaledb.asset_state import (
+    TimescaleAssetStateRepository,
 )
 from tagpulse.repositories.timescaledb.assets import (
     TimescaleAssetRepository,
@@ -85,6 +89,7 @@ class AssetService:
         tenant_repo: TimescaleTenantRepository | None = None,
         position_repo: TimescaleAssetPositionRepository | None = None,
         site_repo: TimescaleSiteRepository | None = None,
+        asset_state_repo: TimescaleAssetStateRepository | None = None,
     ) -> None:
         self._assets = asset_repo
         self._bindings = binding_repo
@@ -96,6 +101,7 @@ class AssetService:
         self._tenant_repo = tenant_repo
         self._positions = position_repo
         self._sites = site_repo
+        self._asset_state = asset_state_repo
 
     # -- Assets --
 
@@ -150,6 +156,30 @@ class AssetService:
             )
             LATEST_TELEMETRY_CACHE.set(cache_key, latest)
         return asset.model_copy(update={"latest_telemetry": latest})
+
+    async def get_asset_state(self, tenant_id: UUID, asset_id: UUID) -> AssetStateResponse | None:
+        """Latest fused asset-state snapshot (Sprint 71, ADR-034), or ``None``.
+
+        ``None`` when the asset has no snapshot yet (consolidation not enabled,
+        or no reads in the window). The route returns 404 only when the asset
+        itself does not exist.
+        """
+        if self._asset_state is None:
+            return None
+        return await self._asset_state.latest(tenant_id, asset_id)
+
+    async def get_asset_state_history(
+        self,
+        tenant_id: UUID,
+        asset_id: UUID,
+        *,
+        since: datetime | None = None,
+        limit: int = 200,
+    ) -> list[AssetStateResponse]:
+        """Fused asset-state snapshots, newest-first (the "was" timeline)."""
+        if self._asset_state is None:
+            return []
+        return await self._asset_state.history(tenant_id, asset_id, since=since, limit=limit)
 
     async def list_assets(
         self,

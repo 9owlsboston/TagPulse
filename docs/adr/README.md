@@ -35,3 +35,4 @@
 | 031 | [Force-delete of stock items never orphans the movement ledger](031-stock-item-force-delete-ledger.md) | accepted | 2026-06-13 |
 | 032 | [Configurable UI — presentation config as a per-viewer projection](032-configurable-ui.md) | proposed | 2026-06-13 |
 | 033 | [Asset `epc` bindings resolve against the EPC URI or the raw hex](033-epc-binding-resolves-uri-or-hex.md) | accepted | 2026-06-20 |
+| 034 | [Asset state consolidation — weighted fusion of bound-tag reads into one asset zone + environment](034-asset-state-consolidation.md) | accepted | 2026-06-20 |

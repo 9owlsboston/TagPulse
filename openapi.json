@@ -736,6 +736,143 @@
         "title": "AssetResponse",
         "type": "object"
       },
+      "AssetStateResponse": {
+        "description": "One fused asset-state snapshot (Sprint 71, ADR-034).\n\nProduced by the consolidation worker as a ``read_count \u00d7 recency``-weighted\nfusion of the asset's bound-tag reads over the look-back window. ``frame`` is\n``reader`` / ``floor`` / ``geo`` / ``none``; ``zone_id`` is the voted zone\n(``None`` for geo \"in transit\"). ``temperature_c``/``humidity_pct`` are the\nweighted means. The same shape serves both the current snapshot\n(``GET /assets/{id}/state``) and history rows (``\u2026/state/history``).",
+        "properties": {
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "frame": {
+            "title": "Frame",
+            "type": "string"
+          },
+          "humidity_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Humidity Pct"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
+          },
+          "sample_count": {
+            "default": 0,
+            "title": "Sample Count",
+            "type": "integer"
+          },
+          "site_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Id"
+          },
+          "tag_count": {
+            "default": 0,
+            "title": "Tag Count",
+            "type": "integer"
+          },
+          "temperature_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature C"
+          },
+          "time": {
+            "format": "date-time",
+            "title": "Time",
+            "type": "string"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          },
+          "zone_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone Id"
+          }
+        },
+        "required": [
+          "asset_id",
+          "time",
+          "frame"
+        ],
+        "title": "AssetStateResponse",
+        "type": "object"
+      },
       "AssetTagBindingCreate": {
         "description": "Bind a tag value to an asset.",
         "properties": {
@@ -10530,6 +10667,145 @@
           }
         ],
         "summary": "Record Floor Position",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/assets/{asset_id}/state": {
+      "get": {
+        "description": "Latest fused asset-state snapshot (Sprint 71, ADR-034) \u2014 the \"is\".\n\nThe ``read_count \u00d7 recency`` fusion of the asset's bound-tag reads into one\nzone + environment answer. ``null`` when no snapshot exists yet (consolidation\nnot enabled, or no recent reads). 404 only when the asset does not exist.",
+        "operationId": "get_asset_state_assets__asset_id__state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Asset Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/AssetStateResponse"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Asset State Assets  Asset Id  State Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Asset State",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/assets/{asset_id}/state/history": {
+      "get": {
+        "description": "Fused asset-state snapshots, newest-first (Sprint 71) \u2014 the \"was\" timeline.",
+        "operationId": "get_asset_state_history_assets__asset_id__state_history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Asset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AssetStateResponse"
+                  },
+                  "title": "Response Get Asset State History Assets  Asset Id  State History Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Asset State History",
         "tags": [
           "assets"
         ]

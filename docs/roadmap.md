@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** none active — Sprint 70 (uniform wildcard table filter) shipped 2026-06-20 (backend #137 + UI #106). See §sprint-70.
+**Current sprint:** 71 — asset state consolidation · branch `sprint-71/asset-state-consolidation` (full scope lands in §sprint-71 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1787,6 +1787,23 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 - Retrofit pages incrementally; document the pattern alongside `ColumnChooser` and [ADR-030](adr/030-list-page-column-filters.md).
 
 **Decisions locked.** (a) wildcard-only v1; (b) server-side in scope; (c) v1 endpoints = Tag Reads, Alert History, Tags, Assets; (d) grammar = substring-by-default / anchored-on-wildcard, case-insensitive, multi-column AND (see design doc §2); (e) **O1** Tag Reads searches `tag_id` only (`tag_q`); (f) **O2** Alert History searches the `message` column (`q`). **Open:** O3 `pg_trgm` index (deferred until a paginated table trips the p95 SLO).
+
+---
+
+## Sprint 71 — Asset state consolidation (Phase 1)
+
+> **Status (2026-06-20, in progress).** Kicked off cross-repo (backend [#142](https://github.com/9owlsboston/TagPulse/pull/142) + UI [#108](https://github.com/9owlsboston/TagPulse-UI/pull/108)). Full design in [ADR-034](adr/034-asset-state-consolidation.md) + the [Sprint 71 design doc](design/sprint-71-asset-state-consolidation.md).
+
+**Why.** Consolidation today is **per-tag, last-writer-wins**: an asset's "current zone" is whichever bound tag last fired, and temp/humidity is the latest per-metric — no vote or aggregation across an asset's tags (`a`, `b`, `c`). `read_count` is carried (Sprint 70) but unused as a weight. The Assets page can't cleanly answer **where X is / was (site/zone)** and **what temp/humidity it is / was** with one trustworthy answer. The worked scenario is a **cold-chain milk lot** moving origin DC (fixed reader) → truck (geo) → SuperMart DC → store — crossing **frames** over time, with the transitions as first-class custody events.
+
+**Scope (Phase 1, planned).**
+- **Consolidation tick (backend).** A gated periodic worker (the [ADR-024](adr/024-position-estimation.md) "Option C" recompute pattern, generalized) that every `recompute_interval_s` looks back `lookback_s` over an asset's bound-tag reads and writes one fused snapshot per active asset to a new **`asset_state_history`** hypertable; warms `subject_current_zone` + `LATEST_TELEMETRY_CACHE`.
+- **Weighting.** `read_count × recency` (half-life `τ`), **shared** across the location **vote** (zone) and the environment **mean** (temp/humidity) → mutually consistent.
+- **Frames + custody.** Per-read in-frame resolution; recency decay arbitrates handoffs (dock-reader ⇄ truck-geo); `frame` change emits a custody event. Geo-zone = "in transit" + last fix.
+- **Config.** Generalize `tenants.position_strategy` JSONB → tenant-level **`fusion_strategy`** (`half_life_s` τ, `recompute_interval_s` D, `lookback_s`); gated off by default until validated on `demo-wm-dc`.
+- **UI.** Asset detail "Current" card (frame-aware zone/site, temp/humidity, last-seen, contributing tag count) + custody timeline / mini history from `asset_state_history`. New `GET /assets/{id}/state` (+ history); `openapi.json` regenerated (**merges first**).
+
+**Decisions locked.** Zone vote = `read_count × recency` (option c); environment = weighted **mean**; recency-decay configured via `fusion_strategy.half_life_s`; compute = history table + recompute tick; frames = segmented custody timeline (per-read in-frame, recency-arbitrated handoffs). **Phase 2 (deferred):** explicit transit **legs** (origin → DC → store) + ETA + leg-level cold-chain SLA. **Caveat:** the fused **mean** is for display/trend and does **not** subsume excursion/threshold alerting (raw per-tag readings + windowed max/min — follow-up).
 
 ---
 - **[ADR 023](adr/023-outbound-connections-mqtt-kafka.md) \u2014 MQTT outbound dispatcher.** Status moved Proposed \u2192 **Deferred** in Sprint 49. Gated on first customer with a contractual or compliance-driven MQTT-egress requirement. Sprint 41 had pencilled this for Sprint 42 but Sprint 42 shipped the asset multi-category filter instead and no demand surfaced through Sprints 43-48 \u2014 the Sprint 46/47 edge wire format v2 work absorbed the messaging-side bandwidth.

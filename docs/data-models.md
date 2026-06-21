@@ -139,11 +139,12 @@ Organization accounts on the platform.
 | `tile_provider` | JSONB | NULLABLE | Per-tenant map tile provider override. Shape: `{"kind": "osm" \| "mapbox" \| "maptiler" \| "self_hosted", "config": {...}}`. NULL = system default (OSM public for POC). Resolved by `MapConfigResolver`; switching providers is a settings change, not a code change. See [design/geofencing-and-map.md §11](design/geofencing-and-map.md) Q4. |
 | `ui_config` | JSONB | NULLABLE | Per-tenant Configurable-UI **presentation** defaults (the tenant + role layers). NULL = pure system default. Tenant-default leaves (`labels` / `theme` / `nav` / `cards` / `columns` / `tables`) live at the top level; the per-role layer is keyed under a reserved `roles` sub-object, e.g. `{"theme": {...}, "roles": {"viewer": {"columns": {...}}}}`. Split into resolve layers and folded `System → Tenant → Role → User` by `tagpulse.services.ui_config` (never queried directly). Reuses the tenant-JSONB precedent above. See [adr/032-configurable-ui.md](adr/032-configurable-ui.md). |
 | `position_strategy` | JSONB | NULLABLE | Sprint 59 ([ADR-024](adr/024-position-estimation.md)): per-tenant indoor-position estimator config — the RSSI-weight formula varies company-to-company, so it is config, never hardcoded. **Read by the Sprint 66 `rssi_weighted_centroid` estimator** (`half_life_s` τ, `recompute_interval_s`, `lookback_s`, `min_antennas`, `rssi_floor_dbm`). NULL = tenant not opted in. The estimator worker is **off by default** (`position_estimator_enabled`). |
+| `fusion_strategy` | JSONB | NULLABLE | Sprint 71 ([ADR-034](adr/034-asset-state-consolidation.md)): per-tenant **asset-state consolidation** config — generalises `position_strategy` to govern the `read_count × recency` fusion of an asset's bound-tag reads into one zone + environment answer. **Read by the consolidation worker** (`FusionStrategy`: `half_life_s` τ, `recompute_interval_s`, `lookback_s`, `rssi_floor_dbm`, `min_reads`). NULL = tenant not opted in. The worker is **off by default** (`consolidation_enabled`). |
 | `logo_url` | TEXT | NULLABLE | Tenant branding logo for the 240px expanded sidebar header. Either an `https://` URL or a size-capped inline base64 `data:` URL (cap enforced at the API layer, not the DB — Sprint 60 widened this from `VARCHAR(2048)` to `TEXT` to hold a data URL). NULL = system default. |
 | `logo_collapsed_url` | TEXT | NULLABLE | Sprint 60: second branding logo — a square mark for the 64px collapsed sidebar rail. Same `https://`-or-`data:` rule as `logo_url`. NULL = no second logo (fall back to `logo_url` / system default). |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
 
-**Migration:** 005, 014, 017 (tracking_modes), 023 (db_pool_key), 026 (tile_provider), 036 (logo_url — tenant branding), 051 (position_strategy), 053 (ui_config), 054 (logo_url → TEXT + logo_collapsed_url)
+**Migration:** 005, 014, 017 (tracking_modes), 023 (db_pool_key), 026 (tile_provider), 036 (logo_url — tenant branding), 051 (position_strategy), 053 (ui_config), 054 (logo_url → TEXT + logo_collapsed_url), 058 (fusion_strategy)
 
 ---
 
@@ -803,6 +804,43 @@ Zone-level "where is X" is still answered from `tag_presence` + `subject_current
 **RLS:** enabled — `tenant_id = current_setting('app.current_tenant_id')`.
 **API:** `POST /assets/{id}/position` (admin/editor write, `source='precomputed'`), `GET /assets/{id}/floor-path` (viewer read, ascending time, `since`/`until`/`source`/`limit` filters) — Sprint 65.
 **Migration:** 051 (spatial foundation).
+
+---
+
+### asset_state_history (hypertable)
+
+One **fused per-asset state snapshot** per consolidation tick (Sprint 71,
+[migration 058](../migrations/versions/058_asset_state_consolidation.py),
+[ADR-034](adr/034-asset-state-consolidation.md)). The consolidation worker
+(**off by default** — `consolidation_enabled`) fuses an asset's bound-tag reads
+over the look-back window into one **location** answer (a `read_count × recency`-weighted
+zone *vote* — `frame` + `zone_id`/`site_id` + position) and one **environment**
+answer (a `read_count × recency`-weighted *mean* of temperature/humidity). "Is" =
+latest row per asset; "was" = range query. Frames are mostly temporally exclusive
+(`reader`/`floor`/`geo`/`none`); a `frame` change between ticks emits a
+`Topic.ASSET_CUSTODY_CHANGED` custody event.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | UUID | PK (with `time`), default `gen_random_uuid()` | |
+| `time` | TIMESTAMPTZ | NOT NULL, hypertable partition key | Tick time (server-ingest frame). |
+| `tenant_id` | UUID | FK → tenants.id, NOT NULL | RLS-scoped (`tenant_isolation_asset_state_history`); always server-stamped. |
+| `asset_id` | UUID | NOT NULL, **no FK** | Hypertable — matches the ADR-013/014 no-FK convention (cf. `asset_positions`). |
+| `frame` | VARCHAR(16) | NOT NULL, `IN ('reader','floor','geo','none')` | Resolution frame of the voted location. `geo` with NULL `zone_id` = "in transit". |
+| `zone_id` | UUID | NULLABLE, **no FK** | Voted zone (`reader`/`floor`/geofence); NULL for a zoneless geo fix. |
+| `site_id` | UUID | NULLABLE, **no FK** | Owning site of the voted zone. |
+| `lat` / `lon` | DOUBLE PRECISION | NULLABLE | Weighted-centroid GPS fix (geo frame). |
+| `x` / `y` | DOUBLE PRECISION | NULLABLE | Weighted-centroid floor position (floor frame; Phase 2). |
+| `temperature_c` | DOUBLE PRECISION | NULLABLE | Weighted-mean temperature. |
+| `humidity_pct` | DOUBLE PRECISION | NULLABLE | Weighted-mean humidity. |
+| `sample_count` | INTEGER | NOT NULL, default 0 | Reads that fed this tick. |
+| `tag_count` | INTEGER | NOT NULL, default 0 | Distinct bound tags that contributed. |
+| `confidence` | DOUBLE PRECISION | NULLABLE, `NULL OR BETWEEN 0 AND 1` | Location share × mean freshness. |
+
+**Index:** `ix_asset_state_history_by_asset` (`tenant_id, asset_id, time DESC`).
+**RLS:** enabled — `tenant_id = current_setting('app.current_tenant_id')`.
+**API:** `GET /assets/{id}/state` (viewer read, latest snapshot — "is"), `GET /assets/{id}/state/history` (viewer read, newest-first, `since`/`limit` — "was") — Sprint 71.
+**Migration:** 058 (asset state consolidation).
 
 ---
 
