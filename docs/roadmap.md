@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 74 — read asset link · **shipped**; between sprints.
+**Current sprint:** 75 — excel column filters · branch `sprint-75/excel-column-filters` (full scope lands in §sprint-75 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1823,6 +1823,20 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 - **SLA config** in `tenants.fusion_strategy.sla` (temp/humidity envelope; absent = envelope-only).
 
 **Decisions to lock (design doc §7).** **A** legs auto-derived from custody (recommend yes); **B** ETA **deferred** to a later phase — v1 is **actuals-only** (no in-flight ETA without a declared destination); **C** SLA from a `fusion_strategy.sla` block. **Out of scope:** in-flight ETA + destination prediction, multi-leg shipment grouping, route/geocoding — all gated on a destination-declaration mechanism.
+
+---
+
+## Sprint 75 — Excel-like uniform column sort & filter (shipped)
+
+> **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#151](https://github.com/9owlsboston/TagPulse/pull/151) + UI [#112](https://github.com/9owlsboston/TagPulse-UI/pull/112)). Every client-side list table now carries the uniform Excel-like column dropdown (sort + type-correct filter); Tag Reads gains an EPC identifier editbox (`epc_q`) and Assets a Name-column editbox. Server checkbox facets + server sort + `asset_q` follow in Sprint 76. Full design in the [Sprint 75 design doc](design/sprint-75-excel-column-filters.md).
+
+**Why.** Sprint 70 built the wildcard column box but adoption stopped at 5 pages (often one column). WM operators asked for an **Excel-AutoFilter** experience: **every** column header with the same affordance — sort asc/desc plus a type-to-search editbox for free-text columns and a searchable checkbox list for small-set columns, *regardless of data type*.
+
+**Scope.**
+- **UI:** a reusable `excelColumn<T>()` helper that auto-selects the control by column nature — high-cardinality text → wildcard editbox; enum/small-set → searchable checkbox list (`filters` + `filterSearch`, values auto-derived from the dataset); numeric/date → sort + range — and always attaches a sorter. Rolled out across the **client-side** list tables (Rules, Users, Integrations, Delivery Log, Products, Stock Movements, Lots, Tag-data Mappings, Telemetry quarantine) + `filterSearch` on the hand-rolled enum filters (Categories, Labels).
+- **Backend:** `epc_q` on `GET /tag-reads` — wildcard `OR` across `tag_id`/`epc`/`epc_hex`/`tid`. UI puts the editbox on the EPC column; Assets reuses the existing `q` on the Name column header.
+
+**Out of scope → Sprint 76.** Server-side **checkbox facets** (distinct-value endpoint) for the low-cardinality columns of the two paginated tables (Scheme, Device, Antenna, Category, Status, Source); **server-side sort**; `asset_q` (bound-asset name search on Tag Reads); and the three other server-paginated tables (Transfers, Stock Levels, Reconciliation).
 
 ---
 

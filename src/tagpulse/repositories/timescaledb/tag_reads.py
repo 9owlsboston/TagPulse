@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.api.filters import LIKE_ESCAPE, wildcard_to_ilike
@@ -121,6 +121,7 @@ class TimescaleTagReadRepository:
         device_id: uuid.UUID | None = None,
         tag_id: str | None = None,
         tag_q: str | None = None,
+        epc_q: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
         has_location: bool | None = None,
@@ -142,6 +143,19 @@ class TimescaleTagReadRepository:
             # Sprint 70: wildcard search over ``tag_id`` (the EPC), bare term =
             # substring, anchored when a ``*``/``?`` is present, case-insensitive.
             stmt = stmt.where(TagReadModel.tag_id.ilike(tag_like, escape=LIKE_ESCAPE))
+        epc_like = wildcard_to_ilike(epc_q)
+        if epc_like is not None:
+            # Sprint 75: identifier wildcard search across the EPC family
+            # (``tag_id``/``epc``/``epc_hex``/``tid``) via OR; same grammar as
+            # ``tag_q``. A read matches if any identifier column matches.
+            stmt = stmt.where(
+                or_(
+                    TagReadModel.tag_id.ilike(epc_like, escape=LIKE_ESCAPE),
+                    TagReadModel.epc.ilike(epc_like, escape=LIKE_ESCAPE),
+                    TagReadModel.epc_hex.ilike(epc_like, escape=LIKE_ESCAPE),
+                    TagReadModel.tid.ilike(epc_like, escape=LIKE_ESCAPE),
+                )
+            )
         if start is not None:
             stmt = stmt.where(TagReadModel.timestamp >= start)
         if end is not None:

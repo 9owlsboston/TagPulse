@@ -31,6 +31,14 @@ async def query_tag_reads(
             "``tag_id`` for an exact match."
         ),
     ),
+    epc_q: str | None = Query(
+        default=None,
+        description=(
+            "Sprint 75 — wildcard search across the EPC identifier family "
+            "(``tag_id`` / ``epc`` / ``epc_hex`` / ``tid``) via OR; same glob "
+            "grammar as ``tag_q``. A read matches if any identifier matches."
+        ),
+    ),
     start: datetime | None = Query(default=None),
     end: datetime | None = Query(default=None),
     has_location: bool | None = Query(
@@ -52,6 +60,7 @@ async def query_tag_reads(
         device_id=device_id,
         tag_id=tag_id,
         tag_q=tag_q,
+        epc_q=epc_q,
         start=start,
         end=end,
         has_location=has_location,
