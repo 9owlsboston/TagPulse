@@ -18,6 +18,8 @@ Tags: `[backend]`, `[ui]`, `[docs]`, `[ops]`, `[idea]`.
 
 ## Open items
 
+- [2026-06-21] **Sprint 77 follow-up — Assets table server checkbox facets + sort (UI).** The backend shipped in Sprint 76 (`GET /assets` multi-`statuses` + `sort`/`order`); wire the UI: Status searchable checkbox (→ `statuses`), Category checkbox (→ `category_ids`), and server sort. Care: AssetList has a **dual fetch path** (positional `AssetsService.listAssetsAssetsGet` + raw `request()` fallback for labels/category_ids) — both need the new params, and the positional call is a known landmine. [ui]
+- [2026-06-21] **Sprint 77 follow-up — Excel column filters on the other 3 server-paginated tables.** Transfers, Stock Levels, Reconciliation still have no column filters. They need server-sort + facet params like Tag Reads/Assets got. [backend][ui]
 - [2026-06-21] **Sprint 72 follow-up — Journey map highlight on leg select.** The leg cross-filter highlights the env chart but not the map trail; pan/highlight the map to the selected leg's window. [ui]
 - [2026-06-20] **Floor-position estimator EPC→asset fusion: match `epc_hex` too (ADR-033 follow-up).** [`asset_fusion.py`](src/tagpulse/services/asset_fusion.py) / `floor_position_source.py` still resolve bindings by the decoded URI (`tr.epc`) only, so a **hex** `epc` binding won't fuse there. Live read→binding surfaces already match both (ADR-033, migration 057); the estimator is gated **off** by default (`position_estimator_enabled=false`), so no live impact. To close: carry `tr.epc_hex` on `RawRead`, look up bindings by both forms in `fuse`/`list_active_by_values`, map either back to the asset. [backend]
 

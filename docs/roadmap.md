@@ -1826,6 +1826,20 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 76 — Server facets, sort & `asset_q` (shipped)
+
+> **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#153](https://github.com/9owlsboston/TagPulse/pull/153) + UI [#113](https://github.com/9owlsboston/TagPulse-UI/pull/113)). The server side of the Excel-like story: Tag Reads gets `asset_q`, server sort, multi-select scheme/antenna filters + a `/tag-reads/facets` endpoint (UI: asset editbox + Scheme/Antenna checkbox facets); Assets gets multi-`statuses` + server sort (backend only — UI consumption is a Sprint 77 follow-up). Full design in the [Sprint 76 design doc](design/sprint-76-server-facets.md).
+
+**Why.** Sprint 75 made the *client* tables Excel-like but the two server-paginated essential tables (Tag Reads, Assets) could only offer editbox/sort tiers — checkbox facets and whole-dataset sort need server support.
+
+**Scope.**
+- **Backend:** `asset_q` (bound-asset-name wildcard via correlated `EXISTS`), server `sort`/`order` (whitelisted), multi-select `epc_schemes`/`reader_antennas`, `GET /tag-reads/facets` (distinct scheme/antenna), Assets multi-`statuses` + server sort. Additive, no migration.
+- **UI (Tag Reads):** an **Asset** editbox (filter reads by bound asset name) + **Scheme/Antenna** searchable checkbox facets sourced from `/tag-reads/facets`.
+
+**Out of scope → Sprint 77.** The **Assets** UI consumption (Status/Category checkboxes + server sort) — backend is live and tested; deferred because the Assets list has a dual fetch path (positional generated client + raw `request()`) risky to rewire late. Also the three other server-paginated tables (Transfers, Stock Levels, Reconciliation), and `pg_trgm` indexes (Sprint 70 O3).
+
+---
+
 ## Sprint 75 — Excel-like uniform column sort & filter (shipped)
 
 > **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#151](https://github.com/9owlsboston/TagPulse/pull/151) + UI [#112](https://github.com/9owlsboston/TagPulse-UI/pull/112)). Every client-side list table now carries the uniform Excel-like column dropdown (sort + type-correct filter); Tag Reads gains an EPC identifier editbox (`epc_q`) and Assets a Name-column editbox. Server checkbox facets + server sort + `asset_q` follow in Sprint 76. Full design in the [Sprint 75 design doc](design/sprint-75-excel-column-filters.md).

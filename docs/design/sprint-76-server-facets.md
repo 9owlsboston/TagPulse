@@ -1,6 +1,14 @@
 # Sprint 76 — Server facets, sort & `asset_q`
 
-- Status: **In progress** (2026-06-21). Backend [#153](https://github.com/9owlsboston/TagPulse/pull/153) + UI [#113](https://github.com/9owlsboston/TagPulse-UI/pull/113).
+- Status: **In progress → shipping** (2026-06-21). Backend [#153](https://github.com/9owlsboston/TagPulse/pull/153) + UI [#113](https://github.com/9owlsboston/TagPulse-UI/pull/113).
+  At ship: the **backend** ships in full (asset_q, server sort, facets endpoint,
+  multi-select `epc_schemes`/`reader_antennas`, assets multi-`statuses` + sort).
+  The **UI** consumes the Tag Reads side fully (asset_q editbox + Scheme/Antenna
+  checkbox facets). The **Assets** UI consumption (Status checkbox, Category
+  checkbox, server sort) is deferred to a **Sprint 77** follow-up because the
+  Assets list has a dual fetch path (positional generated client + raw
+  `request()`) that is risky to rewire late; the backend params are live and
+  tested, so the follow-up is UI-only.
 - Sibling of [Sprint 75 (Excel-like columns)](sprint-75-excel-column-filters.md):
   Sprint 75 delivered the uniform helper + editbox/sort/range on client tables;
   Sprint 76 lights up the **server** side for the two essential paginated tables
@@ -39,6 +47,8 @@ can be filtered by the **bound asset name**.
   **Category** checkbox sourced from the categories list (server `category_ids`).
 
 ## Out of scope
+- **Assets UI consumption** (Status/Category checkboxes + server sort) — backend
+  is shipped; the UI wiring is a **Sprint 77** follow-up (dual fetch path risk).
 - Assets **Location/source** column facet — it is derived from current-location
   data, not an `assets` row column; stays client-side for now.
 - The three other server-paginated tables (Transfers, Stock Levels,
