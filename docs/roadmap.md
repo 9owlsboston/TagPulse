@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 72 — asset state legs · branch `sprint-72/asset-state-legs` (full scope lands in §sprint-72 during the sprint).
+**Current sprint:** none active — Sprint 72 (asset state consolidation Phase 2: transit legs) shipped 2026-06-21 (backend #144 + UI #109). See §sprint-72.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1807,9 +1807,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 72 — Asset state consolidation (Phase 2: transit legs)
+## Sprint 72 — Asset state consolidation (Phase 2: transit legs, shipped)
 
-> **Status (2026-06-20, in progress).** Kicked off cross-repo (backend [#144](https://github.com/9owlsboston/TagPulse/pull/144) + UI [#109](https://github.com/9owlsboston/TagPulse-UI/pull/109)). Full design in the [Sprint 72 design doc](design/sprint-72-asset-state-legs.md) (extends [ADR-034](adr/034-asset-state-consolidation.md)).
+> **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#144](https://github.com/9owlsboston/TagPulse/pull/144) + UI [#109](https://github.com/9owlsboston/TagPulse-UI/pull/109)) and **validated live on dev**: a `reader → geo → reader` read sequence on `demo-wm-dc` opened + closed a real leg (Shipping Dock → Cold Storage) with the temp/humidity envelope computed from `asset_state_history`, served by `GET /assets/{id}/legs` + `open_leg` on `/state`. Gated **off** by default. Full design in the [Sprint 72 design doc](design/sprint-72-asset-state-legs.md) (extends [ADR-034](adr/034-asset-state-consolidation.md)). **Deferred:** in-flight ETA + destination declaration (v1 is actuals-only); Journey map highlight on leg-select.
 
 **Why.** Phase 1 (Sprint 71) gives each asset a fused **frame** + zone + environment per tick and emits a **custody event** on frame change. Phase 2 turns that custody timeline into explicit **transit legs** so the Assets page answers: which leg is the lot on, how long has it been in transit, and **was the cold chain held for the whole leg** (leg-level SLA). The milk lot: `Origin DC → leg → SuperMart DC → leg → store`.
 
