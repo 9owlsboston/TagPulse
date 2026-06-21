@@ -203,3 +203,24 @@ Phase 1 config column — no new tenant column.
 In-flight **ETA** + destination prediction; multi-leg **shipment** grouping
 (a shipment = an ordered set of legs); route/distance/geocoding; per-leg
 carrier attribution. All gated on the destination-declaration decision (B).
+
+## 9. Known follow-ups (v1 simplifications)
+
+- **SLA threshold band not drawn on the env chart.** The Journey environment
+  chart shades *breached* legs (from each leg's `sla_breached`) but does **not**
+  draw the exact min/max envelope lines — the bounds live in
+  `tenants.fusion_strategy.sla` and are not exposed by any read endpoint, so the
+  client can't render them against the current contract. To close: surface the
+  resolved SLA (e.g. an `sla` block on `GET /assets/{id}/state`, or a tenant-config
+  read) and add a banded `ReferenceArea`/`ReferenceLine` at `temp_min_c`/`temp_max_c`
+  (+ `humidity_max`). Until then the chart conveys breach via leg shading only. `[backend][ui]`
+- **Leg selection highlights the chart, not the map.** The Journey cross-filter
+  wires the timeline ↔ env-chart (highlight the selected leg's window). Panning /
+  highlighting the **map** trail to that window is deferred. `[ui]`
+- **`asset_legs.last_lat`/`last_lon` unpopulated in v1.** The live in-transit fix
+  is served from `/state` (the geo snapshot's lat/lon); the leg columns exist for
+  a future per-tick update of the open leg's last fix. `[backend]`
+- **Stale-open safety net leaves a thin row.** A second `facility → geo` without an
+  intervening arrival closes the prior open leg with `arrived_at` = the new
+  departure and no `dest_*`/SLA (rare; the partial-unique index requires it). Such
+  rows are identifiable by `arrived_at IS NOT NULL AND dest_zone_id IS NULL`. `[backend]`
