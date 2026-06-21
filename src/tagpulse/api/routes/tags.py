@@ -1431,18 +1431,29 @@ async def create_tag_transfer(
 async def list_tag_transfers(
     direction: Annotated[str | None, Query(pattern="^(in|out)$")] = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
+    statuses: Annotated[list[str] | None, Query()] = None,
+    epc_q: Annotated[str | None, Query()] = None,
+    sort: Annotated[str | None, Query()] = None,
+    order: Annotated[str, Query(pattern="^(asc|desc)$")] = "desc",
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     tenant: Tenant = Depends(get_current_tenant),
     session: AsyncSession = Depends(get_session),
 ) -> list[TagTransferResponse]:
-    return await _transfer_repo(session).list_for_tenant(
-        tenant.id,
-        direction=direction,
-        status=status_filter,
-        limit=limit,
-        offset=offset,
-    )
+    try:
+        return await _transfer_repo(session).list_for_tenant(
+            tenant.id,
+            direction=direction,
+            status=status_filter,
+            statuses=statuses,
+            epc_q=epc_q,
+            sort=sort,
+            order=order,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/tag-transfers/{transfer_id}", response_model=TagTransferResponse)
@@ -1495,6 +1506,7 @@ async def get_reconciliation_view(
     ),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    q: Annotated[str | None, Query()] = None,
     format: Annotated[str | None, Query(pattern="^(json|csv)$")] = None,
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
     session: AsyncSession = Depends(get_session),
@@ -1519,6 +1531,7 @@ async def get_reconciliation_view(
                 days=days,
                 limit=limit,
                 offset=offset,
+                q=q,
             )
         )
     elif view == "unregistered-reading":
@@ -1529,6 +1542,7 @@ async def get_reconciliation_view(
                 days=days,
                 limit=limit,
                 offset=offset,
+                q=q,
             )
         )
     else:  # "bindings-on-retired" — exhaustive per Literal
@@ -1538,6 +1552,7 @@ async def get_reconciliation_view(
                 user.tenant_id,
                 limit=limit,
                 offset=offset,
+                q=q,
             )
         )
 
