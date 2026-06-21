@@ -16,6 +16,8 @@
 - [Sites & Zones](#sites--zones)
 - [Map](#map)
 - [Inventory](#inventory)
+- [Tag Transfers](#tag-transfers)
+- [Tag Reconciliation](#tag-reconciliation)
 - [Labels](#labels)
 - [Configurable UI & Preferences](#configurable-ui--preferences)
 - [Tenant Settings](#tenant-settings)
@@ -1014,6 +1016,66 @@ Without mappings, ingestion still works — the system just treats the tag as op
 ### Case/pallet containment (Sprint 15b)
 
 Use the `parent_stock_item_id` field on `POST /stock-items` (or `PATCH`) to record a case packed into a pallet, or a pallet loaded onto a trailer. The chain is recursive — a pallet's manifest will traverse all the way down to individual cases. The **Map** page's manifest pop-out (see [Map](#map) above) renders this tree.
+
+---
+
+## Tag Transfers
+
+Cross-tenant **transfers of EPC ownership** (ADR-028 §Transfers) — used when a tagged item physically and legally moves from one TagPulse tenant to another (e.g. a returnable container handed from a supplier to a retailer). Find it in the sidebar under **Tags → Tag Transfers** (`/tag-transfers`); visible to viewer and up, initiable by editor and up.
+
+### Viewing transfers
+
+A toolbar **direction** toggle switches between:
+
+- **Outbound** — transfers **this** tenant initiated (you are the sender).
+- **Inbound** — transfers other tenants requested **to** this tenant (you are the receiver).
+
+A **status** filter (toolbar) narrows to `requested` / `completed` / `failed`.
+
+**Columns:** EPC, Status, the counterparty tenant (**To tenant** outbound / **From tenant** inbound), Request ID, Requested, Completed, Failure reason.
+
+Per-column controls (Sprint 77, see [Filtering & sorting lists](#filtering--sorting-lists)): the **EPC** column has a wildcard search box, and **Status** / **Requested** / **Completed** are sortable server-side.
+
+### Initiating a transfer
+
+Editors and admins see a **New transfer** button. In the dialog:
+
+1. **EPCs** — paste one or more EPC hexes (one per line, or comma/space separated).
+2. **Receiving tenant slug** — the destination tenant's slug.
+
+All EPCs in one request are queued together in `requested` status, sharing a single **Request ID**.
+
+### Lifecycle
+
+Rows are created in `requested`. The **receiving-tenant acknowledgement** flow — which flips the row to `completed` and sets the sender's local tag to `transferred_out` (or records a `failed` row with a failure reason) — lands in a later phase; until then outbound rows stay `requested`. The view polls on a modest cadence so a counterparty-driven flip surfaces without a manual refresh.
+
+---
+
+## Tag Reconciliation
+
+**Read-only exception views** over the tag registry (ADR-028 §Governance #5) — they surface discrepancies the registrar worker can *detect* but cannot self-heal, so an operator can act on them. Find it under **Tags → Tag Reconciliation** (`/tags/reconciliation`); viewer role is sufficient (it's a monitoring concern, not a write concern). Three views, switchable from the page:
+
+### Registered but unread
+
+Tags that **should** be reading but aren't — `status ∈ {registered, active}` and either never seen or `last_seen` older than the lookback window. Catches reels that were registered but never deployed, or readers that have gone dark.
+
+**Columns:** EPC, Status, Source, First seen, Last seen, Registered. Use the **lookback (days)** control to set the "should have been seen by now" cutoff.
+
+### Unregistered but reading
+
+EPCs the **readers are seeing** at the edge that are **absent from your registry** (the registrar classified the read `tag_known = FALSE`). Catches mislabelled or foreign tags entering your space.
+
+**Columns:** Tag ID, Last seen, Read count. The lookback bounds the read-scan window.
+
+### Bindings on retired tags
+
+Stock items still **bound by EPC to a tag in a terminal status** (`retired` / `defective` / `transferred_out`) — an inventory row pointing at a tag that's no longer live. (The lookback control does not apply to this view.)
+
+**Columns:** Stock item, EPC, Stock state, Tag status, Tag updated.
+
+### Searching & exporting
+
+Each view's identifier column (**EPC** or **Tag ID**) has a wildcard search box (Sprint 77 — see [Filtering & sorting lists](#filtering--sorting-lists)); the filter is applied server-side and is honoured by the per-view **Export CSV** button.
 
 ---
 
