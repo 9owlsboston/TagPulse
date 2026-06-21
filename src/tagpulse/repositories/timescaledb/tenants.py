@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import uuid
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.models.database import TenantModel
+from tagpulse.services.consolidation import FusionStrategy, SlaConfig
 
 
 class TimescaleTenantRepository:
@@ -48,3 +50,20 @@ class TimescaleTenantRepository:
         if kinds is None:
             return ["device"]
         return list(kinds)
+
+    async def get_fusion_sla(self, tenant_id: uuid.UUID) -> SlaConfig | None:
+        """Return the tenant's resolved cold-chain SLA (``fusion_strategy.sla``).
+
+        ``None`` when the tenant has no `fusion_strategy`, no `sla` block, or an
+        invalid config (Sprint 72, ADR-034 Phase 2).
+        """
+
+        stmt = select(TenantModel.fusion_strategy).where(TenantModel.id == tenant_id)
+        raw = (await self._session.execute(stmt)).scalar_one_or_none()
+        if not raw:
+            return None
+        try:
+            sla: SlaConfig | None = FusionStrategy.model_validate(raw).sla
+        except ValidationError:
+            return None
+        return sla

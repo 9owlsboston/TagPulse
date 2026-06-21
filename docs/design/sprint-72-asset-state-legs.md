@@ -206,14 +206,6 @@ carrier attribution. All gated on the destination-declaration decision (B).
 
 ## 9. Known follow-ups (v1 simplifications)
 
-- **SLA threshold band not drawn on the env chart.** The Journey environment
-  chart shades *breached* legs (from each leg's `sla_breached`) but does **not**
-  draw the exact min/max envelope lines — the bounds live in
-  `tenants.fusion_strategy.sla` and are not exposed by any read endpoint, so the
-  client can't render them against the current contract. To close: surface the
-  resolved SLA (e.g. an `sla` block on `GET /assets/{id}/state`, or a tenant-config
-  read) and add a banded `ReferenceArea`/`ReferenceLine` at `temp_min_c`/`temp_max_c`
-  (+ `humidity_max`). Until then the chart conveys breach via leg shading only. `[backend][ui]`
 - **Leg selection highlights the chart, not the map.** The Journey cross-filter
   wires the timeline ↔ env-chart (highlight the selected leg's window). Panning /
   highlighting the **map** trail to that window is deferred. `[ui]`

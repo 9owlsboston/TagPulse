@@ -35,6 +35,7 @@ from tagpulse.models.schemas import (
     FloorPositionResponse,
     ManifestEntry,
     ManifestResponse,
+    SlaEnvelope,
 )
 from tagpulse.repositories.timescaledb.asset_legs import (
     TimescaleAssetLegRepository,
@@ -173,12 +174,18 @@ class AssetService:
         if self._asset_state is None:
             return None
         snapshot = await self._asset_state.latest(tenant_id, asset_id)
-        if snapshot is None or self._asset_legs is None:
+        if snapshot is None:
             return snapshot
-        open_leg = await self._asset_legs.open_leg(tenant_id, asset_id)
-        if open_leg is None:
-            return snapshot
-        return snapshot.model_copy(update={"open_leg": open_leg})
+        updates: dict[str, object] = {}
+        if self._asset_legs is not None:
+            open_leg = await self._asset_legs.open_leg(tenant_id, asset_id)
+            if open_leg is not None:
+                updates["open_leg"] = open_leg
+        if self._tenant_repo is not None:
+            sla = await self._tenant_repo.get_fusion_sla(tenant_id)
+            if sla is not None:
+                updates["sla"] = SlaEnvelope.model_validate(sla)
+        return snapshot.model_copy(update=updates) if updates else snapshot
 
     async def get_asset_state_history(
         self,

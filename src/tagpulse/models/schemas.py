@@ -1046,6 +1046,22 @@ class AssetCurrentLocation(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SlaEnvelope(BaseModel):
+    """The resolved per-tenant cold-chain SLA envelope (Sprint 72).
+
+    Mirrors `tenants.fusion_strategy.sla`; attached to `GET /assets/{id}/state`
+    so the Journey environment chart can draw the target band. Each bound is
+    optional (unbounded on that side).
+    """
+
+    temp_min_c: float | None = None
+    temp_max_c: float | None = None
+    humidity_max: float | None = None
+    excursion_tolerance_s: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class AssetLegResponse(BaseModel):
     """One transit leg — the ``geo``-frame interval between two facilities (Sprint 72).
 
@@ -1106,6 +1122,9 @@ class AssetStateResponse(BaseModel):
     # Sprint 72 (ADR-034 Phase 2): the asset's currently-open transit leg, when
     # it is in transit (frame ``geo``). Only populated on ``GET /assets/{id}/state``.
     open_leg: AssetLegResponse | None = None
+    # Sprint 72: the resolved per-tenant cold-chain SLA envelope (for the Journey
+    # chart band). Only populated on ``GET /assets/{id}/state``; ``None`` if unset.
+    sla: SlaEnvelope | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

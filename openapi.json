@@ -1021,6 +1021,16 @@
             ],
             "title": "Site Id"
           },
+          "sla": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SlaEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "tag_count": {
             "default": 0,
             "title": "Tag Count",
@@ -5758,6 +5768,51 @@
           }
         },
         "title": "SiteUpdate",
+        "type": "object"
+      },
+      "SlaEnvelope": {
+        "description": "The resolved per-tenant cold-chain SLA envelope (Sprint 72).\n\nMirrors `tenants.fusion_strategy.sla`; attached to `GET /assets/{id}/state`\nso the Journey environment chart can draw the target band. Each bound is\noptional (unbounded on that side).",
+        "properties": {
+          "excursion_tolerance_s": {
+            "default": 0,
+            "title": "Excursion Tolerance S",
+            "type": "integer"
+          },
+          "humidity_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Humidity Max"
+          },
+          "temp_max_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Max C"
+          },
+          "temp_min_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Min C"
+          }
+        },
+        "title": "SlaEnvelope",
         "type": "object"
       },
       "SortSpec": {
