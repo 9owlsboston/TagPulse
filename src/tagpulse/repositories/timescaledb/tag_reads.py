@@ -137,6 +137,8 @@ class TimescaleTagReadRepository:
         end: datetime | None = None,
         has_location: bool | None = None,
         epc_scheme: str | None = None,
+        epc_schemes: list[str] | None = None,
+        reader_antennas: list[int] | None = None,
         sort: str | None = None,
         order: str = "desc",
         limit: int = 100,
@@ -202,6 +204,12 @@ class TimescaleTagReadRepository:
             stmt = stmt.where(TagReadModel.latitude.is_(None))
         if epc_scheme is not None:
             stmt = stmt.where(TagReadModel.epc_scheme == epc_scheme)
+        if epc_schemes:
+            # Sprint 76: multi-select scheme (the column checkbox list, backed by
+            # ``GET /tag-reads/facets``). Combines with single ``epc_scheme`` via AND.
+            stmt = stmt.where(TagReadModel.epc_scheme.in_(epc_schemes))
+        if reader_antennas:
+            stmt = stmt.where(TagReadModel.reader_antenna.in_(reader_antennas))
         # Sprint 76: server-side sort over a whitelist; default timestamp desc.
         sort_col = TAG_READ_SORT_COLUMNS.get(sort or "timestamp")
         if sort_col is None:

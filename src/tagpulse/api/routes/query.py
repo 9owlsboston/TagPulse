@@ -49,6 +49,17 @@ async def query_tag_reads(
         default=None,
         description="Filter by decoded EPC scheme (e.g. 'sgtin-96', 'sscc-96', 'raw').",
     ),
+    epc_schemes: list[str] | None = Query(
+        default=None,
+        description=(
+            "Sprint 76 — multi-select EPC scheme (column checkbox list, values "
+            "from ``GET /tag-reads/facets``). Repeated ``?epc_schemes=``."
+        ),
+    ),
+    reader_antennas: list[int] | None = Query(
+        default=None,
+        description="Sprint 76 — multi-select reader antenna. Repeated ``?reader_antennas=``.",
+    ),
     asset_q: str | None = Query(
         default=None,
         description=(
@@ -84,6 +95,8 @@ async def query_tag_reads(
             end=end,
             has_location=has_location,
             epc_scheme=epc_scheme,
+            epc_schemes=epc_schemes,
+            reader_antennas=reader_antennas,
             sort=sort,
             order=order,
             limit=limit,

@@ -16174,6 +16174,48 @@
             }
           },
           {
+            "description": "Sprint 76 \u2014 multi-select EPC scheme (column checkbox list, values from ``GET /tag-reads/facets``). Repeated ``?epc_schemes=``.",
+            "in": "query",
+            "name": "epc_schemes",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 76 \u2014 multi-select EPC scheme (column checkbox list, values from ``GET /tag-reads/facets``). Repeated ``?epc_schemes=``.",
+              "title": "Epc Schemes"
+            }
+          },
+          {
+            "description": "Sprint 76 \u2014 multi-select reader antenna. Repeated ``?reader_antennas=``.",
+            "in": "query",
+            "name": "reader_antennas",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sprint 76 \u2014 multi-select reader antenna. Repeated ``?reader_antennas=``.",
+              "title": "Reader Antennas"
+            }
+          },
+          {
             "description": "Sprint 76 \u2014 wildcard search over the *bound asset name*. Matches reads whose tag is actively bound to an asset whose name matches the glob; same grammar as ``tag_q``.",
             "in": "query",
             "name": "asset_q",

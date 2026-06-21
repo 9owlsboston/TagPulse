@@ -50,6 +50,8 @@ class TagReadRepository(Protocol):
         end: datetime | None = None,
         has_location: bool | None = None,
         epc_scheme: str | None = None,
+        epc_schemes: list[str] | None = None,
+        reader_antennas: list[int] | None = None,
         sort: str | None = None,
         order: str = "desc",
         limit: int = 100,

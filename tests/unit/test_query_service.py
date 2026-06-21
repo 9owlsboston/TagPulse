@@ -57,6 +57,8 @@ class FakeTagReadRepo:
         end: datetime | None = None,
         has_location: bool | None = None,
         epc_scheme: str | None = None,
+        epc_schemes: list[str] | None = None,
+        reader_antennas: list[int] | None = None,
         sort: str | None = None,
         order: str = "desc",
         limit: int = 100,
@@ -89,6 +91,10 @@ class FakeTagReadRepo:
             results = [r for r in results if r.latitude is None]
         if epc_scheme is not None:
             results = [r for r in results if r.epc_scheme == epc_scheme]
+        if epc_schemes:
+            results = [r for r in results if r.epc_scheme in epc_schemes]
+        if reader_antennas:
+            results = [r for r in results if r.reader_antenna in reader_antennas]
         key_attr = sort or "timestamp"
         results.sort(key=lambda r: getattr(r, key_attr) or 0, reverse=(order != "asc"))
         return results[offset : offset + limit]
