@@ -113,6 +113,18 @@ The API key (format: `tp_{slug}_{random}`) is returned **once** — store it sec
 
 The sidebar on the left provides access to all sections: Dashboard, Devices, Telemetry, Telemetry Models, Rules, Alerts, Integrations, and Usage.
 
+### Filtering & sorting lists
+
+Every list table shares the same **Excel-style** column controls (Sprints 70 / 75 / 76, [ADR-030](adr/030-list-page-column-filters.md)):
+
+- **Sort** — click a column header to sort it ascending / descending.
+- **Filter** — click the filter icon (magnifier / funnel) in a column header. The control matches the column's data type:
+  - **Text / identifier columns** → a **type-to-search box** with wildcard globbing. A bare term is a *substring* match (`reader` finds `My Reader 03`); `*` and `?` anchor the match (`reader-*`, `*-DC`, `r?ader`). Always case-insensitive.
+  - **Small-set columns** (status, type, scheme, …) → a **searchable checkbox list** of the actual values.
+  - **Number / date columns** → sort, plus a min/max range where offered.
+
+Filters on different columns combine with **AND**. On the large paginated tables (**Tag Reads**, **Assets**) filtering and sorting run **server-side**, so they match the whole dataset — not just the page you're viewing.
+
 ### User Roles
 
 | Role     | Permissions                                      |
@@ -406,7 +418,7 @@ The `metadata` field is freeform JSON, but TagPulse recommends the following com
 
 The detail page has three tabs:
 
-**Overview** — name, type, status, connection state, firmware, metadata (as formatted JSON). Admins see a **Decommission** button to retire a device.
+**Overview** — name, type, status, connection state, firmware, metadata (as formatted JSON). Admins see a **Decommission** button to retire a device. A **Recent Reads** table (Sprint 74) lists the reader's latest reads — time, tag, the bound **Asset** (linked to the asset detail when the tag is bound), antenna, and signal — so you can jump from an active reader straight to what it just read.
 
 **Telemetry** — a line chart of signal strength for the device's last 100 reads.
 
@@ -438,7 +450,9 @@ Click **Explore** (from the Telemetry page) for detailed data access.
 - **Limit** — number of results (1–1000, default 100).
 
 **Views:**
-- **Table** — columns: Tag ID, EPC, Scheme, Device, Timestamp, Signal Strength, **Antenna**, **Temp (°C)**, **Humidity (%)**, Latitude, Longitude. The **Antenna** column is the reading antenna port; **Temp/Humidity** are read from the read's `sensor_data` (resolving either the real-device `temperature_c`/`humidity_pct` keys or the simulator `temperature`/`humidity` keys), showing `—` when absent. The **TID**, **User Memory**, and **EPC (hex)** columns are plumbing the typical operator doesn't need, so they're hidden by default behind the **Advanced columns** toggle in the toolbar — tick it to reveal them. (The **EPC (hex)** column, added Sprint 63, shows the raw hex EPC for hex-preferring tenants — distinct from the decoded **EPC** URN column; a tenant default can promote it ahead of **EPC**.) (All columns, including Antenna/Temp/Humidity, are in the CSV export regardless of the toggle.) Sortable and paginated (100 per page). Which columns are advanced/hidden/ordered and the default sort are configurable per-tenant — see [Configurable UI & Preferences](#configurable-ui--preferences).
+- **Table** — columns: Tag ID, **Asset**, EPC, Scheme, Device, Timestamp, Signal Strength, **Antenna**, **Temp (°C)**, **Humidity (%)**, Latitude, Longitude. The **Asset** column (Sprint 74) links to the asset currently bound to the read's tag, or shows `—` when the tag isn't bound. The **Antenna** column is the reading antenna port; **Temp/Humidity** are read from the read's `sensor_data` (resolving either the real-device `temperature_c`/`humidity_pct` keys or the simulator `temperature`/`humidity` keys), showing `—` when absent. The **TID**, **User Memory**, and **EPC (hex)** columns are plumbing the typical operator doesn't need, so they're hidden by default behind the **Advanced columns** toggle in the toolbar — tick it to reveal them. (The **EPC (hex)** column, added Sprint 63, shows the raw hex EPC for hex-preferring tenants — distinct from the decoded **EPC** URN column; a tenant default can promote it ahead of **EPC**.) (All columns, including Antenna/Temp/Humidity, are in the CSV export regardless of the toggle.) Sortable and paginated (100 per page). Which columns are advanced/hidden/ordered and the default sort are configurable per-tenant — see [Configurable UI & Preferences](#configurable-ui--preferences).
+
+  Beyond the toolbar filters above, each column header has its own filter (see [Filtering & sorting lists](#filtering--sorting-lists)): a wildcard search box on **Tag ID**, on **EPC** (matches across the EPC / EPC-hex / TID identifier family), and on **Asset** (by bound asset name); and a searchable checkbox list on **Scheme** and **Antenna**. All run server-side, so they match every read in range, not just the loaded page.
 - **Chart** — line chart of signal strength over time.
 
 Toggle between views using the button in the toolbar.
@@ -791,7 +805,7 @@ An **asset** is a real-world thing you want to track — a forklift, a returnabl
 
 ### Asset list
 
-**Columns:** Name, Type, External Ref, Status (`active` / `decommissioned`), Updated. Sort by name; type-ahead search filters in place.
+**Columns:** Name, Type, External Ref, Status (`active` / `decommissioned`), Updated. Sort by any column; the toolbar search box and the **Name** column's own search box both filter by name / external ref / tag (server-side wildcard). See [Filtering & sorting lists](#filtering--sorting-lists).
 
 **Advanced columns.** Low-value plumbing columns (e.g. the registration date) are hidden by default behind the **Advanced columns** toggle in the toolbar — tick it to reveal them. Which columns are advanced/hidden/ordered (and the default sort) can be set per-tenant via the configurable-UI config (see [Configurable UI & Preferences](#configurable-ui--preferences) and [ADR-032](adr/032-configurable-ui.md)).
 
