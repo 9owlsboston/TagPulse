@@ -982,7 +982,7 @@ A pivot table: rows are **Product**, columns are **Zones** plus a **Total** colu
 
 - The leftmost zone column is `unassigned` — items that haven't been seen in any zone yet.
 - **Export CSV** in the toolbar dumps the current pivot.
-- Filter by product or zone via the toolbar selectors.
+- Filter by product or zone via the toolbar selectors. The **Product** column header also has its own wildcard search box, and the zone / **Total** count columns are sortable (Sprint 77) — see [Filtering & sorting lists](#filtering--sorting-lists).
 
 The **Map** page's stock-density overlay uses the same data.
 
