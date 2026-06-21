@@ -16,14 +16,19 @@
 - [Sites & Zones](#sites--zones)
 - [Map](#map)
 - [Inventory](#inventory)
+- [Tags](#tags)
 - [Tag Transfers](#tag-transfers)
 - [Tag Reconciliation](#tag-reconciliation)
+- [Categories](#categories)
 - [Labels](#labels)
 - [Configurable UI & Preferences](#configurable-ui--preferences)
 - [Tenant Settings](#tenant-settings)
 - [Usage & Quotas](#usage--quotas)
 - [User Management](#user-management)
 - [Audit Log](#audit-log)
+- [Branding](#branding)
+- [Dead Letters](#dead-letters)
+- [Pending Bulk Operations](#pending-bulk-operations)
 
 ---
 
@@ -1017,6 +1022,45 @@ Without mappings, ingestion still works — the system just treats the tag as op
 
 Use the `parent_stock_item_id` field on `POST /stock-items` (or `PATCH`) to record a case packed into a pallet, or a pallet loaded onto a trailer. The chain is recursive — a pallet's manifest will traverse all the way down to individual cases. The **Map** page's manifest pop-out (see [Map](#map) above) renders this tree.
 
+### Inventory CSV Import (admin)
+
+Bulk-load inventory from CSV under **Data Management → Inventory CSV Import** (`/inventory/csv-import`); admin only. Three tabs — **Products**, **Lots**, and **Stock Items** — each accepts a CSV matching that entity's columns, previews the parsed rows, then imports them in one pass. Use it to seed a catalog or migrate from another system. (For ongoing *tag* registration use [Tag Import](#tag-import) instead — this importer is for the inventory catalog, not the tag registry.)
+
+---
+
+## Tags
+
+The **tag registry** is the authoritative list of every RFID tag (EPC) your tenant knows about — its identity, lifecycle status, and what it's bound to. Find it under **Tags → Tags** (`/tags`); viewer and up.
+
+### Tag list
+
+**Columns:** EPC (hex), Status, Source, First seen, Last seen — plus the bound asset / stock item (when bound) and any batch label.
+
+**Status lifecycle:** a tag moves `registered` → `active` (on first read) and can reach the terminal states `retired` / `defective` / `transferred_out`. Transitions are validated, so an illegal jump is refused.
+
+**Source** records how the tag entered the registry — e.g. `csv_import`, `backfill`, `api`.
+
+**Filtering** (toolbar + column headers — see [Filtering & sorting lists](#filtering--sorting-lists)):
+
+- **Status** — all / registered / active / retired / …
+- **EPC prefix** — match a manufacturer / GS1 prefix.
+- **Bound** — all / bound / unbound (does the tag point at an asset or stock item?).
+- The **EPC (hex)** column header also has a wildcard search box.
+
+### Tag detail
+
+Click a row (or open `/tags/{epc_hex}`) for the tag's detail page: its current status plus the full **status-transition history** (from the audit log), an inline status change (admin-only, respecting the legal-transition rules), its current **binding** (asset / stock item), and a **label editor**. The reserved `batch.*` label keys are read-only — they're managed by Tag Import.
+
+### Tag Import
+
+Bulk-register tags from a CSV. Under **Tags → Tag Import** (`/tags/import`); editor and up. A three-step wizard:
+
+1. **Upload** — pick a CSV whose only required column is `epc_hex` (uppercase hex). Up to 10,000 rows per import.
+2. **Preview** — the server validates every row and shows a per-row table (Row #, EPC, Error) so you fix problems *before* committing — nothing is written yet.
+3. **Commit** — register the valid rows. Already-existing EPCs are skipped (idempotent), never duplicated.
+
+An import larger than the tenant's two-person threshold is held for a second admin's approval — see [Pending Bulk Operations](#pending-bulk-operations).
+
 ---
 
 ## Tag Transfers
@@ -1076,6 +1120,18 @@ Stock items still **bound by EPC to a tag in a terminal status** (`retired` / `d
 ### Searching & exporting
 
 Each view's identifier column (**EPC** or **Tag ID**) has a wildcard search box (Sprint 77 — see [Filtering & sorting lists](#filtering--sorting-lists)); the filter is applied server-side and is honoured by the per-view **Export CSV** button.
+
+---
+
+## Categories
+
+**Categories** classify assets by what they physically are, which drives consolidation behaviour and rule scoping. Under **Data Management → Categories** (`/categories`); viewer to read, editor and up to manage.
+
+Each category has a **type** (ADR-019) — `object`, `rti_container` (returnable transport item), `liquid_container`, or `reference_tag` — and the type is **immutable after creation** (it changes how the asset is consolidated, so a category can't be retyped; create a new one instead).
+
+**Columns:** Name, Type, Required tags (the expected tag count for assets in this category). Filter by type from the column header.
+
+Create a category to start grouping assets — the Asset create/edit form offers it as the classifier. A category still referenced by assets can't be deleted until those assets are reassigned.
 
 ---
 
@@ -1441,4 +1497,36 @@ Presets translate to the backend `?actions=` query parameter on `GET /admin/audi
 3. **Reviewing onboarding/offboarding?** → select **User management** to confirm the right roles were assigned and that decommissioned accounts were marked inactive.
 
 > **Note:** Audit entries are append-only and tenant-scoped — no admin can see or modify another tenant's log, and no API surface lets you delete an entry. For long-horizon retention, export periodically via the API (`GET /admin/audit-logs?limit=1000&offset=...`).
+
+---
+
+## Branding
+
+Admins can white-label the app per tenant. Reach it from the account avatar menu → **Branding** (`/admin/branding`); admin only. Editable fields:
+
+- **Display name** — replaces the tenant name in the header.
+- **Full logo** and **collapsed logo** — uploaded as inline images (PNG / JPEG / SVG / WebP / GIF, ~70 KB max — SVG recommended). The full logo shows in the expanded sidebar; the collapsed one in the narrow rail. You can also paste an `https://` URL instead of uploading.
+- **Accent colour** — the brand colour applied to UI highlights.
+
+Changes apply immediately. Recommended sizes: full ~200×32, collapsed ~32×32 (or a scalable SVG). A live preview of both the expanded header and the collapsed rail updates as you edit.
+
+---
+
+## Dead Letters
+
+When an inbound event (e.g. an MQTT tag read) fails processing repeatedly, it lands in the **dead-letter** queue for manual triage rather than being silently lost. An admin-only page at `/admin/dead-letters`.
+
+**Columns:** Time, Topic, Error (the failure reason), Payload (the original message).
+
+**Actions:** **Retry** re-queues an event for processing (one row, or tick several for a bulk retry); **Abandon** discards it. Use **Retry** to recover from a transient outage once the underlying cause is fixed, and **Abandon** to clear a poison message that will never succeed.
+
+---
+
+## Pending Bulk Operations
+
+A **two-person rule** (ADR-028 §Governance) guards large bulk operations: when a bulk action's row count meets or exceeds the tenant's threshold (the `tag_bulk_two_person_threshold` setting), it isn't executed immediately — it's parked here for a **second** admin to approve. An admin-only page at `/admin/pending-bulk-operations`.
+
+Each pending row shows the requester, the operation, and its size, with a status of `pending` / `approved` / `rejected`. A different admin clicks **Approve & execute** to run it, or **Reject** to discard it.
+
+> **The approver must differ from the requester.** If you try to approve your own request it's refused — that separation of duties is the whole point of the control. The most common "why was my approval rejected?" answer is that you *are* the requester; have a colleague approve it.
 
