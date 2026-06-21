@@ -18,6 +18,7 @@ from tagpulse.api.label_filter import apply_label_filter
 from tagpulse.models.database import AssetModel, AssetTagBindingModel
 from tagpulse.models.schemas import (
     AssetCreate,
+    AssetRef,
     AssetResponse,
     AssetTagBindingCreate,
     AssetTagBindingResponse,
@@ -336,6 +337,34 @@ class TimescaleAssetTagBindingRepository:
         )
         result = await self._session.execute(stmt)
         return [_binding_to_response(r) for r in result.scalars()]
+
+    async def resolve_asset_refs_by_values(
+        self, tenant_id: uuid.UUID, values: Sequence[str]
+    ) -> dict[str, AssetRef]:
+        """Map active binding values to their bound asset (id + name) in one query.
+
+        Sprint 74: powers the "Asset" column on tag-reads. Pass **all** candidate
+        forms a read carries (EPC URI, EPC hex, TID, tag_id); whichever form the
+        binding was stored as matches (ADR-033). Values with no active binding are
+        absent from the result.
+        """
+        if not values:
+            return {}
+        stmt = (
+            select(
+                AssetTagBindingModel.binding_value,
+                AssetModel.id,
+                AssetModel.name,
+            )
+            .join(AssetModel, AssetModel.id == AssetTagBindingModel.asset_id)
+            .where(
+                AssetTagBindingModel.tenant_id == tenant_id,
+                AssetTagBindingModel.binding_value.in_(list(set(values))),
+                AssetTagBindingModel.unbound_at.is_(None),
+            )
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {bv: AssetRef(id=aid, name=name) for bv, aid, name in rows}
 
     async def count_other_tenant_collisions(self, tenant_id: uuid.UUID, binding_value: str) -> int:
         """Number of *other* tenants with an active binding for this value.

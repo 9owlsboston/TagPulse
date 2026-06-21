@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** none active — Sprint 73 (configurable fusion strategy — Tenant Settings) shipped 2026-06-21 (backend #147 + UI #110). See §sprint-73.
+**Current sprint:** 74 — read asset link · branch `sprint-74/read-asset-link` (full scope lands in §sprint-74 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1823,6 +1823,20 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 - **SLA config** in `tenants.fusion_strategy.sla` (temp/humidity envelope; absent = envelope-only).
 
 **Decisions to lock (design doc §7).** **A** legs auto-derived from custody (recommend yes); **B** ETA **deferred** to a later phase — v1 is **actuals-only** (no in-flight ETA without a declared destination); **C** SLA from a `fusion_strategy.sla` block. **Out of scope:** in-flight ETA + destination prediction, multi-leg shipment grouping, route/geocoding — all gated on a destination-declaration mechanism.
+
+---
+
+## Sprint 74 — Bound-asset link on tag reads (shipped)
+
+> **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#149](https://github.com/9owlsboston/TagPulse/pull/149) + UI [#111](https://github.com/9owlsboston/TagPulse-UI/pull/111)). Tag-read responses now carry a resolved `asset` ref; the App shows an **Asset** link column on Tag Reads and a **Recent Reads** table (with bound-asset link) on the reader detail page.
+
+**Why.** A reader can show "active", but there was **no in-App path from a reader's reads to the asset bound to the tag** — the reader → read → asset bridge didn't exist. Answering "which asset did this reader just read?" required ad-hoc DB queries.
+
+**Scope.**
+- **Backend:** `TagReadResponse` gains an optional `asset` ref (`AssetRef{id, name}`). `TimescaleAssetTagBindingRepository.resolve_asset_refs_by_values()` resolves it in one join (`asset_tag_bindings` → `assets`, active bindings only) across every candidate tag form (epc / epc_hex / tid / tag_id per [ADR-033](adr/033-epc-dual-form-binding.md) dual-form). `QueryService` attaches it on `GET /tag-reads` and per-device `recent-reads`. No binding → `asset: null`; back-compat (no binding repo → no-op). `openapi.json` regenerated.
+- **UI:** an **Asset** link column on Tag Reads (links to `/assets/{id}`) + a **Recent Reads** table on the reader detail page replacing the single "Last Read", with a bound-asset link column.
+
+**Out of scope.** No new tag→asset persistence (resolution is read-time over existing active bindings). No migration this sprint.
 
 ---
 

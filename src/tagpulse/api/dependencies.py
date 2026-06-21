@@ -81,6 +81,9 @@ async def get_query_service(
 ) -> AsyncGenerator[QueryService, None]:
     """Provide a QueryService wired with repos."""
     from tagpulse.api.services.floor_zone_resolver import FloorZoneResolver
+    from tagpulse.repositories.timescaledb.assets import (
+        TimescaleAssetTagBindingRepository,
+    )
     from tagpulse.repositories.timescaledb.sites_zones import (
         TimescaleSiteRepository,
         TimescaleZoneRepository,
@@ -98,6 +101,7 @@ async def get_query_service(
         device_repo=device_repo,
         zone_repo=zone_repo,
         floor_resolver=floor_resolver,
+        binding_repo=TimescaleAssetTagBindingRepository(session),
     )
 
 

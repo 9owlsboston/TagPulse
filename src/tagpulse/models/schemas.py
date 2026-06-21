@@ -90,6 +90,15 @@ class TagReadCreate(BaseModel):
     reader_antenna: int | None = Field(default=None, ge=0, le=255)
 
 
+class AssetRef(BaseModel):
+    """Minimal asset reference (id + name) for linking from a read (Sprint 74)."""
+
+    id: UUID
+    name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class TagReadResponse(BaseModel):
     """Tag read event returned from the API."""
 
@@ -115,6 +124,10 @@ class TagReadResponse(BaseModel):
     # Sprint 64: query-time resolved location for the UI "Location" column.
     # Populated by the query service; absent (None) on the ingest response.
     location: LocationDescriptor | None = None
+    # Sprint 74: query-time resolved bound asset for the read's tag (the active
+    # asset_tag_binding matching the read's EPC/TID/tag_id, ADR-033 dual-form).
+    # Populated by the query service; ``None`` when no asset is bound.
+    asset: AssetRef | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
