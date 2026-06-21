@@ -524,6 +524,208 @@
         "title": "AssetInZoneSummary",
         "type": "object"
       },
+      "AssetLegResponse": {
+        "description": "One transit leg \u2014 the ``geo``-frame interval between two facilities (Sprint 72).\n\n``status`` is ``open`` (in transit; ``dest_*``/``arrived_at`` + SLA null) or\n``closed`` (arrived; envelope + SLA computed). The cold-chain summary\n(``temp_*``/``humidity_*``/``excursion_s``/``in_range_pct``/``sla_breached``)\nis populated on close per the tenant SLA.",
+        "properties": {
+          "arrived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arrived At"
+          },
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "departed_at": {
+            "format": "date-time",
+            "title": "Departed At",
+            "type": "string"
+          },
+          "dest_site_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dest Site Id"
+          },
+          "dest_zone_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dest Zone Id"
+          },
+          "excursion_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excursion S"
+          },
+          "humidity_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Humidity Max"
+          },
+          "humidity_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Humidity Min"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "in_range_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Range Pct"
+          },
+          "last_lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Lat"
+          },
+          "last_lon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Lon"
+          },
+          "origin_site_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Site Id"
+          },
+          "origin_zone_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Zone Id"
+          },
+          "sla_breached": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla Breached"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "temp_max_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Max C"
+          },
+          "temp_mean_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Mean C"
+          },
+          "temp_min_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Min C"
+          }
+        },
+        "required": [
+          "id",
+          "asset_id",
+          "status",
+          "departed_at"
+        ],
+        "title": "AssetLegResponse",
+        "type": "object"
+      },
       "AssetLoadRequest": {
         "description": "POST /assets/{id}/load \u2014 attach a child asset to a carrier.",
         "properties": {
@@ -792,6 +994,16 @@
             ],
             "title": "Longitude"
           },
+          "open_leg": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssetLegResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "sample_count": {
             "default": 0,
             "title": "Sample Count",
@@ -808,6 +1020,16 @@
               }
             ],
             "title": "Site Id"
+          },
+          "sla": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SlaEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "tag_count": {
             "default": 0,
@@ -5546,6 +5768,51 @@
           }
         },
         "title": "SiteUpdate",
+        "type": "object"
+      },
+      "SlaEnvelope": {
+        "description": "The resolved per-tenant cold-chain SLA envelope (Sprint 72).\n\nMirrors `tenants.fusion_strategy.sla`; attached to `GET /assets/{id}/state`\nso the Journey environment chart can draw the target band. Each bound is\noptional (unbounded on that side).",
+        "properties": {
+          "excursion_tolerance_s": {
+            "default": 0,
+            "title": "Excursion Tolerance S",
+            "type": "integer"
+          },
+          "humidity_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Humidity Max"
+          },
+          "temp_max_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Max C"
+          },
+          "temp_min_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Min C"
+          }
+        },
+        "title": "SlaEnvelope",
         "type": "object"
       },
       "SortSpec": {
@@ -10415,6 +10682,89 @@
           }
         ],
         "summary": "List Floor Path",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/assets/{asset_id}/legs": {
+      "get": {
+        "description": "Transit legs for an asset, newest-first (Sprint 72, ADR-034 Phase 2).\n\nEach leg is the ``geo``-frame interval between two facilities, with duration,\norigin/destination, and the cold-chain env envelope + SLA (computed on close).",
+        "operationId": "get_asset_legs_assets__asset_id__legs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Asset Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter by leg status: open | closed.",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by leg status: open | closed.",
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AssetLegResponse"
+                  },
+                  "title": "Response Get Asset Legs Assets  Asset Id  Legs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Asset Legs",
         "tags": [
           "assets"
         ]

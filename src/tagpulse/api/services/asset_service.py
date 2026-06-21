@@ -22,6 +22,7 @@ from tagpulse.models.schemas import (
     AssetCreate,
     AssetCurrentLocation,
     AssetInZoneSummary,
+    AssetLegResponse,
     AssetPathPoint,
     AssetResponse,
     AssetStateResponse,
@@ -34,6 +35,10 @@ from tagpulse.models.schemas import (
     FloorPositionResponse,
     ManifestEntry,
     ManifestResponse,
+    SlaEnvelope,
+)
+from tagpulse.repositories.timescaledb.asset_legs import (
+    TimescaleAssetLegRepository,
 )
 from tagpulse.repositories.timescaledb.asset_location import (
     TimescaleAssetLocationRepository,
@@ -90,6 +95,7 @@ class AssetService:
         position_repo: TimescaleAssetPositionRepository | None = None,
         site_repo: TimescaleSiteRepository | None = None,
         asset_state_repo: TimescaleAssetStateRepository | None = None,
+        asset_leg_repo: TimescaleAssetLegRepository | None = None,
     ) -> None:
         self._assets = asset_repo
         self._bindings = binding_repo
@@ -102,6 +108,7 @@ class AssetService:
         self._positions = position_repo
         self._sites = site_repo
         self._asset_state = asset_state_repo
+        self._asset_legs = asset_leg_repo
 
     # -- Assets --
 
@@ -166,7 +173,19 @@ class AssetService:
         """
         if self._asset_state is None:
             return None
-        return await self._asset_state.latest(tenant_id, asset_id)
+        snapshot = await self._asset_state.latest(tenant_id, asset_id)
+        if snapshot is None:
+            return snapshot
+        updates: dict[str, object] = {}
+        if self._asset_legs is not None:
+            open_leg = await self._asset_legs.open_leg(tenant_id, asset_id)
+            if open_leg is not None:
+                updates["open_leg"] = open_leg
+        if self._tenant_repo is not None:
+            sla = await self._tenant_repo.get_fusion_sla(tenant_id)
+            if sla is not None:
+                updates["sla"] = SlaEnvelope.model_validate(sla)
+        return snapshot.model_copy(update=updates) if updates else snapshot
 
     async def get_asset_state_history(
         self,
@@ -180,6 +199,19 @@ class AssetService:
         if self._asset_state is None:
             return []
         return await self._asset_state.history(tenant_id, asset_id, since=since, limit=limit)
+
+    async def get_asset_legs(
+        self,
+        tenant_id: UUID,
+        asset_id: UUID,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[AssetLegResponse]:
+        """Transit legs for an asset, newest-first (Sprint 72, ADR-034 Phase 2)."""
+        if self._asset_legs is None:
+            return []
+        return await self._asset_legs.list(tenant_id, asset_id, status=status, limit=limit)
 
     async def list_assets(
         self,

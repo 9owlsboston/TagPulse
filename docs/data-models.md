@@ -139,7 +139,7 @@ Organization accounts on the platform.
 | `tile_provider` | JSONB | NULLABLE | Per-tenant map tile provider override. Shape: `{"kind": "osm" \| "mapbox" \| "maptiler" \| "self_hosted", "config": {...}}`. NULL = system default (OSM public for POC). Resolved by `MapConfigResolver`; switching providers is a settings change, not a code change. See [design/geofencing-and-map.md §11](design/geofencing-and-map.md) Q4. |
 | `ui_config` | JSONB | NULLABLE | Per-tenant Configurable-UI **presentation** defaults (the tenant + role layers). NULL = pure system default. Tenant-default leaves (`labels` / `theme` / `nav` / `cards` / `columns` / `tables`) live at the top level; the per-role layer is keyed under a reserved `roles` sub-object, e.g. `{"theme": {...}, "roles": {"viewer": {"columns": {...}}}}`. Split into resolve layers and folded `System → Tenant → Role → User` by `tagpulse.services.ui_config` (never queried directly). Reuses the tenant-JSONB precedent above. See [adr/032-configurable-ui.md](adr/032-configurable-ui.md). |
 | `position_strategy` | JSONB | NULLABLE | Sprint 59 ([ADR-024](adr/024-position-estimation.md)): per-tenant indoor-position estimator config — the RSSI-weight formula varies company-to-company, so it is config, never hardcoded. **Read by the Sprint 66 `rssi_weighted_centroid` estimator** (`half_life_s` τ, `recompute_interval_s`, `lookback_s`, `min_antennas`, `rssi_floor_dbm`). NULL = tenant not opted in. The estimator worker is **off by default** (`position_estimator_enabled`). |
-| `fusion_strategy` | JSONB | NULLABLE | Sprint 71 ([ADR-034](adr/034-asset-state-consolidation.md)): per-tenant **asset-state consolidation** config — generalises `position_strategy` to govern the `read_count × recency` fusion of an asset's bound-tag reads into one zone + environment answer. **Read by the consolidation worker** (`FusionStrategy`: `half_life_s` τ, `recompute_interval_s`, `lookback_s`, `rssi_floor_dbm`, `min_reads`). NULL = tenant not opted in. The worker is **off by default** (`consolidation_enabled`). |
+| `fusion_strategy` | JSONB | NULLABLE | Sprint 71 ([ADR-034](adr/034-asset-state-consolidation.md)): per-tenant **asset-state consolidation** config — generalises `position_strategy` to govern the `read_count × recency` fusion of an asset's bound-tag reads into one zone + environment answer. **Read by the consolidation worker** (`FusionStrategy`: `half_life_s` τ, `recompute_interval_s`, `lookback_s`, `rssi_floor_dbm`, `min_reads`). Sprint 72 adds an optional `sla` sub-block (`temp_min_c`/`temp_max_c`/`humidity_max`/`excursion_tolerance_s`) scoring transit-leg cold chain. NULL = tenant not opted in. The worker is **off by default** (`consolidation_enabled`). |
 | `logo_url` | TEXT | NULLABLE | Tenant branding logo for the 240px expanded sidebar header. Either an `https://` URL or a size-capped inline base64 `data:` URL (cap enforced at the API layer, not the DB — Sprint 60 widened this from `VARCHAR(2048)` to `TEXT` to hold a data URL). NULL = system default. |
 | `logo_collapsed_url` | TEXT | NULLABLE | Sprint 60: second branding logo — a square mark for the 64px collapsed sidebar rail. Same `https://`-or-`data:` rule as `logo_url`. NULL = no second logo (fall back to `logo_url` / system default). |
 | `created_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
@@ -841,6 +841,40 @@ latest row per asset; "was" = range query. Frames are mostly temporally exclusiv
 **RLS:** enabled — `tenant_id = current_setting('app.current_tenant_id')`.
 **API:** `GET /assets/{id}/state` (viewer read, latest snapshot — "is"), `GET /assets/{id}/state/history` (viewer read, newest-first, `since`/`limit` — "was") — Sprint 71.
 **Migration:** 058 (asset state consolidation).
+
+---
+
+### asset_legs
+
+Transit **legs** — the `geo`-frame interval between two facility frames (Sprint 72,
+[migration 059](../migrations/versions/059_asset_legs.py), [ADR-034](adr/034-asset-state-consolidation.md)
+Phase 2). Opened/closed by the `AssetLegTracker` from Phase-1 `ASSET_CUSTODY_CHANGED`
+events (open on `facility → geo`, close on `… → facility`); the env envelope +
+cold-chain SLA are computed on close from `asset_state_history` over the leg window
+per the tenant's `fusion_strategy.sla`. Regular tenant-scoped table (not a
+hypertable — low cardinality); **off by default** (`consolidation_enabled`).
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | UUID | PK, default `gen_random_uuid()` | |
+| `tenant_id` | UUID | FK → tenants.id, NOT NULL | RLS-scoped (`tenant_isolation_asset_legs`). |
+| `asset_id` | UUID | NOT NULL, **no FK** | Matches the ADR-013/014 no-FK convention. |
+| `status` | VARCHAR(8) | NOT NULL, `IN ('open','closed')` | `open` = in transit; `closed` = arrived. |
+| `origin_zone_id` / `origin_site_id` | UUID | NULLABLE | Facility departed (from the custody event's `from_*`). |
+| `dest_zone_id` / `dest_site_id` | UUID | NULLABLE | Facility arrived (null while open). |
+| `departed_at` | TIMESTAMPTZ | NOT NULL | Leg start (the `facility → geo` event). |
+| `arrived_at` | TIMESTAMPTZ | NULLABLE | Leg end (null while open). |
+| `last_lat` / `last_lon` | DOUBLE PRECISION | NULLABLE | Reserved for the in-transit fix (live fix served from `/state` in v1). |
+| `temp_min_c` / `temp_max_c` / `temp_mean_c` | DOUBLE PRECISION | NULLABLE | Leg temperature envelope (on close). |
+| `humidity_min` / `humidity_max` | DOUBLE PRECISION | NULLABLE | Leg humidity envelope (on close). |
+| `excursion_s` | INTEGER | NULLABLE | Longest contiguous out-of-SLA run (seconds). |
+| `in_range_pct` | DOUBLE PRECISION | NULLABLE | Share of leg samples within the SLA envelope. |
+| `sla_breached` | BOOLEAN | NULLABLE | `excursion_s` > `excursion_tolerance_s` (null = no SLA configured). |
+
+**Indexes:** `ix_asset_legs_by_asset` (`tenant_id, asset_id, departed_at DESC`); `ix_asset_legs_open` partial-unique (`tenant_id, asset_id) WHERE status='open'` (one open leg per asset).
+**RLS:** enabled — `tenant_id = current_setting('app.current_tenant_id')`.
+**API:** `GET /assets/{id}/legs` (viewer read, newest-first, `status`/`limit`); the **open** leg is also attached to `GET /assets/{id}/state` as `open_leg` — Sprint 72.
+**Migration:** 059 (asset legs).
 
 ---
 

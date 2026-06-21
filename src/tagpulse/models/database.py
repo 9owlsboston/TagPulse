@@ -1016,6 +1016,43 @@ class AssetStateHistoryModel(Base):
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class AssetLegModel(Base):
+    """A transit leg — the ``geo``-frame interval between two facility frames.
+
+    Sprint 72 (ADR-034 Phase 2, migration 059). Opened/closed by the
+    ``AssetLegTracker`` from Phase-1 ``ASSET_CUSTODY_CHANGED`` events; the env
+    envelope + cold-chain SLA summary are computed on close from
+    ``asset_state_history``. Regular tenant-scoped table (RLS); no FK on
+    ``asset_id``/zone/site (matches ADR-013/014). At most one ``open`` leg per
+    asset (partial unique index).
+    """
+
+    __tablename__ = "asset_legs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(8), nullable=False, server_default="open")
+    origin_zone_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    origin_site_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    dest_zone_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    dest_site_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    departed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    arrived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_lon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    temp_min_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    temp_max_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    temp_mean_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    humidity_min: Mapped[float | None] = mapped_column(Float, nullable=True)
+    humidity_max: Mapped[float | None] = mapped_column(Float, nullable=True)
+    excursion_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    in_range_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sla_breached: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+
 # ============================================================================
 # Sprint 15b — Inventory tracking
 # ============================================================================

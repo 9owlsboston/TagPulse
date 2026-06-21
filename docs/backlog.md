@@ -18,6 +18,7 @@ Tags: `[backend]`, `[ui]`, `[docs]`, `[ops]`, `[idea]`.
 
 ## Open items
 
+- [2026-06-21] **Sprint 72 follow-up — Journey map highlight on leg select.** The leg cross-filter highlights the env chart but not the map trail; pan/highlight the map to the selected leg's window. [ui]
 - [2026-06-20] **Floor-position estimator EPC→asset fusion: match `epc_hex` too (ADR-033 follow-up).** [`asset_fusion.py`](src/tagpulse/services/asset_fusion.py) / `floor_position_source.py` still resolve bindings by the decoded URI (`tr.epc`) only, so a **hex** `epc` binding won't fuse there. Live read→binding surfaces already match both (ADR-033, migration 057); the estimator is gated **off** by default (`position_estimator_enabled=false`), so no live impact. To close: carry `tr.epc_hex` on `RawRead`, look up bindings by both forms in `fuse`/`list_active_by_values`, map either back to the asset. [backend]
 
 ### Post-Sprint-58 demo-data chore cluster (discovered 2026-06-13)

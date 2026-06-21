@@ -1046,6 +1046,54 @@ class AssetCurrentLocation(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SlaEnvelope(BaseModel):
+    """The resolved per-tenant cold-chain SLA envelope (Sprint 72).
+
+    Mirrors `tenants.fusion_strategy.sla`; attached to `GET /assets/{id}/state`
+    so the Journey environment chart can draw the target band. Each bound is
+    optional (unbounded on that side).
+    """
+
+    temp_min_c: float | None = None
+    temp_max_c: float | None = None
+    humidity_max: float | None = None
+    excursion_tolerance_s: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AssetLegResponse(BaseModel):
+    """One transit leg — the ``geo``-frame interval between two facilities (Sprint 72).
+
+    ``status`` is ``open`` (in transit; ``dest_*``/``arrived_at`` + SLA null) or
+    ``closed`` (arrived; envelope + SLA computed). The cold-chain summary
+    (``temp_*``/``humidity_*``/``excursion_s``/``in_range_pct``/``sla_breached``)
+    is populated on close per the tenant SLA.
+    """
+
+    id: UUID
+    asset_id: UUID
+    status: str
+    origin_zone_id: UUID | None = None
+    origin_site_id: UUID | None = None
+    dest_zone_id: UUID | None = None
+    dest_site_id: UUID | None = None
+    departed_at: datetime
+    arrived_at: datetime | None = None
+    last_lat: float | None = None
+    last_lon: float | None = None
+    temp_min_c: float | None = None
+    temp_max_c: float | None = None
+    temp_mean_c: float | None = None
+    humidity_min: float | None = None
+    humidity_max: float | None = None
+    excursion_s: int | None = None
+    in_range_pct: float | None = None
+    sla_breached: bool | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class AssetStateResponse(BaseModel):
     """One fused asset-state snapshot (Sprint 71, ADR-034).
 
@@ -1071,6 +1119,12 @@ class AssetStateResponse(BaseModel):
     sample_count: int = 0
     tag_count: int = 0
     confidence: float | None = None
+    # Sprint 72 (ADR-034 Phase 2): the asset's currently-open transit leg, when
+    # it is in transit (frame ``geo``). Only populated on ``GET /assets/{id}/state``.
+    open_leg: AssetLegResponse | None = None
+    # Sprint 72: the resolved per-tenant cold-chain SLA envelope (for the Journey
+    # chart band). Only populated on ``GET /assets/{id}/state``; ``None`` if unset.
+    sla: SlaEnvelope | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

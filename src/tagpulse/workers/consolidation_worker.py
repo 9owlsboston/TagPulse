@@ -54,8 +54,9 @@ class AssetConsolidationWorker:
         self._event_bus = event_bus
         self._interval = interval_s
         self._task: asyncio.Task[None] | None = None
-        # (tenant_id, asset_id) -> last fused frame, for custody-change detection.
-        self._last_frame: dict[tuple[UUID, UUID], str] = {}
+        # (tenant_id, asset_id) -> last fused (frame, zone_id, site_id), for
+        # custody-change detection + carrying the origin facility on the event.
+        self._last_state: dict[tuple[UUID, UUID], tuple[str, UUID | None, UUID | None]] = {}
 
     async def start(self) -> None:
         self._task = asyncio.create_task(self._loop())
@@ -131,12 +132,13 @@ class AssetConsolidationWorker:
     async def _emit_custody(self, tenant_id: UUID, snapshots: list[AssetStateSnapshot]) -> None:
         for snap in snapshots:
             key = (tenant_id, snap.asset_id)
-            prev = self._last_frame.get(key)
-            self._last_frame[key] = snap.frame
-            if prev is None or prev == snap.frame:
+            prev = self._last_state.get(key)
+            self._last_state[key] = (snap.frame, snap.zone_id, snap.site_id)
+            if prev is None or prev[0] == snap.frame:
                 continue  # first-seen (no spurious event) or unchanged.
             if self._event_bus is None:
                 continue
+            from_frame, from_zone_id, from_site_id = prev
             await self._event_bus.publish(
                 Topic.ASSET_CUSTODY_CHANGED,
                 Event(
@@ -146,8 +148,10 @@ class AssetConsolidationWorker:
                     payload={
                         "tenant_id": str(tenant_id),
                         "asset_id": str(snap.asset_id),
-                        "from_frame": prev,
+                        "from_frame": from_frame,
                         "to_frame": snap.frame,
+                        "from_zone_id": str(from_zone_id) if from_zone_id else None,
+                        "from_site_id": str(from_site_id) if from_site_id else None,
                         "zone_id": str(snap.zone_id) if snap.zone_id else None,
                         "site_id": str(snap.site_id) if snap.site_id else None,
                         "confidence": snap.confidence,

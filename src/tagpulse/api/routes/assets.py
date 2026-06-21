@@ -21,6 +21,7 @@ from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.schemas import (
     AssetCreate,
     AssetCurrentLocation,
+    AssetLegResponse,
     AssetLoadRequest,
     AssetPathPoint,
     AssetResponse,
@@ -166,6 +167,25 @@ async def get_asset_state_history(
     if asset is None:
         raise HTTPException(status_code=404, detail="Asset not found")
     return await service.get_asset_state_history(user.tenant_id, asset_id, since=since, limit=limit)
+
+
+@router.get("/{asset_id}/legs", response_model=list[AssetLegResponse])
+async def get_asset_legs(
+    asset_id: UUID,
+    status: str | None = Query(default=None, description="Filter by leg status: open | closed."),
+    limit: int = Query(default=100, ge=1, le=1000),
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    service: AssetService = Depends(get_asset_service),
+) -> list[AssetLegResponse]:
+    """Transit legs for an asset, newest-first (Sprint 72, ADR-034 Phase 2).
+
+    Each leg is the ``geo``-frame interval between two facilities, with duration,
+    origin/destination, and the cold-chain env envelope + SLA (computed on close).
+    """
+    asset = await service.get_asset(user.tenant_id, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return await service.get_asset_legs(user.tenant_id, asset_id, status=status, limit=limit)
 
 
 @router.patch("/{asset_id}", response_model=AssetResponse)

@@ -55,6 +55,50 @@ def _service(state_repo) -> AssetService:  # type: ignore[no-untyped-def]
     )
 
 
+class _FakeTenantRepo:
+    def __init__(self, sla) -> None:  # type: ignore[no-untyped-def]
+        self._sla = sla
+
+    async def get_fusion_sla(self, tenant_id):  # type: ignore[no-untyped-def]
+        return self._sla
+
+
+@pytest.mark.asyncio
+async def test_get_asset_state_attaches_resolved_sla() -> None:
+    from tagpulse.services.consolidation import SlaConfig
+
+    tenant, asset = uuid4(), uuid4()
+    snap = _snap(asset)
+    svc = AssetService(
+        asset_repo=_FakeAssetRepo(),  # type: ignore[arg-type]
+        binding_repo=object(),  # type: ignore[arg-type]
+        audit=object(),  # type: ignore[arg-type]
+        asset_state_repo=_FakeStateRepo(latest=snap, history=[]),
+        tenant_repo=_FakeTenantRepo(SlaConfig(temp_min_c=2.0, temp_max_c=8.0)),  # type: ignore[arg-type]
+    )
+    out = await svc.get_asset_state(tenant, asset)
+    assert out is not None
+    assert out.sla is not None
+    assert out.sla.temp_min_c == 2.0
+    assert out.sla.temp_max_c == 8.0
+
+
+@pytest.mark.asyncio
+async def test_get_asset_state_no_sla_when_unconfigured() -> None:
+    tenant, asset = uuid4(), uuid4()
+    snap = _snap(asset)
+    svc = AssetService(
+        asset_repo=_FakeAssetRepo(),  # type: ignore[arg-type]
+        binding_repo=object(),  # type: ignore[arg-type]
+        audit=object(),  # type: ignore[arg-type]
+        asset_state_repo=_FakeStateRepo(latest=snap, history=[]),
+        tenant_repo=_FakeTenantRepo(None),  # type: ignore[arg-type]
+    )
+    out = await svc.get_asset_state(tenant, asset)
+    assert out is not None
+    assert out.sla is None
+
+
 @pytest.mark.asyncio
 async def test_get_asset_state_returns_latest() -> None:
     tenant, asset = uuid4(), uuid4()
