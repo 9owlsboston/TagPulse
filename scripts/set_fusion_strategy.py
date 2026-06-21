@@ -28,7 +28,7 @@ from uuid import UUID
 from sqlalchemy import text
 
 from tagpulse.core.context import tenant_context
-from tagpulse.services.consolidation import FusionStrategy
+from tagpulse.services.consolidation import FusionStrategy, SlaConfig
 
 
 def _resolve_tenant(args: argparse.Namespace) -> UUID:
@@ -76,12 +76,24 @@ async def _main(args: argparse.Namespace) -> int:
     if args.clear:
         await _clear(tenant_id)
     elif args.set:
+        sla = None
+        if any(
+            v is not None
+            for v in (args.sla_temp_min_c, args.sla_temp_max_c, args.sla_humidity_max)
+        ):
+            sla = SlaConfig(
+                temp_min_c=args.sla_temp_min_c,
+                temp_max_c=args.sla_temp_max_c,
+                humidity_max=args.sla_humidity_max,
+                excursion_tolerance_s=args.sla_excursion_tolerance_s,
+            )
         config = FusionStrategy(
             half_life_s=args.half_life_s,
             recompute_interval_s=args.recompute_interval_s,
             lookback_s=args.lookback_s,
             rssi_floor_dbm=args.rssi_floor_dbm,
             min_reads=args.min_reads,
+            sla=sla,
         )
         await _set(tenant_id, config)
     await _show(tenant_id)
@@ -104,6 +116,17 @@ def _parse_args() -> argparse.Namespace:
         "--rssi-floor-dbm", type=float, default=None, dest="rssi_floor_dbm"
     )
     p.add_argument("--min-reads", type=int, default=1, dest="min_reads")
+    # -- Sprint 72: optional cold-chain SLA block (omit all three bounds to
+    # leave SLA unset; legs then record the envelope only). --
+    p.add_argument("--sla-temp-min-c", type=float, default=None, dest="sla_temp_min_c")
+    p.add_argument("--sla-temp-max-c", type=float, default=None, dest="sla_temp_max_c")
+    p.add_argument("--sla-humidity-max", type=float, default=None, dest="sla_humidity_max")
+    p.add_argument(
+        "--sla-excursion-tolerance-s",
+        type=int,
+        default=0,
+        dest="sla_excursion_tolerance_s",
+    )
     return p.parse_args()
 
 
