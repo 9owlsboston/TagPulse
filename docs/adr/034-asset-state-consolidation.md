@@ -1,6 +1,6 @@
 # ADR-034: Asset state consolidation — weighted fusion of bound-tag reads into one asset zone + environment
 
-- Status: **Proposed** (sprint-71/asset-state-consolidation, June 2026)
+- Status: **Accepted** (sprint-71/asset-state-consolidation, June 2026)
 - Scope: `TagPulse` backend — a per-asset consolidation tick that fuses an
   asset's bound-tag reads into one location answer (zone/site) and one
   environment answer (temperature/humidity), with history; plus the
