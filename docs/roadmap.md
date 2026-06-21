@@ -1826,6 +1826,20 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 74 — Bound-asset link on tag reads (shipped)
+
+> **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#149](https://github.com/9owlsboston/TagPulse/pull/149) + UI [#111](https://github.com/9owlsboston/TagPulse-UI/pull/111)). Tag-read responses now carry a resolved `asset` ref; the App shows an **Asset** link column on Tag Reads and a **Recent Reads** table (with bound-asset link) on the reader detail page.
+
+**Why.** A reader can show "active", but there was **no in-App path from a reader's reads to the asset bound to the tag** — the reader → read → asset bridge didn't exist. Answering "which asset did this reader just read?" required ad-hoc DB queries.
+
+**Scope.**
+- **Backend:** `TagReadResponse` gains an optional `asset` ref (`AssetRef{id, name}`). `TimescaleAssetTagBindingRepository.resolve_asset_refs_by_values()` resolves it in one join (`asset_tag_bindings` → `assets`, active bindings only) across every candidate tag form (epc / epc_hex / tid / tag_id per [ADR-033](adr/033-epc-dual-form-binding.md) dual-form). `QueryService` attaches it on `GET /tag-reads` and per-device `recent-reads`. No binding → `asset: null`; back-compat (no binding repo → no-op). `openapi.json` regenerated.
+- **UI:** an **Asset** link column on Tag Reads (links to `/assets/{id}`) + a **Recent Reads** table on the reader detail page replacing the single "Last Read", with a bound-asset link column.
+
+**Out of scope.** No new tag→asset persistence (resolution is read-time over existing active bindings). No migration this sprint.
+
+---
+
 ## Sprint 73 — Configurable fusion strategy (Tenant Settings, shipped)
 
 > **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#147](https://github.com/9owlsboston/TagPulse/pull/147) + UI [#110](https://github.com/9owlsboston/TagPulse-UI/pull/110)). The per-tenant `fusion_strategy` (decay τ, cadence, look-back, RSSI floor, min-reads, cold-chain SLA) is now on `GET`/`PATCH /tenant/config` and editable from **Tenant Settings → Consolidation**; the `set_fusion_strategy.py` ops script now merges instead of replacing. User + operator guides updated. Full design in the [Sprint 73 design doc](design/sprint-73-configurable-fusion-strategy.md).
