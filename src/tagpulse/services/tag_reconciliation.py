@@ -42,9 +42,12 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
+from sqlalchemy.sql.elements import ColumnElement
 
+from tagpulse.api.filters import LIKE_ESCAPE, wildcard_to_ilike
 from tagpulse.models.database import StockItemModel, TagModel, TagReadModel
 from tagpulse.models.schemas import (
     BindingOnRetiredRow,
@@ -53,6 +56,17 @@ from tagpulse.models.schemas import (
     TagStatus,
     UnregisteredReadingRow,
 )
+
+
+def _ilike_or_true(column: InstrumentedAttribute[str], q: str | None) -> ColumnElement[bool]:
+    """Sprint 77 — a wildcard identifier filter for the reconciliation views,
+    or an always-true predicate when ``q`` is empty (so it can be dropped into
+    a ``.where(...)`` unconditionally)."""
+    like = wildcard_to_ilike(q)
+    if like is None:
+        return true()
+    return column.ilike(like, escape=LIKE_ESCAPE)
+
 
 ReconciliationView = Literal[
     "registered-unread",
@@ -81,6 +95,7 @@ async def query_registered_unread(
     days: int,
     limit: int,
     offset: int,
+    q: str | None = None,
 ) -> list[RegisteredUnreadRow]:
     """Tags expected to be reading but aren't.
 
@@ -100,6 +115,7 @@ async def query_registered_unread(
             TagModel.tenant_id == tenant_id,
             TagModel.status.in_(_LIVE_TAG_STATUSES),
             (TagModel.last_seen_at.is_(None)) | (TagModel.last_seen_at < cutoff),
+            _ilike_or_true(TagModel.epc_hex, q),
         )
         .order_by(
             TagModel.last_seen_at.asc().nulls_first(),
@@ -130,6 +146,7 @@ async def query_unregistered_reading(
     days: int,
     limit: int,
     offset: int,
+    q: str | None = None,
 ) -> list[UnregisteredReadingRow]:
     """EPCs reading at the edge but absent from the tenant registry.
 
@@ -152,6 +169,7 @@ async def query_unregistered_reading(
             TagReadModel.tenant_id == tenant_id,
             TagReadModel.tag_known.is_(False),
             TagReadModel.timestamp >= cutoff,
+            _ilike_or_true(TagReadModel.tag_id, q),
         )
         .group_by(TagReadModel.tag_id)
         .order_by(func.max(TagReadModel.timestamp).desc())
@@ -175,6 +193,7 @@ async def query_bindings_on_retired(
     *,
     limit: int,
     offset: int,
+    q: str | None = None,
 ) -> list[BindingOnRetiredRow]:
     """Stock items bound via EPC to a tag in a terminal status.
 
@@ -207,6 +226,7 @@ async def query_bindings_on_retired(
             StockItemModel.binding_kind == "epc",
             StockItemModel.consumed_at.is_(None),
             TagModel.status.in_(_TERMINAL_TAG_STATUSES),
+            _ilike_or_true(StockItemModel.binding_value, q),
         )
         .order_by(TagModel.updated_at.desc(), StockItemModel.id.asc())
         .limit(limit)

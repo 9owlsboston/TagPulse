@@ -432,6 +432,14 @@ class TimescaleTagRepository:
         return True
 
 
+# Sprint 77: whitelist of server-sortable Tag Transfer columns.
+TRANSFER_SORT_COLUMNS = {
+    "requested_at": TagTransferModel.requested_at,
+    "completed_at": TagTransferModel.completed_at,
+    "status": TagTransferModel.status,
+}
+
+
 class TimescaleTagTransferRepository:
     """Append-only repository for cross-tenant transfer audit rows."""
 
@@ -476,6 +484,10 @@ class TimescaleTagTransferRepository:
         *,
         direction: str | None = None,
         status: str | None = None,
+        statuses: list[str] | None = None,
+        epc_q: str | None = None,
+        sort: str | None = None,
+        order: str = "desc",
         limit: int = 100,
         offset: int = 0,
     ) -> list[TagTransferResponse]:
@@ -496,7 +508,20 @@ class TimescaleTagTransferRepository:
             )
         if status is not None:
             stmt = stmt.where(TagTransferModel.status == status)
-        stmt = stmt.order_by(TagTransferModel.requested_at.desc()).limit(limit).offset(offset)
+        if statuses:
+            # Sprint 77: multi-select status (column checkbox list).
+            stmt = stmt.where(TagTransferModel.status.in_(statuses))
+        epc_like = wildcard_to_ilike(epc_q)
+        if epc_like is not None:
+            # Sprint 77: wildcard search over ``epc_hex`` (same grammar as the
+            # tag list ``q``).
+            stmt = stmt.where(TagTransferModel.epc_hex.ilike(epc_like, escape=LIKE_ESCAPE))
+        # Sprint 77: server-side sort over a whitelist; default requested_at desc.
+        sort_col = TRANSFER_SORT_COLUMNS.get(sort or "requested_at")
+        if sort_col is None:
+            raise ValueError(f"unsortable column: {sort!r}")
+        stmt = stmt.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
+        stmt = stmt.limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return [_transfer_to_response(r) for r in result.scalars()]
 

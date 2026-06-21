@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 76 — server facets · **shipped**; between sprints.
+**Current sprint:** 77 — server table filters · branch `sprint-77/server-table-filters` (full scope lands in §sprint-77 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1823,6 +1823,22 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 - **SLA config** in `tenants.fusion_strategy.sla` (temp/humidity envelope; absent = envelope-only).
 
 **Decisions to lock (design doc §7).** **A** legs auto-derived from custody (recommend yes); **B** ETA **deferred** to a later phase — v1 is **actuals-only** (no in-flight ETA without a declared destination); **C** SLA from a `fusion_strategy.sla` block. **Out of scope:** in-flight ETA + destination prediction, multi-leg shipment grouping, route/geocoding — all gated on a destination-declaration mechanism.
+
+---
+
+## Sprint 77 — Excel filters on the remaining server-paginated tables (shipped)
+
+> **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#156](https://github.com/9owlsboston/TagPulse/pull/156) + UI [#114](https://github.com/9owlsboston/TagPulse-UI/pull/114)). Closes the column-filter initiative (Sprints 70/75/76): **every** list table now has the uniform sort + per-column filter. Full design in the [Sprint 77 design doc](design/sprint-77-server-table-filters.md).
+
+**Why.** Sprints 75/76 brought the Excel-like filters to the client tables + Tag Reads, but four tables were still missing pieces: Assets had the backend (Sprint 76) but no UI wiring, and Transfers / Stock Levels / Reconciliation had no column filters at all.
+
+**Scope.**
+- **Assets (UI):** server-side sort (`name`/`status`/`created_at`) replacing the page-local client sort; filtering already covered by the toolbar + side panel.
+- **Stock Levels (UI, client-side pivot):** Product wildcard editbox + numeric sort on the zone/Total columns.
+- **Transfers (backend + UI):** `GET /tag-transfers` gains `epc_q` + multi `statuses` + server sort; UI gets an EPC editbox + sortable Status/Requested/Completed.
+- **Reconciliation (backend + UI):** a `q` identifier wildcard threaded to all three views + the CSV export; UI gets an editbox on each view's EPC/Tag ID column.
+
+**Out of scope.** New checkbox facet endpoints (Transfers/Reconciliation statuses are fixed enums); per-view server sort on Reconciliation (small admin views keep their fixed default order); `pg_trgm` indexes (Sprint 70 O3); the DB-backed repo test harness (still backlogged).
 
 ---
 

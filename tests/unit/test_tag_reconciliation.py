@@ -146,11 +146,13 @@ async def test_registered_unread_json_dispatch(
         days: int,
         limit: int,
         offset: int,
+        q: str | None = None,
     ) -> list[RegisteredUnreadRow]:
         captured["tenant_id"] = tenant_id
         captured["days"] = days
         captured["limit"] = limit
         captured["offset"] = offset
+        captured["q"] = q
         return [
             RegisteredUnreadRow(
                 tag_id=UUID("00000000-0000-0000-0000-000000000001"),
@@ -168,7 +170,7 @@ async def test_registered_unread_json_dispatch(
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        r = await client.get("/tags/reconciliation/registered-unread?days=14&limit=50")
+        r = await client.get("/tags/reconciliation/registered-unread?days=14&limit=50&q=ABC*")
 
     assert r.status_code == 200
     body = r.json()
@@ -179,6 +181,7 @@ async def test_registered_unread_json_dispatch(
     assert captured["days"] == 14
     assert captured["limit"] == 50
     assert captured["offset"] == 0
+    assert captured["q"] == "ABC*"
 
 
 @pytest.mark.asyncio
@@ -223,6 +226,7 @@ async def test_bindings_on_retired_ignores_days_param(
         *,
         limit: int,
         offset: int,
+        q: str | None = None,
     ) -> list[BindingOnRetiredRow]:
         # Critically — no ``days`` kwarg. The route must not forward it.
         captured["limit"] = limit
