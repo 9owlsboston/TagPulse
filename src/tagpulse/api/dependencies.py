@@ -210,6 +210,9 @@ async def get_asset_service(
     event_bus: EventBus = Depends(get_event_bus),
 ) -> AsyncGenerator["AssetService", None]:
     """Provide an AssetService bound to the current session."""
+    from tagpulse.repositories.timescaledb.asset_legs import (
+        TimescaleAssetLegRepository,
+    )
     from tagpulse.repositories.timescaledb.asset_location import (
         TimescaleAssetLocationRepository,
     )
@@ -245,6 +248,7 @@ async def get_asset_service(
         position_repo=TimescaleAssetPositionRepository(session),
         site_repo=TimescaleSiteRepository(session),
         asset_state_repo=TimescaleAssetStateRepository(session),
+        asset_leg_repo=TimescaleAssetLegRepository(session),
     )
 
 

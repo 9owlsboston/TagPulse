@@ -38,6 +38,7 @@ __all__ = [
     "AssetStateSnapshot",
     "FusionStrategy",
     "ResolvedRead",
+    "SlaConfig",
     "consolidate",
 ]
 
@@ -49,6 +50,21 @@ Frame = Literal["reader", "floor", "geo", "none"]
 _LOCATING_FRAMES: frozenset[str] = frozenset({"reader", "floor", "geo"})
 
 
+class SlaConfig(BaseModel):
+    """Per-tenant cold-chain envelope used to score transit legs (Sprint 72).
+
+    A reading is in-range when ``temp_min_c ≤ temperature ≤ temp_max_c`` and
+    ``humidity ≤ humidity_max`` (each bound optional → unbounded on that side).
+    ``excursion_tolerance_s`` is the longest contiguous out-of-range run allowed
+    before a leg is flagged ``sla_breached``.
+    """
+
+    temp_min_c: float | None = Field(default=None)
+    temp_max_c: float | None = Field(default=None)
+    humidity_max: float | None = Field(default=None)
+    excursion_tolerance_s: int = Field(default=0, ge=0)
+
+
 class FusionStrategy(BaseModel):
     """Per-tenant consolidation config (the ``tenants.fusion_strategy`` JSONB).
 
@@ -58,7 +74,8 @@ class FusionStrategy(BaseModel):
     cadence and ``lookback_s`` the window each tick consolidates over (both
     consumed by the worker, not this pure core). ``rssi_floor_dbm`` drops weak
     reads from the *location* vote (``None`` disables the floor); environment
-    readings are never RSSI-gated.
+    readings are never RSSI-gated. ``sla`` (Sprint 72) is the optional per-tenant
+    cold-chain envelope used to score transit legs; ``None`` = no SLA scoring.
     """
 
     half_life_s: float = Field(default=5.0, ge=0.0)
@@ -66,6 +83,7 @@ class FusionStrategy(BaseModel):
     lookback_s: float = Field(default=60.0, gt=0.0)
     rssi_floor_dbm: float | None = Field(default=None)
     min_reads: int = Field(default=1, ge=1)
+    sla: SlaConfig | None = Field(default=None)
 
 
 @dataclass(frozen=True)

@@ -63,6 +63,7 @@ from tagpulse.workers.consolidation_worker import AssetConsolidationWorker
 from tagpulse.workers.dwell_worker import DwellTracker, DwellWorker
 from tagpulse.workers.floor_position_worker import FloorPositionWorker
 from tagpulse.workers.inventory_rule_worker import InventoryRuleWorker
+from tagpulse.workers.leg_tracker import AssetLegTracker
 from tagpulse.workers.tag_registrar_worker import TagRegistrarWorker
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
             await asset_consolidation_worker.start()
             app.state.asset_consolidation_worker = asset_consolidation_worker
+
+            # Sprint 72 (ADR-034 Phase 2): leg tracker subscribes to the
+            # custody events the consolidation worker emits and opens/closes
+            # ``asset_legs`` (transit legs + cold-chain SLA). Stateless — the
+            # table holds the open-leg state, so nothing to hydrate.
+            asset_leg_tracker = AssetLegTracker(async_session_factory)
+            await event_bus.subscribe(
+                Topic.ASSET_CUSTODY_CHANGED, asset_leg_tracker.on_custody_changed
+            )
+            app.state.asset_leg_tracker = asset_leg_tracker
 
         # Alert delivery — subscribes to alert triggered events
         alert_delivery = AlertDeliveryService()

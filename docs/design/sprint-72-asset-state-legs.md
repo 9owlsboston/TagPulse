@@ -73,13 +73,105 @@ Regular tenant-scoped table (RLS), one row per leg (open or closed).
 
 ## 5. API + UI
 
+### 5.1 API
+
 - **`GET /assets/{id}/legs`** (viewer) — legs newest-first, `status` filter,
-  `limit`. The **open** leg also surfaces on `GET /assets/{id}/state` (add an
-  optional `open_leg` block) so the "Current" card can say *"In transit: Origin
-  DC → … · 2h 14m"*.
-- **UI** — the `AssetCurrentStateCard` shows the open leg (origin + elapsed) when
-  `frame=geo`; a new **Legs** tab/timeline lists closed legs with duration +
-  cold-chain SLA badge (in-range % / excursion).
+  `limit`. Each closed leg carries duration + origin/dest + the env envelope &
+  SLA summary.
+- The **open** leg also surfaces on `GET /assets/{id}/state` as an optional
+  `open_leg` block (origin + `departed_at` + last fix), so the "Current" card can
+  say *"In transit: Origin DC → … · 2h 14m"* without a second call.
+
+### 5.2 UI narrative — Where/What × Now/Over-time
+
+The Asset page answers a 2×2 — **Where** (location) / **What** (environment) ×
+**Now** ("is") / **Over time** ("was"). Phase 2's legs + SLA are what turn the
+"was" into a *story*. Two surfaces carry it: the **Current card** (the "is",
+Overview tab — extends the Phase-1 card) and a renamed **Journey tab** (the "was"
+— the existing "Path" tab becomes a 3-panel linked view).
+
+**Current card (the "is").** Frame-aware headline that flips between *at facility*
+(`At SuperMart DC · Cold Room A`) and *in transit* (the open leg):
+
+```
++-----------------------------------------------------------+
+| Current (fused)                          [In transit] o    |
+|-----------------------------------------------------------|
+| Where   In transit:  Origin DC  ->  (arriving...)          |
+|         elapsed 2h 14m   ·  last fix 41.88, -71.02         |
+| Temp    4.0 C  [in range]       Humidity   60 %  [in range]|
+| Tags 3  ·  samples 12  ·  confidence 0.71  ·  updated 12:03|
++-----------------------------------------------------------+
+```
+
+The SLA chip turns red (`[3.2 C - breach]`) when the fused value is outside
+`fusion_strategy.sla`. Data: `GET /assets/{id}/state` (with `open_leg`).
+
+**Journey tab (the "was") — three linked panels.** Selecting a leg/dwell in any
+panel cross-filters the others.
+
+*(a) Journey timeline* — facility dwells (`o`) interleaved with legs (`=`),
+newest at top; each leg row = duration + origin→dest + cold-chain SLA badge (the
+headline cold-chain answer), each facility row = zone + dwell:
+
+```
++-- Journey -----------------------------------------------+
+| o  At SuperMart store · Backroom Chiller    now          |
+| =  LEG  SuperMart DC -> store        45m   [SLA OK]      |
+| o  At SuperMart DC · Cold Room A     14:00 (dwell 5m)    |
+| =  LEG  Origin DC -> SuperMart DC   3h30m  [SLA BREACH]  |
+| |    3.5-9.1 C · 88% in range · excursion 12m            |
+| o  At Origin DC · Dock 3            08:00-10:30          |
++----------------------------------------------------------+
+```
+
+Data: `GET /assets/{id}/legs` (closed legs + SLA) interleaved with facility
+intervals derived from `/state/history` frame changes; the open leg at top.
+
+*(b) Environment chart* — the fused `temperature_c`/`humidity_pct` series over the
+same time axis, the **SLA band shaded**, excursions highlighted, and **leg
+boundaries as vertical guides** so you read "temp *during the Origin→DC leg*":
+
+```
++-- Environment (was)  [range: this journey v]  Temp | Humidity -+
+| C                                                              |
+| 9|              ___  <- excursion (red)                        |
+| 6|··········· /   \ ···········  SLA max ......................|
+| 4|~~~~~~~~~~~/     \~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~              |
+| 2|·············································  SLA min ........|
+|  +----|-------------|--------|----------------                 |
+|    Dock3   leg A        DC      leg B    store                 |
++----------------------------------------------------------------+
+```
+
+Data: fused series from `GET /assets/{id}/state/history`; band from
+`fusion_strategy.sla`; excursion shading from the leg SLA. (This is the *fused
+mean* — a "show raw per-tag" toggle stays in the Telemetry tab for excursion
+forensics, honoring the "mean ≠ alerting" caveat.)
+
+*(c) Map* — the existing `AssetPathMap` trail with facility markers + the geo
+trail for legs; the open leg's last fix as a live marker.
+
+**The linkage (the narrative):** clicking **leg A** in the timeline clamps the
+chart to leg A's window and highlights leg A on the map — one gesture answers
+"where was it *and* what was the temp, on that leg."
+
+**Decisions (locked).** (1) the existing **"Path" tab is renamed "Journey"** and
+becomes this 3-panel view (Path already owns the map + range picker); (2) the
+chart's **default range is "this journey"** (origin → now) when an open/recent
+leg exists, else the existing 24h default.
+
+**States.** *Gated off / no data* → "No journey yet" empty state.
+*Single-frame deployment (no transit)* → no legs; timeline is facility dwells and
+the chart is one continuous series. *Open leg* → top row is a live, growing leg
+(no SLA verdict until close); chart right edge is live. *SLA breach* → one
+consistent red signal across the leg row, the chart excursion, and the Current
+card chip.
+
+**Build mapping.** *Reuses:* `AssetCurrentStateCard` (extend with `open_leg`),
+`AssetPathMap`, the `/state` + `/state/history` hooks, the Telemetry tab for raw.
+*New:* the Journey timeline component, the SLA-banded environment chart, the
+`useAssetLegs` hook, and the cross-filter wiring.
 
 ## 6. Cold-chain SLA config
 
@@ -89,18 +181,22 @@ The leg envelope needs a per-tenant temp/humidity target. Extend
 no SLA evaluation (legs still record duration + env envelope). This reuses the
 Phase 1 config column — no new tenant column.
 
-## 7. Decisions to lock (before building)
+## 7. Decisions (locked)
 
-- **A. Leg derivation = auto from custody events?** *Recommend **yes*** — reuses
-  Phase 1's `ASSET_CUSTODY_CHANGED`, zero new ingest. (Alternative: explicit
-  shipment/manifest declaration — heavier, needs a new write surface.)
-- **B. ETA in v1?** *Recommend **defer*** — an in-flight ETA needs the
-  **destination known before arrival**, which we don't have without a declared
-  shipment/manifest. **v1 = actuals-only legs** (origin + elapsed while open;
-  origin→destination + duration + SLA on close). ETA → a later phase once a
-  shipment/destination-declaration exists.
-- **C. SLA source = `fusion_strategy.sla` block?** *Recommend **yes*** (per-tenant
+- **A. Leg derivation = auto from custody events.** **Locked: yes** — reuses
+  Phase 1's `ASSET_CUSTODY_CHANGED`, zero new ingest. (Alternative considered:
+  explicit shipment/manifest declaration — heavier, needs a new write surface;
+  deferred.)
+- **B. ETA in v1 = deferred.** An in-flight ETA needs the **destination known
+  before arrival**, which we don't have without a declared shipment/manifest.
+  **v1 = actuals-only legs** (origin + elapsed while open; origin→destination +
+  duration + SLA on close). ETA → a later phase once a destination-declaration
+  exists.
+- **C. SLA source = `fusion_strategy.sla` block.** **Locked: yes** (per-tenant
   config; absent = envelope-only, no breach flag).
+- **D. UI placement.** **Locked:** rename the existing "Path" tab → **"Journey"**
+  (3-panel linked view); env chart **default range = "this journey"** when an
+  open/recent leg exists, else 24h.
 
 ## 8. Out of scope (this sprint)
 
