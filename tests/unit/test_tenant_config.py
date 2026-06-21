@@ -91,3 +91,53 @@ def test_response_includes_dashboard_tags_count_mode_default() -> None:
         tracking_modes=["asset"],
     )
     assert cfg.dashboard_tags_count_mode == "live"
+
+
+# Sprint 73: per-tenant fusion_strategy (asset-state consolidation config).
+# PATCH uses presence (model_fields_set) so the UI can set OR clear it.
+
+
+def test_update_accepts_fusion_strategy() -> None:
+    payload = TenantConfigUpdate(fusion_strategy={"half_life_s": 8.0, "lookback_s": 90.0})  # type: ignore[arg-type]
+    assert payload.fusion_strategy is not None
+    assert payload.fusion_strategy.half_life_s == 8.0
+    assert payload.fusion_strategy.lookback_s == 90.0
+    assert "fusion_strategy" in payload.model_fields_set
+
+
+def test_update_accepts_fusion_strategy_with_sla() -> None:
+    payload = TenantConfigUpdate(
+        fusion_strategy={"sla": {"temp_min_c": 2, "temp_max_c": 8}}  # type: ignore[arg-type]
+    )
+    assert payload.fusion_strategy is not None
+    assert payload.fusion_strategy.sla is not None
+    assert payload.fusion_strategy.sla.temp_max_c == 8
+
+
+def test_update_fusion_strategy_explicit_null_is_clear() -> None:
+    payload = TenantConfigUpdate(fusion_strategy=None)
+    assert payload.fusion_strategy is None
+    assert "fusion_strategy" in payload.model_fields_set  # explicit null = opt out
+
+
+def test_update_fusion_strategy_omitted_not_in_fields_set() -> None:
+    payload = TenantConfigUpdate(tracking_modes=["asset"])
+    assert "fusion_strategy" not in payload.model_fields_set
+
+
+def test_update_rejects_bad_fusion_strategy() -> None:
+    with pytest.raises(ValueError):
+        TenantConfigUpdate(fusion_strategy={"half_life_s": -1})  # type: ignore[arg-type]
+
+
+def test_response_includes_fusion_strategy() -> None:
+    cfg = TenantConfig(
+        id="00000000-0000-0000-0000-000000000001",
+        name="Acme",
+        slug="acme",
+        plan="standard",
+        tracking_modes=["asset"],
+        fusion_strategy={"half_life_s": 5.0},  # type: ignore[arg-type]
+    )
+    dumped = cfg.model_dump()
+    assert dumped["fusion_strategy"]["half_life_s"] == 5.0

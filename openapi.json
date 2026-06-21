@@ -2748,6 +2748,58 @@
         "title": "FloorPositionResponse",
         "type": "object"
       },
+      "FusionStrategy": {
+        "description": "Per-tenant consolidation config (the ``tenants.fusion_strategy`` JSONB).\n\nThe recency dial ``half_life_s`` (\u03c4) is **shared** across the location vote\nand the environment mean (``\u03c4 \u2192 0`` collapses to *last-writer-wins* \u2014 only\nthe freshest read survives). ``recompute_interval_s`` (D) is the worker tick\ncadence and ``lookback_s`` the window each tick consolidates over (both\nconsumed by the worker, not this pure core). ``rssi_floor_dbm`` drops weak\nreads from the *location* vote (``None`` disables the floor); environment\nreadings are never RSSI-gated. ``sla`` (Sprint 72) is the optional per-tenant\ncold-chain envelope used to score transit legs; ``None`` = no SLA scoring.",
+        "properties": {
+          "half_life_s": {
+            "default": 5.0,
+            "minimum": 0.0,
+            "title": "Half Life S",
+            "type": "number"
+          },
+          "lookback_s": {
+            "default": 60.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Lookback S",
+            "type": "number"
+          },
+          "min_reads": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Min Reads",
+            "type": "integer"
+          },
+          "recompute_interval_s": {
+            "default": 10.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Recompute Interval S",
+            "type": "number"
+          },
+          "rssi_floor_dbm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rssi Floor Dbm"
+          },
+          "sla": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SlaConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "FusionStrategy",
+        "type": "object"
+      },
       "GeoAnchor": {
         "additionalProperties": false,
         "description": "Pin one floor-local point ``(x, y)`` to a real-world lat/lon.\n\nReserved seam for a future geo-anchored overlay (mobile + fixed readers on\none geographic map). Validated and stored now; no map consumes it yet.",
@@ -5770,6 +5822,52 @@
         "title": "SiteUpdate",
         "type": "object"
       },
+      "SlaConfig": {
+        "description": "Per-tenant cold-chain envelope used to score transit legs (Sprint 72).\n\nA reading is in-range when ``temp_min_c \u2264 temperature \u2264 temp_max_c`` and\n``humidity \u2264 humidity_max`` (each bound optional \u2192 unbounded on that side).\n``excursion_tolerance_s`` is the longest contiguous out-of-range run allowed\nbefore a leg is flagged ``sla_breached``.",
+        "properties": {
+          "excursion_tolerance_s": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Excursion Tolerance S",
+            "type": "integer"
+          },
+          "humidity_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Humidity Max"
+          },
+          "temp_max_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Max C"
+          },
+          "temp_min_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Min C"
+          }
+        },
+        "title": "SlaConfig",
+        "type": "object"
+      },
       "SlaEnvelope": {
         "description": "The resolved per-tenant cold-chain SLA envelope (Sprint 72).\n\nMirrors `tenants.fusion_strategy.sla`; attached to `GET /assets/{id}/state`\nso the Journey environment chart can draw the target band. Each bound is\noptional (unbounded on that side).",
         "properties": {
@@ -8190,6 +8288,16 @@
             "title": "Dashboard Tags Count Mode",
             "type": "string"
           },
+          "fusion_strategy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FusionStrategy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -8279,6 +8387,16 @@
               }
             ],
             "title": "Dashboard Tags Count Mode"
+          },
+          "fusion_strategy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FusionStrategy"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "low_stock_threshold": {
             "anyOf": [

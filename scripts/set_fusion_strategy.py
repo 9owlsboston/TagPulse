@@ -71,31 +71,69 @@ async def _clear(tenant_id: UUID) -> None:
     print(f"fusion_strategy cleared for {tenant_id}")
 
 
+async def _load(tenant_id: UUID) -> FusionStrategy | None:
+    """Read + parse the tenant's current fusion_strategy (``None`` if unset/invalid)."""
+    async with tenant_context(tenant_id) as session:
+        raw = (
+            await session.execute(
+                text("SELECT fusion_strategy FROM tenants WHERE id = :t"),
+                {"t": str(tenant_id)},
+            )
+        ).scalar_one_or_none()
+    if not raw:
+        return None
+    try:
+        return FusionStrategy.model_validate(raw)
+    except ValueError:
+        return None
+
+
+def _pick(provided, current):  # type: ignore[no-untyped-def]
+    return provided if provided is not None else current
+
+
+def _merge(base: FusionStrategy, args: argparse.Namespace) -> FusionStrategy:
+    """Merge only the explicitly-provided flags onto ``base`` (read-modify-write).
+
+    Omitted knobs keep their existing value, so a partial ``--set`` never clobbers
+    the rest of the config (e.g. setting ``--half-life-s`` keeps the SLA).
+    """
+    sla = base.sla
+    if any(
+        v is not None
+        for v in (
+            args.sla_temp_min_c,
+            args.sla_temp_max_c,
+            args.sla_humidity_max,
+            args.sla_excursion_tolerance_s,
+        )
+    ):
+        bs = base.sla or SlaConfig()
+        sla = SlaConfig(
+            temp_min_c=_pick(args.sla_temp_min_c, bs.temp_min_c),
+            temp_max_c=_pick(args.sla_temp_max_c, bs.temp_max_c),
+            humidity_max=_pick(args.sla_humidity_max, bs.humidity_max),
+            excursion_tolerance_s=_pick(args.sla_excursion_tolerance_s, bs.excursion_tolerance_s),
+        )
+    return FusionStrategy(
+        half_life_s=_pick(args.half_life_s, base.half_life_s),
+        recompute_interval_s=_pick(args.recompute_interval_s, base.recompute_interval_s),
+        lookback_s=_pick(args.lookback_s, base.lookback_s),
+        rssi_floor_dbm=_pick(args.rssi_floor_dbm, base.rssi_floor_dbm),
+        min_reads=_pick(args.min_reads, base.min_reads),
+        sla=sla,
+    )
+
+
 async def _main(args: argparse.Namespace) -> int:
     tenant_id = _resolve_tenant(args)
     if args.clear:
         await _clear(tenant_id)
     elif args.set:
-        sla = None
-        if any(
-            v is not None
-            for v in (args.sla_temp_min_c, args.sla_temp_max_c, args.sla_humidity_max)
-        ):
-            sla = SlaConfig(
-                temp_min_c=args.sla_temp_min_c,
-                temp_max_c=args.sla_temp_max_c,
-                humidity_max=args.sla_humidity_max,
-                excursion_tolerance_s=args.sla_excursion_tolerance_s,
-            )
-        config = FusionStrategy(
-            half_life_s=args.half_life_s,
-            recompute_interval_s=args.recompute_interval_s,
-            lookback_s=args.lookback_s,
-            rssi_floor_dbm=args.rssi_floor_dbm,
-            min_reads=args.min_reads,
-            sla=sla,
-        )
-        await _set(tenant_id, config)
+        # Merge onto the existing config so a partial --set keeps untouched knobs
+        # (e.g. the SLA). No existing config -> start from FusionStrategy() defaults.
+        base = await _load(tenant_id) or FusionStrategy()
+        await _set(tenant_id, _merge(base, args))
     await _show(tenant_id)
     return 0
 
@@ -107,24 +145,25 @@ def _parse_args() -> argparse.Namespace:
     g.add_argument("--tenant-slug", default="demo-wm-dc", help="Tenant slug.")
     p.add_argument("--set", action="store_true", help="Set fusion_strategy (opt in).")
     p.add_argument("--clear", action="store_true", help="Clear fusion_strategy (opt out).")
-    p.add_argument("--half-life-s", type=float, default=5.0, dest="half_life_s")
+    # Knob defaults are None sentinels so a partial --set merges onto the existing
+    # config (omitted knobs keep their current value; defaults apply only when no
+    # config exists yet).
+    p.add_argument("--half-life-s", type=float, default=None, dest="half_life_s")
     p.add_argument(
-        "--recompute-interval-s", type=float, default=10.0, dest="recompute_interval_s"
+        "--recompute-interval-s", type=float, default=None, dest="recompute_interval_s"
     )
-    p.add_argument("--lookback-s", type=float, default=60.0, dest="lookback_s")
-    p.add_argument(
-        "--rssi-floor-dbm", type=float, default=None, dest="rssi_floor_dbm"
-    )
-    p.add_argument("--min-reads", type=int, default=1, dest="min_reads")
-    # -- Sprint 72: optional cold-chain SLA block (omit all three bounds to
-    # leave SLA unset; legs then record the envelope only). --
+    p.add_argument("--lookback-s", type=float, default=None, dest="lookback_s")
+    p.add_argument("--rssi-floor-dbm", type=float, default=None, dest="rssi_floor_dbm")
+    p.add_argument("--min-reads", type=int, default=None, dest="min_reads")
+    # -- Sprint 72: optional cold-chain SLA block (omit all bounds to leave SLA
+    # unchanged; legs then record the envelope only). --
     p.add_argument("--sla-temp-min-c", type=float, default=None, dest="sla_temp_min_c")
     p.add_argument("--sla-temp-max-c", type=float, default=None, dest="sla_temp_max_c")
     p.add_argument("--sla-humidity-max", type=float, default=None, dest="sla_humidity_max")
     p.add_argument(
         "--sla-excursion-tolerance-s",
         type=int,
-        default=0,
+        default=None,
         dest="sla_excursion_tolerance_s",
     )
     return p.parse_args()
