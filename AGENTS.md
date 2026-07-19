@@ -67,7 +67,10 @@ Pick the destination by the **kind** of content, not the topic:
      union open items + facts across EVERY repo that declares the SAME (lowercase)
      project name. Copy the line below, DROP the `-example` suffix so it goes live,
      put it on its own line, and set your name (the `-example` form is inert): -->
-<!-- ledger-project-example: your-project-name -->
+<!-- ledger-project: tagpulse -->
+<!-- For the cross-repo union to work, TagPulse-UI must declare the SAME `tagpulse`
+     project line (add it there if absent) — then ledger recall/profile union open
+     items + facts across both repos of this two-repo product. -->
 <!-- Uncomment the rows the repo has grown into (profile s+ / grow):
 | Architecture, proposals, decisions — the *why* (Diátaxis *explanation* / ADRs) | `docs/design/` |
 | How-to workflows and walkthroughs (Diátaxis *how-to* / *tutorial*) | `docs/guides/` |
