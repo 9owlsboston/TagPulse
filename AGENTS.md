@@ -200,8 +200,12 @@ design doc).
 - Two repos, **one roadmap**: `docs/roadmap.md` here is the single source of truth; UI-only
   items live here too, tagged `[UI]`. Sprint numbers are **shared** across both repos.
 - **OpenAPI is the contract handoff.** Any API-touching change regenerates `openapi.json`
-  in the same PR (`make export-openapi`). When both repos change, merge **backend first**,
-  then the UI rebases onto the updated `openapi.json`.
+  in the same PR (`make export-openapi`). UI PRs that consume new API **record the backend
+  commit SHA** the `openapi.json` was regenerated against, in the PR description. When both
+  repos change, merge **backend first**, then the UI rebases onto the updated `openapi.json`.
+- **Declare the cross-repo plan upfront.** `scripts/start-sprint.sh` injects a
+  `## Cross-repo plan` section into the draft PR body — fill it in even when the answer is
+  "backend only" or "UI TBD pending backend exploration". Explicit beats implicit.
 - Mid-sprint discovery that the *other* repo needs a change → don't derail the active
   branch; ship a small focused `sprint-NN/<topic>-<repo>-followup` PR.
 - `scripts/start-sprint.sh --with-ui <NN> <topic>` also creates the matching UI branch +
