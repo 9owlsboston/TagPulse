@@ -8,7 +8,7 @@
 # Checks (all best-effort; missing dependency = yellow, not red):
 #   1. azd env resolves
 #   2. RG exists and is in expected state
-#   3. api Container App is running and reachable on /healthz
+#   3. api Container App is running and reachable on /health/ready
 #   4. worker Container App has 1+ replicas
 #   5. Mosquitto ACI is in 'Running' state
 #   6. PG Flexible Server is 'Ready'
@@ -58,7 +58,7 @@ else
   emit red "resource group" "$RG missing"
 fi
 
-# 3. api running + healthz
+# 3. api running + readiness (/health/ready)
 #    The app exposes /health (FastAPI), /health/ready, /health/live.
 #    /healthz is NOT a route — earlier versions of this script probed it
 #    and reported a false red. Probe /health/ready (the readiness path

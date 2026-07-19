@@ -4,6 +4,10 @@ All notable changes to TagPulse will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- **`scripts/azd-smoke.sh` probed non-existent `/healthz` + `/readyz` (false red).** The post-deploy smoke gate (Sprint 28 A5) curled `/healthz` and `/readyz`, but the API mounts its health router with no prefix — the real routes are `/health/live` (liveness) and `/health/ready` (readiness). Every `make smoke` / CI smoke run reported 2 false failures (`404 {"detail":"Not Found"}`) even against a perfectly healthy API. Fixed to probe the correct paths, mirroring the identical `scripts/azd-doctor.sh` fix (commit `e3122db`). Also corrected the `make smoke` help text + script header. Tooling only — no app change.
+
 ### Added
 
 - **Sprint 77 — Excel filters on the remaining server-paginated tables.** Finishes the column-filter initiative (Sprints 70/75/76) so **every** list table has the uniform sort + per-column filter. `GET /tag-transfers` gains **`epc_q`** (wildcard over `epc_hex`), multi-select **`statuses`**, and **server sort** (`requested_at`/`completed_at`/`status`, 422 on unknown). The reconciliation views (`GET /tags/reconciliation/{view}`) gain a **`q`** wildcard over each view's identifier (`epc_hex` / `tag_id`), forwarded to all three views + the CSV export. All additive, reuse `wildcard_to_ilike`, no migration. 1 new unit test; `openapi.json` regenerated. `make check` green (1796). UI: EPC editbox + Status/Requested/Completed server sort on Transfers; identifier editbox on each Reconciliation view; **Assets** server-side sort (the Sprint 76 follow-up); and client-side Excel filters on the **Stock Levels** pivot (Product wildcard + numeric sort). See [docs/design/sprint-77-server-table-filters.md](docs/design/sprint-77-server-table-filters.md).

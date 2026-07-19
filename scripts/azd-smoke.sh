@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/azd-smoke.sh <env>
 #
-# Sprint 28 A5: post-deploy smoke. Curl /healthz, /readyz, and /tenant/config
+# Sprint 28 A5: post-deploy smoke. Curl /health/live, /health/ready, and /tenant/config
 # against a deployed env. Exit non-zero on first failure with the response
 # in stderr. Designed to be wired into CI after `azd deploy` succeeds.
 #
@@ -44,8 +44,11 @@ check() {
   fi
 }
 
-check "GET /healthz"  "$API_URL/healthz"
-check "GET /readyz"   "$API_URL/readyz"
+# The app mounts the health router with no prefix: /health, /health/live
+# (liveness), /health/ready (readiness). /healthz and /readyz are NOT routes
+# (FastAPI 404) — probing them was a false red. Mirrors the azd-doctor.sh fix.
+check "GET /health/live"   "$API_URL/health/live"
+check "GET /health/ready"  "$API_URL/health/ready"
 
 # Authenticated probe — needs the test-corp admin key.
 KEY="$(az keyvault secret show --vault-name "$KV_NAME" --name "tagpulse-test-corp-admin-key" --query value -o tsv 2>/dev/null || echo '')"
