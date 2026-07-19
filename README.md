@@ -2,6 +2,12 @@
 
 IoT platform for RFID tag readers and sensor data. Ingests device telemetry, manages device registry, and runs pluggable analytics modules tailored to application needs.
 
+> **Current state:** see [docs/current-state.md](docs/current-state.md) for the dated
+> "where we are now" snapshot (current → future → open gaps). This README holds the
+> durable orientation; the snapshot holds the moving picture. **For AI agents:** start
+> with [AGENTS.md](AGENTS.md) (the repo operating contract) and record the action/
+> verification trail in [docs/history/execution-log.md](docs/history/execution-log.md).
+
 ## Status
 
 - **Current sprint & shipped milestones:** see [docs/roadmap.md](docs/roadmap.md) — single source of truth. The roadmap header carries a `current-sprint` badge that is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff.
