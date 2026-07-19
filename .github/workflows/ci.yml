@@ -10,8 +10,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -45,13 +45,31 @@ jobs:
       pull-requests: write
     environment: dev
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: changes
+      - uses: actions/checkout@v5
         with:
-          filters: |
-            bicep:
-              - 'deploy/azure/bicep/**'
+          fetch-depth: 0
+      # Resilient path detection via local git instead of
+      # dorny/paths-filter@v3, whose GitHub-API diff call intermittently
+      # fails ("diff temporarily unavailable due to heavy server load")
+      # and spuriously reds this required check. A local `git diff` needs
+      # no API and can't hit that failure mode.
+      - name: Detect Bicep changes
+        id: changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE_REF"
+          # `git diff --quiet` exits 0 = no change, 1 = changed, >1 = error.
+          # As an `if` condition it's exempt from `set -e`; any non-zero
+          # (changed OR error) routes to the `true` branch — fail-safe: on
+          # the rare local-git error we run what-if rather than silently
+          # skip a real Bicep change. No pipe, so no grep/SIGPIPE hazard.
+          if git diff --quiet "origin/${BASE_REF}...HEAD" -- 'deploy/azure/bicep/**'; then
+            echo "bicep=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "bicep=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Skip when no Bicep changes
         if: steps.changes.outputs.bicep != 'true'
         run: echo "No deploy/azure/bicep/ changes — skipping what-if."

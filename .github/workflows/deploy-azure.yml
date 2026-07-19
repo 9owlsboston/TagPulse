@@ -89,7 +89,7 @@ jobs:
     # gates manual approval.
     environment: ${{ inputs.environment || (github.event_name == 'workflow_run' && 'dev') || 'production' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # workflow_run defaults to checking out the default branch HEAD at
           # trigger time, not the commit that produced the image we're about
