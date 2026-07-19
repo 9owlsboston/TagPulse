@@ -54,7 +54,7 @@ export-openapi:  ## Export the FastAPI OpenAPI spec to openapi.json
 # (default: dev). All wrap scripts/ that source scripts/lib/azd-common.sh.
 # ---------------------------------------------------------------------------
 
-smoke:       ## Sprint 28 A5: post-deploy smoke (curl /healthz, /readyz, /tenant/config) — ENV=dev
+smoke:       ## Sprint 28 A5: post-deploy smoke (curl /health/live, /health/ready, /tenant/config) — ENV=dev
 	scripts/azd-smoke.sh $(ENV)
 
 rotate-key:  ## Sprint 28: rotate a tenant API key via tools-job — ENV=dev TENANT=test-corp
