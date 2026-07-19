@@ -39,7 +39,7 @@ jobs:
     environment: dev
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Sign in to Azure (OIDC)
         uses: azure/login@v2
