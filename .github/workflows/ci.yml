@@ -75,7 +75,7 @@ jobs:
         run: echo "No deploy/azure/bicep/ changes — skipping what-if."
       - name: Azure login (OIDC)
         if: steps.changes.outputs.bicep == 'true'
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
