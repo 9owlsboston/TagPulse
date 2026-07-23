@@ -1913,7 +1913,7 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 - Customizable drag-and-drop dashboards (react-grid-layout, Sprint 9+) (G13)
 - Device type-specific UI views (G14)
 - Second device type support (beyond RFID readers)
-- Mobile app for field technicians
+- Mobile app for field technicians — **repo stood up**: [9owlsboston/TagPulse-Mobile](https://github.com/9owlsboston/TagPulse-Mobile) (native iOS+Android edge client; camera scans + GPS/sensor telemetry). Design + locked decisions (separate repo · hybrid mode-switch · native Swift+Kotlin · HTTP-first) in that repo's `docs/design/mobile-client.md`; Phase 0 spike pending. Also realises **Second device type support** (above).
 - MQTT connection metering via broker plugin/proxy
 - ~~Pallet-of-cases hierarchy (`stock_items.parent_stock_item_id`) for SSCC → SGTIN containment~~ — **promoted to Sprint 15b** per [mobile-carriers-and-manifests.md](design/mobile-carriers-and-manifests.md)
 - Inventory cycle counts and reconciliation workflows

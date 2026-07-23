@@ -15,8 +15,10 @@ here).
 
 ## 1. What this repo is
 
-TagPulse is the **backend** of a two-repo IoT product (the React SPA lives in
-[9owlsboston/TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI)). It provides device
+TagPulse is the **backend** of a three-repo IoT product — the React SPA lives in
+[9owlsboston/TagPulse-UI](https://github.com/9owlsboston/TagPulse-UI) and the native mobile
+edge client in [9owlsboston/TagPulse-Mobile](https://github.com/9owlsboston/TagPulse-Mobile).
+It provides device
 registration/config, dual telemetry ingestion (**MQTT** on `:1883`, `:8883` TLS opt-in, and
 **HTTP**), TimescaleDB-backed time-series storage + monitoring, a user-defined rules/alerts
 engine, pluggable analytics modules, and outbound integration/export — behind FastAPI and an
@@ -68,9 +70,10 @@ Pick the destination by the **kind** of content, not the topic:
      project name. Copy the line below, DROP the `-example` suffix so it goes live,
      put it on its own line, and set your name (the `-example` form is inert): -->
 <!-- ledger-project: tagpulse -->
-<!-- For the cross-repo union to work, TagPulse-UI must declare the SAME `tagpulse`
-     project line (add it there if absent) — then ledger recall/profile union open
-     items + facts across both repos of this two-repo product. -->
+<!-- TagPulse-UI and TagPulse-Mobile declare the SAME `tagpulse` project line, so
+     ledger recall/profile union open items + facts across all three repos of this
+     product. Keep every repo's marker in the `<!-- ledger-project: tagpulse -->`
+     comment form — the un-commented form is inert (privacy_gate regex). -->
 <!-- Uncomment the rows the repo has grown into (profile s+ / grow):
 | Architecture, proposals, decisions — the *why* (Diátaxis *explanation* / ADRs) | `docs/design/` |
 | How-to workflows and walkthroughs (Diátaxis *how-to* / *tutorial*) | `docs/guides/` |
@@ -195,14 +198,18 @@ design doc).
 - Follow `CONTRIBUTING.md` for branch naming, commit format, and PR expectations. Run
   `make check` before marking work complete.
 
-## 10. Cross-repo workflow (TagPulse + TagPulse-UI)
+## 10. Cross-repo workflow (TagPulse + TagPulse-UI + TagPulse-Mobile)
 
-- Two repos, **one roadmap**: `docs/roadmap.md` here is the single source of truth; UI-only
-  items live here too, tagged `[UI]`. Sprint numbers are **shared** across both repos.
+- Three repos, **one roadmap**: `docs/roadmap.md` here is the single source of truth; UI-only
+  items live here too, tagged `[UI]` (mobile-only items tagged `[Mobile]`). Sprint numbers are
+  **shared** across all three repos.
 - **OpenAPI is the contract handoff.** Any API-touching change regenerates `openapi.json`
   in the same PR (`make export-openapi`). UI PRs that consume new API **record the backend
   commit SHA** the `openapi.json` was regenerated against, in the PR description. When both
   repos change, merge **backend first**, then the UI rebases onto the updated `openapi.json`.
+  [TagPulse-Mobile](https://github.com/9owlsboston/TagPulse-Mobile) consumes the **same**
+  `openapi.json` (its native iOS/Android API client is generated from it) and follows the
+  same record-the-backend-SHA rule.
 - **Declare the cross-repo plan upfront.** `scripts/start-sprint.sh` injects a
   `## Cross-repo plan` section into the draft PR body — fill it in even when the answer is
   "backend only" or "UI TBD pending backend exploration". Explicit beats implicit.
