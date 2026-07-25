@@ -91,3 +91,17 @@ ruff` clean, `python -m mypy src` clean (147 files), `python -m alembic history`
 `python -m pytest tests/unit` = 1836 passed / 1 skipped, `openapi.json` regenerated. Plan-stage
 rubber-duck (3 blockers → tenant-filter all methods, subject existence validation, device_id
 narrowing) ran. Migration round-trip runs in CI (make migration-check).
+
+### 2026-07-25 — Fix: inventory SGTIN auto-create epc_hex lookup (I-2J9R); I-EHQH already fixed
+
+P0 pair from the backlog. I-2J9R (live bug): IngestionService._process_inventory_read looked up
+the tag via get_by_epc(normalize_epc_hex(identity.epc)) — identity.epc is the decoded GS1 URI but
+get_by_epc matches hex-keyed tags.epc_hex, so it never matched → every SGTIN auto-create blocked →
+Stock Levels empty. Fixed to look up by identity.epc_hex (populated by _normalize for hex reads);
+URI-only reads conservatively still block. 2 regression tests (match-by-hex proceeds + asserts the
+hex was queried; unregistered hex blocks). I-EHQH (force-delete 500): verified ALREADY FIXED —
+delete_stock_item gates on movement_count>0 → StockItemLedgerError → structured 409 before any
+delete (ADR-031); only RESTRICT FK is stock_movements (parent is SET NULL); regression test
+test_inventory_route_force_delete.py already asserts 409-not-500. Resolved in ledger; both stale
+backlog.md entries drained. Verified: python -m ruff clean, python -m mypy src clean (147 files),
+python -m pytest tests/unit = 1838 passed / 1 skipped, openapi unchanged.
