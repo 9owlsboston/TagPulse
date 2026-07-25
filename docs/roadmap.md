@@ -1826,6 +1826,22 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 79 — Gateway/device telemetry ingest (I-75YC)
+
+> **Status (2026-07-25, in progress).** Backend-only. Second of the TagPulse-Mobile backend
+> asks. `POST /telemetry/readings/ingest` now accepts a **device** principal (from Sprint 78),
+> restricted to its own device subject + clock-validated, so the mobile gateway can report its
+> own telemetry without borrowing a tenant API key. Full design:
+> [docs/design/gateway-telemetry-ingest.md](design/gateway-telemetry-ingest.md).
+
+- [done] Role gate `admin,editor` → `admin,editor,device` on `POST /telemetry/readings/ingest`.
+- [done] Device principals restricted to own device subject (`subject_kind="device"` + own `device_id`) → 403 otherwise.
+- [done] Device batches clock-validated (whole batch 400 if any reading out of window) before any insert/publish.
+- [done] `source`→`external` and `device_id`→gateway coercion for device principals; admin/editor unchanged.
+- [done] Unit tests, `openapi.json` regenerated, `make check` green.
+
+**Out of scope (future follow-up):** relaying telemetry for *other* subjects (asset/lot/stock_item/zone) via a per-gateway **approved-subject-set grant** table — deferred; the MVE covers the gateway's own telemetry.
+
 ## Sprint 78 — Device-token HTTP auth + provision-time issuance (I-K6D1) (shipped)
 
 > **Status (2026-07-25, shipped).** Backend-only. Closes a TagPulse-Mobile backend ask:

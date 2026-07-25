@@ -16,10 +16,12 @@ from tagpulse.api.services.telemetry_service import TelemetryService
 from tagpulse.core.tenant_auth import Tenant, get_current_tenant
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.events.protocol import Event, EventBus, Topic
+from tagpulse.ingestion.clock import check_clock_window
 from tagpulse.models.schemas import (
     TelemetryAggregateBucket,
     TelemetryBatch,
     TelemetryQuarantineResponse,
+    TelemetryReadingIngest,
     TelemetryReadingResponse,
     TelemetryReadingsBatch,
     TelemetryResponse,
@@ -157,6 +159,36 @@ async def list_telemetry_aggregates(
     )
 
 
+def _enforce_device_telemetry(
+    principal: AuthenticatedUser, readings: list[TelemetryReadingIngest]
+) -> None:
+    """Guard a device principal's telemetry batch (no-op for admin/editor).
+
+    A device principal (``tpd_`` token, I-K6D1) may write telemetry only for
+    **its own device subject** (``subject_kind="device"`` + ``subject_id ==
+    device_id``), and every reading must fall inside the ingest clock window
+    (``check_clock_window``: ≥ now−24h, ≤ now+5min). The whole batch is
+    rejected — 403 (subject) / 400 (clock) — before any row is written, so a
+    compromised device cannot poison "latest" telemetry or fire
+    ``telemetry.threshold`` alerts with far-future/stale rows. Provenance
+    (``source``/``device_id``) is coerced by the caller. Relaying telemetry for
+    *other* subjects is deferred to a future per-gateway subject-grant model.
+    """
+    if principal.role != "device":
+        return
+    for reading in readings:
+        if reading.subject_kind != "device" or reading.subject_id != principal.device_id:
+            raise HTTPException(
+                status_code=403,
+                detail=("Device principals may only ingest telemetry for their own device subject"),
+            )
+        if check_clock_window(reading.timestamp) is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Telemetry timestamp outside the acceptable clock window",
+            )
+
+
 @router.post(
     "/telemetry/readings/ingest",
     response_model=list[TelemetryReadingResponse],
@@ -164,20 +196,28 @@ async def list_telemetry_aggregates(
 )
 async def ingest_telemetry_readings(
     body: TelemetryReadingsBatch,
-    user: AuthenticatedUser = require_role("admin", "editor"),
+    user: AuthenticatedUser = require_role("admin", "editor", "device"),
     repo: TimescaleTelemetryReadingsRepository = Depends(get_telemetry_readings_repo),
     event_bus: EventBus = Depends(get_event_bus),
 ) -> list[TelemetryReadingResponse]:
-    """Direct subject-scoped telemetry write (admin/editor only).
+    """Direct subject-scoped telemetry write (admin, editor, or device principal).
 
     For external systems publishing pre-resolved subject readings
     (e.g. a TMS pushing per-asset GPS speed). Bypasses the tag-borne
     fan-out path. Source defaults to ``"external"`` per the schema.
     Each persisted row is published as ``Topic.TELEMETRY_RECORDED`` so
     the Sprint 20 ``telemetry.threshold`` rule path fires here too.
+
+    A **device** principal (I-75YC) may write only its own device subject and
+    is clock-validated; its ``source``/``device_id`` are coerced to truthful
+    relay provenance. Admin/editor behavior is unchanged.
     """
+    _enforce_device_telemetry(user, body.readings)
+    is_device = user.role == "device"
     written: list[TelemetryReadingResponse] = []
     for reading in body.readings:
+        source = "external" if is_device else reading.source
+        device_id = user.device_id if is_device else reading.device_id
         row = await repo.insert(
             tenant_id=user.tenant_id,
             subject_kind=reading.subject_kind,
@@ -185,9 +225,9 @@ async def ingest_telemetry_readings(
             timestamp=reading.timestamp,
             metric_name=reading.metric_name,
             metric_value=reading.metric_value,
-            device_id=reading.device_id,
+            device_id=device_id,
             unit=reading.unit,
-            source=reading.source,
+            source=source,
             metadata=reading.metadata,
         )
         written.append(row)
@@ -205,8 +245,8 @@ async def ingest_telemetry_readings(
                         "metric_name": reading.metric_name,
                         "metric_value": reading.metric_value,
                         "unit": reading.unit,
-                        "device_id": (str(reading.device_id) if reading.device_id else None),
-                        "source": reading.source,
+                        "device_id": (str(device_id) if device_id else None),
+                        "source": source,
                         "timestamp": row.timestamp.isoformat(),
                     },
                 ),
