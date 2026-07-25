@@ -135,3 +135,20 @@ introducing PR). Driver: postgresql+asyncpg (alembic env.py builds an async engi
 Desktop WSL integration off in this distro) — the CI job's first run on this PR IS the validation
 (it exercises migration 062's downgrade). Roadmap E3 flipped to [done]. Verified: ci.yml parses
 as valid YAML (3 jobs). CI-only change.
+
+### 2026-07-25 — Test infra: live-DB integration harness (C-6RTX)
+
+Stood up tests/integration/conftest.py: session-scoped `alembic upgrade head` + function-scoped
+async `session` fixture on a fresh create_async_engine(poolclass=NullPool) built inside each
+test's loop (avoids cross-event-loop asyncpg errors under asyncio_mode=auto), rolled back at
+teardown; make_tenant/category/device/asset factory fixtures. Gated by TAGPULSE_INTEGRATION_DB_URL
+(hermetic without it — verified 6 integration tests skip). New `make integration-test` +
+`integration-test` CI job (own timescaledb service, itest db). Proof tests backfill Sprint 81
+grant CRUD (partial-unique enforcement, soft-revoke+recreate, active_subject_set scoping — split
+the duplicate-IntegrityError case into its own test so it can't poison the lifecycle tx) and
+Sprint 82 get_by_binding_value (raw+lowercased scan, tenant isolation, unbound exclusion). Could
+NOT run locally (Docker Desktop WSL integration off) — the integration-test CI job on the PR is
+the validation. Plan-stage rubber-duck (2 blockers: NullPool per-test engine + split duplicate
+test) ran. Verified: python -m ruff clean, python -m mypy src clean, python -m pytest tests/unit
+= 1846 passed, ci.yml valid (4 jobs). Remaining fake-only paths (asset_q/facets/Transfers/
+Reconciliation) logged as a backlog follow-up.

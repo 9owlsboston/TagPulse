@@ -1,4 +1,4 @@
-.PHONY: lint typecheck test format check run export-openapi migration-check \
+.PHONY: lint typecheck test format check run export-openapi migration-check integration-test \
         smoke rotate-key logs doctor demo-tenant demo-tenant-reset demo-tenant-dev \
         demo-inventory demo-asset demo-inventory-reset demo-asset-reset \
         demo-creds sim-start sim-stop sim-status help
@@ -22,6 +22,13 @@ migration-check:  ## Sprint 19: round-trip alembic upgrade head -> downgrade -1 
 	  exit 1; \
 	fi
 	pytest tests/integration/test_migration_round_trip.py -v --tb=short
+
+integration-test:  ## C-6RTX: live-DB repo tests (needs TAGPULSE_INTEGRATION_DB_URL)
+	@if [ -z "$$TAGPULSE_INTEGRATION_DB_URL" ]; then \
+	  echo "TAGPULSE_INTEGRATION_DB_URL not set; export it to a TimescaleDB URL first." >&2; \
+	  exit 1; \
+	fi
+	pytest tests/integration --ignore=tests/integration/test_migration_round_trip.py -v --tb=short
 
 format:      ## Auto-format code
 	ruff format src tests clients/pi

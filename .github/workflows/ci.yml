@@ -69,6 +69,37 @@ jobs:
           TAGPULSE_INTEGRATION_DB_URL: postgresql+asyncpg://tagpulse:secret@localhost:5432/migtest
         run: make migration-check
 
+  # C-6RTX: live-DB repo tests (the fake-only SQL paths get real coverage).
+  # Its own TimescaleDB service container (separate job = separate services),
+  # schema built by the harness via `alembic upgrade head`.
+  integration-test:
+    runs-on: ubuntu-latest
+    services:
+      timescaledb:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: tagpulse
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: itest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tagpulse -d itest"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Live-DB integration tests
+        env:
+          TAGPULSE_INTEGRATION_DB_URL: postgresql+asyncpg://tagpulse:secret@localhost:5432/itest
+        run: make integration-test
+
   # Sprint 28 A1+A4: Bicep `what-if` preview on PRs that touch
   # deploy/azure/bicep/. Posts the diff back to the PR so reviewers can
   # see the planned change set without running az locally. Skipped on
