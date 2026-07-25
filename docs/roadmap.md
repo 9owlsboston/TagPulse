@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 81 — gateway subject grants · branch `sprint-81/gateway-subject-grants` (full scope lands in §sprint-81 during the sprint).
+**Current sprint:** 81 — gateway subject grants · **shipped** (PR #171); between sprints.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1826,9 +1826,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 81 — Per-gateway approved-subject-set grants (C-6S9H)
+## Sprint 81 — Per-gateway approved-subject-set grants (C-6S9H) (shipped)
 
-> **Status (2026-07-25, in progress).** Backend-only. Completes the deferred relay-scoping from
+> **Status (2026-07-25, shipped).** Backend-only. Completes the deferred relay-scoping from
 > I-75YC/I-9HQA: an admin can authorize a gateway device to relay telemetry for a set of
 > downstream subjects. Full design: [docs/design/gateway-subject-grants.md](design/gateway-subject-grants.md).
 
