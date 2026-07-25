@@ -21,6 +21,7 @@ from tagpulse.api.routes.auth import router as auth_router
 from tagpulse.api.routes.bulk_operations import router as bulk_operations_router
 from tagpulse.api.routes.categories import router as categories_router
 from tagpulse.api.routes.dashboard import router as dashboard_router
+from tagpulse.api.routes.device_location import router as device_location_router
 from tagpulse.api.routes.devices import router as devices_router
 from tagpulse.api.routes.health import router as health_router
 from tagpulse.api.routes.ingestion import router as ingestion_router
@@ -468,6 +469,7 @@ app.include_router(security_router)
 app.include_router(auth_router)
 app.include_router(ingestion_router)
 app.include_router(devices_router)
+app.include_router(device_location_router)
 app.include_router(antennas_router)
 app.include_router(query_router)
 app.include_router(rules_router)

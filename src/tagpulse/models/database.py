@@ -905,7 +905,13 @@ class AssetTagBindingModel(Base):
 
 
 class ExternalLocationModel(Base):
-    """Non-RFID position fix for an asset (Sprint 15 Phase C)."""
+    """Non-RFID position fix for a subject (Sprint 15 Phase C; Sprint 80 I-9HQA).
+
+    Originally asset-only; ``subject_kind``/``subject_id`` generalize it to any
+    subject (e.g. a gateway's own ``device``). ``asset_id`` is retained for the
+    asset path + existing queries and is populated (=``subject_id``) for asset
+    rows; ``NULL`` for non-asset subjects.
+    """
 
     __tablename__ = "external_locations"
 
@@ -913,7 +919,11 @@ class ExternalLocationModel(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
     )
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # Sprint 80 (I-9HQA): generic subject. Nullable during the expand phase
+    # (see migration 060); new writers always populate them.
+    subject_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    subject_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), primary_key=True, nullable=False
     )

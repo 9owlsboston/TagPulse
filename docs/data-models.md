@@ -987,23 +987,25 @@ Live count of in-stock items per (product, lot, zone). Defined in [design/tracki
 
 ### external_locations (hypertable)
 
-Positions pushed by external systems (TMS adapters, mobile-carrier apps) for assets without an onboard reader. Partitioned by `recorded_at`. UNION'd with reader-derived positions in the `asset_current_location` view (Sprint 15 Phase C).
+Positions pushed by external systems (TMS adapters, mobile-carrier apps) for subjects without an onboard reader. Partitioned by `recorded_at`. UNION'd with reader-derived positions in the `asset_current_location` view (Sprint 15 Phase C). **Sprint 80 (I-9HQA):** generalized from asset-only to any `(subject_kind, subject_id)` — a gateway can stamp its own `device` position via `POST /device-location`. Additive: asset rows keep `asset_id` (= `subject_id`); the asset queries + index are unchanged.
 
 | Column | Type | Constraints | Notes |
 |--------|------|-------------|-------|
 | `id` | UUID | PK (composite with `recorded_at`) | |
 | `tenant_id` | UUID | FK → tenants.id, NOT NULL | |
-| `asset_id` | UUID | FK → assets.id, NOT NULL, indexed | |
+| `asset_id` | UUID | **NULLABLE** (Sprint 80), indexed | Populated (= `subject_id`) for asset rows; `NULL` for non-asset subjects |
+| `subject_kind` | VARCHAR(16) | NULLABLE (expand phase, Sprint 80) | `device` / `asset` / `lot` / `stock_item` / `zone`; backfilled `asset` for pre-060 rows |
+| `subject_id` | UUID | NULLABLE (expand phase, Sprint 80), indexed | The subject the position belongs to |
 | `recorded_at` | TIMESTAMPTZ | NOT NULL, indexed | When the position was sampled at the source |
 | `received_at` | TIMESTAMPTZ | NOT NULL, default `now()` | When TagPulse ingested it |
 | `latitude` | DOUBLE PRECISION | NOT NULL | WGS84 |
 | `longitude` | DOUBLE PRECISION | NOT NULL | WGS84 |
-| `accuracy_m` | DOUBLE PRECISION | NULLABLE | |
-| `source` | VARCHAR(64) | NOT NULL | Adapter / vendor identifier (e.g. `samsara`, `geotab`) |
+| `accuracy_m` | DOUBLE PRECISION | NULLABLE | Arbitration key when multiple sources report one subject (smaller wins) |
+| `source` | VARCHAR(64) | NOT NULL | Adapter / vendor identifier (e.g. `samsara`, `geotab`, `gps`) |
 | `metadata` | JSONB | NULLABLE | |
 
 **RLS:** Yes
-**Migration:** 019
+**Migration:** 019, 060
 
 ---
 

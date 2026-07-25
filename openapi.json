@@ -2537,9 +2537,16 @@
             "title": "Accuracy Meters"
           },
           "asset_id": {
-            "format": "uuid",
-            "title": "Asset Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Id"
           },
           "heading_deg": {
             "anyOf": [
@@ -2597,6 +2604,29 @@
             ],
             "title": "Speed Kph"
           },
+          "subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "subject_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Kind"
+          },
           "tenant_id": {
             "format": "uuid",
             "title": "Tenant Id",
@@ -2606,7 +2636,6 @@
         "required": [
           "id",
           "tenant_id",
-          "asset_id",
           "recorded_at",
           "latitude",
           "longitude",
@@ -12258,6 +12287,53 @@
         "summary": "Single Device Health",
         "tags": [
           "query"
+        ]
+      }
+    },
+    "/device-location": {
+      "post": {
+        "description": "Record the calling device's own external position (device principals only).\n\nThe subject is fixed to ``('device', <this device>)`` \u2014 a device cannot\nstamp another subject's location. ``recorded_at`` must fall inside the\ningest clock window (``check_clock_window``).",
+        "operationId": "record_device_location_device_location_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalLocationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalLocationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Record Device Location",
+        "tags": [
+          "device-location"
         ]
       }
     },

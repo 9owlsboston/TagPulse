@@ -59,3 +59,19 @@ coerced (persisted row + published event). Admin/editor unchanged. Per-gateway a
 grants deferred. Verified: `python -m ruff` clean, `python -m mypy src` clean (144 files),
 `python -m pytest tests/unit` = 1820 passed / 1 skipped, `openapi.json` regenerated (endpoint
 description). Plan-stage rubber-duck (2 blockers → self-subject-only + batch clock check) ran.
+
+### 2026-07-25 — Sprint 80: external_locations subject generalization + device-self endpoint (I-9HQA)
+
+Third TagPulse-Mobile backend ask. Migration 060 adds nullable `subject_kind`/`subject_id` to
+`external_locations` (expand-phase safe — migrations run pre-rollout; backfills existing rows to
+`subject_kind='asset'`), makes `asset_id` nullable, adds `ix_external_locations_by_subject`;
+downgrade deletes `asset_id IS NULL` rows before restoring NOT NULL (data-lossy, documented).
+Model/schema/repo generalized additively (generic `insert_for_subject`/`get_latest_for_subject`/
+`list_for_subject`; asset methods delegate + keep `asset_id` so the asset UNION/index/RFID path
+are untouched). New `POST /device-location` (require_role("device"), `device_id` guarded,
+subject fixed to the token's device, `recorded_at` clock-validated) — emits NO event so the asset
+`EXTERNAL_LOCATION_RECORDED` webhook contract (dispatcher subscribes to ALL topics) is unchanged.
+Verified: `python -m ruff` clean, `python -m mypy src` clean (145 files), `python -m alembic
+history` shows 059->060 head, `python -m pytest tests/unit` = 1826 passed / 1 skipped,
+`openapi.json` regenerated. Plan-stage rubber-duck (4 blockers → nullable cols, device_id guard,
+no device event, data-lossy downgrade) ran. Migration round-trip (make migration-check) runs in CI.

@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 79 — gateway telemetry ingest · **shipped** (PR #168); between sprints.
+**Current sprint:** 80 — external locations subject kinds · **shipped** (PR #169); between sprints.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1825,6 +1825,21 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 **Decisions to lock (design doc §7).** **A** legs auto-derived from custody (recommend yes); **B** ETA **deferred** to a later phase — v1 is **actuals-only** (no in-flight ETA without a declared destination); **C** SLA from a `fusion_strategy.sla` block. **Out of scope:** in-flight ETA + destination prediction, multi-leg shipment grouping, route/geocoding — all gated on a destination-declaration mechanism.
 
 ---
+
+## Sprint 80 — Generalize external_locations to all subject_kinds + device-self endpoint (I-9HQA) (shipped)
+
+> **Status (2026-07-25, shipped).** Backend-only. Third of the TagPulse-Mobile backend
+> asks. `external_locations` was asset-only; it now carries `(subject_kind, subject_id)` so a
+> gateway can stamp its own `device` position, additively (asset path + RFID untouched). Full
+> design: [docs/design/external-locations-subject-kinds.md](design/external-locations-subject-kinds.md).
+
+- [done] Migration 060: nullable `subject_kind`/`subject_id` (+backfill `asset`), `asset_id` nullable, `ix_external_locations_by_subject`; data-lossy documented downgrade.
+- [done] Model/schema/repo generalized additively (`insert_for_subject`/`get_latest_for_subject`/`list_for_subject`; asset methods delegate).
+- [done] `POST /device-location` — device principals stamp their OWN device position; `device_id`-fixed subject, clock-validated, no event (asset webhook contract untouched).
+- [done] `accuracy_meters` documented as the multi-source arbitration key.
+- [done] Unit tests, `openapi.json` regenerated, `make check` green.
+
+**Out of scope (future follow-up C-6S9H):** relaying external positions for *other* subjects (asset/lot/stock_item/zone) from a gateway — pairs with the deferred telemetry subject-grant model.
 
 ## Sprint 79 — Gateway/device telemetry ingest (I-75YC) (shipped)
 
