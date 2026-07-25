@@ -826,6 +826,7 @@ class AssetCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=255)
     external_ref: str | None = Field(default=None, max_length=255)
+    display_label: str | None = Field(default=None, max_length=255)
     status: Literal["active", "retired", "lost"] = Field(default="active")
     parent_asset_id: UUID | None = None
     category_id: UUID
@@ -841,6 +842,7 @@ class AssetUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     external_ref: str | None = Field(default=None, max_length=255)
+    display_label: str | None = Field(default=None, max_length=255)
     status: Literal["active", "retired", "lost"] | None = None
     parent_asset_id: UUID | None = None
     # Repoints the asset to a different Category. Setting it to
@@ -861,6 +863,7 @@ class AssetResponse(BaseModel):
     tenant_id: UUID
     external_ref: str | None
     name: str
+    display_label: str | None = None
     status: str
     parent_asset_id: UUID | None
     # Sprint 42 — category_id is a nullable FK in the DB (assets created
@@ -887,7 +890,7 @@ class AssetTagBindingCreate(BaseModel):
     """Bind a tag value to an asset."""
 
     binding_value: str = Field(min_length=1, max_length=256)
-    binding_kind: Literal["epc", "tid", "device"] = Field(default="epc")
+    binding_kind: Literal["epc", "tid", "device", "vin"] = Field(default="epc")
     metadata: dict[str, Any] | None = None
 
 

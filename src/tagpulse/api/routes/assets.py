@@ -145,6 +145,32 @@ async def list_assets_current_locations(
     return await service.list_current_locations(user.tenant_id, limit=limit, offset=offset)
 
 
+@router.get("/by-binding", response_model=AssetResponse)
+async def get_asset_by_binding(
+    value: str = Query(
+        ...,
+        min_length=1,
+        description=(
+            "Active binding value to resolve — e.g. a scanned/keyed VIN "
+            "(binding_kind='vin'). Kind-agnostic; matches the raw + canonical "
+            "(upper) form. Tenant-scoped."
+        ),
+    ),
+    user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
+    service: AssetService = Depends(get_asset_service),
+) -> AssetResponse:
+    """Resolve an active binding value (e.g. a VIN) to its asset (I-P923).
+
+    Declared before ``/{asset_id}`` so FastAPI doesn't capture ``by-binding`` as
+    a path param. The handset keys the Map link on the returned ``asset.id`` and
+    shows ``asset.display_label`` (the plate) for operator confirmation.
+    """
+    asset = await service.get_asset_by_binding_value(user.tenant_id, value)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="No asset for that binding value")
+    return asset
+
+
 @router.get("/{asset_id}", response_model=AssetResponse)
 async def get_asset(
     asset_id: UUID,
