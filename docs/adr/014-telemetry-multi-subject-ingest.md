@@ -70,8 +70,11 @@ Sprint 14 contract is byte-for-byte preserved.
   avg/min/max/count, served from `cagg_telemetry_1m` / `cagg_telemetry_1h`
   for the two common widths and from a live `time_bucket()` over the
   raw hypertable for arbitrary widths.
-* `POST /telemetry/readings/ingest` — admin-only direct write for
+* `POST /telemetry/readings/ingest` — admin/editor direct write for
   pre-resolved external observations (TMS GPS, BMS temperatures, etc).
+  **Sprint 79 (I-75YC):** also accepts a **device** principal, restricted to
+  its own device subject + clock-validated (source/device_id coerced). See
+  [gateway-telemetry-ingest.md](../design/gateway-telemetry-ingest.md).
 * `GET /telemetry-models/{subject_kind}/{key}` — subject-scoped model
   lookup. The legacy `GET /telemetry-models/{device_type}` returns a
   301 redirect to `device/{device_type}` for the deprecation window;

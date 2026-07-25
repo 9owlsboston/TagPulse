@@ -47,3 +47,15 @@ src` clean (144 files), `python -m pytest tests/unit` = 1814 passed / 1 skipped,
 regenerated. Plan-stage rubber-duck (3 blockers → folded in) + diff-stage code-review (1 medium
 → fixed) both ran. NOTE: `make check` on this box needs `python -m ...` — the `~/.local/bin`
 pytest/mypy shebang is python3.13 which lacks the editable install (tagpulse lives in 3.11).
+
+### 2026-07-25 — Sprint 79: gateway/device telemetry ingest (I-75YC)
+
+Second TagPulse-Mobile backend ask. `POST /telemetry/readings/ingest` role gate widened
+`admin,editor` → `admin,editor,device`; a `_enforce_device_telemetry` helper restricts device
+principals to their OWN device subject (`subject_kind="device"` + `subject_id==device_id`, 403
+otherwise) and clock-validates the whole batch via `ingestion.clock.check_clock_window` (400 if
+any reading out of window) before any insert/publish; `source`→`external` and `device_id`→gateway
+coerced (persisted row + published event). Admin/editor unchanged. Per-gateway approved-subject
+grants deferred. Verified: `python -m ruff` clean, `python -m mypy src` clean (144 files),
+`python -m pytest tests/unit` = 1820 passed / 1 skipped, `openapi.json` regenerated (endpoint
+description). Plan-stage rubber-duck (2 blockers → self-subject-only + batch clock check) ran.

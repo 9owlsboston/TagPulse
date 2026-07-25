@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 78 — device token http auth · **shipped** (PR #167); between sprints.
+**Current sprint:** 79 — gateway telemetry ingest · **shipped** (PR #168); between sprints.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1825,6 +1825,22 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 **Decisions to lock (design doc §7).** **A** legs auto-derived from custody (recommend yes); **B** ETA **deferred** to a later phase — v1 is **actuals-only** (no in-flight ETA without a declared destination); **C** SLA from a `fusion_strategy.sla` block. **Out of scope:** in-flight ETA + destination prediction, multi-leg shipment grouping, route/geocoding — all gated on a destination-declaration mechanism.
 
 ---
+
+## Sprint 79 — Gateway/device telemetry ingest (I-75YC) (shipped)
+
+> **Status (2026-07-25, shipped).** Backend-only. Second of the TagPulse-Mobile backend
+> asks. `POST /telemetry/readings/ingest` now accepts a **device** principal (from Sprint 78),
+> restricted to its own device subject + clock-validated, so the mobile gateway can report its
+> own telemetry without borrowing a tenant API key. Full design:
+> [docs/design/gateway-telemetry-ingest.md](design/gateway-telemetry-ingest.md).
+
+- [done] Role gate `admin,editor` → `admin,editor,device` on `POST /telemetry/readings/ingest`.
+- [done] Device principals restricted to own device subject (`subject_kind="device"` + own `device_id`) → 403 otherwise.
+- [done] Device batches clock-validated (whole batch 400 if any reading out of window) before any insert/publish.
+- [done] `source`→`external` and `device_id`→gateway coercion for device principals; admin/editor unchanged.
+- [done] Unit tests, `openapi.json` regenerated, `make check` green.
+
+**Out of scope (future follow-up):** relaying telemetry for *other* subjects (asset/lot/stock_item/zone) via a per-gateway **approved-subject-set grant** table — deferred; the MVE covers the gateway's own telemetry.
 
 ## Sprint 78 — Device-token HTTP auth + provision-time issuance (I-K6D1) (shipped)
 

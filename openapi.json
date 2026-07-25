@@ -18416,7 +18416,7 @@
     },
     "/telemetry/readings/ingest": {
       "post": {
-        "description": "Direct subject-scoped telemetry write (admin/editor only).\n\nFor external systems publishing pre-resolved subject readings\n(e.g. a TMS pushing per-asset GPS speed). Bypasses the tag-borne\nfan-out path. Source defaults to ``\"external\"`` per the schema.\nEach persisted row is published as ``Topic.TELEMETRY_RECORDED`` so\nthe Sprint 20 ``telemetry.threshold`` rule path fires here too.",
+        "description": "Direct subject-scoped telemetry write (admin, editor, or device principal).\n\nFor external systems publishing pre-resolved subject readings\n(e.g. a TMS pushing per-asset GPS speed). Bypasses the tag-borne\nfan-out path. Source defaults to ``\"external\"`` per the schema.\nEach persisted row is published as ``Topic.TELEMETRY_RECORDED`` so\nthe Sprint 20 ``telemetry.threshold`` rule path fires here too.\n\nA **device** principal (I-75YC) may write only its own device subject and\nis clock-validated; its ``source``/``device_id`` are coerced to truthful\nrelay provenance. Admin/editor behavior is unchanged.",
         "operationId": "ingest_telemetry_readings_telemetry_readings_ingest_post",
         "requestBody": {
           "content": {
