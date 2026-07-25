@@ -952,6 +952,28 @@ class ExternalLocationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class GatewaySubjectGrantCreate(BaseModel):
+    """Admin request to grant a gateway relay authority for a subject (C-6S9H)."""
+
+    subject_kind: Literal["asset", "device", "lot", "stock_item", "zone"]
+    subject_id: UUID
+
+
+class GatewaySubjectGrantResponse(BaseModel):
+    """A gateway_subject_grants row."""
+
+    id: UUID
+    tenant_id: UUID
+    gateway_device_id: UUID
+    subject_kind: str
+    subject_id: UUID
+    granted_by: UUID | None
+    granted_at: datetime
+    revoked_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # -------- Floor positions (Sprint 65 — BYO precomputed (x, y)) --------
 
 

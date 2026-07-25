@@ -1826,6 +1826,19 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 81 — Per-gateway approved-subject-set grants (C-6S9H)
+
+> **Status (2026-07-25, in progress).** Backend-only. Completes the deferred relay-scoping from
+> I-75YC/I-9HQA: an admin can authorize a gateway device to relay telemetry for a set of
+> downstream subjects. Full design: [docs/design/gateway-subject-grants.md](design/gateway-subject-grants.md).
+
+- [done] `gateway_subject_grants` table (migration 061): plain tenant-scoped table, soft-revoke, partial-unique active index, RLS.
+- [done] Admin API `POST/GET/DELETE /admin/gateways/{device_id}/subject-grants` (require_role admin, audit), with in-tenant gateway + subject existence validation (MVE kinds asset/device; others 422).
+- [done] Telemetry-ingest enforcement: own device subject **or** an active grant; fails closed; per-request grant-set fetch.
+- [done] Unit tests (repo + admin guards + granted/ungranted enforcement), `openapi.json` regenerated, `make check` green.
+
+**Out of scope (fast-follow):** relaying external *location* for granted subjects (`POST /device-location` is self-only); enabling `lot`/`stock_item`/`zone` grant kinds (needs their existence checks).
+
 ## Sprint 80 — Generalize external_locations to all subject_kinds + device-self endpoint (I-9HQA) (shipped)
 
 > **Status (2026-07-25, shipped).** Backend-only. Third of the TagPulse-Mobile backend

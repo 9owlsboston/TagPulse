@@ -25,6 +25,9 @@ from tagpulse.repositories.timescaledb.devices import TimescaleDeviceRepository
 from tagpulse.repositories.timescaledb.external_locations import (
     TimescaleExternalLocationRepository,
 )
+from tagpulse.repositories.timescaledb.gateway_subject_grants import (
+    TimescaleGatewaySubjectGrantRepository,
+)
 from tagpulse.repositories.timescaledb.session import get_session
 from tagpulse.repositories.timescaledb.tag_reads import TimescaleTagReadRepository
 from tagpulse.repositories.timescaledb.telemetry import (
@@ -139,6 +142,13 @@ async def get_external_location_repo(
     :func:`get_asset_service`.
     """
     return TimescaleExternalLocationRepository(session)
+
+
+async def get_gateway_grant_repo(
+    session: AsyncSession = Depends(get_session),
+) -> TimescaleGatewaySubjectGrantRepository:
+    """Provide the gateway_subject_grants repo bound to the session (Sprint 81)."""
+    return TimescaleGatewaySubjectGrantRepository(session)
 
 
 async def get_telemetry_service(

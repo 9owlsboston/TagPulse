@@ -75,3 +75,19 @@ Verified: `python -m ruff` clean, `python -m mypy src` clean (145 files), `pytho
 history` shows 059->060 head, `python -m pytest tests/unit` = 1826 passed / 1 skipped,
 `openapi.json` regenerated. Plan-stage rubber-duck (4 blockers → nullable cols, device_id guard,
 no device event, data-lossy downgrade) ran. Migration round-trip (make migration-check) runs in CI.
+
+### 2026-07-25 — Sprint 81: per-gateway approved-subject-set grants (C-6S9H)
+
+Completes the deferred relay-scoping from I-75YC/I-9HQA. Migration 061 adds a plain tenant-scoped
+`gateway_subject_grants` table (soft-revoke via `revoked_at`, partial-unique index over active
+rows, RLS `tenant_isolation_gateway_subject_grants`). New admin API `POST/GET/DELETE
+/admin/gateways/{device_id}/subject-grants` (require_role admin, AuditLogger) validates the
+gateway device + granted subject exist in-tenant (MVE kinds asset/device via their repos; other
+kinds 422). Repo `TimescaleGatewaySubjectGrantRepository` filters every query by explicit
+tenant_id (RLS is defense-in-depth). `_enforce_device_telemetry` now allows own device subject OR
+an active grant (fetched once/request via get_gateway_grant_repo; device_id guarded to a local
+UUID); fails closed. External-location relay for granted subjects deferred. Verified: `python -m
+ruff` clean, `python -m mypy src` clean (147 files), `python -m alembic history` 060->061 head,
+`python -m pytest tests/unit` = 1836 passed / 1 skipped, `openapi.json` regenerated. Plan-stage
+rubber-duck (3 blockers → tenant-filter all methods, subject existence validation, device_id
+narrowing) ran. Migration round-trip runs in CI (make migration-check).

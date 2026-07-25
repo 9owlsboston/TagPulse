@@ -1216,6 +1216,7 @@ USING (tenant_id = current_setting('app.current_tenant_id')::uuid)
 | `stock_movements` | `tenant_isolation_stock_movements` | 020 |
 | `tag_data_mappings` | `tenant_isolation_tag_data_mappings` | 020 |
 | `external_locations` | `tenant_isolation_external_locations` | 019 |
+| `gateway_subject_grants` | `tenant_isolation_gateway_subject_grants` | 061 |
 | `subject_current_zone` | `subject_current_zone_tenant_isolation` | 027 |
 
 ---

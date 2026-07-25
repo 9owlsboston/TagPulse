@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from tagpulse.api.dependencies import (
     get_event_bus,
+    get_gateway_grant_repo,
     get_telemetry_readings_repo,
     get_telemetry_service,
 )
@@ -25,6 +26,9 @@ from tagpulse.models.schemas import (
     TelemetryReadingResponse,
     TelemetryReadingsBatch,
     TelemetryResponse,
+)
+from tagpulse.repositories.timescaledb.gateway_subject_grants import (
+    TimescaleGatewaySubjectGrantRepository,
 )
 from tagpulse.repositories.timescaledb.telemetry import (
     TimescaleTelemetryReadingsRepository,
@@ -160,27 +164,34 @@ async def list_telemetry_aggregates(
 
 
 def _enforce_device_telemetry(
-    principal: AuthenticatedUser, readings: list[TelemetryReadingIngest]
+    principal: AuthenticatedUser,
+    readings: list[TelemetryReadingIngest],
+    grant_set: set[tuple[str, UUID]],
 ) -> None:
     """Guard a device principal's telemetry batch (no-op for admin/editor).
 
-    A device principal (``tpd_`` token, I-K6D1) may write telemetry only for
-    **its own device subject** (``subject_kind="device"`` + ``subject_id ==
-    device_id``), and every reading must fall inside the ingest clock window
+    A device principal (``tpd_`` token, I-K6D1) may write telemetry for **its
+    own device subject** (``subject_kind="device"`` + ``subject_id == device_id``)
+    or for any ``(subject_kind, subject_id)`` an admin has granted it (C-6S9H,
+    ``grant_set``). Every reading must fall inside the ingest clock window
     (``check_clock_window``: ≥ now−24h, ≤ now+5min). The whole batch is
     rejected — 403 (subject) / 400 (clock) — before any row is written, so a
     compromised device cannot poison "latest" telemetry or fire
     ``telemetry.threshold`` alerts with far-future/stale rows. Provenance
-    (``source``/``device_id``) is coerced by the caller. Relaying telemetry for
-    *other* subjects is deferred to a future per-gateway subject-grant model.
+    (``source``/``device_id``) is coerced by the caller.
     """
     if principal.role != "device":
         return
     for reading in readings:
-        if reading.subject_kind != "device" or reading.subject_id != principal.device_id:
+        own_device = reading.subject_kind == "device" and reading.subject_id == principal.device_id
+        granted = (reading.subject_kind, reading.subject_id) in grant_set
+        if not (own_device or granted):
             raise HTTPException(
                 status_code=403,
-                detail=("Device principals may only ingest telemetry for their own device subject"),
+                detail=(
+                    "Device principals may only ingest telemetry for their own "
+                    "device subject or a granted subject"
+                ),
             )
         if check_clock_window(reading.timestamp) is not None:
             raise HTTPException(
@@ -198,6 +209,7 @@ async def ingest_telemetry_readings(
     body: TelemetryReadingsBatch,
     user: AuthenticatedUser = require_role("admin", "editor", "device"),
     repo: TimescaleTelemetryReadingsRepository = Depends(get_telemetry_readings_repo),
+    grants: TimescaleGatewaySubjectGrantRepository = Depends(get_gateway_grant_repo),
     event_bus: EventBus = Depends(get_event_bus),
 ) -> list[TelemetryReadingResponse]:
     """Direct subject-scoped telemetry write (admin, editor, or device principal).
@@ -208,11 +220,18 @@ async def ingest_telemetry_readings(
     Each persisted row is published as ``Topic.TELEMETRY_RECORDED`` so
     the Sprint 20 ``telemetry.threshold`` rule path fires here too.
 
-    A **device** principal (I-75YC) may write only its own device subject and
-    is clock-validated; its ``source``/``device_id`` are coerced to truthful
-    relay provenance. Admin/editor behavior is unchanged.
+    A **device** principal (I-75YC) may write its own device subject or any
+    admin-granted subject (C-6S9H); it is clock-validated and its
+    ``source``/``device_id`` are coerced to truthful relay provenance.
+    Admin/editor behavior is unchanged.
     """
-    _enforce_device_telemetry(user, body.readings)
+    grant_set: set[tuple[str, UUID]] = set()
+    if user.role == "device":
+        if user.device_id is None:
+            # Defensive: a device principal always carries device_id (I-K6D1).
+            raise HTTPException(status_code=403, detail="Device principal required")
+        grant_set = await grants.active_subject_set(user.tenant_id, user.device_id)
+    _enforce_device_telemetry(user, body.readings, grant_set)
     is_device = user.role == "device"
     written: list[TelemetryReadingResponse] = []
     for reading in body.readings:
