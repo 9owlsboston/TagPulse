@@ -4559,6 +4559,40 @@
         "title": "ProvisionRequest",
         "type": "object"
       },
+      "ProvisionResponse": {
+        "description": "Device self-registration result.\n\nCarries the freshly-minted per-device token (``tpd_\u2026``). It is returned\n**once** here \u2014 the backend stores only its SHA-256 hash and it cannot be\nre-read later (rotate via ``POST /device-registry/{id}/rotate-token``). The\ntoken is **inert until an admin approves the device** (``get_current_user``\nrequires ``status=\"active\"``).",
+        "properties": {
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "token_prefix": {
+            "title": "Token Prefix",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "status",
+          "token",
+          "token_prefix",
+          "message"
+        ],
+        "title": "ProvisionResponse",
+        "type": "object"
+      },
       "ProvisionStatusResponse": {
         "description": "Device provisioning status.",
         "properties": {
@@ -12719,7 +12753,7 @@
     },
     "/devices/provision": {
       "post": {
-        "description": "Self-register a device using a tenant provisioning key.",
+        "description": "Self-register a device using a tenant provisioning key.\n\nMints the device's per-device token in the same step and returns it once\n(copy-once). The device holds the token through the approval wait; it only\nauthenticates once an admin approves the device.",
         "operationId": "provision_device_devices_provision_post",
         "requestBody": {
           "content": {
@@ -12736,11 +12770,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Provision Device Devices Provision Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProvisionResponse"
                 }
               }
             },

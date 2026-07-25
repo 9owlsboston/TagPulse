@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 77 — server table filters · **shipped**; between sprints.
+**Current sprint:** 78 — device token http auth · **shipped** (PR #167); between sprints.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1825,6 +1825,22 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 **Decisions to lock (design doc §7).** **A** legs auto-derived from custody (recommend yes); **B** ETA **deferred** to a later phase — v1 is **actuals-only** (no in-flight ETA without a declared destination); **C** SLA from a `fusion_strategy.sla` block. **Out of scope:** in-flight ETA + destination prediction, multi-leg shipment grouping, route/geocoding — all gated on a destination-declaration mechanism.
 
 ---
+
+## Sprint 78 — Device-token HTTP auth + provision-time issuance (I-K6D1) (shipped)
+
+> **Status (2026-07-25, shipped).** Backend-only. Closes a TagPulse-Mobile backend ask:
+> per-device `tpd_` tokens were minted/rotatable but never verified on the HTTP ingest path,
+> and no provisioning step handed a token to the device — so an approved handset couldn't
+> authenticate `POST /tag-reads` as a per-device principal (it borrowed a tenant API key).
+> Full design: [docs/design/device-token-http-auth.md](design/device-token-http-auth.md); roadmap under [ADR-011](adr/011-device-identity-roadmap.md) Phase 1.
+
+- [done] Verify `tpd_` tokens in `get_current_user` → `device` principal (role + `device_id`); 401 bad token / 403 not-active.
+- [done] `get_current_tenant` rejects device principals; new `get_ingest_auth` gates the tag-read ingest routes only.
+- [done] Device principals bound to their own `device_id`; `backfill` blocked for devices.
+- [done] `POST /devices/provision` mints + returns the device token once (inert until approval).
+- [done] Unit tests (auth matrix, ingest guards, provision token), `openapi.json` regenerated, `make check` green.
+
+**Out of scope (→ I-75YC):** device principals on the telemetry-ingest endpoint (`POST /telemetry/readings/ingest`) and multi-reader gateway relay (one principal, an approved *set* of downstream subjects).
 
 ## Sprint 77 — Excel filters on the remaining server-paginated tables (shipped)
 

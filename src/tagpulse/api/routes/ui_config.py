@@ -34,7 +34,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.core.audit import AuditLogger
-from tagpulse.core.user_auth import AuthenticatedUser, get_current_user, require_role
+from tagpulse.core.user_auth import AuthenticatedUser, get_console_user, require_role
 from tagpulse.repositories.timescaledb.session import get_session
 from tagpulse.repositories.timescaledb.tenant_ui_config import TenantUiConfigRepository
 from tagpulse.repositories.timescaledb.user_ui_prefs import UserUiPrefsRepository
@@ -73,7 +73,7 @@ async def _resolve_for_user(user: AuthenticatedUser, session: AsyncSession) -> U
 
 @router.get("", response_model=UiConfig)
 async def get_ui_config(
-    user: AuthenticatedUser = Depends(get_current_user),
+    user: AuthenticatedUser = Depends(get_console_user),
     session: AsyncSession = Depends(get_session),
 ) -> UiConfig:
     """Return the presentation config resolved for the calling viewer.
@@ -87,7 +87,7 @@ async def get_ui_config(
 @router.put("/me", response_model=UiConfig)
 async def put_ui_config_me(
     body: dict[str, Any],
-    user: AuthenticatedUser = Depends(get_current_user),
+    user: AuthenticatedUser = Depends(get_console_user),
     session: AsyncSession = Depends(get_session),
 ) -> UiConfig:
     """Upsert the caller's UI override and return the freshly resolved config.
@@ -113,7 +113,7 @@ async def put_ui_config_me(
 @router.patch("/me", response_model=UiConfig)
 async def patch_ui_config_me(
     body: dict[str, Any],
-    user: AuthenticatedUser = Depends(get_current_user),
+    user: AuthenticatedUser = Depends(get_console_user),
     session: AsyncSession = Depends(get_session),
 ) -> UiConfig:
     """Deep-merge a sparse override into the caller's stored prefs (Sprint 63).
@@ -154,7 +154,7 @@ async def patch_ui_config_me(
 @router.delete("/me/columns/{page}", response_model=UiConfig)
 async def delete_ui_config_me_columns(
     page: str,
-    user: AuthenticatedUser = Depends(get_current_user),
+    user: AuthenticatedUser = Depends(get_console_user),
     session: AsyncSession = Depends(get_session),
 ) -> UiConfig:
     """Reset one list page's column override to the team default (Sprint 63).
