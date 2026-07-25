@@ -1826,6 +1826,21 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 80 — Generalize external_locations to all subject_kinds + device-self endpoint (I-9HQA)
+
+> **Status (2026-07-25, in progress).** Backend-only. Third of the TagPulse-Mobile backend
+> asks. `external_locations` was asset-only; it now carries `(subject_kind, subject_id)` so a
+> gateway can stamp its own `device` position, additively (asset path + RFID untouched). Full
+> design: [docs/design/external-locations-subject-kinds.md](design/external-locations-subject-kinds.md).
+
+- [done] Migration 060: nullable `subject_kind`/`subject_id` (+backfill `asset`), `asset_id` nullable, `ix_external_locations_by_subject`; data-lossy documented downgrade.
+- [done] Model/schema/repo generalized additively (`insert_for_subject`/`get_latest_for_subject`/`list_for_subject`; asset methods delegate).
+- [done] `POST /device-location` — device principals stamp their OWN device position; `device_id`-fixed subject, clock-validated, no event (asset webhook contract untouched).
+- [done] `accuracy_meters` documented as the multi-source arbitration key.
+- [done] Unit tests, `openapi.json` regenerated, `make check` green.
+
+**Out of scope (future follow-up C-6S9H):** relaying external positions for *other* subjects (asset/lot/stock_item/zone) from a gateway — pairs with the deferred telemetry subject-grant model.
+
 ## Sprint 79 — Gateway/device telemetry ingest (I-75YC) (shipped)
 
 > **Status (2026-07-25, shipped).** Backend-only. Second of the TagPulse-Mobile backend

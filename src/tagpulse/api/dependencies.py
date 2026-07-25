@@ -22,6 +22,9 @@ from tagpulse.repositories.protocols import (
 )
 from tagpulse.repositories.timescaledb.antennas import TimescaleAntennaRepository
 from tagpulse.repositories.timescaledb.devices import TimescaleDeviceRepository
+from tagpulse.repositories.timescaledb.external_locations import (
+    TimescaleExternalLocationRepository,
+)
 from tagpulse.repositories.timescaledb.session import get_session
 from tagpulse.repositories.timescaledb.tag_reads import TimescaleTagReadRepository
 from tagpulse.repositories.timescaledb.telemetry import (
@@ -124,6 +127,18 @@ async def get_telemetry_readings_repo(
     so :class:`TelemetryService` also takes its instance from here.
     """
     return TimescaleTelemetryReadingsRepository(session)
+
+
+async def get_external_location_repo(
+    session: AsyncSession = Depends(get_session),
+) -> TimescaleExternalLocationRepository:
+    """Provide the external_locations repo bound to the session (Sprint 80).
+
+    Used by the device-self ``POST /device-location`` endpoint; the asset
+    external-position path resolves its own instance inside
+    :func:`get_asset_service`.
+    """
+    return TimescaleExternalLocationRepository(session)
 
 
 async def get_telemetry_service(

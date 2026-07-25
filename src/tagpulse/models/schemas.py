@@ -937,7 +937,9 @@ class ExternalLocationResponse(BaseModel):
 
     id: UUID
     tenant_id: UUID
-    asset_id: UUID
+    asset_id: UUID | None = None
+    subject_kind: str | None = None
+    subject_id: UUID | None = None
     recorded_at: datetime
     latitude: float
     longitude: float
