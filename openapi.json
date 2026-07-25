@@ -2849,6 +2849,102 @@
         "title": "FusionStrategy",
         "type": "object"
       },
+      "GatewaySubjectGrantCreate": {
+        "description": "Admin request to grant a gateway relay authority for a subject (C-6S9H).",
+        "properties": {
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_kind": {
+            "enum": [
+              "asset",
+              "device",
+              "lot",
+              "stock_item",
+              "zone"
+            ],
+            "title": "Subject Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_kind",
+          "subject_id"
+        ],
+        "title": "GatewaySubjectGrantCreate",
+        "type": "object"
+      },
+      "GatewaySubjectGrantResponse": {
+        "description": "A gateway_subject_grants row.",
+        "properties": {
+          "gateway_device_id": {
+            "format": "uuid",
+            "title": "Gateway Device Id",
+            "type": "string"
+          },
+          "granted_at": {
+            "format": "date-time",
+            "title": "Granted At",
+            "type": "string"
+          },
+          "granted_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Granted By"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_kind": {
+            "title": "Subject Kind",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "gateway_device_id",
+          "subject_kind",
+          "subject_id",
+          "granted_by",
+          "granted_at"
+        ],
+        "title": "GatewaySubjectGrantResponse",
+        "type": "object"
+      },
       "GeoAnchor": {
         "additionalProperties": false,
         "description": "Pin one floor-local point ``(x, y)`` to a real-world lat/lon.\n\nReserved seam for a future geo-anchored overlay (mobile + fixed readers on\none geographic map). Validated and stored now; no map consumes it yet.",
@@ -9537,6 +9633,177 @@
           }
         ],
         "summary": "Retry Dead Letter",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/gateways/{device_id}/subject-grants": {
+      "get": {
+        "description": "List a gateway's active subject grants (admin only).",
+        "operationId": "list_gateway_grants_admin_gateways__device_id__subject_grants_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Device Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GatewaySubjectGrantResponse"
+                  },
+                  "title": "Response List Gateway Grants Admin Gateways  Device Id  Subject Grants Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List Gateway Grants",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "description": "Grant a gateway device relay authority for a subject (admin only).",
+        "operationId": "create_gateway_grant_admin_gateways__device_id__subject_grants_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Device Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatewaySubjectGrantCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewaySubjectGrantResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Create Gateway Grant",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/gateways/{device_id}/subject-grants/{subject_kind}/{subject_id}": {
+      "delete": {
+        "description": "Revoke a gateway's active subject grant (admin only).",
+        "operationId": "revoke_gateway_grant_admin_gateways__device_id__subject_grants__subject_kind___subject_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subject_kind",
+            "required": true,
+            "schema": {
+              "title": "Subject Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subject_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Subject Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Revoke Gateway Grant",
         "tags": [
           "admin"
         ]
@@ -18492,7 +18759,7 @@
     },
     "/telemetry/readings/ingest": {
       "post": {
-        "description": "Direct subject-scoped telemetry write (admin, editor, or device principal).\n\nFor external systems publishing pre-resolved subject readings\n(e.g. a TMS pushing per-asset GPS speed). Bypasses the tag-borne\nfan-out path. Source defaults to ``\"external\"`` per the schema.\nEach persisted row is published as ``Topic.TELEMETRY_RECORDED`` so\nthe Sprint 20 ``telemetry.threshold`` rule path fires here too.\n\nA **device** principal (I-75YC) may write only its own device subject and\nis clock-validated; its ``source``/``device_id`` are coerced to truthful\nrelay provenance. Admin/editor behavior is unchanged.",
+        "description": "Direct subject-scoped telemetry write (admin, editor, or device principal).\n\nFor external systems publishing pre-resolved subject readings\n(e.g. a TMS pushing per-asset GPS speed). Bypasses the tag-borne\nfan-out path. Source defaults to ``\"external\"`` per the schema.\nEach persisted row is published as ``Topic.TELEMETRY_RECORDED`` so\nthe Sprint 20 ``telemetry.threshold`` rule path fires here too.\n\nA **device** principal (I-75YC) may write its own device subject or any\nadmin-granted subject (C-6S9H); it is clock-validated and its\n``source``/``device_id`` are coerced to truthful relay provenance.\nAdmin/editor behavior is unchanged.",
         "operationId": "ingest_telemetry_readings_telemetry_readings_ingest_post",
         "requestBody": {
           "content": {

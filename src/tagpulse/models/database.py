@@ -936,6 +936,32 @@ class ExternalLocationModel(Base):
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
 
 
+class GatewaySubjectGrantModel(Base):
+    """Per-gateway approved-subject-set grant (Sprint 81, C-6S9H).
+
+    An admin authorizes a gateway ``device`` to relay telemetry for a specific
+    ``(subject_kind, subject_id)``. Soft-revoked via ``revoked_at``; a partial
+    unique index enforces one active grant per (gateway, subject).
+    """
+
+    __tablename__ = "gateway_subject_grants"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False
+    )
+    gateway_device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False
+    )
+    subject_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    subject_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    granted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class AntennaModel(Base):
     """Per-antenna position within a site's coordinate frame (Sprint 59 Track 2).
 

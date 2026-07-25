@@ -15,10 +15,24 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from tagpulse.api.dependencies import get_event_bus, get_telemetry_readings_repo
+from tagpulse.api.dependencies import (
+    get_event_bus,
+    get_gateway_grant_repo,
+    get_telemetry_readings_repo,
+)
 from tagpulse.api.routes import telemetry as telemetry_route
 from tagpulse.core.user_auth import AuthenticatedUser, get_current_user
 from tagpulse.models.schemas import TelemetryReadingResponse
+
+
+class _FakeGrantRepo:
+    """Returns a configurable active grant set; empty by default."""
+
+    def __init__(self, grants: set[tuple[str, UUID]] | None = None) -> None:
+        self._grants = grants or set()
+
+    async def active_subject_set(self, _tenant: UUID, _gw: UUID) -> set[tuple[str, UUID]]:
+        return self._grants
 
 
 class _FakeRepo:
@@ -46,11 +60,16 @@ class _FakeBus:
         return None
 
 
-def _app(principal: AuthenticatedUser, repo: _FakeRepo) -> FastAPI:
+def _app(
+    principal: AuthenticatedUser,
+    repo: _FakeRepo,
+    grants: set[tuple[str, UUID]] | None = None,
+) -> FastAPI:
     app = FastAPI()
     app.include_router(telemetry_route.router)
     app.dependency_overrides[get_current_user] = lambda: principal
     app.dependency_overrides[get_telemetry_readings_repo] = lambda: repo
+    app.dependency_overrides[get_gateway_grant_repo] = lambda: _FakeGrantRepo(grants)
     app.dependency_overrides[get_event_bus] = lambda: _FakeBus()
     return app
 
@@ -129,6 +148,34 @@ async def test_device_non_device_subject_403() -> None:
     did, tid = uuid4(), uuid4()
     repo = _FakeRepo()
     app = _app(_device(did, tid), repo)
+    resp = await _post(app, [_reading("asset", uuid4())])
+    assert resp.status_code == 403
+    assert repo.inserts == []
+
+
+@pytest.mark.asyncio
+async def test_device_granted_asset_subject_ok() -> None:
+    did, tid = uuid4(), uuid4()
+    asset_id = uuid4()
+    repo = _FakeRepo()
+    # Grant the gateway relay authority for (asset, asset_id).
+    app = _app(_device(did, tid), repo, grants={("asset", asset_id)})
+    resp = await _post(app, [_reading("asset", asset_id, source="tag")])
+    assert resp.status_code == 201
+    (call,) = repo.inserts
+    assert call["subject_kind"] == "asset"
+    assert call["subject_id"] == asset_id
+    # Relay provenance still coerced for the granted subject.
+    assert call["source"] == "external"
+    assert call["device_id"] == did
+
+
+@pytest.mark.asyncio
+async def test_device_ungranted_asset_subject_403() -> None:
+    did, tid = uuid4(), uuid4()
+    repo = _FakeRepo()
+    # Grant is for a DIFFERENT asset than the one posted.
+    app = _app(_device(did, tid), repo, grants={("asset", uuid4())})
     resp = await _post(app, [_reading("asset", uuid4())])
     assert resp.status_code == 403
     assert repo.inserts == []
