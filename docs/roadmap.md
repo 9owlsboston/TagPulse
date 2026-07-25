@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 82 — asset display label vin lookup · branch `sprint-82/asset-display-label-vin-lookup` (full scope lands in §sprint-82 during the sprint).
+**Current sprint:** 82 — asset display label vin lookup · **shipped** (PR #173); between sprints.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1826,9 +1826,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 82 — Asset display_label + VIN binding lookup for TagPulse-Mobile (I-P923)
+## Sprint 82 — Asset display_label + VIN binding lookup for TagPulse-Mobile (I-P923) (shipped)
 
-> **Status (2026-07-25, in progress).** Backend-only. Serves TagPulse-Mobile `C-RYH7`: the
+> **Status (2026-07-25, shipped).** Backend-only. Serves TagPulse-Mobile `C-RYH7`: the
 > handset Map-links a scanned VIN to the vehicle asset and shows its license plate. Full design:
 > [docs/design/asset-display-label-vin-lookup.md](design/asset-display-label-vin-lookup.md).
 
