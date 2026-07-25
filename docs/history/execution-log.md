@@ -122,3 +122,16 @@ tpd_ device principals are console-forbidden per I-K6D1). Verified: python -m ru
 -m mypy src clean (147 files), python -m alembic history 061->062 head, python -m pytest
 tests/unit = 1846 passed / 1 skipped, openapi.json regenerated. Plan-stage rubber-duck (1 blocker
 -> 'vin' kind not 'device') ran. Migration round-trip runs in CI.
+
+### 2026-07-25 — CI: gate the Alembic migration round-trip (C-EKF0 / roadmap E3)
+
+Added a migration-check job to .github/workflows/ci.yml: a timescale/timescaledb:latest-pg16
+service container + `make migration-check` (upgrade head -> downgrade -1 -> upgrade head via the
+Sprint-19 TAGPULSE_INTEGRATION_DB_URL test) on every push/PR, blocking merge on a broken
+downgrade. Previously the round-trip only ran manually, so migrations 059-062 shipped without
+automated reversibility validation; the `-1` step tests the newest migration (always head in its
+introducing PR). Driver: postgresql+asyncpg (alembic env.py builds an async engine); migration
+001 CREATE EXTENSION timescaledb runs against the image. Could NOT validate locally (Docker
+Desktop WSL integration off in this distro) — the CI job's first run on this PR IS the validation
+(it exercises migration 062's downgrade). Roadmap E3 flipped to [done]. Verified: ci.yml parses
+as valid YAML (3 jobs). CI-only change.

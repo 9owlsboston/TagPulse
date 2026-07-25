@@ -32,6 +32,43 @@ jobs:
           make export-openapi
           git diff --exit-code openapi.json
 
+  # C-EKF0 (roadmap E3): gate the Alembic round-trip (upgrade head →
+  # downgrade -1 → upgrade head) against a real TimescaleDB so a broken
+  # migration downgrade is caught at merge time, not during a production
+  # rollback. The `-1` step exercises the newest migration's reversibility
+  # — and since a new migration is always `head` in the PR that adds it,
+  # every migration is validated on the PR that introduces it.
+  migration-check:
+    runs-on: ubuntu-latest
+    services:
+      timescaledb:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: tagpulse
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: migtest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tagpulse -d migtest"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Alembic round-trip (upgrade → downgrade -1 → upgrade)
+        env:
+          # Alembic env.py builds an async engine from DATABASE_URL, so use
+          # the asyncpg driver. Migration 001 runs CREATE EXTENSION
+          # timescaledb, which the timescaledb image makes available.
+          TAGPULSE_INTEGRATION_DB_URL: postgresql+asyncpg://tagpulse:secret@localhost:5432/migtest
+        run: make migration-check
+
   # Sprint 28 A1+A4: Bicep `what-if` preview on PRs that touch
   # deploy/azure/bicep/. Posts the diff back to the PR so reviewers can
   # see the planned change set without running az locally. Skipped on
