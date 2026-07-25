@@ -42,11 +42,11 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -66,7 +66,7 @@ jobs:
 
       - name: Compute image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: |
             ghcr.io/9owlsboston/tagpulse-${{ matrix.component }}
@@ -85,7 +85,7 @@ jobs:
 
       - name: Build and push
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -104,7 +104,7 @@ jobs:
           # single-manifest output to the docker daemon). That left the
           # index digest reported by both `outputs.digest` and
           # `outputs.metadata['containerimage.digest']` un-fetchable at
-          # GHCR (404), breaking `actions/attest-build-provenance@v1`
+          # GHCR (404), breaking `actions/attest-build-provenance@v3`
           # below. Setting `provenance: false` makes buildx emit a flat
           # single manifest whose digest matches what's pushed — and we
           # still get SLSA provenance via the attest-build-provenance
@@ -149,7 +149,7 @@ jobs:
       # See docker/build-push-action#1015.
       - name: Attest build provenance (GHCR)
         if: github.event_name != 'pull_request' && !github.event.repository.private
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v3
         with:
           subject-name: ghcr.io/9owlsboston/tagpulse-${{ matrix.component }}
           subject-digest: ${{ fromJSON(steps.push.outputs.metadata)['containerimage.digest'] }}
