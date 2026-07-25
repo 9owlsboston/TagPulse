@@ -854,6 +854,10 @@ class AssetModel(Base):
     )
     external_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Sprint 82 (I-P923): optional secondary human-facing label — carries a
+    # vehicle's license plate for operator confirmation on the handset; generic
+    # for any asset. The primary key/identifier stays ``name``/bindings.
+    display_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
     parent_asset_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

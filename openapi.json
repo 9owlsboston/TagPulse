@@ -294,6 +294,18 @@
             "title": "Category Id",
             "type": "string"
           },
+          "display_label": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Label"
+          },
           "external_ref": {
             "anyOf": [
               {
@@ -871,6 +883,17 @@
             "title": "Created At",
             "type": "string"
           },
+          "display_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Label"
+          },
           "external_ref": {
             "anyOf": [
               {
@@ -1123,7 +1146,8 @@
             "enum": [
               "epc",
               "tid",
-              "device"
+              "device",
+              "vin"
             ],
             "title": "Binding Kind",
             "type": "string"
@@ -1254,6 +1278,18 @@
               }
             ],
             "title": "Category Id"
+          },
+          "display_label": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Label"
           },
           "external_ref": {
             "anyOf": [
@@ -10534,6 +10570,57 @@
           }
         ],
         "summary": "Create Asset",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/assets/by-binding": {
+      "get": {
+        "description": "Resolve an active binding value (e.g. a VIN) to its asset (I-P923).\n\nDeclared before ``/{asset_id}`` so FastAPI doesn't capture ``by-binding`` as\na path param. The handset keys the Map link on the returned ``asset.id`` and\nshows ``asset.display_label`` (the plate) for operator confirmation.",
+        "operationId": "get_asset_by_binding_assets_by_binding_get",
+        "parameters": [
+          {
+            "description": "Active binding value to resolve \u2014 e.g. a scanned/keyed VIN (binding_kind='vin'). Kind-agnostic; matches the raw + canonical (upper) form. Tenant-scoped.",
+            "in": "query",
+            "name": "value",
+            "required": true,
+            "schema": {
+              "description": "Active binding value to resolve \u2014 e.g. a scanned/keyed VIN (binding_kind='vin'). Kind-agnostic; matches the raw + canonical (upper) form. Tenant-scoped.",
+              "minLength": 1,
+              "title": "Value",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get Asset By Binding",
         "tags": [
           "assets"
         ]

@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 81 — gateway subject grants · **shipped** (PR #171); between sprints.
+**Current sprint:** 82 — asset display label vin lookup · **shipped** (PR #173); between sprints.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1825,6 +1825,17 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 **Decisions to lock (design doc §7).** **A** legs auto-derived from custody (recommend yes); **B** ETA **deferred** to a later phase — v1 is **actuals-only** (no in-flight ETA without a declared destination); **C** SLA from a `fusion_strategy.sla` block. **Out of scope:** in-flight ETA + destination prediction, multi-leg shipment grouping, route/geocoding — all gated on a destination-declaration mechanism.
 
 ---
+
+## Sprint 82 — Asset display_label + VIN binding lookup for TagPulse-Mobile (I-P923) (shipped)
+
+> **Status (2026-07-25, shipped).** Backend-only. Serves TagPulse-Mobile `C-RYH7`: the
+> handset Map-links a scanned VIN to the vehicle asset and shows its license plate. Full design:
+> [docs/design/asset-display-label-vin-lookup.md](design/asset-display-label-vin-lookup.md).
+
+- [done] Nullable `assets.display_label` column (migration 062) — carries the plate; settable via create/update, returned in `AssetResponse`.
+- [done] New `binding_kind='vin'` (CHECK widened) — isolated from `'device'` (which telemetry/location SQL treats as `tr.tag_id`); VIN canonicalized on bind.
+- [done] `GET /assets/by-binding?value=<VIN>` — tenant-scoped resolve of an active binding value → asset (handset uses its `tp_` key).
+- [done] Unit tests, `openapi.json` regenerated, `make check` green.
 
 ## Sprint 81 — Per-gateway approved-subject-set grants (C-6S9H) (shipped)
 

@@ -105,3 +105,20 @@ delete (ADR-031); only RESTRICT FK is stock_movements (parent is SET NULL); regr
 test_inventory_route_force_delete.py already asserts 409-not-500. Resolved in ledger; both stale
 backlog.md entries drained. Verified: python -m ruff clean, python -m mypy src clean (147 files),
 python -m pytest tests/unit = 1838 passed / 1 skipped, openapi unchanged.
+
+### 2026-07-25 — Sprint 82: asset display_label + VIN binding lookup (I-P923, TagPulse-Mobile)
+
+Serves TagPulse-Mobile C-RYH7. Migration 062 adds nullable assets.display_label (the plate) and
+widens ck_asset_tag_bindings_kind to include 'vin' (downgrade drops 'vin' rows then narrows).
+Model/schema/repo carry display_label (AssetCreate/Update/Response; update already clears via
+model_dump(exclude_unset)). New binding_kind='vin' is isolated from 'device' — verified 3 SQL
+paths (asset_location, consolidation_source, overlapping_zones) treat binding_kind='device' as
+tr.tag_id=binding_value, so a VIN there would falsely associate reads; 'vin' matches none of
+them. bind_tag canonicalizes 'vin' values (strip+upper); new
+TimescaleAssetTagBindingRepository.get_by_binding_value matches raw+canonical, active only,
+tenant-scoped, earliest bound_at. New GET /assets/by-binding (declared before /{asset_id} so it
+isn't captured as a path param; require_role admin/editor/viewer — handset uses its tp_ key since
+tpd_ device principals are console-forbidden per I-K6D1). Verified: python -m ruff clean, python
+-m mypy src clean (147 files), python -m alembic history 061->062 head, python -m pytest
+tests/unit = 1846 passed / 1 skipped, openapi.json regenerated. Plan-stage rubber-duck (1 blocker
+-> 'vin' kind not 'device') ran. Migration round-trip runs in CI.

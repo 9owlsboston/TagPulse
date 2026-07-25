@@ -32,6 +32,7 @@ def _asset_to_response(row: AssetModel) -> AssetResponse:
         tenant_id=row.tenant_id,
         external_ref=row.external_ref,
         name=row.name,
+        display_label=row.display_label,
         status=row.status,
         parent_asset_id=row.parent_asset_id,
         category_id=row.category_id,
@@ -64,6 +65,12 @@ ASSET_SORT_COLUMNS = {
 }
 
 
+def _binding_candidates(value: str) -> set[str]:
+    """Match forms for a binding-value lookup: the raw value + its canonical
+    (``strip().upper()``) form, so a differently-cased VIN scan resolves."""
+    return {value, value.strip().upper()}
+
+
 class TimescaleAssetRepository:
     """Persists assets to TimescaleDB."""
 
@@ -76,6 +83,7 @@ class TimescaleAssetRepository:
             tenant_id=tenant_id,
             external_ref=asset.external_ref,
             name=asset.name,
+            display_label=asset.display_label,
             status=asset.status,
             parent_asset_id=asset.parent_asset_id,
             category_id=asset.category_id,
@@ -387,6 +395,31 @@ class TimescaleAssetTagBindingRepository:
         )
         rows = (await self._session.execute(stmt)).all()
         return {bv: AssetRef(id=aid, name=name) for bv, aid, name in rows}
+
+    async def get_by_binding_value(self, tenant_id: uuid.UUID, value: str) -> AssetResponse | None:
+        """Resolve an active binding value (e.g. a scanned VIN) to its asset.
+
+        Tenant-scoped, active bindings only (``unbound_at IS NULL``),
+        kind-agnostic. Matches the raw value **and** its canonical
+        (``strip().upper()``) form so a differently-cased VIN scan still
+        resolves. Deterministic on the (unexpected) multi-binding case: the
+        earliest ``bound_at`` wins.
+        """
+        candidates = _binding_candidates(value)
+        stmt = (
+            select(AssetModel)
+            .join(AssetTagBindingModel, AssetTagBindingModel.asset_id == AssetModel.id)
+            .where(
+                AssetModel.tenant_id == tenant_id,
+                AssetTagBindingModel.tenant_id == tenant_id,
+                AssetTagBindingModel.binding_value.in_(candidates),
+                AssetTagBindingModel.unbound_at.is_(None),
+            )
+            .order_by(AssetTagBindingModel.bound_at.asc())
+            .limit(1)
+        )
+        row = (await self._session.execute(stmt)).scalars().first()
+        return _asset_to_response(row) if row else None
 
     async def count_other_tenant_collisions(self, tenant_id: uuid.UUID, binding_value: str) -> int:
         """Number of *other* tenants with an active binding for this value.

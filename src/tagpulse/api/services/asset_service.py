@@ -296,6 +296,12 @@ class AssetService:
         asset_id: UUID,
         payload: AssetTagBindingCreate,
     ) -> AssetTagBindingResponse:
+        # Canonicalise a VIN binding so a differently-cased scan resolves (the
+        # lookup also matches the canonical form). Other kinds are stored as-is.
+        if payload.binding_kind == "vin":
+            payload = payload.model_copy(
+                update={"binding_value": payload.binding_value.strip().upper()}
+            )
         binding = await self._bindings.create(tenant_id, asset_id, payload)
         await self._audit.log(
             tenant_id=tenant_id,
@@ -309,6 +315,10 @@ class AssetService:
             },
         )
         return binding
+
+    async def get_asset_by_binding_value(self, tenant_id: UUID, value: str) -> AssetResponse | None:
+        """Resolve an active binding value (e.g. a scanned VIN) to its asset."""
+        return await self._bindings.get_by_binding_value(tenant_id, value)
 
     async def list_bindings(
         self,

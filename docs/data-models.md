@@ -599,6 +599,7 @@ The physical thing being tracked, distinct from the reader. See [design/assets-a
 | `tenant_id` | UUID | FK → tenants.id, NOT NULL | |
 | `external_ref` | VARCHAR(255) | NULLABLE | ERP / WMS asset code. URL-unsafe characters rejected at the API layer (see [ADR-019](adr/019-categories.md), gap 2.8). |
 | `name` | VARCHAR(255) | NOT NULL | |
+| `display_label` | VARCHAR(255) | NULLABLE | Sprint 82 (I-P923) — optional secondary human-facing label (e.g. a vehicle's license plate for handset confirmation); generic for any asset. |
 | `category_id` | UUID | FK → categories.id, ON DELETE RESTRICT, NOT NULL | Sprint 34 (added nullable); promoted to `NOT NULL` and the legacy `asset_type` shadow column was dropped in Sprint 41 Phase H (migration `041`, [ADR-019](adr/019-categories.md) close-out). |
 | `status` | VARCHAR(20) | NOT NULL, default `'active'` | `active` \| `retired` \| `lost` |
 | `metadata` | JSONB | NULLABLE | |
@@ -607,7 +608,7 @@ The physical thing being tracked, distinct from the reader. See [design/assets-a
 
 **Unique constraint:** `(tenant_id, external_ref)`
 **RLS:** Yes
-**Migration:** 017 (base table); 037 adds `category_id`; 041 promotes `category_id` to `NOT NULL` and drops `asset_type`
+**Migration:** 017 (base table); 037 adds `category_id`; 041 promotes `category_id` to `NOT NULL` and drops `asset_type`; 062 adds `display_label`
 
 ---
 
@@ -621,7 +622,7 @@ Historical mapping of RFID tag IDs to assets. Bindings carry an open or closed l
 |--------|------|-------------|-------|
 | `asset_id` | UUID | FK → assets.id, ON DELETE CASCADE | |
 | `tag_id` | VARCHAR(256) | NOT NULL | EPC URI or TID hex per `binding_kind` |
-| `binding_kind` | VARCHAR(8) | NOT NULL, default `'epc'` | `epc` \| `tid` |
+| `binding_kind` | VARCHAR(8) | NOT NULL, default `'epc'` | `epc` \| `tid` \| `device` \| `vin` (Sprint 82, I-P923 — `vin` binds a VIN as a lookup handle; isolated from `device`, which telemetry/location SQL treats as `tr.tag_id`). CHECK `ck_asset_tag_bindings_kind`. |
 | `bound_at` | TIMESTAMPTZ | NOT NULL, default `now()` | |
 | `unbound_at` | TIMESTAMPTZ | NULLABLE | NULL = currently active |
 | `tenant_id` | UUID | NOT NULL | Denormalized for RLS |
