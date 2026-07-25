@@ -6,6 +6,8 @@ All notable changes to TagPulse will be documented in this file.
 
 ### Fixed
 
+- **Inventory SGTIN auto-create silently blocked (Stock Levels stayed empty).** The stock-item auto-create gate (`IngestionService._process_inventory_read`) looked the tag up via `get_by_epc(tenant_id, normalize_epc_hex(read.identity.epc))` — but `identity.epc` is the *decoded GS1 URI* (`urn:epc:id:sgtin:…`) and `get_by_epc` matches the **hex**-keyed `tags.epc_hex` column, so `normalize_epc_hex(<URI>)` (an uppercased URI) never matched → the ownership check failed → **every** first-ever SGTIN read was counted `stock_item_auto_create_blocked` and no stock item was created. Fixed to look up by `read.identity.epc_hex` (the native hex form, populated by `_normalize` for hex-sourced reads); a caller supplying only a URI with no hex is conservatively still blocked (can't verify ownership against the hex-keyed registry). 2 regression tests (match-by-hex proceeds + records the hex query; unregistered hex stays blocked). No API/schema change.
+
 - **`scripts/azd-smoke.sh` probed non-existent `/healthz` + `/readyz` (false red).** The post-deploy smoke gate (Sprint 28 A5) curled `/healthz` and `/readyz`, but the API mounts its health router with no prefix — the real routes are `/health/live` (liveness) and `/health/ready` (readiness). Every `make smoke` / CI smoke run reported 2 false failures (`404 {"detail":"Not Found"}`) even against a perfectly healthy API. Fixed to probe the correct paths, mirroring the identical `scripts/azd-doctor.sh` fix (commit `e3122db`). Also corrected the `make smoke` help text + script header. Tooling only — no app change.
 
 ### Changed

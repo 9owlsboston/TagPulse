@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -713,3 +714,74 @@ async def test_auto_create_race_recovers_existing_item() -> None:
     # No new items beyond the seeded winner; create attempted exactly once.
     assert len(stock.items) == 1
     assert stock.creates == 1
+
+
+# ---- Regression: auto-create gate must match the hex-keyed tag registry ----
+
+
+class FakeTagRepo:
+    """Records the value passed to ``get_by_epc`` (the hex-keyed lookup)."""
+
+    def __init__(self, by_hex: dict[str, Any]) -> None:
+        self._by_hex = by_hex
+        self.queried: list[str] = []
+
+    async def get_by_epc(self, _tenant_id: UUID, epc_hex: str) -> Any:
+        self.queried.append(epc_hex)
+        return self._by_hex.get(epc_hex)
+
+
+def _read_with_hex(device_id: UUID, *, serial: str = "42", epc_hex: str) -> TagReadCreate:
+    base = _sgtin_identity(serial)
+    ident = Identity(
+        epc=base.epc,
+        epc_hex=epc_hex,
+        epc_scheme=base.epc_scheme,
+        epc_decoded=base.epc_decoded,
+    )
+    return TagReadCreate(
+        device_id=device_id,
+        tag_id=base.epc,
+        timestamp=datetime.now(UTC),
+        signal_strength=-50,
+        identity=ident,
+    )
+
+
+async def _run_inventory(tenant: UUID, read: TagReadCreate, tag_repo: FakeTagRepo) -> FakeStockRepo:
+    bus = AsyncEventBus(capacity=10)
+    await bus.start()
+    stock = FakeStockRepo()
+    svc = IngestionService(
+        repo=FakeRepo(),  # type: ignore[arg-type]
+        event_bus=bus,
+        device_repo=FakeDeviceRepo(),  # type: ignore[arg-type]
+        zone_repo=FakeZoneRepo({}),  # type: ignore[arg-type]
+        product_repo=FakeProductRepo({GTIN: _product(tenant)}),  # type: ignore[arg-type]
+        stock_repo=stock,  # type: ignore[arg-type]
+        tag_repo=tag_repo,  # type: ignore[arg-type]
+    )
+    await svc.ingest(tenant, read)
+    await bus.drain(timeout=1.0)
+    return stock
+
+
+@pytest.mark.asyncio
+async def test_auto_create_matches_tag_by_epc_hex_not_uri() -> None:
+    """Regression (I-2J9R): the gate must look up the tag by ``epc_hex`` (hex),
+    not ``normalize_epc_hex(epc)`` (the uppercased decoded URI, which never
+    equals the hex column and silently blocked every SGTIN auto-create)."""
+    tenant = uuid4()
+    hexval = "3034257BF400B7800004D2"
+    tags = FakeTagRepo({hexval: SimpleNamespace(status="registered")})
+    stock = await _run_inventory(tenant, _read_with_hex(uuid4(), epc_hex=hexval), tags)
+    assert stock.creates == 1  # auto-create proceeded
+    assert tags.queried == [hexval]  # queried by HEX, never the URI
+
+
+@pytest.mark.asyncio
+async def test_auto_create_blocked_when_epc_hex_unregistered() -> None:
+    tenant = uuid4()
+    tags = FakeTagRepo({})  # nothing registered
+    stock = await _run_inventory(tenant, _read_with_hex(uuid4(), epc_hex="DEADBEEF"), tags)
+    assert stock.creates == 0

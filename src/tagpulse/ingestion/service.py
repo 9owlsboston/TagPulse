@@ -935,7 +935,20 @@ class IngestionService:
             # above. The MQTT ingest write path (``self._repo.create``)
             # still never touches ``tags``.
             if self._tag_repo is not None:
-                tag = await self._tag_repo.get_by_epc(tenant_id, normalize_epc_hex(epc))
+                # The tag registry is hex-keyed (``tags.epc_hex``), so match on
+                # the read's ``epc_hex`` — NOT ``normalize_epc_hex(epc)``, which
+                # would uppercase the *decoded URI* (``urn:epc:id:sgtin:…``) and
+                # never equal the hex column, silently blocking every SGTIN
+                # auto-create (Stock Levels stays empty). ``epc_hex`` is
+                # populated by :meth:`_normalize` for hex-sourced reads; when a
+                # caller supplies only a URI (no hex) we can't verify ownership
+                # against the hex-keyed registry, so we conservatively block.
+                epc_hex = read.identity.epc_hex
+                tag = (
+                    await self._tag_repo.get_by_epc(tenant_id, normalize_epc_hex(epc_hex))
+                    if epc_hex
+                    else None
+                )
                 if tag is None or tag.status not in {"registered", "active"}:
                     stock_item_auto_create_blocked_counter.add(1, {"tenant_id": str(tenant_id)})
                     return
