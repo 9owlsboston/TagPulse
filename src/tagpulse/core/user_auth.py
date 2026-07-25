@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tagpulse.core.config import settings
-from tagpulse.models.database import TenantModel, UserModel
+from tagpulse.models.database import DeviceModel, TenantModel, UserModel
 from tagpulse.repositories.timescaledb.session import get_session
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,8 @@ def _annotate_span_with_user(user: AuthenticatedUser) -> None:
     span.set_attribute("user_role", user.role)
     if user.user_id is not None:
         span.set_attribute("user_id", str(user.user_id))
+    if user.device_id is not None:
+        span.set_attribute("device_id", str(user.device_id))
 
 
 class AuthenticatedUser:
@@ -62,6 +64,7 @@ class AuthenticatedUser:
         tenant_slug: str,
         role: str,
         email: str | None = None,
+        device_id: UUID | None = None,
     ) -> None:
         self.user_id = user_id
         self.tenant_id = tenant_id
@@ -69,6 +72,9 @@ class AuthenticatedUser:
         self.tenant_slug = tenant_slug
         self.role = role
         self.email = email
+        # Set only for device principals authenticated via a ``tpd_`` token
+        # (ADR-011 Phase 1). ``None`` for human users and X-Tenant-ID.
+        self.device_id = device_id
 
 
 def generate_api_key(tenant_slug: str) -> tuple[str, str, str]:
@@ -134,6 +140,43 @@ def decode_jwt(token: str) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="Invalid token") from None
 
 
+async def _authenticate_device_token(raw_token: str, session: AsyncSession) -> AuthenticatedUser:
+    """Authenticate a per-device ``tpd_`` bearer token (ADR-011 Phase 1).
+
+    Mirrors the user API-key path: look up candidate devices by the 10-char
+    ``token_prefix`` (multiple devices in one tenant share it), verify the full
+    SHA-256 hash per candidate, then gate on device + tenant status. A valid
+    token on a not-yet-approved (or rejected/decommissioned) device yields a
+    403 — distinct from a bad token (401) — so the handset can tell "await
+    approval" from "bad credential".
+    """
+    prefix = raw_token[:10]
+    stmt = select(DeviceModel).where(DeviceModel.token_prefix == prefix)
+    result = await session.execute(stmt)
+    device: DeviceModel | None = None
+    for candidate in result.scalars().all():
+        if candidate.token_hash and verify_api_key(raw_token, candidate.token_hash):
+            device = candidate
+            break
+    if device is None:
+        raise HTTPException(status_code=401, detail="Invalid device token")
+    if device.status != "active":
+        raise HTTPException(status_code=403, detail="Device not active")
+    tenant = await session.get(TenantModel, device.tenant_id)
+    if tenant is None or tenant.status != "active":
+        raise HTTPException(status_code=401, detail="Tenant inactive")
+    user_obj = AuthenticatedUser(
+        user_id=None,
+        tenant_id=tenant.id,
+        tenant_name=tenant.name,
+        tenant_slug=tenant.slug,
+        role="device",
+        device_id=device.id,
+    )
+    _annotate_span_with_user(user_obj)
+    return user_obj
+
+
 async def get_current_user(
     authorization: str | None = Security(api_key_header),
     x_tenant_id: str | None = Security(tenant_id_header),
@@ -143,6 +186,11 @@ async def get_current_user(
     # Try Bearer token first
     if authorization and authorization.startswith("Bearer "):
         raw_token = authorization[7:]
+        # Per-device token (``tpd_``) — checked before JWT/``tp_``: a ``tpd_``
+        # value does not start with ``tp_`` so it would otherwise be misrouted
+        # into JWT decode. ``tp_``/``tpd_`` are mutually exclusive prefixes.
+        if raw_token.startswith("tpd_"):
+            return await _authenticate_device_token(raw_token, session)
         # JWT tokens don't start with "tp_"; API keys do
         if not raw_token.startswith("tp_"):
             # Decode JWT
@@ -229,3 +277,18 @@ def require_role(*roles: str) -> Any:
         return user
 
     return Depends(_check)
+
+
+async def get_console_user(
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> AuthenticatedUser:
+    """Authenticated console (human) principal — rejects device tokens.
+
+    Use on console endpoints that depend on ``get_current_user`` directly
+    (i.e. not via ``get_current_tenant`` / ``require_role``, which already
+    reject devices). A ``tpd_`` device principal may only reach the ingest
+    surface (``get_ingest_auth``); anything else returns 403.
+    """
+    if user.role == "device":
+        raise HTTPException(status_code=403, detail="Device principals cannot access this endpoint")
+    return user

@@ -29,6 +29,13 @@ Adopt a **three-phase device identity roadmap**. Each phase is independently shi
 
 **Why first:** small surface area, immediate revocation, no broker work, no PKI. Solves the "stolen token" worst case in one sprint.
 
+> **Sprint 78 update (I-K6D1).** Phase 1 originally shipped the token *mint + rotate* pipeline
+> but left two gaps: `get_current_user` never verified `tpd_` tokens on the HTTP path, and no
+> provisioning step handed a token to the device. Sprint 78 closes both — HTTP verification
+> yields a least-privilege `device` principal (bound to its own `device_id`, ingest-only), and
+> `POST /devices/provision` issues the token once at provision time (inert until approval). See
+> [device-token-http-auth.md](../design/device-token-http-auth.md).
+
 ### Phase 2 — mTLS for MQTT (Sprint 17b, separate ADR-012)
 
 - Per-device X.509 client cert issued at provisioning (or first rotation).

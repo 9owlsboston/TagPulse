@@ -32,3 +32,18 @@ existing changelog is richer and already Keep-a-Changelog conformant). Verified:
 placeholders remain in `README.md` / `AGENTS.md` / `docs/current-state.md`; every cross-doc
 link target resolves (`test -f` per link); `.editorconfig` and the seeded `.gitattributes`
 agree on the PowerShell-CRLF rule.
+
+### 2026-07-25 — Sprint 78: device-token HTTP auth + provision-time issuance (I-K6D1)
+
+Closed a TagPulse-Mobile backend ask. `get_current_user` now verifies `tpd_` per-device
+tokens (prefix lookup → per-candidate SHA-256 verify → device/tenant status gate) and yields
+a least-privilege `device` principal (role `device`, `device_id`-bound); non-active device
+with a valid token → 403, bad token → 401. `POST /devices/provision` mints + returns the token
+once (hashed at rest, inert until admin approval). `get_current_tenant` now rejects device
+principals; new `get_ingest_auth` gates only `POST /tag-reads(/batch)`, where devices are bound
+to their own `device_id` and cannot `backfill`; `get_console_user` guard added to the four
+`ui_config` routes (diff-stage review catch). Verified: `python -m ruff` clean, `python -m mypy
+src` clean (144 files), `python -m pytest tests/unit` = 1814 passed / 1 skipped, `openapi.json`
+regenerated. Plan-stage rubber-duck (3 blockers → folded in) + diff-stage code-review (1 medium
+→ fixed) both ran. NOTE: `make check` on this box needs `python -m ...` — the `~/.local/bin`
+pytest/mypy shebang is python3.13 which lacks the editable install (tagpulse lives in 3.11).

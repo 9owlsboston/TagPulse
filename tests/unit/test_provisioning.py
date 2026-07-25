@@ -2,11 +2,17 @@
 
 import hashlib
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
-from tagpulse.api.routes.provisioning import ProvisionRequest, ProvisionStatusResponse
+from tagpulse.api.routes.provisioning import (
+    ProvisionRequest,
+    ProvisionResponse,
+    ProvisionStatusResponse,
+    provision_device,
+)
 
 
 class TestProvisionRequest:
@@ -59,3 +65,61 @@ class TestProvisioningKeyVerification:
         h1 = hashlib.sha256(key1.encode()).hexdigest()
         h2 = hashlib.sha256(key2.encode()).hexdigest()
         assert h1 != h2
+
+
+class _FakeResult:
+    def __init__(self, scalar: object) -> None:
+        self._scalar = scalar
+
+    def scalar_one_or_none(self) -> object:
+        return self._scalar
+
+
+class _FakeSession:
+    """Minimal async session: returns a fixed tenant, records adds/flush."""
+
+    def __init__(self, tenant: object) -> None:
+        self._tenant = tenant
+        self.added: list = []
+        self.flushed = False
+
+    async def execute(self, _stmt: object) -> _FakeResult:
+        return _FakeResult(self._tenant)
+
+    def add(self, obj: object) -> None:
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        self.flushed = True
+
+
+class TestProvisionMintsToken:
+    """Sprint 78 (I-K6D1): provision issues the device token once, up front."""
+
+    @pytest.mark.asyncio
+    async def test_provision_returns_pending_device_token(self) -> None:
+        key = "pk_acme_0123456789abcdef"
+        tenant = SimpleNamespace(
+            id=uuid.uuid4(),
+            slug="acme",
+            status="active",
+            provisioning_key_hash=hashlib.sha256(key.encode()).hexdigest(),
+        )
+        session = _FakeSession(tenant)
+
+        resp = await provision_device(
+            ProvisionRequest(name="Reader-42"),
+            key=key,
+            session=session,  # type: ignore[arg-type]
+        )
+
+        assert isinstance(resp, ProvisionResponse)
+        assert resp.status == "pending"
+        assert resp.token.startswith("tpd_acme_")
+        assert resp.token_prefix == resp.token[:10]
+        # Device row was created with the hashed token (never the plaintext).
+        assert session.flushed is True
+        (device,) = session.added
+        assert device.status == "pending"
+        assert device.token_hash == hashlib.sha256(resp.token.encode()).hexdigest()
+        assert device.token_hash != resp.token

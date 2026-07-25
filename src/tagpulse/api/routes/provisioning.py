@@ -2,6 +2,7 @@
 
 import hashlib
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security
 from fastapi.security import APIKeyHeader
@@ -9,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tagpulse.core.user_auth import AuthenticatedUser, require_role
+from tagpulse.core.user_auth import AuthenticatedUser, generate_device_token, require_role
 from tagpulse.models.database import DeviceModel, TenantModel
 from tagpulse.repositories.timescaledb.session import get_session
 
@@ -25,6 +26,23 @@ class ProvisionRequest(BaseModel):
     device_type: str = Field(default="rfid_reader", max_length=50)
 
 
+class ProvisionResponse(BaseModel):
+    """Device self-registration result.
+
+    Carries the freshly-minted per-device token (``tpd_…``). It is returned
+    **once** here — the backend stores only its SHA-256 hash and it cannot be
+    re-read later (rotate via ``POST /device-registry/{id}/rotate-token``). The
+    token is **inert until an admin approves the device** (``get_current_user``
+    requires ``status="active"``).
+    """
+
+    device_id: str
+    status: str
+    token: str
+    token_prefix: str
+    message: str
+
+
 class ProvisionStatusResponse(BaseModel):
     """Device provisioning status."""
 
@@ -32,13 +50,18 @@ class ProvisionStatusResponse(BaseModel):
     status: str
 
 
-@router.post("/devices/provision", status_code=201)
+@router.post("/devices/provision", status_code=201, response_model=ProvisionResponse)
 async def provision_device(
     body: ProvisionRequest,
     key: str | None = Security(provisioning_key_header),
     session: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
-    """Self-register a device using a tenant provisioning key."""
+) -> ProvisionResponse:
+    """Self-register a device using a tenant provisioning key.
+
+    Mints the device's per-device token in the same step and returns it once
+    (copy-once). The device holds the token through the approval wait; it only
+    authenticates once an admin approves the device.
+    """
     if not key:
         raise HTTPException(status_code=401, detail="X-Provisioning-Key required") from None
 
@@ -58,22 +81,31 @@ async def provision_device(
     if tenant.provisioning_key_hash != key_hash:
         raise HTTPException(status_code=401, detail="Invalid provisioning key") from None
 
-    # Create device with pending status
+    # Create device with pending status + mint its per-device token.
+    raw_token, token_prefix, token_hash = generate_device_token(tenant.slug)
     device = DeviceModel(
         id=uuid.uuid4(),
         tenant_id=tenant.id,
         name=body.name,
         device_type=body.device_type,
         status="pending",
+        token_hash=token_hash,
+        token_prefix=token_prefix,
+        token_rotated_at=datetime.now(UTC),
     )
     session.add(device)
     await session.flush()
 
-    return {
-        "device_id": str(device.id),
-        "status": "pending",
-        "message": "Device registered. Awaiting admin approval.",
-    }
+    return ProvisionResponse(
+        device_id=str(device.id),
+        status="pending",
+        token=raw_token,
+        token_prefix=token_prefix,
+        message=(
+            "Device registered. Awaiting admin approval. Store this token now — "
+            "it is shown once and activates when the device is approved."
+        ),
+    )
 
 
 @router.get("/devices/provision/status", response_model=ProvisionStatusResponse)

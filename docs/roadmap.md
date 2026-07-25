@@ -1826,6 +1826,22 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 78 — Device-token HTTP auth + provision-time issuance (I-K6D1)
+
+> **Status (2026-07-25, in progress).** Backend-only. Closes a TagPulse-Mobile backend ask:
+> per-device `tpd_` tokens were minted/rotatable but never verified on the HTTP ingest path,
+> and no provisioning step handed a token to the device — so an approved handset couldn't
+> authenticate `POST /tag-reads` as a per-device principal (it borrowed a tenant API key).
+> Full design: [docs/design/device-token-http-auth.md](design/device-token-http-auth.md); roadmap under [ADR-011](adr/011-device-identity-roadmap.md) Phase 1.
+
+- [done] Verify `tpd_` tokens in `get_current_user` → `device` principal (role + `device_id`); 401 bad token / 403 not-active.
+- [done] `get_current_tenant` rejects device principals; new `get_ingest_auth` gates the tag-read ingest routes only.
+- [done] Device principals bound to their own `device_id`; `backfill` blocked for devices.
+- [done] `POST /devices/provision` mints + returns the device token once (inert until approval).
+- [done] Unit tests (auth matrix, ingest guards, provision token), `openapi.json` regenerated, `make check` green.
+
+**Out of scope (→ I-75YC):** device principals on the telemetry-ingest endpoint (`POST /telemetry/readings/ingest`) and multi-reader gateway relay (one principal, an approved *set* of downstream subjects).
+
 ## Sprint 77 — Excel filters on the remaining server-paginated tables (shipped)
 
 > **Status (2026-06-21, shipped).** Shipped cross-repo (backend [#156](https://github.com/9owlsboston/TagPulse/pull/156) + UI [#114](https://github.com/9owlsboston/TagPulse-UI/pull/114)). Closes the column-filter initiative (Sprints 70/75/76): **every** list table now has the uniform sort + per-column filter. Full design in the [Sprint 77 design doc](design/sprint-77-server-table-filters.md).
