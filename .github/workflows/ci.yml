@@ -101,7 +101,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - name: Comment on PR
         if: steps.changes.outputs.bicep == 'true'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: bicep-whatif
           message: |
