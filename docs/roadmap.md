@@ -1826,6 +1826,16 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 83 — /assets/by-binding returns the matched binding_kind (I-WAPN)
+
+> **Status (2026-07-25, in progress).** Backend-only. Enriches the I-P923 lookup so the
+> TagPulse-Mobile handset can warn on a `vin`-only match (no operational binding ⇒ reads won't
+> Map-link). Full design: [docs/design/by-binding-matched-kind.md](design/by-binding-matched-kind.md).
+
+- [done] `AssetByBindingResponse(AssetResponse)` adds `binding_kind` + matched `binding_value`.
+- [done] `get_by_binding_value` SELECTs the matched binding's kind/value; route response_model updated.
+- [done] Unit + live-DB integration tests assert the matched kind; `openapi.json` regenerated.
+
 ## Sprint 82 — Asset display_label + VIN binding lookup for TagPulse-Mobile (I-P923) (shipped)
 
 > **Status (2026-07-25, shipped).** Backend-only. Serves TagPulse-Mobile `C-RYH7`: the

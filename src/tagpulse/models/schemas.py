@@ -886,6 +886,19 @@ class AssetResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AssetByBindingResponse(AssetResponse):
+    """Asset resolved via ``GET /assets/by-binding`` (I-WAPN).
+
+    Extends :class:`AssetResponse` with the **matched** binding so the handset
+    can warn when a VIN resolves via a ``vin`` binding (a lookup-only handle that
+    does not Map-link tag-reads) rather than an operational ``device``/``epc``/
+    ``tid`` binding.
+    """
+
+    binding_kind: str
+    binding_value: str
+
+
 class AssetTagBindingCreate(BaseModel):
     """Bind a tag value to an asset."""
 

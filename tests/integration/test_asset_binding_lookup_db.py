@@ -30,10 +30,13 @@ async def test_resolves_by_raw_and_lowercased_scan(
 
     raw = await repo.get_by_binding_value(tenant, VIN)
     assert raw is not None and raw.id == asset
+    assert raw.binding_kind == "vin"
+    assert raw.binding_value == VIN  # stored canonical form
 
     # A differently-cased scan resolves via the canonical candidate.
     lowered = await repo.get_by_binding_value(tenant, VIN.lower())
     assert lowered is not None and lowered.id == asset
+    assert lowered.binding_kind == "vin"
 
 
 @pytest.mark.asyncio

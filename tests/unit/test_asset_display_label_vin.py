@@ -16,6 +16,7 @@ from tagpulse.api.routes.assets import router
 from tagpulse.api.services.asset_service import AssetService
 from tagpulse.core.user_auth import AuthenticatedUser, get_current_user
 from tagpulse.models.schemas import (
+    AssetByBindingResponse,
     AssetCreate,
     AssetResponse,
     AssetTagBindingCreate,
@@ -169,11 +170,15 @@ def _asset_row() -> SimpleNamespace:
 
 
 @pytest.mark.asyncio
-async def test_get_by_binding_value_maps_asset_with_display_label() -> None:
-    repo = TimescaleAssetTagBindingRepository(_FakeSession(_asset_row()))  # type: ignore[arg-type]
-    resp = await repo.get_by_binding_value(uuid4(), "1HGCM82633A004352")
+async def test_get_by_binding_value_maps_asset_with_matched_kind() -> None:
+    # The repo now SELECTs (AssetModel, binding_kind, binding_value) → a Row.
+    row = (_asset_row(), "vin", "1HGCM82633A004352")
+    repo = TimescaleAssetTagBindingRepository(_FakeSession(row))  # type: ignore[arg-type]
+    resp = await repo.get_by_binding_value(uuid4(), "1hgcm82633a004352")
     assert resp is not None
     assert resp.display_label == "ABC-123"
+    assert resp.binding_kind == "vin"
+    assert resp.binding_value == "1HGCM82633A004352"
 
 
 @pytest.mark.asyncio
@@ -187,12 +192,33 @@ async def test_get_by_binding_value_none_when_unmatched() -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _by_binding_response(display_label: str | None = None) -> AssetByBindingResponse:
+    now = datetime.now(UTC)
+    return AssetByBindingResponse(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        external_ref=None,
+        name="Truck 42",
+        display_label=display_label,
+        status="active",
+        parent_asset_id=None,
+        category_id=uuid4(),
+        metadata=None,
+        created_at=now,
+        updated_at=now,
+        binding_kind="vin",
+        binding_value="1HGCM82633A004352",
+    )
+
+
 class _StubAssetService:
-    def __init__(self, asset: AssetResponse | None) -> None:
+    def __init__(self, asset: AssetByBindingResponse | None) -> None:
         self._asset = asset
         self.looked_up: str | None = None
 
-    async def get_asset_by_binding_value(self, _tenant: UUID, value: str) -> AssetResponse | None:
+    async def get_asset_by_binding_value(
+        self, _tenant: UUID, value: str
+    ) -> AssetByBindingResponse | None:
         self.looked_up = value
         return self._asset
 
@@ -207,12 +233,14 @@ def _client(stub: _StubAssetService) -> TestClient:
     return TestClient(app)
 
 
-def test_route_by_binding_returns_asset() -> None:
-    asset = _asset_response("ABC-123")
-    stub = _StubAssetService(asset)
+def test_route_by_binding_returns_asset_and_matched_kind() -> None:
+    stub = _StubAssetService(_by_binding_response("ABC-123"))
     resp = _client(stub).get("/v1/assets/by-binding", params={"value": "1HGCM82633A004352"})
     assert resp.status_code == 200
-    assert resp.json()["display_label"] == "ABC-123"
+    body = resp.json()
+    assert body["display_label"] == "ABC-123"
+    assert body["binding_kind"] == "vin"
+    assert body["binding_value"] == "1HGCM82633A004352"
     # Route ordering: reached the by-binding handler, not get_asset({asset_id}).
     assert stub.looked_up == "1HGCM82633A004352"
 

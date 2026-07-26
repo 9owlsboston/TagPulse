@@ -17,6 +17,7 @@ from tagpulse.api.filters import LIKE_ESCAPE, wildcard_to_ilike
 from tagpulse.api.label_filter import apply_label_filter
 from tagpulse.models.database import AssetModel, AssetTagBindingModel
 from tagpulse.models.schemas import (
+    AssetByBindingResponse,
     AssetCreate,
     AssetRef,
     AssetResponse,
@@ -396,18 +397,26 @@ class TimescaleAssetTagBindingRepository:
         rows = (await self._session.execute(stmt)).all()
         return {bv: AssetRef(id=aid, name=name) for bv, aid, name in rows}
 
-    async def get_by_binding_value(self, tenant_id: uuid.UUID, value: str) -> AssetResponse | None:
+    async def get_by_binding_value(
+        self, tenant_id: uuid.UUID, value: str
+    ) -> AssetByBindingResponse | None:
         """Resolve an active binding value (e.g. a scanned VIN) to its asset.
 
         Tenant-scoped, active bindings only (``unbound_at IS NULL``),
         kind-agnostic. Matches the raw value **and** its canonical
         (``strip().upper()``) form so a differently-cased VIN scan still
         resolves. Deterministic on the (unexpected) multi-binding case: the
-        earliest ``bound_at`` wins.
+        earliest ``bound_at`` wins. Carries the **matched** ``binding_kind`` +
+        stored ``binding_value`` (I-WAPN) so the caller can warn on a
+        lookup-only ``vin`` match.
         """
         candidates = _binding_candidates(value)
         stmt = (
-            select(AssetModel)
+            select(
+                AssetModel,
+                AssetTagBindingModel.binding_kind,
+                AssetTagBindingModel.binding_value,
+            )
             .join(AssetTagBindingModel, AssetTagBindingModel.asset_id == AssetModel.id)
             .where(
                 AssetModel.tenant_id == tenant_id,
@@ -418,8 +427,16 @@ class TimescaleAssetTagBindingRepository:
             .order_by(AssetTagBindingModel.bound_at.asc())
             .limit(1)
         )
-        row = (await self._session.execute(stmt)).scalars().first()
-        return _asset_to_response(row) if row else None
+        row = (await self._session.execute(stmt)).first()
+        if row is None:
+            return None
+        asset_model, binding_kind, binding_value = row
+        asset = _asset_to_response(asset_model)
+        return AssetByBindingResponse(
+            **asset.model_dump(),
+            binding_kind=binding_kind,
+            binding_value=binding_value,
+        )
 
     async def count_other_tenant_collisions(self, tenant_id: uuid.UUID, binding_value: str) -> int:
         """Number of *other* tenants with an active binding for this value.
