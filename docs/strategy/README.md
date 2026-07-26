@@ -38,6 +38,10 @@ living document.
 | [`ai-landscape.md`](ai-landscape.md) | AI opportunity map | The existing telemetry pipeline, analytics-module framework, and edge gateway are an unusually AI-ready substrate — four clean plug-in patterns. |
 | [`sensor-wedges.md`](sensor-wedges.md) | Sensor market wedges | The `GatewayDriver` seam generalizes OBD-II; each new cheap/standardized sensor is a new driver, not a rebuild. |
 | [`home-automation.md`](home-automation.md) | Home-automation wedge | A stationary MQTT hub (the `clients/pi` lineage) meets a market that already speaks MQTT — strong as a B2B fleet-of-homes play. |
+| [`actuation-control-loop.md`](actuation-control-loop.md) | Actuation / control loop | Adding a "device command" rule action turns TagPulse from a monitoring platform into an automation platform — a cross-wedge category upgrade. |
+| [`edge-ai-architecture.md`](edge-ai-architecture.md) | Edge-AI architecture | The differentiator isn't a model, it's a model *lifecycle* on the `GatewayDriver` seam: inference stage, signed OTA model delivery, retraining flywheel. |
+| [`competitive-positioning.md`](competitive-positioning.md) | Competitive positioning | Most incumbents sit in different layers; the wedge is vertical depth on cheap sensors + an AI-native layer, not out-breadthing Samsara or out-plumbing hyperscalers. |
+| [`data-monetization.md`](data-monetization.md) | Data monetization | A multi-tenant platform accrues a cross-tenant data asset; monetize via privacy-preserving benchmarks/indices/federated models — trust and opt-in are the whole game. |
 
 ## Adding a note
 
