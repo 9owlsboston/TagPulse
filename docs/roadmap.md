@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 83 — by binding matched kind · **shipped** (PR #176); between sprints.
+**Current sprint:** 84 — grant relay extensions · branch `sprint-84/grant-relay-extensions` (full scope lands in §sprint-84 during the sprint).
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1825,6 +1825,19 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 **Decisions to lock (design doc §7).** **A** legs auto-derived from custody (recommend yes); **B** ETA **deferred** to a later phase — v1 is **actuals-only** (no in-flight ETA without a declared destination); **C** SLA from a `fusion_strategy.sla` block. **Out of scope:** in-flight ETA + destination prediction, multi-leg shipment grouping, route/geocoding — all gated on a destination-declaration mechanism.
 
 ---
+
+## Sprint 84 — Gateway grant relay: device-location + more subject kinds (C-4Z66) (shipped)
+
+> **Status (2026-07-25, shipped).** Backend-only, no migration. Closes the two fast-follows
+> deferred from Sprint 81 (C-6S9H) by reusing the existing grant seam. Full design:
+> [docs/design/gateway-grant-relay-extensions.md](design/gateway-grant-relay-extensions.md).
+
+- [done] `POST /device-location` accepts an optional target `(subject_kind, subject_id)` via `DeviceLocationCreate(ExternalLocationCreate)` (both-or-neither); a granted gateway relays a position for the subject — own-or-granted enforcement mirroring the telemetry guard, fails closed (403).
+- [done] Asset targets populate `asset_id` (asset reads filter on it, not `subject_id`); relay writes stamp server-controlled `metadata.relayed_by_device_id` (spoof-proof).
+- [done] Grant kinds `lot`/`stock_item`/`zone` enabled — `_assert_subject_exists` wires their in-tenant existence checks (no schema change; the `subject_kind` column has no CHECK).
+- [done] Unit tests (relay matrix + new-kind existence 404/OK), `openapi.json` regenerated, `make check` green.
+
+**Deferred:** a dedicated `relayed_by_device_id` **column** on `external_locations` (this sprint stamps it in `metadata`); per-channel grant scoping (telemetry vs location) — YAGNI until a customer needs isolation.
 
 ## Sprint 83 — /assets/by-binding returns the matched binding_kind (I-WAPN) (shipped)
 

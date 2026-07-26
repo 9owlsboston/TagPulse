@@ -129,9 +129,11 @@ async def _post_grant(app: FastAPI, device_id: UUID, body: dict[str, Any]) -> An
 
 
 @pytest.mark.asyncio
-async def test_create_grant_unsupported_kind_422() -> None:
+async def test_create_grant_unknown_kind_422() -> None:
+    # All five Literal kinds are now supported (C-4Z66); a non-Literal kind is
+    # rejected by schema validation (422) before the route runs.
     app = _admin_app()
-    resp = await _post_grant(app, uuid4(), {"subject_kind": "zone", "subject_id": str(uuid4())})
+    resp = await _post_grant(app, uuid4(), {"subject_kind": "widget", "subject_id": str(uuid4())})
     assert resp.status_code == 422
 
 
@@ -155,3 +157,60 @@ async def test_create_grant_device_principal_403() -> None:
     app = _admin_app(role="device")
     resp = await _post_grant(app, uuid4(), {"subject_kind": "asset", "subject_id": str(uuid4())})
     assert resp.status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+# _assert_subject_exists — new grant kinds (C-4Z66)
+# --------------------------------------------------------------------------- #
+
+
+def _patch_repo(monkeypatch: pytest.MonkeyPatch, name: str, *, found: bool) -> None:
+    """Replace grants_route.<name> so ``Repo(session).get(...)`` returns a stub or None."""
+
+    class _R:
+        def __init__(self, _session: Any) -> None:
+            pass
+
+        async def get(self, _tenant: UUID, _subject: UUID) -> Any:
+            return object() if found else None
+
+    monkeypatch.setattr(grants_route, name, _R)
+
+
+_NEW_KINDS = [
+    ("lot", "TimescaleLotRepository"),
+    ("stock_item", "TimescaleStockItemRepository"),
+    ("zone", "TimescaleZoneRepository"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,repo_name", _NEW_KINDS)
+async def test_assert_subject_exists_new_kind_ok(
+    monkeypatch: pytest.MonkeyPatch, kind: str, repo_name: str
+) -> None:
+    _patch_repo(monkeypatch, repo_name, found=True)
+    # Does not raise when the subject exists in-tenant.
+    await grants_route._assert_subject_exists(object(), uuid4(), kind, uuid4())  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,repo_name", _NEW_KINDS)
+async def test_assert_subject_exists_new_kind_404(
+    monkeypatch: pytest.MonkeyPatch, kind: str, repo_name: str
+) -> None:
+    from fastapi import HTTPException
+
+    _patch_repo(monkeypatch, repo_name, found=False)
+    with pytest.raises(HTTPException) as exc:
+        await grants_route._assert_subject_exists(object(), uuid4(), kind, uuid4())  # type: ignore[arg-type]
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_assert_subject_exists_unknown_kind_422() -> None:
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        await grants_route._assert_subject_exists(object(), uuid4(), "widget", uuid4())  # type: ignore[arg-type]
+    assert exc.value.status_code == 422

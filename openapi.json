@@ -2318,6 +2318,121 @@
         "title": "DeviceHealthSummary",
         "type": "object"
       },
+      "DeviceLocationCreate": {
+        "description": "`POST /device-location` body \u2014 a device's own position, or a relay for a granted subject.\n\nExtends :class:`ExternalLocationCreate` with an **optional** target subject. Both fields\nomitted (the default) records the calling device's own position (``subject_kind='device'``,\nunchanged self behavior). Supplying **both** relays the position for that subject \u2014 allowed only\nwhen the calling gateway holds an active grant for it (C-4Z66). A lone ``subject_kind`` or\n``subject_id`` is rejected (a target needs both).",
+        "properties": {
+          "accuracy_meters": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accuracy Meters"
+          },
+          "heading_deg": {
+            "anyOf": [
+              {
+                "exclusiveMaximum": 360.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heading Deg"
+          },
+          "latitude": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Latitude",
+            "type": "number"
+          },
+          "longitude": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Longitude",
+            "type": "number"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "speed_kph": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speed Kph"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "subject_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "device",
+                  "asset",
+                  "lot",
+                  "stock_item",
+                  "zone"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Kind"
+          }
+        },
+        "required": [
+          "latitude",
+          "longitude",
+          "recorded_at",
+          "source"
+        ],
+        "title": "DeviceLocationCreate",
+        "type": "object"
+      },
       "DeviceResponse": {
         "description": "Device returned from the API.",
         "properties": {
@@ -12774,13 +12889,13 @@
     },
     "/device-location": {
       "post": {
-        "description": "Record the calling device's own external position (device principals only).\n\nThe subject is fixed to ``('device', <this device>)`` \u2014 a device cannot\nstamp another subject's location. ``recorded_at`` must fall inside the\ningest clock window (``check_clock_window``).",
+        "description": "Record a device's own external position, or relay one for a granted subject.\n\nDevice principals only. With no target subject the row is the calling device's own\n(``('device', device_id)``, unchanged). With a target ``(subject_kind, subject_id)`` the write\nis allowed iff it is the own device subject **or** an active admin grant authorizes it (C-4Z66),\nexactly mirroring the telemetry-ingest guard (I-75YC). ``recorded_at`` must fall inside the\ningest clock window.",
         "operationId": "record_device_location_device_location_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ExternalLocationCreate"
+                "$ref": "#/components/schemas/DeviceLocationCreate"
               }
             }
           },
