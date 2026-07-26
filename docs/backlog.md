@@ -18,7 +18,7 @@ Tags: `[backend]`, `[ui]`, `[docs]`, `[ops]`, `[idea]`.
 
 ## Open items
 
-- [2026-07-25] **Backfill remaining fake-only SQL paths onto the C-6RTX harness.** The live-DB integration harness now exists (`tests/integration/conftest.py`, `integration-test` CI job) with real coverage for gateway grants + `get_by_binding_value`. Still fake/contract-only and worth a focused integration test: `asset_q` (correlated `EXISTS` over active bindings → assets) + `GET /tag-reads/facets`, and the Sprint 77 Transfers/Reconciliation wildcard filters. [backend]
+- [2026-07-25] **Backfill the last fake-only SQL paths onto the C-6RTX harness.** Done (C-XSD1): tag-reads `asset_q` (correlated `EXISTS` over active bindings → assets) + `GET /tag-reads/facets` now have live-DB integration tests. Still fake/contract-only: the Sprint 77 **Transfers / Reconciliation** wildcard filters — add focused integration tests using the `session` + `make_*` fixtures. [backend]
 - [2026-06-21] **Sprint 72 follow-up — Journey map highlight on leg select.** The leg cross-filter highlights the env chart but not the map trail; pan/highlight the map to the selected leg's window. [ui]
 - [2026-06-21] **Sprint 72 follow-up — Journey map highlight on leg select.** The leg cross-filter highlights the env chart but not the map trail; pan/highlight the map to the selected leg's window. [ui]
 
