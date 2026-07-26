@@ -203,3 +203,18 @@ path (coldchain scenario) also heartbeats to end; stock_unit_serial(0,0)=100000,
 python -m ruff format --check clean; the 7 pre-existing S311 (non-crypto random) warnings are
 outside `make lint`'s scope (src tests clients/pi). scripts/ isn't type-checked/tested in CI.
 Drained both 2026-06-13 SIM GAP backlog notes. Dev tooling only — no app/API/schema change.
+
+### 2026-07-25 — Tests: backfill Transfers + Reconciliation wildcard filters (C-4PAD)
+
+Added tests/integration/test_transfer_reconciliation_db.py (6 live-DB tests) + harness factories
+make_user/make_tag/make_product/make_stock_item and a tag_known param on make_tag_read
+(tests/integration/conftest.py). Covers the last fake/contract-only SQL paths from the Sprint 77
+audit: TimescaleTagTransferRepository.list_for_tenant epc_q (ILIKE over epc_hex) + statuses
+(status IN (...)) incl. compose + tenant scoping; and tag_reconciliation's three views'
+q filter (query_registered_unread over tags.epc_hex, query_unregistered_reading over
+tag_reads.tag_id with tag_known=False, query_bindings_on_retired over stock_items.binding_value
+joined to terminal-status tags). Verified: python -m ruff check + format clean; wildcard_to_ilike
+('E280AA*')=='E280AA%' confirms the * grammar; all 15 integration tests collect + skip
+hermetically without TAGPULSE_INTEGRATION_DB_URL; the integration-test CI job validates against a
+real TimescaleDB (Docker unavailable locally). mypy scope is `mypy src` so tests aren't gated.
+Drained the C-XSD1 follow-up backlog note (no fake-only paths remain). Tests only.
