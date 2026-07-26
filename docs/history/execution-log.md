@@ -187,3 +187,19 @@ tests/integration/test_tag_reads_query_db.py: live-DB tests for the asset_q corr
 can't model the asset_tag_bindings->assets join). Verified: python -m ruff clean, 9 integration
 tests skip hermetically without the DB env; the integration-test CI job validates on the PR.
 Transfers/Reconciliation filters remain (backlog note updated). Tests only.
+
+### 2026-07-25 — Fix: inventory simulator readers stay online on long runs (C-W7XM)
+
+Reworked scripts/simulate_inventory._build_units so a long --duration no longer idles readers
+past the dashboard's 5-min ONLINE_WINDOW (src/tagpulse/core/device_status.py). (1) Per-stage
+dwell is capped at _MAX_STAGE_DWELL_S=240s via min(random.uniform(duration*0.10, 0.30), cap) —
+the uniform draw is still consumed. (2) Once a unit reaches its final stage it gets resident
+heartbeat re-reads every _HEARTBEAT_S=240s until `duration` (appended to its schedule, same
+stage → location never flaps, no random draws). Also extracted the serial scheme into a shared
+stock_unit_serial(product_idx, unit_idx) helper (single source of truth for external seeders).
+Verified: standalone harness over --duration 90/600/1800 → worst consecutive read-gap ≤240s
+(was up to 540s at 1800s) and every unit re-reads within one heartbeat of the run end; quarantine
+path (coldchain scenario) also heartbeats to end; stock_unit_serial(0,0)=100000, (1,5)=200005.
+python -m ruff format --check clean; the 7 pre-existing S311 (non-crypto random) warnings are
+outside `make lint`'s scope (src tests clients/pi). scripts/ isn't type-checked/tested in CI.
+Drained both 2026-06-13 SIM GAP backlog notes. Dev tooling only — no app/API/schema change.

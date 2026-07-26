@@ -68,6 +68,23 @@ API_URL = os.environ.get("TAGPULSE_API_URL", "http://localhost:8000").rstrip("/"
 
 _API_KEY: str | None = None
 
+# A reader counts as "online" only if it reported within this window
+# (src/tagpulse/core/device_status.py: ONLINE_WINDOW = 5 min). We keep the
+# simulator's per-stage dwell and resident heartbeat strictly *under* that
+# window so a long ``--duration`` never leaves a reader idle past it — without
+# this the dashboard shows "0 readers online" on a cold open of a long run.
+_ONLINE_WINDOW_S = 300.0
+# Longest a unit may sit at one stage before it is read again downstream.
+_MAX_STAGE_DWELL_S = 240.0
+# Cadence of resident re-reads once a unit reaches its final stage (RFID
+# readers continuously re-read tags in view). < _ONLINE_WINDOW_S by design.
+_HEARTBEAT_S = 240.0
+
+# Invariant: both cadences must stay under the online window, else a long run
+# can still idle a reader offline (the whole point of the two knobs above).
+assert _MAX_STAGE_DWELL_S < _ONLINE_WINDOW_S
+assert _HEARTBEAT_S < _ONLINE_WINDOW_S
+
 
 # --------------------------------------------------------------------------- #
 # Catalog definition
@@ -667,11 +684,24 @@ class StockUnit:
         return self.item.lot_code
 
 
+def stock_unit_serial(product_idx: int, unit_idx: int) -> int:
+    """Canonical stock-unit serial number (single source of truth).
+
+    ``(product_idx + 1) * 100_000 + unit_idx``. Stable across runs so
+    re-running the simulator hits the same ``stock_item`` rows, and catalog
+    rows that share a SKU still land in distinct ``product_idx`` slots so
+    their EPCs never collide. **Any external seeder that materializes the same
+    units (e.g. via ``POST /stock-items``) must import and use this helper** —
+    an off-by-one or a different multiplier produces a *different* EPC set and
+    the two data sources silently diverge.
+    """
+    return (product_idx + 1) * 100_000 + unit_idx
+
+
 def _build_units(scenario: Scenario, duration: float) -> list[StockUnit]:
     """Generate stock units with stable EPCs and a per-unit movement schedule.
 
-    Serial numbering scheme (stable across runs):
-        product_index * 100_000 + unit_index_within_lot
+    Serial numbering scheme (stable across runs) is :func:`stock_unit_serial`
     so re-running the simulator hits the same stock_item rows. Catalog rows
     that share a SKU still get distinct ``product_index`` slots, so their EPCs
     never collide.
@@ -687,7 +717,7 @@ def _build_units(scenario: Scenario, duration: float) -> list[StockUnit]:
     units: list[StockUnit] = []
     for product_idx, item in enumerate(catalog):
         for unit_idx in range(item.units):
-            serial = (product_idx + 1) * 100_000 + unit_idx
+            serial = stock_unit_serial(product_idx, unit_idx)
             epc_hex = _sgtin96_hex(COMPANY_PREFIX, item.item_ref, serial)
 
             quarantined = (
@@ -715,10 +745,28 @@ def _build_units(scenario: Scenario, duration: float) -> list[StockUnit]:
                 t = random.uniform(0, duration * 0.10)  # arrival jitter
                 for stage in range(final_stage + 1):
                     schedule.append((t, stage))
-                    # Dwell in current stage before moving on.
+                    # Dwell in current stage before moving on. Capped so a
+                    # long ``--duration`` never spaces stage reads more than
+                    # the online window apart (the ``uniform`` draw is still
+                    # consumed, preserving the run's random sequence).
                     if stage < final_stage:
-                        dwell = random.uniform(duration * 0.10, duration * 0.30)
+                        dwell = min(
+                            random.uniform(duration * 0.10, duration * 0.30),
+                            _MAX_STAGE_DWELL_S,
+                        )
                         t += dwell
+
+            # Resident heartbeat: once the unit settles at its final stage,
+            # keep re-reading it there every ``_HEARTBEAT_S`` for the rest of
+            # the run so that reader stays online on a long ``--duration``.
+            # Re-reads land at the *same* (final) stage, so a unit's resolved
+            # location never flaps. No random draws here → run sequence intact.
+            if schedule:
+                t_last, last_stage = schedule[-1]
+                hb = t_last + _HEARTBEAT_S
+                while hb < duration:
+                    schedule.append((hb, last_stage))
+                    hb += _HEARTBEAT_S
 
             units.append(StockUnit(item=item, serial=serial, epc_hex=epc_hex, schedule=schedule))
     random.shuffle(units)
