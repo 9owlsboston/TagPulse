@@ -286,6 +286,134 @@
         "title": "ApiKeyResponse",
         "type": "object"
       },
+      "AssetByBindingResponse": {
+        "description": "Asset resolved via ``GET /assets/by-binding`` (I-WAPN).\n\nExtends :class:`AssetResponse` with the **matched** binding so the handset\ncan warn when a VIN resolves via a ``vin`` binding (a lookup-only handle that\ndoes not Map-link tag-reads) rather than an operational ``device``/``epc``/\n``tid`` binding.",
+        "properties": {
+          "binding_kind": {
+            "title": "Binding Kind",
+            "type": "string"
+          },
+          "binding_value": {
+            "title": "Binding Value",
+            "type": "string"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Label"
+          },
+          "external_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Ref"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "latest_telemetry": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/LatestTelemetryEntry"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Telemetry"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Asset Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "external_ref",
+          "name",
+          "status",
+          "parent_asset_id",
+          "category_id",
+          "created_at",
+          "updated_at",
+          "binding_kind",
+          "binding_value"
+        ],
+        "title": "AssetByBindingResponse",
+        "type": "object"
+      },
       "AssetCreate": {
         "description": "Create an asset.\n\nSprint 41 Phase H (ADR 019 close-out): ``category_id`` is now\n**required** \u2014 every asset must point at a Category. The legacy\n``asset_type`` String field has been dropped.",
         "properties": {
@@ -10577,7 +10705,7 @@
     },
     "/assets/by-binding": {
       "get": {
-        "description": "Resolve an active binding value (e.g. a VIN) to its asset (I-P923).\n\nDeclared before ``/{asset_id}`` so FastAPI doesn't capture ``by-binding`` as\na path param. The handset keys the Map link on the returned ``asset.id`` and\nshows ``asset.display_label`` (the plate) for operator confirmation.",
+        "description": "Resolve an active binding value (e.g. a VIN) to its asset (I-P923/I-WAPN).\n\nDeclared before ``/{asset_id}`` so FastAPI doesn't capture ``by-binding`` as\na path param. The handset keys the Map link on the returned ``id`` and shows\n``display_label`` (the plate) for operator confirmation. The response also\ncarries the **matched** ``binding_kind`` (+ ``binding_value``) so the handset\ncan warn when a VIN resolves via a lookup-only ``vin`` binding (no\n``device``/``epc``/``tid`` binding \u21d2 reads won't Map-link).",
         "operationId": "get_asset_by_binding_assets_by_binding_get",
         "parameters": [
           {
@@ -10598,7 +10726,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AssetResponse"
+                  "$ref": "#/components/schemas/AssetByBindingResponse"
                 }
               }
             },

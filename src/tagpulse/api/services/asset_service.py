@@ -19,6 +19,7 @@ from tagpulse.core.telemetry_caches import (
 )
 from tagpulse.events.protocol import Event, EventBus, Topic
 from tagpulse.models.schemas import (
+    AssetByBindingResponse,
     AssetCreate,
     AssetCurrentLocation,
     AssetInZoneSummary,
@@ -316,7 +317,9 @@ class AssetService:
         )
         return binding
 
-    async def get_asset_by_binding_value(self, tenant_id: UUID, value: str) -> AssetResponse | None:
+    async def get_asset_by_binding_value(
+        self, tenant_id: UUID, value: str
+    ) -> AssetByBindingResponse | None:
         """Resolve an active binding value (e.g. a scanned VIN) to its asset."""
         return await self._bindings.get_by_binding_value(tenant_id, value)
 

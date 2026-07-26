@@ -152,3 +152,15 @@ the validation. Plan-stage rubber-duck (2 blockers: NullPool per-test engine + s
 test) ran. Verified: python -m ruff clean, python -m mypy src clean, python -m pytest tests/unit
 = 1846 passed, ci.yml valid (4 jobs). Remaining fake-only paths (asset_q/facets/Transfers/
 Reconciliation) logged as a backlog follow-up.
+
+### 2026-07-25 — Sprint 83: /assets/by-binding returns matched binding_kind (I-WAPN)
+
+Enriches I-P923. New AssetByBindingResponse(AssetResponse) adds binding_kind + stored
+binding_value (flat, additive). Repo get_by_binding_value switched from select(AssetModel) +
+scalars().first() to select(AssetModel, binding_kind, binding_value) + .first() (Row), builds the
+subclass via asset.model_dump() + the matched kind/value. Route response_model + service return
+type updated. Handset warns when a VIN resolves via a lookup-only 'vin' binding. Verified: python
+-m ruff clean, python -m mypy src clean (147 files), python -m pytest tests/unit = 1846 passed,
+integration tests skip without DB, openapi.json regenerated (+AssetByBindingResponse schema).
+Plan-stage rubber-duck (no blockers) ran. Mobile side re-vendors openapi to pick up binding_kind
++ display_label (CONTRACT.md).

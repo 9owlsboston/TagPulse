@@ -19,6 +19,7 @@ from tagpulse.api.services.asset_service import (
 )
 from tagpulse.core.user_auth import AuthenticatedUser, require_role
 from tagpulse.models.schemas import (
+    AssetByBindingResponse,
     AssetCreate,
     AssetCurrentLocation,
     AssetLegResponse,
@@ -145,7 +146,7 @@ async def list_assets_current_locations(
     return await service.list_current_locations(user.tenant_id, limit=limit, offset=offset)
 
 
-@router.get("/by-binding", response_model=AssetResponse)
+@router.get("/by-binding", response_model=AssetByBindingResponse)
 async def get_asset_by_binding(
     value: str = Query(
         ...,
@@ -158,12 +159,15 @@ async def get_asset_by_binding(
     ),
     user: AuthenticatedUser = require_role("admin", "editor", "viewer"),
     service: AssetService = Depends(get_asset_service),
-) -> AssetResponse:
-    """Resolve an active binding value (e.g. a VIN) to its asset (I-P923).
+) -> AssetByBindingResponse:
+    """Resolve an active binding value (e.g. a VIN) to its asset (I-P923/I-WAPN).
 
     Declared before ``/{asset_id}`` so FastAPI doesn't capture ``by-binding`` as
-    a path param. The handset keys the Map link on the returned ``asset.id`` and
-    shows ``asset.display_label`` (the plate) for operator confirmation.
+    a path param. The handset keys the Map link on the returned ``id`` and shows
+    ``display_label`` (the plate) for operator confirmation. The response also
+    carries the **matched** ``binding_kind`` (+ ``binding_value``) so the handset
+    can warn when a VIN resolves via a lookup-only ``vin`` binding (no
+    ``device``/``epc``/``tid`` binding ⇒ reads won't Map-link).
     """
     asset = await service.get_asset_by_binding_value(user.tenant_id, value)
     if asset is None:
