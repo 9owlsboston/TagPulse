@@ -35,8 +35,12 @@ from tagpulse.models.database import (
     AssetTagBindingModel,
     CategoryModel,
     DeviceModel,
+    ProductModel,
+    StockItemModel,
+    TagModel,
     TagReadModel,
     TenantModel,
+    UserModel,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -165,6 +169,7 @@ def make_tag_read() -> Callable[..., Awaitable[uuid.UUID]]:
         epc: str | None = None,
         epc_scheme: str | None = None,
         reader_antenna: int | None = None,
+        tag_known: bool | None = None,
         ts: datetime | None = None,
     ) -> uuid.UUID:
         row = TagReadModel(
@@ -175,6 +180,86 @@ def make_tag_read() -> Callable[..., Awaitable[uuid.UUID]]:
             epc=epc,
             epc_scheme=epc_scheme,
             reader_antenna=reader_antenna,
+            tag_known=tag_known,
+        )
+        s.add(row)
+        await s.flush()
+        return row.id
+
+    return _make
+
+
+@pytest.fixture
+def make_tag() -> Callable[..., Awaitable[uuid.UUID]]:
+    async def _make(
+        s: AsyncSession,
+        tenant_id: uuid.UUID,
+        *,
+        epc_hex: str,
+        status: str = "registered",
+        source: str = "api",
+        last_seen_at: datetime | None = None,
+    ) -> uuid.UUID:
+        # status ∈ TagStatus, source ∈ TagSource (schemas.py) — both CHECK-constrained.
+        row = TagModel(
+            tenant_id=tenant_id,
+            epc_hex=epc_hex,
+            status=status,
+            source=source,
+            last_seen_at=last_seen_at,
+        )
+        s.add(row)
+        await s.flush()
+        return row.id
+
+    return _make
+
+
+@pytest.fixture
+def make_product() -> Callable[..., Awaitable[uuid.UUID]]:
+    async def _make(
+        s: AsyncSession, tenant_id: uuid.UUID, *, sku: str | None = None, name: str = "Widget"
+    ) -> uuid.UUID:
+        row = ProductModel(tenant_id=tenant_id, sku=sku or f"SKU-{uuid.uuid4().hex[:8]}", name=name)
+        s.add(row)
+        await s.flush()
+        return row.id
+
+    return _make
+
+
+@pytest.fixture
+def make_stock_item() -> Callable[..., Awaitable[uuid.UUID]]:
+    async def _make(
+        s: AsyncSession,
+        tenant_id: uuid.UUID,
+        product_id: uuid.UUID,
+        *,
+        binding_value: str,
+        binding_kind: str = "epc",
+    ) -> uuid.UUID:
+        row = StockItemModel(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            binding_value=binding_value,
+            binding_kind=binding_kind,
+        )
+        s.add(row)
+        await s.flush()
+        return row.id
+
+    return _make
+
+
+@pytest.fixture
+def make_user() -> Callable[..., Awaitable[uuid.UUID]]:
+    async def _make(
+        s: AsyncSession, tenant_id: uuid.UUID, *, email: str | None = None
+    ) -> uuid.UUID:
+        row = UserModel(
+            tenant_id=tenant_id,
+            email=email or f"u-{uuid.uuid4().hex[:10]}@example.test",
+            name="Test User",
         )
         s.add(row)
         await s.flush()
