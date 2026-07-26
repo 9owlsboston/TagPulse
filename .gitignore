@@ -111,3 +111,6 @@ logs/
 tmp/
 .tmp/
 .cache/
+
+# Spurious lockfile from ad-hoc uv invocations — this repo pins deps in pyproject.toml
+uv.lock

@@ -177,3 +177,13 @@ r.epc_hex) when r.epc misses. Same class as the inventory-gate bug. Gated off
 epc_hex'). 1 regression test (asset bound only by hex → resolves via fallback; fails on old code).
 Verified: python -m ruff clean, python -m mypy src clean, python -m pytest tests/unit = 1847
 passed, openapi unchanged. Drained the backlog note.
+
+### 2026-07-25 — Tests: backfill tag-reads query SQL onto the harness (C-XSD1)
+
+Added make_binding + make_tag_read factories to tests/integration/conftest.py and
+tests/integration/test_tag_reads_query_db.py: live-DB tests for the asset_q correlated EXISTS
+(bound-asset-name filter, incl. tenant scoping + off-by-default) and GET /tag-reads/facets
+(distinct scheme/antenna, sorted). These SQL paths were fake/contract-only (the in-memory fake
+can't model the asset_tag_bindings->assets join). Verified: python -m ruff clean, 9 integration
+tests skip hermetically without the DB env; the integration-test CI job validates on the PR.
+Transfers/Reconciliation filters remain (backlog note updated). Tests only.

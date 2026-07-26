@@ -22,6 +22,7 @@ import subprocess
 import sys
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -31,8 +32,10 @@ from sqlalchemy.pool import NullPool
 
 from tagpulse.models.database import (
     AssetModel,
+    AssetTagBindingModel,
     CategoryModel,
     DeviceModel,
+    TagReadModel,
     TenantModel,
 )
 
@@ -121,6 +124,58 @@ def make_asset() -> Callable[..., Awaitable[uuid.UUID]]:
         s: AsyncSession, tenant_id: uuid.UUID, category_id: uuid.UUID, *, name: str = "Truck 42"
     ) -> uuid.UUID:
         row = AssetModel(tenant_id=tenant_id, name=name, category_id=category_id)
+        s.add(row)
+        await s.flush()
+        return row.id
+
+    return _make
+
+
+@pytest.fixture
+def make_binding() -> Callable[..., Awaitable[uuid.UUID]]:
+    async def _make(
+        s: AsyncSession,
+        tenant_id: uuid.UUID,
+        asset_id: uuid.UUID,
+        *,
+        binding_value: str,
+        binding_kind: str = "epc",
+    ) -> uuid.UUID:
+        row = AssetTagBindingModel(
+            tenant_id=tenant_id,
+            asset_id=asset_id,
+            binding_value=binding_value,
+            binding_kind=binding_kind,
+        )
+        s.add(row)
+        await s.flush()
+        return row.id
+
+    return _make
+
+
+@pytest.fixture
+def make_tag_read() -> Callable[..., Awaitable[uuid.UUID]]:
+    async def _make(
+        s: AsyncSession,
+        tenant_id: uuid.UUID,
+        device_id: uuid.UUID,
+        *,
+        tag_id: str,
+        epc: str | None = None,
+        epc_scheme: str | None = None,
+        reader_antenna: int | None = None,
+        ts: datetime | None = None,
+    ) -> uuid.UUID:
+        row = TagReadModel(
+            tenant_id=tenant_id,
+            device_id=device_id,
+            tag_id=tag_id,
+            timestamp=ts or datetime.now(UTC),
+            epc=epc,
+            epc_scheme=epc_scheme,
+            reader_antenna=reader_antenna,
+        )
         s.add(row)
         await s.flush()
         return row.id
