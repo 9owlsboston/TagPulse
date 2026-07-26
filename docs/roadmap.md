@@ -1826,6 +1826,19 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
+## Sprint 84 — Gateway grant relay: device-location + more subject kinds (C-4Z66) (shipped)
+
+> **Status (2026-07-25, shipped).** Backend-only, no migration. Closes the two fast-follows
+> deferred from Sprint 81 (C-6S9H) by reusing the existing grant seam. Full design:
+> [docs/design/gateway-grant-relay-extensions.md](design/gateway-grant-relay-extensions.md).
+
+- [done] `POST /device-location` accepts an optional target `(subject_kind, subject_id)` via `DeviceLocationCreate(ExternalLocationCreate)` (both-or-neither); a granted gateway relays a position for the subject — own-or-granted enforcement mirroring the telemetry guard, fails closed (403).
+- [done] Asset targets populate `asset_id` (asset reads filter on it, not `subject_id`); relay writes stamp server-controlled `metadata.relayed_by_device_id` (spoof-proof).
+- [done] Grant kinds `lot`/`stock_item`/`zone` enabled — `_assert_subject_exists` wires their in-tenant existence checks (no schema change; the `subject_kind` column has no CHECK).
+- [done] Unit tests (relay matrix + new-kind existence 404/OK), `openapi.json` regenerated, `make check` green.
+
+**Deferred:** a dedicated `relayed_by_device_id` **column** on `external_locations` (this sprint stamps it in `metadata`); per-channel grant scoping (telemetry vs location) — YAGNI until a customer needs isolation.
+
 ## Sprint 83 — /assets/by-binding returns the matched binding_kind (I-WAPN) (shipped)
 
 > **Status (2026-07-25, shipped).** Backend-only. Enriches the I-P923 lookup so the

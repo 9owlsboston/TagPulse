@@ -968,6 +968,26 @@ class ExternalLocationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class DeviceLocationCreate(ExternalLocationCreate):
+    """`POST /device-location` body — a device's own position, or a relay for a granted subject.
+
+    Extends :class:`ExternalLocationCreate` with an **optional** target subject. Both fields
+    omitted (the default) records the calling device's own position (``subject_kind='device'``,
+    unchanged self behavior). Supplying **both** relays the position for that subject — allowed only
+    when the calling gateway holds an active grant for it (C-4Z66). A lone ``subject_kind`` or
+    ``subject_id`` is rejected (a target needs both).
+    """
+
+    subject_kind: Literal["device", "asset", "lot", "stock_item", "zone"] | None = None
+    subject_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def _check_target_pair(self) -> "DeviceLocationCreate":
+        if (self.subject_kind is None) != (self.subject_id is None):
+            raise ValueError("subject_kind and subject_id must be provided together")
+        return self
+
+
 class GatewaySubjectGrantCreate(BaseModel):
     """Admin request to grant a gateway relay authority for a subject (C-6S9H)."""
 

@@ -23,13 +23,18 @@ from tagpulse.repositories.timescaledb.devices import TimescaleDeviceRepository
 from tagpulse.repositories.timescaledb.gateway_subject_grants import (
     TimescaleGatewaySubjectGrantRepository,
 )
+from tagpulse.repositories.timescaledb.inventory import (
+    TimescaleLotRepository,
+    TimescaleStockItemRepository,
+)
 from tagpulse.repositories.timescaledb.session import get_session
+from tagpulse.repositories.timescaledb.sites_zones import TimescaleZoneRepository
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-# MVE grant subject kinds — each has an in-tenant existence check below. Other
-# kinds (lot/stock_item/zone) are rejected 422 until their checks are wired.
-_SUPPORTED_KINDS = ("asset", "device")
+# Grant subject kinds — each has an in-tenant existence check below so a grant can never authorize
+# relay for a bogus subject. lot/stock_item/zone enabled in Sprint 84 (C-4Z66).
+_SUPPORTED_KINDS = ("asset", "device", "lot", "stock_item", "zone")
 
 
 async def _assert_subject_exists(
@@ -41,6 +46,15 @@ async def _assert_subject_exists(
     elif subject_kind == "device":
         if await TimescaleDeviceRepository(session).get(tenant_id, subject_id) is None:
             raise HTTPException(status_code=404, detail="Subject device not found")
+    elif subject_kind == "lot":
+        if await TimescaleLotRepository(session).get(tenant_id, subject_id) is None:
+            raise HTTPException(status_code=404, detail="Subject lot not found")
+    elif subject_kind == "stock_item":
+        if await TimescaleStockItemRepository(session).get(tenant_id, subject_id) is None:
+            raise HTTPException(status_code=404, detail="Subject stock_item not found")
+    elif subject_kind == "zone":
+        if await TimescaleZoneRepository(session).get(tenant_id, subject_id) is None:
+            raise HTTPException(status_code=404, detail="Subject zone not found")
     else:
         raise HTTPException(
             status_code=422,

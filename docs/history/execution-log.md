@@ -218,3 +218,17 @@ joined to terminal-status tags). Verified: python -m ruff check + format clean; 
 hermetically without TAGPULSE_INTEGRATION_DB_URL; the integration-test CI job validates against a
 real TimescaleDB (Docker unavailable locally). mypy scope is `mypy src` so tests aren't gated.
 Drained the C-XSD1 follow-up backlog note (no fake-only paths remain). Tests only.
+
+### 2026-07-25 — Feat: gateway grant relay — device-location + more subject kinds (C-4Z66, Sprint 84)
+
+Extended the C-6S9H grant seam (no migration). POST /device-location (device_location.py) now takes
+an optional target subject via new DeviceLocationCreate(ExternalLocationCreate) (both-or-neither
+model_validator); relay is own-or-granted (active_subject_set, keyed to the authenticated device_id,
+403 on miss) mirroring _enforce_device_telemetry. Asset targets pass asset_id=subject_id (asset reads
+filter asset_id, not subject_id — plan-stage blocker #1). Relay writes stamp a server-controlled
+metadata.relayed_by_device_id via body.model_copy (blocker #3). gateway_grants.py _SUPPORTED_KINDS +=
+lot/stock_item/zone with existence checks (TimescaleLot/StockItem/ZoneRepository.get). Fixed the
+now-stale zone-422 unit test (zone is supported now) → widget-422 (schema). Plan-stage + diff-stage
+rubber-duck both ran (3 plan blockers folded in; diff clean). Verified: python -m ruff clean, python
+-m mypy src clean (147 files), python -m pytest tests/unit = 1861 passed/1 skipped, make export-openapi
+regenerated (DeviceLocationCreate + /device-location body). Backend-only, no schema change.
