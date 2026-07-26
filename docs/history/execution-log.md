@@ -164,3 +164,16 @@ type updated. Handset warns when a VIN resolves via a lookup-only 'vin' binding.
 integration tests skip without DB, openapi.json regenerated (+AssetByBindingResponse schema).
 Plan-stage rubber-duck (no blockers) ran. Mobile side re-vendors openapi to pick up binding_kind
 + display_label (CONTRACT.md).
+
+### 2026-07-25 — Fix: floor-position estimator hex-EPC binding fusion (I-KPT3)
+
+TimescaleFloorPositionSource resolved reads to assets by the decoded EPC URI (tag_reads.epc)
+only, so a tag bound by the hex form (binding_kind='epc' + hex binding_value, valid per ADR-033/
+migration 057) never fused (reads silently dropped). Fix: RawRead carries epc_hex (SELECT adds
+the column, default None so existing keyword constructions still work); the fuse candidate list
+now includes both r.epc + r.epc_hex; build_floor_observations falls back to epc_to_asset.get(
+r.epc_hex) when r.epc misses. Same class as the inventory-gate bug. Gated off
+(position_estimator_enabled=false) so no live impact. Updated the module docstring (was 'not
+epc_hex'). 1 regression test (asset bound only by hex → resolves via fallback; fails on old code).
+Verified: python -m ruff clean, python -m mypy src clean, python -m pytest tests/unit = 1847
+passed, openapi unchanged. Drained the backlog note.
