@@ -1,7 +1,7 @@
 # TagPulse Roadmap
 
 <!-- current-sprint:start -->
-**Current sprint:** 83 — by binding matched kind · branch `sprint-83/by-binding-matched-kind` (full scope lands in §sprint-83 during the sprint).
+**Current sprint:** 83 — by binding matched kind · **shipped** (PR #176); between sprints.
 <!-- current-sprint:end -->
 
 > The badge above is bumped automatically by `scripts/start-sprint.sh` at each sprint kickoff and reset to "shipped; between sprints" by `scripts/ship-sprint.sh` at merge. Don't hand-edit between the markers — re-run the scripts or update both this file and the consumer (`README.md`'s Status block) together.
@@ -1826,9 +1826,9 @@ Sprint 59 runs **two tracks** with different engineering postures. **Track 1 —
 
 ---
 
-## Sprint 83 — /assets/by-binding returns the matched binding_kind (I-WAPN)
+## Sprint 83 — /assets/by-binding returns the matched binding_kind (I-WAPN) (shipped)
 
-> **Status (2026-07-25, in progress).** Backend-only. Enriches the I-P923 lookup so the
+> **Status (2026-07-25, shipped).** Backend-only. Enriches the I-P923 lookup so the
 > TagPulse-Mobile handset can warn on a `vin`-only match (no operational binding ⇒ reads won't
 > Map-link). Full design: [docs/design/by-binding-matched-kind.md](design/by-binding-matched-kind.md).
 
