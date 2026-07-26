@@ -45,6 +45,9 @@ on HA/zigbee2mqtt normalization today so you never reimplement Zigbee/Z-Wave sta
 
 ## Business potential — go B2B fleets-of-homes, NOT consumer DIY
 
+> Market sizing for each vertical below is now backed by sourced (secondary) research in
+> the data appendix: **[home-automation-market.md](home-automation-market.md)**.
+
 Consumer smart home (Home Assistant, SmartThings, Hubitat) is crowded, low-margin, and
 self-hosted — those users won't buy SaaS. The money is in **B2B fleets of homes/units**, which
 is exactly TagPulse's multi-tenant + assets/zones + rules + metering shape:
