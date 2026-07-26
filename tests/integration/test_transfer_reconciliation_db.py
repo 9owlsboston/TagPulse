@@ -20,6 +20,21 @@ from tagpulse.repositories.timescaledb.tags import TimescaleTagTransferRepositor
 from tagpulse.services import tag_reconciliation
 
 
+def _epc(suffix: str) -> str:
+    """A valid 24-char canonical EPC hex ending in ``suffix``.
+
+    ``tags``/``tag_transfers``/``stock_items`` all CHECK epc_hex against
+    ``^[0-9A-F]{16,128}$`` (migration 043), so test EPCs must be uppercase hex
+    of that length — a short literal like ``E280AA01`` is rejected.
+    """
+    return "E2" + "0" * (24 - 2 - len(suffix)) + suffix
+
+
+def _wild(epc: str) -> str:
+    """Prefix wildcard for ``epc`` (drops the last 2 chars, appends ``*``)."""
+    return epc[:-2] + "*"
+
+
 async def _add_transfer(
     session,
     *,
@@ -52,12 +67,13 @@ async def test_transfer_epc_q_wildcard_filters_by_epc_hex(session, make_tenant, 
     home = await make_tenant(session)
     other = await make_tenant(session)
     user = await make_user(session, home)
+    epc_aa, epc_bb = _epc("AA01"), _epc("BB02")
     await _add_transfer(
         session,
         from_tenant=home,
         to_tenant=other,
         requested_by=user,
-        epc_hex="E280AA01",
+        epc_hex=epc_aa,
         status="requested",
     )
     await _add_transfer(
@@ -65,17 +81,17 @@ async def test_transfer_epc_q_wildcard_filters_by_epc_hex(session, make_tenant, 
         from_tenant=home,
         to_tenant=other,
         requested_by=user,
-        epc_hex="E280BB02",
+        epc_hex=epc_bb,
         status="requested",
     )
     repo = TimescaleTagTransferRepository(session)
 
     # Wildcard over epc_hex (same grammar as the tag list ``q``).
-    hits = await repo.list_for_tenant(home, epc_q="E280AA*")
-    assert {r.epc_hex for r in hits} == {"E280AA01"}
+    hits = await repo.list_for_tenant(home, epc_q=_wild(epc_aa))
+    assert {r.epc_hex for r in hits} == {epc_aa}
 
     # A wildcard matching nothing yields an empty page.
-    assert await repo.list_for_tenant(home, epc_q="ZZZZ*") == []
+    assert await repo.list_for_tenant(home, epc_q="FFFF*") == []
 
     # No epc_q → both rows returned (filter is off).
     assert len(await repo.list_for_tenant(home)) == 2
@@ -86,10 +102,11 @@ async def test_transfer_statuses_multiselect(session, make_tenant, make_user) ->
     home = await make_tenant(session)
     other = await make_tenant(session)
     user = await make_user(session, home)
+    epc1, epc2, epc3 = _epc("A001"), _epc("B002"), _epc("C003")
     for epc, status in (
-        ("E2800001", "requested"),
-        ("E2800002", "completed"),
-        ("E2800003", "failed"),
+        (epc1, "requested"),
+        (epc2, "completed"),
+        (epc3, "failed"),
     ):
         await _add_transfer(
             session,
@@ -108,9 +125,9 @@ async def test_transfer_statuses_multiselect(session, make_tenant, make_user) ->
 
     # epc_q AND statuses compose (both predicates apply).
     combined = await repo.list_for_tenant(
-        home, statuses=["requested", "completed"], epc_q="E2800002*"
+        home, statuses=["requested", "completed"], epc_q=_wild(epc2)
     )
-    assert {r.epc_hex for r in combined} == {"E2800002"}
+    assert {r.epc_hex for r in combined} == {epc2}
 
 
 @pytest.mark.asyncio
@@ -119,20 +136,21 @@ async def test_transfer_list_is_tenant_scoped(session, make_tenant, make_user) -
     other = await make_tenant(session)
     stranger = await make_tenant(session)
     user = await make_user(session, home)
+    epc = _epc("CAFE")
     await _add_transfer(
         session,
         from_tenant=home,
         to_tenant=other,
         requested_by=user,
-        epc_hex="E280CAFE",
+        epc_hex=epc,
         status="requested",
     )
     repo = TimescaleTagTransferRepository(session)
 
     # A tenant that is neither the from- nor to-side sees nothing.
-    assert await repo.list_for_tenant(stranger, epc_q="E280CAFE*") == []
+    assert await repo.list_for_tenant(stranger, epc_q=_wild(epc)) == []
     # The counterparty (to-side) sees it (list returns both sides).
-    assert len(await repo.list_for_tenant(other, epc_q="E280CAFE*")) == 1
+    assert len(await repo.list_for_tenant(other, epc_q=_wild(epc))) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -144,20 +162,21 @@ async def test_transfer_list_is_tenant_scoped(session, make_tenant, make_user) -
 async def test_registered_unread_q_filters_by_epc_hex(session, make_tenant, make_tag) -> None:
     tenant = await make_tenant(session)
     stale = datetime.now(UTC) - timedelta(days=30)
+    epc_aa, epc_bb = _epc("AA01"), _epc("BB02")
     # Both live + stale → both are "registered but unread"; q narrows the set.
-    await make_tag(session, tenant, epc_hex="E280AA01", status="registered", last_seen_at=None)
-    await make_tag(session, tenant, epc_hex="E280BB02", status="active", last_seen_at=stale)
+    await make_tag(session, tenant, epc_hex=epc_aa, status="registered", last_seen_at=None)
+    await make_tag(session, tenant, epc_hex=epc_bb, status="active", last_seen_at=stale)
 
     rows = await tag_reconciliation.query_registered_unread(
-        session, tenant, days=7, limit=100, offset=0, q="E280AA*"
+        session, tenant, days=7, limit=100, offset=0, q=_wild(epc_aa)
     )
-    assert {r.epc_hex for r in rows} == {"E280AA01"}
+    assert {r.epc_hex for r in rows} == {epc_aa}
 
     # No q → both surface (filter off).
     all_rows = await tag_reconciliation.query_registered_unread(
         session, tenant, days=7, limit=100, offset=0
     )
-    assert {r.epc_hex for r in all_rows} == {"E280AA01", "E280BB02"}
+    assert {r.epc_hex for r in all_rows} == {epc_aa, epc_bb}
 
 
 @pytest.mark.asyncio
@@ -189,18 +208,19 @@ async def test_bindings_on_retired_q_filters_by_binding_value(
 ) -> None:
     tenant = await make_tenant(session)
     product = await make_product(session, tenant)
+    epc_aa, epc_bb = _epc("AA01"), _epc("BB02")
     # Stock item bound (epc) to a tag that is in a terminal status → the inconsistency.
-    await make_stock_item(session, tenant, product, binding_value="E280AA01", binding_kind="epc")
-    await make_stock_item(session, tenant, product, binding_value="E280BB02", binding_kind="epc")
-    await make_tag(session, tenant, epc_hex="E280AA01", status="retired")
-    await make_tag(session, tenant, epc_hex="E280BB02", status="defective")
+    await make_stock_item(session, tenant, product, binding_value=epc_aa, binding_kind="epc")
+    await make_stock_item(session, tenant, product, binding_value=epc_bb, binding_kind="epc")
+    await make_tag(session, tenant, epc_hex=epc_aa, status="retired")
+    await make_tag(session, tenant, epc_hex=epc_bb, status="defective")
 
     rows = await tag_reconciliation.query_bindings_on_retired(
-        session, tenant, limit=100, offset=0, q="E280AA*"
+        session, tenant, limit=100, offset=0, q=_wild(epc_aa)
     )
-    assert {r.epc_hex for r in rows} == {"E280AA01"}
+    assert {r.epc_hex for r in rows} == {epc_aa}
 
     all_rows = await tag_reconciliation.query_bindings_on_retired(
         session, tenant, limit=100, offset=0
     )
-    assert {r.epc_hex for r in all_rows} == {"E280AA01", "E280BB02"}
+    assert {r.epc_hex for r in all_rows} == {epc_aa, epc_bb}
