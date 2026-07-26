@@ -33,8 +33,13 @@ living document.
 
 ## Notes
 
+> **Start here:** [`phased-strategy.md`](phased-strategy.md) is the **capstone** — it sequences
+> every note below into one dependency-ordered path (no-regret moves → STR-noise beachhead →
+> insurance-leak expansion → AI/data platform).
+
 | Note | Theme | One-line thesis |
 |---|---|---|
+| [`phased-strategy.md`](phased-strategy.md) | **Capstone — phased synthesis** | Sequences all notes by dependency and maps each move to the roadmap entry / ADR / design doc it would seed. |
 | [`ai-landscape.md`](ai-landscape.md) | AI opportunity map | The existing telemetry pipeline, analytics-module framework, and edge gateway are an unusually AI-ready substrate — four clean plug-in patterns. |
 | [`sensor-wedges.md`](sensor-wedges.md) | Sensor market wedges | The `GatewayDriver` seam generalizes OBD-II; each new cheap/standardized sensor is a new driver, not a rebuild. |
 | [`home-automation.md`](home-automation.md) | Home-automation wedge | A stationary MQTT hub (the `clients/pi` lineage) meets a market that already speaks MQTT — strong as a B2B fleet-of-homes play. |
