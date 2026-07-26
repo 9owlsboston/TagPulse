@@ -44,9 +44,10 @@ async def _add_transfer(
     epc_hex: str,
     status: str,
 ) -> None:
-    # ck_tag_transfers_completed_at (migration 043): completed_at is set iff the
-    # transfer is terminal (completed/failed) and NULL while requested.
+    # ck_tag_transfers_completed_at (043): completed_at set iff terminal.
+    # ck_tag_transfers_terminal_failure_reason (043): failure_reason set iff failed.
     completed_at = datetime.now(UTC) if status in ("completed", "failed") else None
+    failure_reason = "simulated failure" if status == "failed" else None
     session.add(
         TagTransferModel(
             request_id=uuid.uuid4(),
@@ -56,6 +57,7 @@ async def _add_transfer(
             status=status,
             requested_by=requested_by,
             completed_at=completed_at,
+            failure_reason=failure_reason,
         )
     )
     await session.flush()
