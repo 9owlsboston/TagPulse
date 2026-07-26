@@ -7,10 +7,12 @@ unit-tested; the thin session/SQL wrappers around them are exercised by
 integration tests before the worker is enabled (it is gated **off** by default —
 see ``settings.position_estimator_enabled``).
 
-EPC→asset matching uses ``tag_reads.epc`` (the decoded EPC), matching the
-canonical ``binding_kind='epc' AND tr.epc = b.binding_value`` join used by
-``asset_current_location`` — *not* ``epc_hex`` (cf. the inventory gate bug in
-``docs/backlog.md``).
+EPC→asset matching resolves a read against its active binding by **both** the
+decoded EPC URI (``tag_reads.epc``) **and** the hex form (``tag_reads.epc_hex``),
+so a binding stored in either form (ADR-033 dual-form / migration 057) fuses —
+mirroring the live read→binding surfaces. (Historically this matched only
+``tr.epc``, so a hex ``epc`` binding silently failed to fuse — the same class of
+bug as the inventory gate; I-KPT3.)
 """
 
 from __future__ import annotations
@@ -59,6 +61,11 @@ class RawRead:
     rssi: float
     epc: str
     ts: datetime
+    # I-KPT3: the hex EPC form (``tag_reads.epc_hex``), when present, so a
+    # binding stored as hex (not the decoded URI) still fuses. ``None`` for
+    # reads with no hex form. Defaulted (last of the non-defaults moved after
+    # ``ts``) so existing keyword constructions stay valid.
+    epc_hex: str | None = None
     # Per-snapshot read count (WM ``cnt``, from ``tag_reads.sensor_data``).
     # Defaults to 1 when absent. Carried for the count-weight extension on the
     # estimator (ADR-024); the reference weight does not use it yet.
@@ -108,6 +115,9 @@ def build_floor_observations(
     out: list[FloorObservation] = []
     for r in reads:
         asset_id = epc_to_asset.get(r.epc)
+        if asset_id is None and r.epc_hex is not None:
+            # I-KPT3: the read may have resolved via its hex form (a hex binding).
+            asset_id = epc_to_asset.get(r.epc_hex)
         if asset_id is None:
             continue
         site_id = device_site.get(r.device_id)
@@ -221,6 +231,7 @@ class TimescaleObservationSource:
                         TagReadModel.reader_antenna,
                         TagReadModel.signal_strength,
                         TagReadModel.epc,
+                        TagReadModel.epc_hex,
                         TagReadModel.timestamp,
                         TagReadModel.sensor_data,
                     ).where(
@@ -242,14 +253,18 @@ class TimescaleObservationSource:
                     port=port,
                     rssi=float(rssi),
                     epc=epc,
+                    epc_hex=epc_hex,
                     ts=ts,
                     read_count=_read_count_of(sensor_data),
                 )
-                for dev_id, port, rssi, epc, ts, sensor_data in read_rows
+                for dev_id, port, rssi, epc, epc_hex, ts, sensor_data in read_rows
             ]
 
             fusion = AssetFusionService(TimescaleAssetTagBindingRepository(session))
-            fused = await fusion.fuse(tenant_id, [r.epc for r in reads])
+            # I-KPT3: resolve by BOTH the decoded URI and the hex form so a
+            # binding stored in either form fuses. ``fuse`` de-dups internally.
+            candidates = [v for r in reads for v in (r.epc, r.epc_hex) if v]
+            fused = await fusion.fuse(tenant_id, candidates)
             epc_to_asset: dict[str, UUID] = {}
             for fa in fused:
                 for epc in fa.observed_epcs:

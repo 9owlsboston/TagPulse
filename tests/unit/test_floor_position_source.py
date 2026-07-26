@@ -53,6 +53,22 @@ def test_build_observations_happy_path() -> None:
     assert o.ts == TS
 
 
+def test_build_observations_resolves_via_epc_hex_when_binding_is_hex() -> None:
+    """I-KPT3: a read whose asset is bound by the HEX epc form still fuses —
+    ``build_floor_observations`` falls back to ``r.epc_hex`` when the decoded
+    ``r.epc`` misses (previously such reads were silently dropped)."""
+    dev, site, asset, ant = uuid4(), uuid4(), uuid4(), uuid4()
+    reads = [RawRead(device_id=dev, port=1, rssi=-55.0, epc="urn:epc:a", epc_hex="AABBCCDD", ts=TS)]
+    obs = build_floor_observations(
+        reads,
+        device_site={dev: site},
+        antenna_index={(dev, 1): (ant, 10.0, 20.0)},
+        epc_to_asset={"AABBCCDD": asset},  # only the HEX form maps (hex binding)
+    )
+    assert len(obs) == 1
+    assert obs[0].asset_id == asset
+
+
 def test_build_observations_carries_real_read_count() -> None:
     """``read_count`` (WM ``cnt``) flows from the raw read onto the observation
     so the count-weight estimator extension has live data (it currently
