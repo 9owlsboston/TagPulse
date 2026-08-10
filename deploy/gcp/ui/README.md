@@ -1,7 +1,7 @@
 # `deploy/gcp/ui/` — GCP Static Site (skeleton)
 
 > **Status:** structure-only stub per [Sprint 24 D2](../../../docs/roadmap.md#phase-d--multi-cloud-skeletons-this-repo-backend-structure-only-per-adr-016-precedent).
-> Mirrors the Sprint 22 F2 backend skeleton in [`deploy/gcp/`](../README.md) (TODO: that README too).
+> Mirrors the Sprint 22 F2 backend skeleton in `deploy/gcp/` (no README there yet).
 > No resources provision from this directory yet — see [`main.tf`](main.tf).
 
 ## Provider mapping (Azure SWA → GCP)

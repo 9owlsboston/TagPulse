@@ -1,7 +1,7 @@
 # `deploy/aws/ui/` — AWS Static Site (skeleton)
 
 > **Status:** structure-only stub per [Sprint 24 D1](../../../docs/roadmap.md#phase-d--multi-cloud-skeletons-this-repo-backend-structure-only-per-adr-016-precedent).
-> Mirrors the Sprint 22 F1 backend skeleton in [`deploy/aws/`](../README.md) (TODO: that README too).
+> Mirrors the Sprint 22 F1 backend skeleton in `deploy/aws/` (no README there yet).
 > No resources provision from this directory yet — see [`main.tf`](main.tf).
 
 ## Provider mapping (Azure SWA → AWS)

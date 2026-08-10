@@ -232,3 +232,31 @@ now-stale zone-422 unit test (zone is supported now) → widget-422 (schema). Pl
 rubber-duck both ran (3 plan blockers folded in; diff clean). Verified: python -m ruff clean, python
 -m mypy src clean (147 files), python -m pytest tests/unit = 1861 passed/1 skipped, make export-openapi
 regenerated (DeviceLocationCreate + /device-location body). Backend-only, no schema change.
+
+### 2026-08-10 — docs-drift: reconcile 7 broken links (incl. an obsolete deploy runbook)
+
+A cross-repo `hygiene` sweep reported 13 `docs-drift` findings. Six were `CHANGELOG.md`
+links naming files as they were at their release — correct historical artifacts, now
+exempted upstream (`dev-env-setup#152`). The other **7 were real**, and one of them was
+hiding a genuinely wrong runbook:
+
+| Finding | Diagnosis | Fix |
+|---|---|---|
+| `deploy/azure/README.md:137 → ../../scripts/azd-bootstrap-mqtt.sh` | **Obsolete section.** Sprint 23 (`0e996d2`) `git rm`'d that script and replaced Azure Files seeding with a custom Mosquitto image whose entrypoint materialises `mosquitto.passwd` from env vars. The README still told operators to run a 125-line script that no longer exists — plus a "manual fallback" for a storage share the Bicep no longer provisions. | Replaced the whole `## Bootstrap MQTT broker (one-time)` section with an accurate `## MQTT broker (no bootstrap step)`, pointing at `mosquitto.Dockerfile` / `mosquitto-entrypoint.sh` / `azd-mqtt-build.sh`, and recording that Sprint 23 removed the old path. |
+| `docs/roadmap.md:1974 → adr/033-epc-dual-form-binding.md` | Plain rename. | Retargeted to `adr/033-epc-binding-resolves-uri-or-hex.md`. |
+| `deploy/{aws,gcp}/ui/README.md:4 → ../README.md` | Forward-ref to a file never written — the line already said "(TODO: that README too)". | De-linked to plain code with "(no README there yet)". |
+| `docs/design/admin-ui.md:373 → ~/.templates/…` | Home-relative, machine-specific — never resolvable from a checkout. | De-linked to inline code, marked "outside this repo". |
+| `docs/roadmap.md:922,955 → refs/ui-crud-audit-sprint28.md` | Never produced; G2 was deferred to the UI repo. Line 955 also asserted as an acceptance criterion that it "exists". | De-linked at 922 (marked planned/never-produced); at 955 dropped the false claim so the criterion covers only the audit that does exist. |
+
+The last one is the reason this is worth doing at all: the drift check surfaced a
+**satisfied-looking acceptance criterion that could never have been met**.
+
+**How verified.** `docs-drift` on this repo: 7 → **clean**. Each retarget checked to
+resolve on disk; each de-link checked to be genuinely unresolvable (`git log --all` for the
+removed script and the never-added audit doc).
+
+**Review attestations.** Plan-stage / diff-stage: **waived** — `noncodefix` carve-out
+(documentation only; no code, deps, CI, IaC, or behavioral config touched — the Bicep and
+scripts referenced were already in their current state).
+
+`current-state: not-affected`
