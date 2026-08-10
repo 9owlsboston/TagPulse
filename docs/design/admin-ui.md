@@ -370,7 +370,7 @@ volumes:
 
 ## 9. Bootstrap with AI-First Template
 
-The `TagPulse-UI` repo will be bootstrapped using the [AI-First Development Project Template](~/.templates/AI-First-Development-Project-Template.md) via the `/bootstrap-project` prompt:
+The `TagPulse-UI` repo will be bootstrapped using the AI-First Development Project Template (`~/.templates/AI-First-Development-Project-Template.md`, outside this repo) via the `/bootstrap-project` prompt:
 
 ```
 Bootstrap this project using the AI-First Development Project Template.

@@ -131,51 +131,21 @@ The api FQDN is printed at the end:
 URL  https://tagpulse-api.<random>.southcentralus.azurecontainerapps.io
 ```
 
-## Bootstrap MQTT broker (one-time)
+## MQTT broker (no bootstrap step)
 
-ACI cannot inject files into the Mosquitto config volume on first boot. The
-[`scripts/azd-bootstrap-mqtt.sh`](../../scripts/azd-bootstrap-mqtt.sh) helper
-seeds it for you — derives the resource group + storage account from the
-selected azd env, reads `AZURE_MQTT_PASSWORD` from `.env.<env>`, generates the
-hashed password file via the `eclipse-mosquitto:2` Docker image, uploads
-`mosquitto.conf` + `mosquitto.passwd` to the `mosquitto-config` Azure Files
-share, and restarts the ACI:
+Nothing to seed by hand. The broker runs a **custom Mosquitto image**
+([`docker/mosquitto.Dockerfile`](../../docker/mosquitto.Dockerfile) +
+[`docker/mosquitto.prod.conf`](../../docker/mosquitto.prod.conf)) whose entrypoint
+([`docker/mosquitto-entrypoint.sh`](../../docker/mosquitto-entrypoint.sh)) materialises
+`mosquitto.passwd` at container start from `MOSQUITTO_USERNAME` / `MOSQUITTO_PASSWORD`.
 
-```sh
-scripts/azd-bootstrap-mqtt.sh dev    # or omit arg to use the currently-selected azd env
-```
+The image is built and pushed by
+[`scripts/azd-mqtt-build.sh`](../../scripts/azd-mqtt-build.sh), wired as a
+`preprovision` hook in `azure.yaml`. Rotating the password is a redeploy of the ACI
+with the new secret — no file upload, no Azure Files share.
 
-Re-run the same command after rotating `AZURE_MQTT_PASSWORD` to refresh the
-password file in place (idempotent).
-
-<details>
-<summary>Manual fallback (if the script can't run)</summary>
-
-```sh
-RG=tagpulse-dev-rg
-SA=$(azd env get-value mqttStorageAccountName)
-KEY=$(az storage account keys list -g "$RG" -n "$SA" --query '[0].value' -o tsv)
-
-docker run --rm -v "$(pwd)":/work eclipse-mosquitto:2 \
-  mosquitto_passwd -b -c /work/mosquitto.passwd tagpulse "$AZURE_MQTT_PASSWORD"
-
-cat > mosquitto.conf <<'EOF'
-listener 1883
-allow_anonymous false
-password_file /mosquitto/config/mosquitto.passwd
-persistence true
-persistence_location /mosquitto/data/
-EOF
-
-az storage file upload --account-name "$SA" --account-key "$KEY" \
-  --share-name mosquitto-config --source mosquitto.conf
-az storage file upload --account-name "$SA" --account-key "$KEY" \
-  --share-name mosquitto-config --source mosquitto.passwd
-
-az container restart --name tagpulse-mqtt --resource-group "$RG"
-```
-
-</details>
+> Sprint 23 removed the previous Azure Files seeding step and its
+> `scripts/azd-bootstrap-mqtt.sh` helper.
 
 ## Smoke test
 
