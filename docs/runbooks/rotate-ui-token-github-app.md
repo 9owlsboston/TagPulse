@@ -51,10 +51,10 @@ So the cutover is purely config — **no code change, no PR** — and reversible
 **Fast path — one prefilled link.** While signed in to GitHub **as
 `9owlsboston`**, open this URL; it opens the *New GitHub App* form with the
 name, homepage, webhook-off, and both permissions (`Secrets: write`,
-`Environments: read`) already filled. Review, then click **Create GitHub App**:
+`Environments: write`) already filled. Review, then click **Create GitHub App**:
 
 ```text
-https://github.com/settings/apps/new?name=tagpulse-ui-secrets&url=https://github.com/9owlsboston/TagPulse&public=false&webhook_active=false&secrets=write&environments=read
+https://github.com/settings/apps/new?name=tagpulse-ui-secrets&url=https://github.com/9owlsboston/TagPulse&public=false&webhook_active=false&secrets=write&environments=write
 ```
 
 Or fill it manually: `github.com` → your avatar → **Settings** →
@@ -66,11 +66,19 @@ Or fill it manually: `github.com` → your avatar → **Settings** →
 | Homepage URL | `https://github.com/9owlsboston/TagPulse` (anything) |
 | Webhook | **Uncheck "Active"** — this App takes no webhooks |
 | Repository permissions → **Secrets** | **Read and write** |
-| Repository permissions → **Environments** | **Read-only** *(lets it resolve `environments/<env>/secrets/public-key`)* |
+| Repository permissions → **Environments** | **Read and write** *(required — environment-secret **writes** are gated by this permission, not by Secrets)* |
 | Where can this App be installed? | **Only on this account** |
 
 Leave every other permission at *No access* (least privilege). Click
 **Create GitHub App**.
+
+> **Why Environments: write (not read)?** Writing a GitHub **Environment**
+> secret (`PUT .../environments/<env>/secrets/<name>`) requires the
+> **Environments** permission at *write*. `Secrets: write` alone lets the App
+> *read* the environment's public key but the write 403s with *"Resource not
+> accessible by integration"* — which previously left the UI repo
+> half-rotated. The preflight now proves write before rotating, so a wrong
+> grant fails safely.
 
 ### 2. Generate a private key
 
@@ -115,7 +123,7 @@ gh run watch -R 9owlsboston/TagPulse "$(gh run list -R 9owlsboston/TagPulse \
 
 In the run log, confirm the **"Mint cross-repo token (GitHub App → PAT
 fallback)"** step executed (not skipped) and the preflight prints
-`✓ token validated for 9owlsboston/TagPulse-UI env=dev secret writes`.
+`✓ token validated for 9owlsboston/TagPulse-UI env=dev secret writes (read + write)`.
 
 ### 6. Retire the PAT
 
@@ -137,7 +145,7 @@ step 5 passes.
 
 ## Security notes
 
-- The App's **only** power is read/write **Secrets** (+ read **Environments**)
+- The App's **only** power is read/write **Secrets** and **Environments**
   on `TagPulse-UI` — a smaller blast radius than a PAT's `repo`/secrets scope.
 - The private key lives solely in the `UI_SECRETS_APP_PRIVATE_KEY` secret;
   `create-github-app-token` revokes each minted installation token at job end.

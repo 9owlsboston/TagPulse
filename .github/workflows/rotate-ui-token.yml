@@ -163,20 +163,51 @@ jobs:
             exit 1
           fi
 
-          # 3. Authorization — verify the token can reach the EXACT capability
-          #    the Rotate step needs: reading the environment's secrets public
-          #    key (the endpoint `gh secret set --env` uses). An under-scoped
-          #    token, or a missing environment, fails here instead of after the
-          #    Azure-side rotation.
+          # 3. Reachability — confirm the token can read the environment's
+          #    secrets public key and that the environment exists at all. This
+          #    is necessary but NOT sufficient: a read-only check passes even
+          #    when writes are forbidden, so step 4 proves write separately.
           if ! gh api "repos/${UI_REPO}/environments/${TARGET_ENV}/secrets/public-key" \
                  --silent 2>/tmp/ghapi.err; then
-            echo "::error::Cross-repo token cannot access env '${TARGET_ENV}'" \
-                 "secrets on ${UI_REPO}. Confirm it grants secrets:write on" \
-                 "${UI_REPO} and that the '${TARGET_ENV}' environment exists there."
+            echo "::error::Cross-repo token cannot read env '${TARGET_ENV}'" \
+                 "secrets on ${UI_REPO}. Confirm the '${TARGET_ENV}' environment" \
+                 "exists there and the token can read it."
             sed 's/^/  gh api: /' /tmp/ghapi.err >&2 || true
             exit 1
           fi
-          echo "✓ token validated for ${UI_REPO} env=${TARGET_ENV} secret writes"
+
+          # 4. Write capability — the real test. Environment-secret *writes*
+          #    are gated by the **Environments: write** permission, which is
+          #    NOT implied by Secrets: write; the read in step 3 succeeds even
+          #    when the write 403s ("Resource not accessible by integration").
+          #    Prove write by setting + deleting a throwaway probe secret
+          #    BEFORE the destructive `az ... reset-api-key`, so an under-scoped
+          #    token fails here instead of leaving the UI repo half-rotated
+          #    (Azure key reset, but the new value never written back).
+          #    Use a run-scoped probe name so it can never collide with / clobber
+          #    a real secret, and arm an EXIT trap so a crash mid-step still
+          #    cleans it up.
+          PROBE="ROTATE_PREFLIGHT_PROBE_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          # NB: no `--body`; gh reads the value from stdin only when --body is
+          # omitted (`--body -` would store the literal string "-").
+          if ! printf 'preflight-delete-me' | gh -R "${UI_REPO}" secret set \
+                 "${PROBE}" --env "${TARGET_ENV}" 2>/tmp/ghprobe.err; then
+            echo "::error::Cross-repo token can READ but cannot WRITE env" \
+                 "'${TARGET_ENV}' secrets on ${UI_REPO}. Environment-secret" \
+                 "writes need **Environments: write** — for the GitHub App, set" \
+                 "Repository permissions → Environments → Read and write and" \
+                 "approve it on the installation; for a PAT, grant Secrets: write."
+            sed 's/^/  gh secret set: /' /tmp/ghprobe.err >&2 || true
+            exit 1
+          fi
+          trap 'gh -R "${UI_REPO}" secret delete "${PROBE}" --env "${TARGET_ENV}" >/dev/null 2>&1 || true' EXIT
+          # Remove the probe so it never lingers in the UI repo environment.
+          if ! gh -R "${UI_REPO}" secret delete "${PROBE}" --env "${TARGET_ENV}" 2>/dev/null; then
+            echo "::warning::preflight probe secret ${PROBE} was written to" \
+                 "${UI_REPO} env=${TARGET_ENV} but could not be deleted; remove it manually."
+          fi
+          trap - EXIT
+          echo "✓ token validated for ${UI_REPO} env=${TARGET_ENV} secret writes (read + write)"
 
       - name: Rotate token
         if: steps.gate.outputs.run == 'true'
