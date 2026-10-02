@@ -17,8 +17,12 @@
 # secret set --env <env>`. The workflow uses a fine-scoped PAT
 # (UI_REPO_SECRETS_PAT) stored as a *repository* secret here; rotate it
 # alongside the SWA tokens (the script's audit log surfaces last-4-chars).
-# Scope: `repo` access to the UI repo only — anything broader is a
-# blast-radius bug.
+# Scope: fine-grained PAT with **Secrets: read/write** on the UI repo only
+# (classic equivalent: `repo`) — anything broader is a blast-radius bug.
+# A PAT expiry is the most common failure mode: the "Authenticate gh CLI"
+# step is a safety preflight that fails *before* the destructive Azure-side
+# rotation so an expired/under-scoped PAT can never leave the UI repo
+# holding a stale (now-invalid) token.
 
 name: rotate-ui-token
 
@@ -103,20 +107,82 @@ jobs:
           fi
           echo "swa_name=$SWA_NAME" >> "$GITHUB_OUTPUT"
 
+      - name: Mint cross-repo token (GitHub App → PAT fallback)
+        id: appauth
+        if: steps.gate.outputs.run == 'true' && vars.UI_SECRETS_APP_ID != ''
+        # continue-on-error keeps the PAT fallback intact even when the App is
+        # only half-configured (e.g. UI_SECRETS_APP_ID is set but
+        # UI_SECRETS_APP_PRIVATE_KEY is missing/invalid): a failed mint leaves
+        # steps.appauth.outputs.token empty, so the downstream
+        # `outputs.token || secrets.UI_REPO_SECRETS_PAT` expression falls back
+        # to the PAT instead of hard-failing the run. The safety preflight
+        # still validates whichever token is used before anything destructive.
+        continue-on-error: true
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.UI_SECRETS_APP_ID }}
+          private-key: ${{ secrets.UI_SECRETS_APP_PRIVATE_KEY }}
+          owner: ${{ vars.UI_SECRETS_APP_OWNER || '9owlsboston' }}
+          repositories: ${{ vars.UI_SECRETS_APP_REPOS || 'TagPulse-UI' }}
+
       - name: Authenticate gh CLI for cross-repo secret write
         if: steps.gate.outputs.run == 'true'
         env:
-          GH_TOKEN: ${{ secrets.UI_REPO_SECRETS_PAT }}
+          GH_TOKEN: ${{ steps.appauth.outputs.token || secrets.UI_REPO_SECRETS_PAT }}
+          UI_REPO: ${{ vars.TAGPULSE_UI_REPO || '9owlsboston/TagPulse-UI' }}
+          TARGET_ENV: ${{ matrix.env }}
         run: |
-          # The UI_REPO_SECRETS_PAT is a fine-scoped PAT (repo scope on the
-          # UI repo only). Rotate it alongside the SWA tokens — the audit
-          # log captures last-4-chars on every run.
-          gh auth status
+          set -euo pipefail
+          # Cross-repo auth. When the UI_SECRETS_APP_ID repo variable is set,
+          # GH_TOKEN is a short-lived GitHub App installation token (never
+          # expires — minted per run); otherwise it falls back to the
+          # UI_REPO_SECRETS_PAT fine-scoped PAT (secrets:write on the UI repo).
+          # See docs/runbooks/rotate-ui-token-github-app.md for the one-time
+          # App setup that retires the PAT entirely.
+          #
+          # This is a *safety preflight*: it must fail BEFORE the destructive
+          # `az staticwebapp secrets reset-api-key` in the Rotate step. If the
+          # token is missing/expired/under-scoped, surfacing it here avoids the
+          # dangerous half-rotated state (Azure token rotated, but the UI repo
+          # left holding the now-invalid old token → broken UI deploys).
+
+          # 1. Missing/empty secret — distinct, actionable error.
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::No cross-repo token available. Either set the" \
+                 "UI_SECRETS_APP_ID variable + UI_SECRETS_APP_PRIVATE_KEY" \
+                 "secret (GitHub App — preferred), or store a fine-scoped PAT" \
+                 "(secrets:write on ${UI_REPO}) as the UI_REPO_SECRETS_PAT secret."
+            exit 1
+          fi
+
+          # 2. Token validity.
+          if ! gh auth status; then
+            echo "::error::Cross-repo token is invalid or expired. If using a" \
+                 "PAT, rotate UI_REPO_SECRETS_PAT (secrets:write on ${UI_REPO});" \
+                 "if using the GitHub App, confirm the App is still installed."
+            exit 1
+          fi
+
+          # 3. Authorization — verify the token can reach the EXACT capability
+          #    the Rotate step needs: reading the environment's secrets public
+          #    key (the endpoint `gh secret set --env` uses). An under-scoped
+          #    token, or a missing environment, fails here instead of after the
+          #    Azure-side rotation.
+          if ! gh api "repos/${UI_REPO}/environments/${TARGET_ENV}/secrets/public-key" \
+                 --silent 2>/tmp/ghapi.err; then
+            echo "::error::Cross-repo token cannot access env '${TARGET_ENV}'" \
+                 "secrets on ${UI_REPO}. Confirm it grants secrets:write on" \
+                 "${UI_REPO} and that the '${TARGET_ENV}' environment exists there."
+            sed 's/^/  gh api: /' /tmp/ghapi.err >&2 || true
+            exit 1
+          fi
+          echo "✓ token validated for ${UI_REPO} env=${TARGET_ENV} secret writes"
 
       - name: Rotate token
         if: steps.gate.outputs.run == 'true'
         env:
-          GH_TOKEN: ${{ secrets.UI_REPO_SECRETS_PAT }}
+          GH_TOKEN: ${{ steps.appauth.outputs.token || secrets.UI_REPO_SECRETS_PAT }}
+          TAGPULSE_UI_REPO: ${{ vars.TAGPULSE_UI_REPO || '9owlsboston/TagPulse-UI' }}
           AZURE_STATIC_WEB_APPS_NAME: ${{ steps.swa.outputs.swa_name }}
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
         run: |
@@ -134,21 +200,39 @@ jobs:
           script: |
             const env = '${{ matrix.env }}';
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `rotate-ui-token failed for env=${env}`,
-              body: [
-                `The scheduled SWA-token rotation for **${env}** failed.`,
-                ``,
-                `Run: ${runUrl}`,
-                ``,
-                `Likely causes:`,
-                `- \`UI_REPO_SECRETS_PAT\` expired (rotate it; scope = repo on \`9owlsboston/TagPulse-UI\`).`,
-                `- \`AZURE_RESOURCE_GROUP\` variable on the \`${env}\` Environment is wrong or the SWA was renamed.`,
-                `- The OIDC federated credential is no longer trusted (re-run \`scripts/azd-cicd-setup.sh ${env}\`).`,
-                ``,
-                `Manual recovery: \`scripts/azd-ui-token-rotate.sh ${env} --force\` from a workstation that's signed in to the right tenant.`,
-              ].join('\n'),
-              labels: ['ops', 'security'],
+            const title = `rotate-ui-token failed for env=${env}`;
+            const body = [
+              `The scheduled SWA-token rotation for **${env}** failed.`,
+              ``,
+              `Run: ${runUrl}`,
+              ``,
+              `Likely causes (the "Authenticate gh CLI" preflight pinpoints the first two):`,
+              `- \`UI_REPO_SECRETS_PAT\` expired/invalid — rotate it: create a new fine-scoped PAT with **Secrets: read/write** on \`9owlsboston/TagPulse-UI\` and update the \`UI_REPO_SECRETS_PAT\` repo secret.`,
+              `- \`UI_REPO_SECRETS_PAT\` under-scoped or the \`${env}\` environment is missing on the UI repo — the PAT needs **Secrets: write** and the environment must exist.`,
+              `- \`AZURE_RESOURCE_GROUP\` variable on the \`${env}\` Environment is wrong or the SWA was renamed.`,
+              `- The OIDC federated credential is no longer trusted (re-run \`scripts/azd-cicd-setup.sh ${env}\`).`,
+              ``,
+              `Manual recovery: \`scripts/azd-ui-token-rotate.sh ${env} --force\` from a workstation that's signed in to the right tenant.`,
+            ].join('\n');
+            // Idempotent: reuse an existing open issue (the quarterly cron
+            // would otherwise file a fresh duplicate on every failed run).
+            const existing = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open in:title "${title}"`,
             });
+            const hit = existing.data.items.find((i) => i.title === title);
+            if (hit) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: hit.number,
+                body: `Rotation failed again — ${runUrl}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['ops', 'security'],
+              });
+            }

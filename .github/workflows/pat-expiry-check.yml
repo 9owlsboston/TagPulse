@@ -1,0 +1,164 @@
+# Early-warning canary for the cross-repo rotation PAT.
+#
+# The `rotate-ui-token` workflow depends on a long-lived fine-scoped PAT
+# (UI_REPO_SECRETS_PAT, Secrets:write on 9owlsboston/TagPulse-UI). Because
+# that rotation only runs quarterly, a silently-expired PAT was previously
+# discovered *at the cron*, long after it expired. This canary closes that
+# gap: it runs weekly, reads the PAT's own expiry via the
+# `github-authentication-token-expiration` response header GitHub returns
+# for PAT-authenticated requests, and files an issue WELL BEFORE the token
+# lapses so it can be rotated on-schedule instead of in a fire drill.
+#
+# Strongest long-term fix (tracked separately): replace the PAT with a
+# GitHub App installation token (actions/create-github-app-token), which is
+# minted per-run and never expires — this canary becomes unnecessary then.
+#
+# The PAT is used ONLY to probe its own expiry (an isolated curl in the
+# `probe` step). Issue create/update uses the Actions GITHUB_TOKEN, not the
+# PAT, so the PAT's scope never needs issues:write on this repo.
+
+name: pat-expiry-check
+
+on:
+  schedule:
+    # Weekly, Monday 09:00 UTC.
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      warn_days:
+        description: 'Open an issue when fewer than this many days remain before the PAT expires.'
+        required: false
+        type: string
+        default: '21'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: pat-expiry-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Once the cross-repo auth has migrated to a GitHub App (UI_SECRETS_APP_ID
+    # set), there is no PAT to expire — the canary self-disables.
+    if: ${{ vars.UI_SECRETS_APP_ID == '' }}
+    steps:
+      - name: Probe PAT expiry
+        id: probe
+        env:
+          PAT: ${{ secrets.UI_REPO_SECRETS_PAT }}
+          WARN_DAYS: ${{ inputs.warn_days || '21' }}
+        run: |
+          set -euo pipefail
+          out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
+
+          if [[ -z "${PAT:-}" ]]; then
+            out status "missing"
+            out detail "UI_REPO_SECRETS_PAT is not set on this repository."
+            exit 0
+          fi
+
+          # Probe api.github.com with the PAT in isolation. GitHub returns
+          # the token's expiry in a response header for PAT auth. Use a
+          # cheap, always-available endpoint and capture both headers + the
+          # HTTP status.
+          code="$(curl -sS -o /dev/null -D /tmp/pat_headers.txt \
+            -w '%{http_code}' \
+            -H "Authorization: Bearer ${PAT}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/rate_limit || echo "000")"
+
+          if [[ "$code" == "401" || "$code" == "403" ]]; then
+            out status "invalid"
+            out detail "The PAT was rejected (HTTP ${code}) — already expired or revoked."
+            exit 0
+          fi
+          if [[ "$code" != "200" ]]; then
+            out status "probe_error"
+            out detail "Unexpected HTTP ${code} probing token expiry; retry or check manually."
+            exit 0
+          fi
+
+          # Header name is case-insensitive; value looks like
+          # "2026-07-01 07:00:00 UTC".
+          expiry="$(grep -i '^github-authentication-token-expiration:' /tmp/pat_headers.txt \
+            | head -1 | cut -d: -f2- | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr -d '\r')"
+
+          if [[ -z "$expiry" ]]; then
+            # No expiry header → non-expiring token (e.g. classic PAT with no
+            # expiration, or a GitHub App token). Nothing to warn about.
+            out status "no_expiry"
+            out detail "PAT reports no expiration — no action needed."
+            exit 0
+          fi
+
+          exp_epoch="$(date -u -d "$expiry" +%s 2>/dev/null || echo 0)"
+          now_epoch="$(date -u +%s)"
+          if [[ "$exp_epoch" -le 0 ]]; then
+            out status "probe_error"
+            out detail "Could not parse expiry '${expiry}'."
+            exit 0
+          fi
+          days_left=$(( (exp_epoch - now_epoch) / 86400 ))
+          out expiry "$expiry"
+          out days_left "$days_left"
+
+          if [[ "$days_left" -le 0 ]]; then
+            out status "invalid"
+            out detail "PAT expired on ${expiry}."
+          elif [[ "$days_left" -le "$WARN_DAYS" ]]; then
+            out status "expiring"
+            out detail "PAT expires in ${days_left} day(s) — on ${expiry}."
+          else
+            out status "ok"
+            out detail "PAT healthy — ${days_left} day(s) left (expires ${expiry})."
+          fi
+
+      - name: Report probe result
+        run: |
+          echo "status=${{ steps.probe.outputs.status }}"
+          echo "detail=${{ steps.probe.outputs.detail }}"
+
+      - name: Open or update expiry issue
+        if: steps.probe.outputs.status == 'expiring' || steps.probe.outputs.status == 'invalid' || steps.probe.outputs.status == 'missing'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const status = '${{ steps.probe.outputs.status }}';
+            const detail = `${{ steps.probe.outputs.detail }}`;
+            const title = 'UI_REPO_SECRETS_PAT needs rotation (expiry canary)';
+            const body = [
+              `The weekly PAT-expiry canary flagged \`UI_REPO_SECRETS_PAT\` (status: **${status}**).`,
+              ``,
+              `> ${detail}`,
+              ``,
+              `**Rotate it before it lapses** so the quarterly \`rotate-ui-token\` cron keeps working:`,
+              `1. Create a new fine-grained PAT with **Secrets: read/write** on \`9owlsboston/TagPulse-UI\` (set the longest allowed expiry).`,
+              `2. Update the \`UI_REPO_SECRETS_PAT\` repository secret on \`9owlsboston/TagPulse\`.`,
+              `3. Optionally verify: \`gh workflow run rotate-ui-token.yml -f force=true\`.`,
+              ``,
+              `_Long-term fix: replace the PAT with a GitHub App installation token (\`actions/create-github-app-token\`) so there is no expiry to track._`,
+            ].join('\n');
+            const q = `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open in:title "${title}"`;
+            const found = await github.rest.search.issuesAndPullRequests({ q });
+            const hit = found.data.items.find((i) => i.title === title);
+            if (hit) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: hit.number,
+                body: `Still flagged (${status}): ${detail}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['ops', 'security'],
+              });
+            }
