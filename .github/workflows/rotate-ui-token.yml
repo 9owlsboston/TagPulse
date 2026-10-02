@@ -14,14 +14,17 @@
 # so no extra setup is required to land this file.
 #
 # Cross-repo secret write: the rotation script needs `gh -R 9owlsboston/TagPulse-UI
-# secret set --env <env>`. The workflow uses a fine-scoped PAT
-# (UI_REPO_SECRETS_PAT) stored as a *repository* secret here; rotate it
-# alongside the SWA tokens (the script's audit log surfaces last-4-chars).
-# Scope: fine-grained PAT with **Secrets: read/write** on the UI repo only
-# (classic equivalent: `repo`) — anything broader is a blast-radius bug.
-# A PAT expiry is the most common failure mode: the "Authenticate gh CLI"
-# step is a safety preflight that fails *before* the destructive Azure-side
-# rotation so an expired/under-scoped PAT can never leave the UI repo
+# secret set --env <env>`. The workflow authenticates with a short-lived
+# **GitHub App installation token** (App `tagpulse-ui-secrets`, minted per run
+# via actions/create-github-app-token), scoped to the UI repo only — it never
+# expires and there is nothing to rotate. Config: the UI_SECRETS_APP_ID repo
+# variable + UI_SECRETS_APP_PRIVATE_KEY repo secret (see
+# docs/runbooks/rotate-ui-token-github-app.md). The App needs **Secrets:
+# read/write** and **Environments: read/write** on the UI repo only — anything
+# broader is a blast-radius bug.
+# The "Authenticate gh CLI" step is a safety preflight that proves the token
+# can both read AND write the target env's secrets *before* the destructive
+# Azure-side rotation, so an under-scoped token can never leave the UI repo
 # holding a stale (now-invalid) token.
 
 name: rotate-ui-token
@@ -107,17 +110,9 @@ jobs:
           fi
           echo "swa_name=$SWA_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Mint cross-repo token (GitHub App → PAT fallback)
+      - name: Mint cross-repo token (GitHub App)
         id: appauth
         if: steps.gate.outputs.run == 'true' && vars.UI_SECRETS_APP_ID != ''
-        # continue-on-error keeps the PAT fallback intact even when the App is
-        # only half-configured (e.g. UI_SECRETS_APP_ID is set but
-        # UI_SECRETS_APP_PRIVATE_KEY is missing/invalid): a failed mint leaves
-        # steps.appauth.outputs.token empty, so the downstream
-        # `outputs.token || secrets.UI_REPO_SECRETS_PAT` expression falls back
-        # to the PAT instead of hard-failing the run. The safety preflight
-        # still validates whichever token is used before anything destructive.
-        continue-on-error: true
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ vars.UI_SECRETS_APP_ID }}
@@ -128,17 +123,16 @@ jobs:
       - name: Authenticate gh CLI for cross-repo secret write
         if: steps.gate.outputs.run == 'true'
         env:
-          GH_TOKEN: ${{ steps.appauth.outputs.token || secrets.UI_REPO_SECRETS_PAT }}
+          GH_TOKEN: ${{ steps.appauth.outputs.token }}
           UI_REPO: ${{ vars.TAGPULSE_UI_REPO || '9owlsboston/TagPulse-UI' }}
           TARGET_ENV: ${{ matrix.env }}
         run: |
           set -euo pipefail
-          # Cross-repo auth. When the UI_SECRETS_APP_ID repo variable is set,
-          # GH_TOKEN is a short-lived GitHub App installation token (never
-          # expires — minted per run); otherwise it falls back to the
-          # UI_REPO_SECRETS_PAT fine-scoped PAT (secrets:write on the UI repo).
-          # See docs/runbooks/rotate-ui-token-github-app.md for the one-time
-          # App setup that retires the PAT entirely.
+          # Cross-repo auth uses a short-lived GitHub App installation token
+          # (minted per run from the UI_SECRETS_APP_ID variable +
+          # UI_SECRETS_APP_PRIVATE_KEY secret — never expires, nothing to
+          # rotate). See docs/runbooks/rotate-ui-token-github-app.md for the
+          # one-time App setup.
           #
           # This is a *safety preflight*: it must fail BEFORE the destructive
           # `az staticwebapp secrets reset-api-key` in the Rotate step. If the
@@ -146,20 +140,20 @@ jobs:
           # dangerous half-rotated state (Azure token rotated, but the UI repo
           # left holding the now-invalid old token → broken UI deploys).
 
-          # 1. Missing/empty secret — distinct, actionable error.
+          # 1. Missing/empty token — the App isn't configured.
           if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "::error::No cross-repo token available. Either set the" \
-                 "UI_SECRETS_APP_ID variable + UI_SECRETS_APP_PRIVATE_KEY" \
-                 "secret (GitHub App — preferred), or store a fine-scoped PAT" \
-                 "(secrets:write on ${UI_REPO}) as the UI_REPO_SECRETS_PAT secret."
+            echo "::error::No cross-repo token minted. Set the UI_SECRETS_APP_ID" \
+                 "repo variable + UI_SECRETS_APP_PRIVATE_KEY repo secret (GitHub" \
+                 "App 'tagpulse-ui-secrets', scoped to ${UI_REPO}). See" \
+                 "docs/runbooks/rotate-ui-token-github-app.md."
             exit 1
           fi
 
           # 2. Token validity.
           if ! gh auth status; then
-            echo "::error::Cross-repo token is invalid or expired. If using a" \
-                 "PAT, rotate UI_REPO_SECRETS_PAT (secrets:write on ${UI_REPO});" \
-                 "if using the GitHub App, confirm the App is still installed."
+            echo "::error::Cross-repo App token is invalid. Confirm the GitHub" \
+                 "App is still installed on ${UI_REPO} and UI_SECRETS_APP_PRIVATE_KEY" \
+                 "matches UI_SECRETS_APP_ID."
             exit 1
           fi
 
@@ -212,7 +206,7 @@ jobs:
       - name: Rotate token
         if: steps.gate.outputs.run == 'true'
         env:
-          GH_TOKEN: ${{ steps.appauth.outputs.token || secrets.UI_REPO_SECRETS_PAT }}
+          GH_TOKEN: ${{ steps.appauth.outputs.token }}
           TAGPULSE_UI_REPO: ${{ vars.TAGPULSE_UI_REPO || '9owlsboston/TagPulse-UI' }}
           AZURE_STATIC_WEB_APPS_NAME: ${{ steps.swa.outputs.swa_name }}
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
@@ -237,9 +231,9 @@ jobs:
               ``,
               `Run: ${runUrl}`,
               ``,
-              `Likely causes (the "Authenticate gh CLI" preflight pinpoints the first two):`,
-              `- \`UI_REPO_SECRETS_PAT\` expired/invalid — rotate it: create a new fine-scoped PAT with **Secrets: read/write** on \`9owlsboston/TagPulse-UI\` and update the \`UI_REPO_SECRETS_PAT\` repo secret.`,
-              `- \`UI_REPO_SECRETS_PAT\` under-scoped or the \`${env}\` environment is missing on the UI repo — the PAT needs **Secrets: write** and the environment must exist.`,
+              `Likely causes (the "Authenticate gh CLI" preflight pinpoints the token ones):`,
+              `- The GitHub App token couldn't be minted — confirm the \`UI_SECRETS_APP_ID\` variable + \`UI_SECRETS_APP_PRIVATE_KEY\` secret are set and the App \`tagpulse-ui-secrets\` is still installed on \`9owlsboston/TagPulse-UI\`.`,
+              `- The App is under-scoped or the \`${env}\` environment is missing on the UI repo — the App needs **Secrets: read/write** + **Environments: read/write** and the environment must exist.`,
               `- \`AZURE_RESOURCE_GROUP\` variable on the \`${env}\` Environment is wrong or the SWA was renamed.`,
               `- The OIDC federated credential is no longer trusted (re-run \`scripts/azd-cicd-setup.sh ${env}\`).`,
               ``,

@@ -1,14 +1,19 @@
 # Eliminate the cross-repo PAT — migrate `rotate-ui-token` to a GitHub App
 
+> **Status: ✅ COMPLETED (2026-10-02).** The cutover is done — the App
+> `tagpulse-ui-secrets` is live, the `UI_REPO_SECRETS_PAT` secret is deleted,
+> the PAT is revoked, and `pat-expiry-check.yml` has been removed. The workflow
+> now authenticates **only** via the App (no PAT fallback remains). This runbook
+> is kept as the reference for how the App is wired and how to re-provision it.
+
 **Summary — what / who / when.** The `rotate-ui-token` workflow writes the
 freshly-rotated Static Web App deploy token into the `TagPulse-UI` repo. It
-authenticates to that *other* repo with a long-lived fine-grained PAT
-(`UI_REPO_SECRETS_PAT`), which **expires and breaks the quarterly cron
-silently** (runs `#36887295240`, `#28515415671`). This one-time cutover
-replaces that PAT with a **GitHub App installation token** — minted per run,
-**never expires, nothing to rotate**. For the repo owner (`9owlsboston`).
-Do it once; the workflow already supports it and falls back to the PAT until
-you finish, so there is **zero downtime**.
+authenticates to that *other* repo with a **GitHub App installation token**
+(App `tagpulse-ui-secrets`) — minted per run, **never expires, nothing to
+rotate**. It previously used a long-lived fine-grained PAT
+(`UI_REPO_SECRETS_PAT`), which **expired and broke the quarterly cron silently**
+(runs `#36887295240`, `#28515415671`); that PAT has now been retired. For the
+repo owner (`9owlsboston`).
 
 > **Why an App, not a PAT?** A fine-grained PAT is a *user* credential with a
 > hard max expiry (≤ 1 year) that a human must re-mint. A GitHub App is an
@@ -16,13 +21,13 @@ you finish, so there is **zero downtime**.
 > App's private key for a short-lived token scoped to exactly the repos the
 > App is installed on, on every run. No expiry to track, smaller blast radius.
 
-## How the workflow already supports this
+## How the workflow uses the App
 
-`.github/workflows/rotate-ui-token.yml` mints the cross-repo token with a
-GitHub-App-first, PAT-fallback expression:
+`.github/workflows/rotate-ui-token.yml` mints the cross-repo token from the App
+on every run:
 
 ```yaml
-- name: Mint cross-repo token (GitHub App → PAT fallback)
+- name: Mint cross-repo token (GitHub App)
   id: appauth
   if: steps.gate.outputs.run == 'true' && vars.UI_SECRETS_APP_ID != ''
   uses: actions/create-github-app-token@v2
@@ -32,17 +37,14 @@ GitHub-App-first, PAT-fallback expression:
     owner: ${{ vars.UI_SECRETS_APP_OWNER || '9owlsboston' }}
     repositories: ${{ vars.UI_SECRETS_APP_REPOS || 'TagPulse-UI' }}
 # ... downstream steps use:
-#   GH_TOKEN: ${{ steps.appauth.outputs.token || secrets.UI_REPO_SECRETS_PAT }}
+#   GH_TOKEN: ${{ steps.appauth.outputs.token }}
 ```
 
-- **Before** you set `UI_SECRETS_APP_ID`: the mint step is skipped, its output
-  is empty, and the workflow uses `UI_REPO_SECRETS_PAT` — today's behaviour.
-- **After** you set it: the workflow uses the App token and ignores the PAT.
-- The `pat-expiry-check.yml` canary **self-disables** once `UI_SECRETS_APP_ID`
-  is set (there's no PAT left to expire).
-
-So the cutover is purely config — **no code change, no PR** — and reversible
-(unset the variable to fall back).
+- The `UI_SECRETS_APP_ID` repo variable + `UI_SECRETS_APP_PRIVATE_KEY` repo
+  secret drive the mint; the token is scoped to `TagPulse-UI` only and is
+  revoked at job end.
+- There is **no PAT fallback** — if the App isn't configured, the safety
+  preflight fails fast *before* the destructive Azure rotation.
 
 ## Steps (one-time, ~10 min)
 
@@ -121,27 +123,28 @@ gh run watch -R 9owlsboston/TagPulse "$(gh run list -R 9owlsboston/TagPulse \
   -w rotate-ui-token --limit 1 --json databaseId --jq '.[0].databaseId')"
 ```
 
-In the run log, confirm the **"Mint cross-repo token (GitHub App → PAT
-fallback)"** step executed (not skipped) and the preflight prints
+In the run log, confirm the **"Mint cross-repo token (GitHub App)"** step
+executed (not skipped) and the preflight prints
 `✓ token validated for 9owlsboston/TagPulse-UI env=dev secret writes (read + write)`.
 
-### 6. Retire the PAT
+### 6. Retire the PAT — ✅ done (2026-10-02)
 
-Once a run succeeds via the App:
+Completed once the App run succeeded:
 
-- Delete the `UI_REPO_SECRETS_PAT` repo secret on `TagPulse`.
-- Revoke the old fine-grained PAT in **Settings → Developer settings →
+- [x] Deleted the `UI_REPO_SECRETS_PAT` repo secret on `TagPulse`.
+- [x] Revoked the old fine-grained PAT in **Settings → Developer settings →
   Personal access tokens**.
-- `pat-expiry-check.yml` is already dormant (step-4 `UI_SECRETS_APP_ID` set).
-  You may delete it, or keep it inert as documentation.
-- Delete the `.pem` from your laptop (`UI_SECRETS_APP_PRIVATE_KEY` is now the
-  only copy that matters).
+- [x] Deleted `pat-expiry-check.yml` (the PAT it watched is gone).
+- [x] Shredded the `.pem` from the laptop (`UI_SECRETS_APP_PRIVATE_KEY` is now
+  the only copy that matters).
 
 ## Rollback
 
-Unset `UI_SECRETS_APP_ID` (or delete the variable). The next run skips the
-mint step and falls back to `UI_REPO_SECRETS_PAT` — so keep the PAT until
-step 5 passes.
+There is no PAT fallback anymore. To roll back you must **re-provision a PAT**:
+create a fine-grained PAT with **Secrets: read/write** on `TagPulse-UI`, store
+it as `UI_REPO_SECRETS_PAT`, and re-add the `|| secrets.UI_REPO_SECRETS_PAT`
+fallback to the two `GH_TOKEN` expressions in the workflow. Preferred recovery
+is instead to fix the App (re-install it or re-set `UI_SECRETS_APP_PRIVATE_KEY`).
 
 ## Security notes
 
@@ -154,7 +157,6 @@ step 5 passes.
 ## Source
 
 - Workflow: [`.github/workflows/rotate-ui-token.yml`](../../.github/workflows/rotate-ui-token.yml)
-- Canary: [`.github/workflows/pat-expiry-check.yml`](../../.github/workflows/pat-expiry-check.yml)
 - Rotation script: [`scripts/azd-ui-token-rotate.sh`](../../scripts/azd-ui-token-rotate.sh)
 - Related: [secret-rotation.md](secret-rotation.md) · [github-workflows.md](github-workflows.md)
 - Action: [`actions/create-github-app-token`](https://github.com/actions/create-github-app-token)
