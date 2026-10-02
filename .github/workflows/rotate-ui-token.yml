@@ -107,59 +107,73 @@ jobs:
           fi
           echo "swa_name=$SWA_NAME" >> "$GITHUB_OUTPUT"
 
+      - name: Mint cross-repo token (GitHub App → PAT fallback)
+        id: appauth
+        if: steps.gate.outputs.run == 'true' && vars.UI_SECRETS_APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.UI_SECRETS_APP_ID }}
+          private-key: ${{ secrets.UI_SECRETS_APP_PRIVATE_KEY }}
+          owner: ${{ vars.UI_SECRETS_APP_OWNER || '9owlsboston' }}
+          repositories: ${{ vars.UI_SECRETS_APP_REPOS || 'TagPulse-UI' }}
+
       - name: Authenticate gh CLI for cross-repo secret write
         if: steps.gate.outputs.run == 'true'
         env:
-          GH_TOKEN: ${{ secrets.UI_REPO_SECRETS_PAT }}
+          GH_TOKEN: ${{ steps.appauth.outputs.token || secrets.UI_REPO_SECRETS_PAT }}
           UI_REPO: ${{ vars.TAGPULSE_UI_REPO || '9owlsboston/TagPulse-UI' }}
           TARGET_ENV: ${{ matrix.env }}
         run: |
           set -euo pipefail
-          # The UI_REPO_SECRETS_PAT is a fine-scoped PAT (secrets:write on the
-          # UI repo only). Rotate it alongside the SWA tokens — the audit log
-          # captures last-4-chars on every run.
+          # Cross-repo auth. When the UI_SECRETS_APP_ID repo variable is set,
+          # GH_TOKEN is a short-lived GitHub App installation token (never
+          # expires — minted per run); otherwise it falls back to the
+          # UI_REPO_SECRETS_PAT fine-scoped PAT (secrets:write on the UI repo).
+          # See docs/runbooks/rotate-ui-token-github-app.md for the one-time
+          # App setup that retires the PAT entirely.
           #
           # This is a *safety preflight*: it must fail BEFORE the destructive
           # `az staticwebapp secrets reset-api-key` in the Rotate step. If the
-          # PAT is missing/expired/under-scoped, surfacing it here avoids the
+          # token is missing/expired/under-scoped, surfacing it here avoids the
           # dangerous half-rotated state (Azure token rotated, but the UI repo
           # left holding the now-invalid old token → broken UI deploys).
 
           # 1. Missing/empty secret — distinct, actionable error.
           if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "::error::UI_REPO_SECRETS_PAT is not set on this repository." \
-                 "Create a fine-scoped PAT (secrets:write on ${UI_REPO}) and" \
-                 "store it as the repo secret UI_REPO_SECRETS_PAT."
+            echo "::error::No cross-repo token available. Either set the" \
+                 "UI_SECRETS_APP_ID variable + UI_SECRETS_APP_PRIVATE_KEY" \
+                 "secret (GitHub App — preferred), or store a fine-scoped PAT" \
+                 "(secrets:write on ${UI_REPO}) as the UI_REPO_SECRETS_PAT secret."
             exit 1
           fi
 
           # 2. Token validity.
           if ! gh auth status; then
-            echo "::error::UI_REPO_SECRETS_PAT is invalid or expired." \
-                 "Rotate it: create a new fine-scoped PAT (secrets:write on" \
-                 "${UI_REPO}) and update the UI_REPO_SECRETS_PAT repo secret."
+            echo "::error::Cross-repo token is invalid or expired. If using a" \
+                 "PAT, rotate UI_REPO_SECRETS_PAT (secrets:write on ${UI_REPO});" \
+                 "if using the GitHub App, confirm the App is still installed."
             exit 1
           fi
 
-          # 3. Authorization — verify the PAT can reach the EXACT capability the
-          #    Rotate step needs: reading the environment's secrets public key
-          #    (the endpoint `gh secret set --env` uses). A valid-but-under-
-          #    scoped PAT, or a missing environment, fails here instead of
-          #    after the Azure-side rotation.
+          # 3. Authorization — verify the token can reach the EXACT capability
+          #    the Rotate step needs: reading the environment's secrets public
+          #    key (the endpoint `gh secret set --env` uses). An under-scoped
+          #    token, or a missing environment, fails here instead of after the
+          #    Azure-side rotation.
           if ! gh api "repos/${UI_REPO}/environments/${TARGET_ENV}/secrets/public-key" \
                  --silent 2>/tmp/ghapi.err; then
-            echo "::error::UI_REPO_SECRETS_PAT cannot access env '${TARGET_ENV}'" \
-                 "secrets on ${UI_REPO}. Confirm the PAT grants secrets:write on" \
+            echo "::error::Cross-repo token cannot access env '${TARGET_ENV}'" \
+                 "secrets on ${UI_REPO}. Confirm it grants secrets:write on" \
                  "${UI_REPO} and that the '${TARGET_ENV}' environment exists there."
             sed 's/^/  gh api: /' /tmp/ghapi.err >&2 || true
             exit 1
           fi
-          echo "✓ PAT validated for ${UI_REPO} env=${TARGET_ENV} secret writes"
+          echo "✓ token validated for ${UI_REPO} env=${TARGET_ENV} secret writes"
 
       - name: Rotate token
         if: steps.gate.outputs.run == 'true'
         env:
-          GH_TOKEN: ${{ secrets.UI_REPO_SECRETS_PAT }}
+          GH_TOKEN: ${{ steps.appauth.outputs.token || secrets.UI_REPO_SECRETS_PAT }}
           TAGPULSE_UI_REPO: ${{ vars.TAGPULSE_UI_REPO || '9owlsboston/TagPulse-UI' }}
           AZURE_STATIC_WEB_APPS_NAME: ${{ steps.swa.outputs.swa_name }}
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}

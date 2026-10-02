@@ -42,6 +42,9 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # Once the cross-repo auth has migrated to a GitHub App (UI_SECRETS_APP_ID
+    # set), there is no PAT to expire — the canary self-disables.
+    if: ${{ vars.UI_SECRETS_APP_ID == '' }}
     steps:
       - name: Probe PAT expiry
         id: probe

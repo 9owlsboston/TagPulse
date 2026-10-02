@@ -46,6 +46,7 @@ referenced from the incident template.
 | [device-token-rotation.md](device-token-rotation.md) | Sprint 16 | Bulk-rotate device JWTs; see also ADR-011 for the long-term mTLS plan (ADR-012 partially implemented in Sprint 28 C6). |
 | [reserved-label-key-collision.md](reserved-label-key-collision.md) | **Sprint 50 Phase A3** | What to do when migration `045_tag_label_namespace.py` refuses because a tenant holds labels under the reserved `batch.*` namespace ([ADR 028](../adr/028-tags-as-first-class-entity.md)). |
 | [tag-registry-operations.md](tag-registry-operations.md) | **Sprint 50 Phase F2** | Day-to-day tag registry ops: CSV bulk import (limits, dry-run, two-person rule), status lifecycle, cross-tenant transfer, and the three reconciliation views ([ADR 028](../adr/028-tags-as-first-class-entity.md)). |
+| [rotate-ui-token-github-app.md](rotate-ui-token-github-app.md) | **Chore (post Sprint 84)** | One-time cutover of `rotate-ui-token` cross-repo auth from the expiring `UI_REPO_SECRETS_PAT` to a never-expiring **GitHub App installation token** (zero-downtime, config-only). Retires the PAT + its expiry canary. |
 
 ## Cross-references
 
