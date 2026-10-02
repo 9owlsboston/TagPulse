@@ -103,7 +103,7 @@ def resolve_antenna_xy(
 
 def build_floor_observations(
     reads: Sequence[RawRead],
-    device_site: dict[UUID, UUID],
+    device_site: dict[UUID, UUID | None],
     antenna_index: AntennaIndex,
     epc_to_asset: dict[str, UUID],
 ) -> list[FloorObservation]:
