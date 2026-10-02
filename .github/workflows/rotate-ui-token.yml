@@ -110,6 +110,14 @@ jobs:
       - name: Mint cross-repo token (GitHub App → PAT fallback)
         id: appauth
         if: steps.gate.outputs.run == 'true' && vars.UI_SECRETS_APP_ID != ''
+        # continue-on-error keeps the PAT fallback intact even when the App is
+        # only half-configured (e.g. UI_SECRETS_APP_ID is set but
+        # UI_SECRETS_APP_PRIVATE_KEY is missing/invalid): a failed mint leaves
+        # steps.appauth.outputs.token empty, so the downstream
+        # `outputs.token || secrets.UI_REPO_SECRETS_PAT` expression falls back
+        # to the PAT instead of hard-failing the run. The safety preflight
+        # still validates whichever token is used before anything destructive.
+        continue-on-error: true
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ vars.UI_SECRETS_APP_ID }}
