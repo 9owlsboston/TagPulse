@@ -48,8 +48,17 @@ So the cutover is purely config — **no code change, no PR** — and reversible
 
 ### 1. Create the GitHub App  *(browser — owner only)*
 
-`github.com` → your avatar → **Settings** → **Developer settings** →
-**GitHub Apps** → **New GitHub App**.
+**Fast path — one prefilled link.** While signed in to GitHub **as
+`9owlsboston`**, open this URL; it opens the *New GitHub App* form with the
+name, homepage, webhook-off, and both permissions (`Secrets: write`,
+`Environments: read`) already filled. Review, then click **Create GitHub App**:
+
+```text
+https://github.com/settings/apps/new?name=tagpulse-ui-secrets&url=https://github.com/9owlsboston/TagPulse&public=false&webhook_active=false&secrets=write&environments=read
+```
+
+Or fill it manually: `github.com` → your avatar → **Settings** →
+**Developer settings** → **GitHub Apps** → **New GitHub App**.
 
 | Field | Value |
 |---|---|
