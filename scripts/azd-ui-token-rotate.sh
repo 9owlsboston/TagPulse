@@ -150,7 +150,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 DRY-RUN: would run:
   az staticwebapp secrets reset-api-key --name $SWA_NAME --resource-group $RG_NAME
   az staticwebapp secrets list         --name $SWA_NAME --resource-group $RG_NAME --query properties.apiKey
-  printf '%s' "<new-token>" | gh -R ${TAGPULSE_UI_REPO:-9owlsboston/TagPulse-UI} secret set AZURE_STATIC_WEB_APPS_API_TOKEN --env $ENV_NAME --body -
+  printf '%s' "<new-token>" | gh -R ${TAGPULSE_UI_REPO:-9owlsboston/TagPulse-UI} secret set AZURE_STATIC_WEB_APPS_API_TOKEN --env $ENV_NAME
   jq … >> deploy/azure/.audit/ui-token-rotation.jsonl
 EOF
   exit 0
@@ -179,8 +179,11 @@ fi
 UI_REPO="${TAGPULSE_UI_REPO:-9owlsboston/TagPulse-UI}"
 SECRET_NAME="AZURE_STATIC_WEB_APPS_API_TOKEN"
 echo "==> Writing new token to ${UI_REPO} env=${ENV_NAME} secret=${SECRET_NAME}..." >&2
+GH_SET_ERR="$(mktemp)"
+# NB: no `--body`; gh reads the value from stdin only when --body is omitted
+# (`--body -` would store the literal string "-", not $NEW_TOKEN).
 if ! printf '%s' "$NEW_TOKEN" | gh -R "$UI_REPO" secret set "$SECRET_NAME" \
-    --env "$ENV_NAME" --body - >/dev/null 2>&1; then
+    --env "$ENV_NAME" >/dev/null 2>"$GH_SET_ERR"; then
   cat >&2 <<EOF
 error: rotation succeeded on Azure side, but 'gh secret set' failed.
        The UI repo's ${ENV_NAME} environment still holds the old token.
@@ -188,8 +191,13 @@ error: rotation succeeded on Azure side, but 'gh secret set' failed.
          scripts/azd-ui-token.sh ${ENV_NAME} --print | \\
            gh -R ${UI_REPO} secret set ${SECRET_NAME} --env ${ENV_NAME}
 EOF
+  # Surface the underlying gh/HTTP error (e.g. a 403 means the token lacks
+  # the Environments: write permission) instead of swallowing it.
+  sed 's/^/       gh: /' "$GH_SET_ERR" >&2 || true
+  rm -f "$GH_SET_ERR"
   exit 2
 fi
+rm -f "$GH_SET_ERR"
 
 # ---------- audit ------------------------------------------------------------
 LAST4="${NEW_TOKEN: -4}"
